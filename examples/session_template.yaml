@@ -1,0 +1,27 @@
+agent_templates:
+  - name: archivar_template
+    description: "lala"
+    skills:
+      - skill_1
+      - skill_2
+    tools:
+      - web_search
+      - time
+      - calculator
+    filters:
+      - compress
+      - dings
+
+agents:
+  - name: archivar
+    template: archivar_template
+
+session_templates:
+  - name: main_template
+    participants:
+      - kind: agent
+        name: archivar
+
+sessions:
+  - name: main
+    template: main_template
