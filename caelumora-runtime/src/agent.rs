@@ -100,8 +100,8 @@ impl MessageProcessor for AgentLoop {
                 // --- PHASE 2: PLAN ---
                 // Call LLM with the current context
                 // The LLM returns a stream of tokens or structured parts
-                let llm_response_stream = state.llm_client.chat_completion(state.messages().await.as_slice()).await;
-                pin_mut!(llm_response_stream);
+                let context = state.messages().await;
+                let mut llm_response_stream = state.llm_client.chat_completion(context.as_slice()).await;
 
                 while let Some(llm_event) = llm_response_stream.try_next().await? {
                     match llm_event {
@@ -135,7 +135,7 @@ impl MessageProcessor for AgentLoop {
 
             // --- PHASE 4: REFLECT ---
             // After the loop or if we have enough context, perform a final reflection
-            // TODO
+            state.reflect().await?;
 
             yield Ok(MessageEvent::EndOfTurn);
         };

@@ -7,14 +7,45 @@ use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
 use caelumora_model::session::{Session, SessionTemplate};
 use dashmap::DashMap;
 use futures::future::{join_all, ready};
-use futures::stream::{once, BoxStream};
+use futures::stream::{once, BoxStream, FuturesUnordered};
 use std::collections::HashMap;
 use std::sync::Arc;
 use async_stream::try_stream;
-use futures::{FutureExt, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use crate::runner::LoopRunner;
+
+
+
+struct StreamState {
+    stream: BoxStream<'static, Result<MessageEvent>>,
+    all_messages: Vec<Message>,
+}
+
+impl StreamState {
+    fn new(stream: BoxStream<'static, Result<MessageEvent>>) -> Self {
+        Self {
+            stream,
+            all_messages: Vec::new(),
+        }
+    }
+
+    async fn next_event(mut self) -> Result<(Self, Option<MessageEvent>)> {
+        let event = self.stream.try_next().await?;
+        if let Some(MessageEvent::Complete(message)) = &event {
+            self.all_messages.push(message.clone());
+        }
+
+        Ok((self, event))
+    }
+
+    fn all_messages(
+        self,
+    ) -> Vec<Message> {
+        self.all_messages
+    }
+}
 
 
 struct LoopState {
@@ -28,14 +59,22 @@ struct LoopState {
 
 impl LoopState {
     fn new(aloop: &SessionLoop) -> Self {
-        todo!()
+        let (tx,rx) = mpsc::unbounded_channel();
+        Self {
+            session: aloop.session.clone(),
+            agents: aloop.agents.clone(),
+            moderator: aloop.moderator.clone(),
+            recorder: aloop.recorder.clone(),
+            rx,
+            tx
+        }
     }
 
     async fn route_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
         let routes = self.moderator.route(messages.as_slice());
         let agents = &self.agents;
 
-        // First route all messages to all agents...
+        // First, route all messages to all agents...
         let futures = routes.into_iter().flat_map(|route| {
             // Do not propagate message to sender again
             let target_id = route.0;
@@ -51,28 +90,28 @@ impl LoopState {
             }
         });
 
-        // Wait until we receive a BoxStream from all agents
-        let joined = join_all(futures).await;
-
         // And now process each BoxStream
+        let mut pending = FuturesUnordered::new();
+
+        // Wait until we receive a BoxStream from all agents
+        for result in join_all(futures).await {
+            let state = StreamState::new(result);
+            pending.push(state.next_event());
+        }
+
         let tx = self.tx.clone();
         let stream = try_stream! {
-            for mut result in joined {
-                let mut all_messages = Vec::new();
-                while let Some(msg) = result.try_next().await? {
-                    match &msg {
-                        MessageEvent::Partial(_) => {}
-                        MessageEvent::Complete(msg) => {
-                            //self.session.history.push(msg.clone());
-                            all_messages.push(msg.clone())
-                        }
-                        MessageEvent::EndOfTurn => {}
+            while let Some(result) = pending.next().await {
+                let (state, event) = result?;
+
+                match event {
+                    Some(event) => {
+                        yield event;
+                        pending.push(state.next_event());
                     }
-                    yield msg;
-                }
-                if !all_messages.is_empty() {
-                    if let Err(_e) = tx.send(all_messages) {
-                        Err(anyhow::anyhow!("Failed to send messages back into SessionLoop"))?
+                    None => {
+                        tx.send(state.all_messages())
+                            .map_err(|_| anyhow::anyhow!("Failed to send messages back into SessionLoop"))?
                     }
                 }
             }
@@ -100,12 +139,12 @@ impl MessageProcessor for SessionLoop {
         // Save message into session history
         //state.session.history.extend(messages.to_vec());
 
-        if let Err(e) = state.tx.send(messages) {
-            return once(ready(Err(anyhow::anyhow!("Failed to send command"))))
-                .boxed();
-        }
-
+        // Stream results
         let stream = try_stream! {
+            if let Err(_e) = state.tx.send(messages) {
+                Err(anyhow::anyhow!("Failed to send command"))?
+            }
+
             while let Some(msg) = state.rx.recv().await {
                 let mut routed = state.route_messages(msg).await;
 

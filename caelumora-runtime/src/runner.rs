@@ -48,7 +48,7 @@ impl LoopRunner {
         // 3. Wait for the response
         match rx.await {
             Ok(result) => result,
-            Err(e) => once(ready(Err(anyhow::anyhow!("Error receiving result"))))
+            Err(_e) => once(ready(Err(anyhow::anyhow!("Error receiving result"))))
                 .boxed(),
         }
     }
