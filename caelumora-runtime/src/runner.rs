@@ -16,20 +16,27 @@ pub enum LoopCommand {
 }
 
 pub struct LoopRunner {
-    pub id: String,
     pub processor: Box<dyn MessageProcessor>,
     req_rx: mpsc::UnboundedReceiver<LoopCommand>,
     req_tx: mpsc::UnboundedSender<LoopCommand>,
 }
 
 impl LoopRunner {
-    pub async fn send_messages(&self, messages: &[Message]) -> BoxStream<'static, Result<MessageEvent>> {
+    pub fn new(proc: Box<dyn MessageProcessor>) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Self {
+            processor: proc,
+            req_rx: rx,
+            req_tx: tx,
+        }
+    }
+    pub async fn send_messages(&self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
         // 1. Create the "Return Address"
         let (tx, rx) = oneshot::async_channel();
 
         // 2. Send the command WITH the return address
         let command = LoopCommand::HandleRequest {
-            request: messages.to_vec(),
+            request: messages,
             reply_to: tx,
         };
         if let Err(e) = self.req_tx.send(command) {
@@ -41,8 +48,7 @@ impl LoopRunner {
         // 3. Wait for the response
         match rx.await {
             Ok(result) => result,
-            Err(e) => once(ready(Err(e)))
-                .map_err(|_| anyhow::anyhow!("Error receiving result"))
+            Err(e) => once(ready(Err(anyhow::anyhow!("Error receiving result"))))
                 .boxed(),
         }
     }
@@ -51,7 +57,7 @@ impl LoopRunner {
         while let Some(cmd) = self.req_rx.recv().await {
             match cmd {
                 LoopCommand::HandleRequest { request, reply_to} => {
-                    let result = self.agent.send_messages(request.as_slice());
+                    let result = self.processor.send_messages(request);
                     let _ = reply_to.send(result.await);
                 }
             }

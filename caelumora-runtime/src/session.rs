@@ -1,45 +1,120 @@
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
 use caelumora_model::session::{Session, SessionTemplate};
 use dashmap::DashMap;
-use futures::future::join_all;
-use futures::stream::BoxStream;
+use futures::future::{join_all, ready};
+use futures::stream::{once, BoxStream};
 use std::collections::HashMap;
 use std::sync::Arc;
+use async_stream::try_stream;
+use futures::{FutureExt, StreamExt, TryStreamExt};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 use crate::runner::LoopRunner;
 
 
+struct LoopState {
+    session: Arc<Session>,
+    agents: Arc<HashMap<Uuid, LoopRunner>>,
+    moderator: Arc<Box<dyn Moderator>>,
+    recorder: Arc<Box<dyn Recorder>>,
+    rx: mpsc::UnboundedReceiver<Vec<Message>>,
+    tx: mpsc::UnboundedSender<Vec<Message>>,
+}
+
+impl LoopState {
+    fn new(aloop: &SessionLoop) -> Self {
+        todo!()
+    }
+
+    async fn route_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
+        let routes = self.moderator.route(messages.as_slice());
+        let agents = &self.agents;
+
+        // First route all messages to all agents...
+        let futures = routes.into_iter().flat_map(|route| {
+            // Do not propagate message to sender again
+            let target_id = route.0;
+            let target_messages = route.1;
+            return if !target_messages.is_empty() && !target_messages.iter().any(|m| m.sender_id == target_id) {
+                if let Some(agent_loop) = agents.get(&target_id) {
+                    Some(agent_loop.send_messages(target_messages))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        // Wait until we receive a BoxStream from all agents
+        let joined = join_all(futures).await;
+
+        // And now process each BoxStream
+        let tx = self.tx.clone();
+        let stream = try_stream! {
+            for mut result in joined {
+                let mut all_messages = Vec::new();
+                while let Some(msg) = result.try_next().await? {
+                    match &msg {
+                        MessageEvent::Partial(_) => {}
+                        MessageEvent::Complete(msg) => {
+                            //self.session.history.push(msg.clone());
+                            all_messages.push(msg.clone())
+                        }
+                        MessageEvent::EndOfTurn => {}
+                    }
+                    yield msg;
+                }
+                if !all_messages.is_empty() {
+                    if let Err(_e) = tx.send(all_messages) {
+                        Err(anyhow::anyhow!("Failed to send messages back into SessionLoop"))?
+                    }
+                }
+            }
+        };
+        Box::pin(stream)
+    }
+}
+
+
 pub struct SessionLoop {
-    session: Session,
-    runtime: Arc<RuntimeManager>,
-    agents: HashMap<Uuid, LoopRunner>,
-    moderator: Box<dyn Moderator>,
-    recorder: Box<dyn Recorder>,
+    session: Arc<Session>,
+    agents: Arc<HashMap<Uuid, LoopRunner>>,
+    moderator: Arc<Box<dyn Moderator>>,
+    recorder: Arc<Box<dyn Recorder>>,
 }
 
 #[async_trait]
 impl MessageProcessor for SessionLoop {
     async fn send_messages(
         &mut self,
-        messages: &[Message],
+        messages: Vec<Message>,
     ) -> BoxStream<'static, Result<MessageEvent>> {
+        let mut state = LoopState::new(self);
+
         // Save message into session history
-        self.session.history.extend(messages.to_vec());
+        //state.session.history.extend(messages.to_vec());
 
-        // 1. Process message by the target agent
-        //let responses = self.route_message(message).await?;
-        //for resp in responses.iter() {
-        // 2. Recursively process all received messages
-        //    self.send_message(resp).await?;
-        //}
+        if let Err(e) = state.tx.send(messages) {
+            return once(ready(Err(anyhow::anyhow!("Failed to send command"))))
+                .boxed();
+        }
 
-        //Ok(responses)
-        todo!()
+        let stream = try_stream! {
+            while let Some(msg) = state.rx.recv().await {
+                let mut routed = state.route_messages(msg).await;
+
+                while let Some(event) = routed.try_next().await? {
+                    yield event;
+                }
+            }
+        };
+        Box::pin(stream)
     }
 }
 
@@ -47,40 +122,6 @@ impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         // TODO
         todo!()
-    }
-
-    pub fn run() {
-
-    }
-
-    async fn route_messages(&mut self, messages: &[Message]) -> Result<Vec<Message>> {
-        // 2. Route responses to other agents based on orchestration strategy
-        let routes = self.moderator.route(messages);
-        let agents = self.agents;
-
-        let mut futures = Vec::new();
-        for route in routes.iter() {
-            // Do not propagate message to sender again
-            let tid = route.0;
-            let rm = route.1;
-            if !rm.iter().any(|m| m.sender_id == *tid) {
-                let agent_loop = agents
-                    .get_mut(tid)
-                    .ok_or_else(|| anyhow!("Target agent not found"))?;
-                let f = agent_loop.send_messages(rm);
-                futures.push(f);
-            }
-        }
-
-        let joined = join_all(futures).await;
-
-        let mut responses: Vec<Message> = Vec::new();
-        for result in joined {
-            //let target_responses = result?;
-            //responses.extend(target_responses);
-        }
-
-        Ok(responses)
     }
 
     pub fn session(&self) -> &Session {

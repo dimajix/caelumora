@@ -23,6 +23,12 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: Uuid,
     pub session_id: Uuid,
@@ -54,5 +60,5 @@ pub trait MessageFilter: Send + Sync {
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync {
-    async fn send_messages(&mut self, messages: &[Message]) -> BoxStream<'static, Result<MessageEvent>>;
+    async fn send_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>>;
 }

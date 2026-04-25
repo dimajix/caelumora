@@ -4,82 +4,127 @@ use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentState};
-use caelumora_model::message::MessageEvent::Partial;
-use caelumora_model::message::{Message, MessageEvent, MessageFilter, MessageProcessor};
+use caelumora_model::message::MessageEvent::{Complete, Partial};
+use caelumora_model::message::{Message, MessageEvent, MessageFilter, MessageProcessor, ToolCall, ToolResult};
 use caelumora_model::tool::ToolExecution;
 use futures::{pin_mut, TryStreamExt};
 use std::sync::Arc;
 use futures::stream::BoxStream;
+use tokio::sync::Mutex;
+use uuid::Uuid;
+
+struct LoopState {
+    agent_id: Uuid,
+    llm_client: Arc<dyn LLMClient>,
+    state: Arc<Mutex<AgentState>>,
+    // perceive_filter (input)
+    // history_filter (storage)
+    // context_filter
+    // result_filter
+}
+
+impl LoopState {
+    fn new(aloop: &AgentLoop) -> Self {
+        Self {
+            agent_id: aloop.agent.id.clone(),
+            llm_client: Arc::clone(&aloop.llm_client),
+            state: Arc::clone(&aloop.global_state),
+        }
+    }
+
+    async fn perceive(&self, messages: Vec<Message>) -> Result<()> {
+        let mut state_guard = self.state.lock().await;
+        state_guard.history.extend(messages.to_vec());
+        drop(state_guard);
+        Ok(())
+    }
+
+    async fn plan(&self, _message: &Message) -> Result<Vec<ToolExecution>> {
+        // Placeholder: in a real implementation, this would use an LLM
+        // to decide which tools to call.
+        Ok(Vec::new())
+    }
+
+    async fn reflect(&self) -> Result<()> {
+        // Placeholder for post-processing and logging
+        Ok(())
+    }
+
+    async fn messages(&self) -> Vec<Message> {
+        let state_guard = self.state.lock().await;
+        let context = state_guard.history.clone();
+        drop(state_guard);
+        context
+    }
+
+    async fn respond(&self, messages: &[Message]) {
+        let mut state_guard = self.state.lock().await;
+        state_guard.history.extend(messages.to_vec());
+        drop(state_guard);
+    }
+
+    async fn execute(&self, call: &ToolCall) -> Result<ToolResult> {
+        // 1. Execute tool
+        // 2. Add tool result to history and context
+        // 3. Return some message
+        todo!()
+    }
+}
 
 
 pub struct AgentLoop {
     agent: Agent,
     llm_client: Arc<dyn LLMClient>,
-    global_state: AgentState,
+    global_state: Arc<Mutex<AgentState>>,
     message_filters: Vec<Box<dyn MessageFilter>>,
     runtime_manager: Arc<RuntimeManager>,
     max_iterations: i32,
 }
 
-
 #[async_trait]
 impl MessageProcessor for AgentLoop {
-    async fn send_messages(&mut self, messages: &[Message]) -> BoxStream<'static, Result<MessageEvent>> {
+    async fn send_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
         // We move ownership into the stream block
-        let agent_id = self.agent.id.clone();
-        let llm = Arc::clone(&self.llm_client);
-        let mut my_messages = messages.to_vec();
-        let mut global_state = self.global_state.clone();
-        let mut context = global_state.private_history.clone();
-        let max_iterations = self.max_iterations;
+        let state = LoopState::new(self);
 
+        let max_iterations = self.max_iterations;
         let stream = stream! {
             // --- PHASE 1: PERCEIVE ---
             // Pre-process the incoming batch
-            my_messages = self.perceive(my_messages).await?;
-            global_state.private_history.extend(my_messages.clone());
-            context.extend(my_messages);
+            state.perceive(messages).await?;
 
-            // Internal state for the ReAct loop
             let mut loop_count = 0;
-
-            // --- THE ReAct LOOP (Plan -> Act -> Plan) ---
             while loop_count < max_iterations {
                 loop_count += 1;
 
                 // --- PHASE 2: PLAN ---
                 // Call LLM with the current context
                 // The LLM returns a stream of tokens or structured parts
-                let llm_response_stream = llm.chat_completion(context.as_slice()).await;
-
-                let mut current_plan_part = String::new();
-
+                let llm_response_stream = state.llm_client.chat_completion(state.messages().await.as_slice()).await;
                 pin_mut!(llm_response_stream);
 
                 while let Some(llm_event) = llm_response_stream.try_next().await? {
                     match llm_event {
-                        MessageEvent::Partial(mut llm_chunk) => {
-                            llm_chunk.sender_id = agent_id;
+                        Partial(mut llm_chunk) => {
+                            llm_chunk.sender_id = state.agent_id;
                             yield Ok(Partial(llm_chunk));
                         }
-                        MessageEvent::Complete(mut llm_message) => {
-                            llm_message.sender_id = agent_id;
-                            current_plan_part.push_str(&llm_message.content.unwrap_or_default());
+                        Complete(mut llm_message) => {
+                            llm_message.sender_id = state.agent_id;
+                            state.respond(&[llm_message.clone()]).await;
+                            let tool_calls = llm_message.tool_calls.clone();
+
+                            yield Ok(Complete(llm_message));
 
                             // Execute all tools
-                            // TODO
-
-                            // Add tool result to context so the next 'Plan' phase sees it
-                            // TODO
-
-                            // Yield tool result as a complete message
-                            // TODO
-
-                            // Break the inner LLM loop to re-enter the 'Plan' phase with new context
-                            break;
+                            for c in tool_calls {
+                                let r = state.execute(&c);
+                                //yield r;
+                            }
                         }
                         MessageEvent::EndOfTurn => {
-                            yield Ok(MessageEvent::EndOfTurn)
+                            yield Ok(MessageEvent::EndOfTurn);
+                            break;
                         }
                     }
                 }
@@ -113,32 +158,6 @@ impl AgentLoop {
 
     pub fn into_agent(self) -> Agent {
         self.agent
-    }
-
-    async fn perceive(&self, messages: Vec<Message>) -> Result<Vec<Message>> {
-        for filter in &self.message_filters {
-        }
-
-        Ok(messages)
-    }
-
-    async fn plan(&self, _message: &Message) -> Result<Vec<ToolExecution>> {
-        // Placeholder: in a real implementation, this would use an LLM
-        // to decide which tools to call.
-        Ok(Vec::new())
-    }
-
-    async fn act(&self, executions: Vec<ToolExecution>) -> Result<Vec<Message>> {
-        let _tool_executor = self.runtime_manager.tool_executor();
-        for mut _execution in executions {
-            // Tool execution logic would go here
-        }
-        Ok(Vec::new())
-    }
-
-    async fn reflect(&self) -> Result<()> {
-        // Placeholder for post-processing and logging
-        Ok(())
     }
 }
 
