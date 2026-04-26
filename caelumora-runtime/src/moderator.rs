@@ -33,12 +33,12 @@ impl Moderator for BroadcastModerator {
     }
 
     fn add_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()> {
-        self.agents.insert(agent_loop.agent().id);
+        self.agents.insert(agent_loop.agent_id);
         Ok(())
     }
 
     fn remove_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()> {
-        self.agents.remove(&agent_loop.agent().id);
+        self.agents.remove(&agent_loop.agent_id);
         Ok(())
     }
 }

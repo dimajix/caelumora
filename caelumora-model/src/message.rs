@@ -60,5 +60,5 @@ pub trait MessageFilter: Send + Sync {
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync {
-    async fn send_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>>;
+    async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>>;
 }

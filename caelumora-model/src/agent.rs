@@ -32,14 +32,18 @@ impl Agent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentState {
     pub status: AgentStatus,
+    /// Full message history
     pub history: Vec<Message>,
+    /// Possibly preprocessed history used as context
+    pub context: Vec<Message>,
 }
 
 impl Default for AgentState {
     fn default() -> Self {
         Self {
             status: AgentStatus::Idle,
-            history: Vec::new()
+            history: Vec::new(),
+            context: Vec::new()
         }
     }
 }

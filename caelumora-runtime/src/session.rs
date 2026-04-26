@@ -1,21 +1,20 @@
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
+use crate::runner::LoopRunner;
 use crate::runtime::RuntimeManager;
 use anyhow::Result;
+use async_stream::try_stream;
 use async_trait::async_trait;
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
 use caelumora_model::session::{Session, SessionTemplate};
 use dashmap::DashMap;
-use futures::future::{join_all, ready};
-use futures::stream::{once, BoxStream, FuturesUnordered};
+use futures::future::join_all;
+use futures::stream::{BoxStream, FuturesUnordered};
+use futures::{StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
-use async_stream::try_stream;
-use futures::{StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use crate::runner::LoopRunner;
-
 
 
 struct StreamState {
@@ -130,7 +129,7 @@ pub struct SessionLoop {
 
 #[async_trait]
 impl MessageProcessor for SessionLoop {
-    async fn send_messages(
+    async fn process_messages(
         &mut self,
         messages: Vec<Message>,
     ) -> BoxStream<'static, Result<MessageEvent>> {

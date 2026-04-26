@@ -57,7 +57,7 @@ impl LoopRunner {
         while let Some(cmd) = self.req_rx.recv().await {
             match cmd {
                 LoopCommand::HandleRequest { request, reply_to} => {
-                    let result = self.processor.send_messages(request);
+                    let result = self.processor.process_messages(request);
                     let _ = reply_to.send(result.await);
                 }
             }
