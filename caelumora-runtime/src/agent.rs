@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 
 struct AgentStateHandler {
+    agent_id: Uuid,
     state: Mutex<AgentState>,
     // perceive_filter (input)
     // history_filter (storage)
@@ -23,7 +24,9 @@ struct AgentStateHandler {
 impl AgentStateHandler {
     fn new(agent: Agent) -> Self {
         let agent_state = AgentState::default();
+        let agent_id = agent.id.clone();
         Self {
+            agent_id: agent_id,
             state: Mutex::new(agent_state)
         }
     }
@@ -79,16 +82,15 @@ struct LoopState {
 
 impl LoopState {
     fn new(
-        runtime: Arc<RuntimeManager>,
-        agent: Agent
+        runtime_manager: Arc<RuntimeManager>,
+        state: Arc<AgentStateHandler>,
     ) -> Self {
-        let llm = runtime.llm_client();
-        let agent_id = agent.id.clone();
-        let agent_state = AgentStateHandler::new(agent);
+        let llm = runtime_manager.llm_client();
+        let agent_id = state.agent_id.clone();
         Self {
             agent_id: agent_id,
             llm_client: llm,
-            state: Arc::new(agent_state),
+            state: state,
         }
     }
 
@@ -147,15 +149,18 @@ impl LoopState {
 
 pub struct AgentLoop {
     pub agent_id: Uuid,
-    loop_state: Arc<LoopState>,
+    pub runtime_manager: Arc<RuntimeManager>,
+    agent_state: Arc<AgentStateHandler>,
     max_iterations: i32,
 }
 
 #[async_trait]
 impl MessageProcessor for AgentLoop {
     async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
-        // We move ownership into the stream block
-        let state = self.loop_state.clone();
+        // We create a new LoopState instance, which will be owned by the stream
+        let agent_handler = Arc::clone(&self.agent_state);
+        let runtime_manager = Arc::clone(&self.runtime_manager);
+        let state = LoopState::new(runtime_manager, agent_handler);
 
         let max_iterations = self.max_iterations;
         let stream = stream! {
@@ -215,10 +220,11 @@ impl AgentLoop {
         runtime_manager: Arc<RuntimeManager>
     ) -> Self {
         let agent_id = agent.id.clone();
-        let loop_state = LoopState::new(runtime_manager, agent);
+        let agent_handler = AgentStateHandler::new(agent);
         Self {
             agent_id: agent_id,
-            loop_state: Arc::new(loop_state),
+            runtime_manager: runtime_manager,
+            agent_state: Arc::new(agent_handler),
             max_iterations: 5
         }
     }
