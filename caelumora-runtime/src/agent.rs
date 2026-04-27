@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 
-struct AgentStateHandler {
+struct LoopState {
     agent_id: Uuid,
     state: Mutex<AgentState>,
     // perceive_filter (input)
@@ -21,7 +21,7 @@ struct AgentStateHandler {
     // context_filter
     // result_filter
 }
-impl AgentStateHandler {
+impl LoopState {
     fn new(agent: Agent) -> Self {
         let agent_state = AgentState::default();
         let agent_id = agent.id.clone();
@@ -74,83 +74,10 @@ impl AgentStateHandler {
 }
 
 
-struct LoopState {
-    agent_id: Uuid,
-    llm_client: Arc<dyn LLMClient>,
-    state: Arc<AgentStateHandler>,
-}
-
-impl LoopState {
-    fn new(
-        runtime_manager: Arc<RuntimeManager>,
-        state: Arc<AgentStateHandler>,
-    ) -> Self {
-        let llm = runtime_manager.llm_client();
-        let agent_id = state.agent_id.clone();
-        Self {
-            agent_id: agent_id,
-            llm_client: llm,
-            state: state,
-        }
-    }
-
-    async fn perceive(&self, messages: Vec<Message>) {
-        self.state.perceive(messages).await
-    }
-
-    async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
-        let agent_state = self.state.clone();
-        let agent_id = self.agent_id.clone();
-        let context = agent_state.context().await;
-        let mut messages = self.llm_client.chat_completion(context.as_slice()).await;
-
-        let result = stream! {
-            while let Some(event) = messages.try_next().await? {
-                match event {
-                    Partial(mut message) => {
-                        // Fix sender ID
-                        message.sender_id = agent_id;
-                        if let Some(msg) = agent_state.respond_partial(message).await {
-                        // Emit message
-                            yield Ok(Partial(msg));
-                        }
-                    },
-                    Complete(mut message) => {
-                        // Fix sender ID
-                        message.sender_id = agent_id;
-                        if let Some(msg) = agent_state.respond_complete(message).await {
-                        // Emit message
-                            yield Ok(Complete(msg));
-                        }
-                    },
-                    MessageEvent::EndOfTurn => {
-                        yield Ok(MessageEvent::EndOfTurn);
-                        break;
-                    }
-                }
-            }
-        };
-        Box::pin(result)
-    }
-
-    async fn reflect(&self) -> Result<()> {
-        // Placeholder for post-processing and logging
-        Ok(())
-    }
-
-    async fn execute(&self, call: &ToolCall) -> Result<ToolResult> {
-        // 1. Execute tool
-        // 2. Add tool result to history and context
-        // 3. Return some message
-        todo!()
-    }
-}
-
-
+#[derive(Clone)]
 pub struct AgentLoop {
-    pub agent_id: Uuid,
-    pub runtime_manager: Arc<RuntimeManager>,
-    agent_state: Arc<AgentStateHandler>,
+    runtime_manager: Arc<RuntimeManager>,
+    agent_state: Arc<LoopState>,
     max_iterations: i32,
 }
 
@@ -158,9 +85,7 @@ pub struct AgentLoop {
 impl MessageProcessor for AgentLoop {
     async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
         // We create a new LoopState instance, which will be owned by the stream
-        let agent_handler = Arc::clone(&self.agent_state);
-        let runtime_manager = Arc::clone(&self.runtime_manager);
-        let state = LoopState::new(runtime_manager, agent_handler);
+        let state = self.clone();
 
         let max_iterations = self.max_iterations;
         let stream = stream! {
@@ -202,6 +127,7 @@ impl MessageProcessor for AgentLoop {
 
                 // Check if the LLM finished with a "Final Answer" or "Reflect" signal
                 // TODO with "break"
+                break;
             }
 
             // --- PHASE 4: REFLECT ---
@@ -219,14 +145,68 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Self {
-        let agent_id = agent.id.clone();
-        let agent_handler = AgentStateHandler::new(agent);
+        let agent_handler = LoopState::new(agent);
         Self {
-            agent_id: agent_id,
             runtime_manager: runtime_manager,
             agent_state: Arc::new(agent_handler),
             max_iterations: 5
         }
+    }
+
+    pub fn agent_id(&self) -> Uuid {
+        self.agent_state.agent_id
+    }
+
+    async fn perceive(&self, messages: Vec<Message>) {
+        self.agent_state.perceive(messages).await
+    }
+
+    async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
+        let llm_client = self.runtime_manager.llm_client();
+        let agent_state = self.agent_state.clone();
+        let agent_id = agent_state.agent_id.clone();
+        let context = agent_state.context().await;
+        let mut messages = llm_client.chat_completion(context.as_slice()).await;
+
+        let result = stream! {
+            while let Some(event) = messages.try_next().await? {
+                match event {
+                    Partial(mut message) => {
+                        // Fix sender ID
+                        message.sender_id = agent_id;
+                        if let Some(msg) = agent_state.respond_partial(message).await {
+                        // Emit message
+                            yield Ok(Partial(msg));
+                        }
+                    },
+                    Complete(mut message) => {
+                        // Fix sender ID
+                        message.sender_id = agent_id;
+                        if let Some(msg) = agent_state.respond_complete(message).await {
+                        // Emit message
+                            yield Ok(Complete(msg));
+                        }
+                    },
+                    MessageEvent::EndOfTurn => {
+                        yield Ok(MessageEvent::EndOfTurn);
+                        break;
+                    }
+                }
+            }
+        };
+        Box::pin(result)
+    }
+
+    async fn reflect(&self) -> Result<()> {
+        // Placeholder for post-processing and logging
+        Ok(())
+    }
+
+    async fn execute(&self, call: &ToolCall) -> Result<ToolResult> {
+        // 1. Execute tool
+        // 2. Add tool result to history and context
+        // 3. Return some message
+        todo!()
     }
 }
 
