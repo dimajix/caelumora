@@ -47,7 +47,7 @@ impl Participant {
         let participant_id = Uuid::new_v4();
         let kind = match template.kind {
             ParticipantKindTemplate::User => ParticipantKind::User {},
-            ParticipantKindTemplate::Agent { agent_id } => ParticipantKind::Agent {
+            ParticipantKindTemplate::AgentTemplate { template_id: agent_id } => ParticipantKind::Agent {
                 agent_id,
                 state: AgentState::default()
             }
@@ -84,7 +84,7 @@ pub struct ParticipantTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParticipantKindTemplate {
     User,
-    Agent {
-        agent_id: Uuid,
+    AgentTemplate {
+        template_id: Uuid,
     },
 }

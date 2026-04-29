@@ -1,27 +1,25 @@
 agent_templates:
-  - name: archivar_template
-    description: "lala"
-    skills:
-      - skill_1
-      - skill_2
-    tools:
-      - web_search
-      - time
-      - calculator
-    filters:
-      - compress
-      - dings
+  - id: 11111111-1111-1111-1111-111111111111
+    name: archivar_template
+    description: "General purpose archive assistant"
+    capabilities:
+      - summarize
+      - retrieve
 
-agents:
-  - name: archivar
-    template: archivar_template
+participant_templates:
+  - name: archivar_participant
+    kind:
+      AgentTemplate:
+        template_id: 22222222-2222-2222-2222-222222222222
+  - name: operator
+    kind: User
 
 session_templates:
   - name: main_template
     participants:
-      - kind: agent
-        name: archivar
-
-sessions:
-  - name: main
-    template: main_template
+      - name: archivar
+        kind:
+          AgentTemplate:
+            template_id: 22222222-2222-2222-2222-222222222222
+      - name: operator
+        kind: User
