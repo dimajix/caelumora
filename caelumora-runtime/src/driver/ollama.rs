@@ -1,0 +1,110 @@
+use async_trait::async_trait;
+use anyhow::Result;
+use async_stream::stream;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::env;
+use futures::stream::BoxStream;
+use caelumora_model::message::{Message, MessageEvent, MessageRole};
+use uuid::Uuid;
+
+use crate::llm::LLMClient;
+
+#[derive(Clone)]
+pub struct OllamaClient {
+    http: reqwest::Client,
+    base_url: String,
+    model: String,
+}
+
+impl Default for OllamaClient {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+impl OllamaClient {
+    pub fn from_env() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base_url: env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
+            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaChatRequest {
+    model: String,
+    messages: Vec<OllamaChatMessage>,
+    stream: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaChatResponse {
+    message: Option<OllamaChatMessage>,
+}
+
+impl From<&Message> for OllamaChatMessage {
+    fn from(value: &Message) -> Self {
+        let role = match value.role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+            MessageRole::Tool => "tool",
+        }
+        .to_string();
+
+        Self {
+            role,
+            content: value.content.clone().unwrap_or_default(),
+        }
+    }
+}
+
+#[async_trait]
+impl LLMClient for OllamaClient {
+    async fn chat_completion(&self, context: &[Message]) -> BoxStream<'static, Result<MessageEvent>> {
+        let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
+        let request = OllamaChatRequest {
+            model: self.model.clone(),
+            messages: context.iter().map(OllamaChatMessage::from).collect(),
+            stream: false,
+        };
+
+        let http = self.http.clone();
+
+        let output = stream! {
+            let response = http.post(url).json(&request).send().await?;
+            let body: OllamaChatResponse = response.error_for_status()?.json().await?;
+            let content = body
+                .message
+                .and_then(|msg| if msg.content.is_empty() { None } else { Some(msg.content) });
+
+            let message = Message {
+                id: Uuid::new_v4(),
+                session_id: Uuid::nil(),
+                sender_id: Uuid::nil(),
+                sender_name: "ollama".to_string(),
+                role: MessageRole::Assistant,
+                content,
+                reasoning: None,
+                tool_calls: vec![],
+                timestamp: Utc::now(),
+                metadata: HashMap::new(),
+            };
+
+            yield Ok(MessageEvent::Complete(message));
+            yield Ok(MessageEvent::EndOfTurn);
+        };
+
+        Box::pin(output)
+    }
+}

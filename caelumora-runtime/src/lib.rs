@@ -3,5 +3,6 @@ pub mod session;
 pub mod moderator;
 pub mod runtime;
 pub mod llm;
+pub mod driver;
 pub mod recorder;
 pub mod runner;
