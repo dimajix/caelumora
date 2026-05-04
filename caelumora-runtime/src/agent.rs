@@ -3,7 +3,7 @@ use crate::runtime::RuntimeManager;
 use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentTemplate, AgentState};
+use caelumora_model::agent::{AgentState, Agent};
 use caelumora_model::message::MessageEvent::{Complete, Partial};
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor, ToolCall, ToolResult};
 use futures::stream::BoxStream;
@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 struct LoopState {
     agent_id: Uuid,
+    agent: Agent,
     state: Mutex<AgentState>,
     // perceive_filter (input)
     // history_filter (storage)
@@ -22,11 +23,12 @@ struct LoopState {
     // result_filter
 }
 impl LoopState {
-    fn new(agent: AgentTemplate) -> Self {
+    fn new(agent: Agent) -> Self {
         let agent_state = AgentState::default();
         let agent_id = agent.id.clone();
         Self {
-            agent_id: agent_id,
+            agent_id,
+            agent,
             state: Mutex::new(agent_state)
         }
     }
@@ -142,7 +144,7 @@ impl MessageProcessor for AgentLoop {
 
 impl AgentLoop {
     pub fn new(
-        agent: AgentTemplate,
+        agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Self {
         let agent_handler = LoopState::new(agent);

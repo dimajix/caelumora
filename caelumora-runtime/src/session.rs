@@ -1,3 +1,4 @@
+use crate::agent::AgentLoop;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runner::LoopRunner;
@@ -6,7 +7,7 @@ use anyhow::Result;
 use async_stream::try_stream;
 use async_trait::async_trait;
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
-use caelumora_model::session::{Session, SessionTemplate};
+use caelumora_model::session::{ParticipantKind, Session};
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::{BoxStream, FuturesUnordered};
@@ -159,7 +160,25 @@ impl MessageProcessor for SessionLoop {
 impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         // TODO
-        todo!()
+        let mut agents = HashMap::new();
+        for p in session.participants.iter() {
+            match &p.kind {
+                ParticipantKind::User => {},
+                ParticipantKind::Agent(agent) => {
+                    let l = AgentLoop::new(agent.clone(), runtime_manager.clone());
+                    let runner = LoopRunner::new(Box::new(l));
+                    agents.insert(agent.id.clone(), runner);
+                }
+            }
+        };
+        let moderator = runtime_manager.moderator(&"".to_string())?;
+        let recorder = runtime_manager.recorder(&"".to_string())?;
+        Ok(Self {
+            session: Arc::new(session),
+            agents: Arc::new(agents),
+            moderator: Arc::new(moderator),
+            recorder: Arc::new(recorder),
+        })
     }
 
     pub fn session(&self) -> &Session {
@@ -185,8 +204,7 @@ impl SessionManager {
         }
     }
 
-    pub fn create_session_loop(&self, template: &SessionTemplate) -> Result<Arc<SessionLoop>> {
-        let session = Session::new(template)?;
+    pub fn create_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
         let session_loop = SessionLoop::new(session, self.runtime_manager.clone())?;
         let session_ref = Arc::new(session_loop);
         let id = session_ref.id();
@@ -194,11 +212,7 @@ impl SessionManager {
         Ok(session_ref)
     }
 
-    pub fn get_session(&self, id: Uuid) -> Option<Session> {
-        self.sessions.get(&id).map(|s| s.session().clone())
-    }
-
-    pub fn list_sessions(&self) -> Vec<Session> {
-        todo!()
+    pub fn get_session(&self, id: Uuid) -> Option<Arc<SessionLoop>> {
+        self.sessions.get(&id).map(|s| s.clone())
     }
 }

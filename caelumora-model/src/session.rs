@@ -1,8 +1,9 @@
+use crate::agent::Agent;
+use crate::message::Message;
+use crate::template::{ParticipantKindTemplate, ParticipantTemplate, SessionTemplate};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::agent::AgentState;
-use crate::message::Message;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -47,10 +48,14 @@ impl Participant {
         let participant_id = Uuid::new_v4();
         let kind = match template.kind {
             ParticipantKindTemplate::User => ParticipantKind::User {},
-            ParticipantKindTemplate::AgentTemplate { template_id: agent_id } => ParticipantKind::Agent {
-                agent_id,
-                state: AgentState::default()
-            }
+            ParticipantKindTemplate::Agent { agent_id } => {
+                // TODO: Retrieve existing agent
+                todo!()
+            },
+            ParticipantKindTemplate::AgentTemplate { template_id: agent_id } => ParticipantKind::Agent(
+                // TODO: Retrieve existing agent template
+                todo!()
+            )
         };
         Participant {
             id: participant_id,
@@ -63,28 +68,6 @@ impl Participant {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParticipantKind {
     User,
-    Agent {
-        agent_id: Uuid,
-        state: AgentState
-    },
+    Agent(Agent)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionTemplate {
-    pub name: String,
-    pub participants: Vec<ParticipantTemplate>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParticipantTemplate {
-    pub name: String,
-    pub kind: ParticipantKindTemplate,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ParticipantKindTemplate {
-    User,
-    AgentTemplate {
-        template_id: Uuid,
-    },
-}

@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::agent::{AgentTemplate};
-use crate::session::{ParticipantTemplate, SessionTemplate};
+use crate::template::{AgentTemplate};
+use crate::template::{ParticipantTemplate, SessionTemplate};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -112,14 +112,10 @@ mod tests {
 
     #[test]
     fn parses_wrapped_agent_templates() {
-        let template_id = Uuid::new_v4();
-        let yaml = format!(
-            "agent_templates:\n  - id: {template_id}\n    name: assistant\n    description: Helper\n    capabilities:\n      - summarize\n"
-        );
+        let yaml = "agent_templates:\n  - name: assistant\n    description: Helper\n    capabilities:\n      - summarize\n";
 
         let templates = parse_agent_templates_yaml(&yaml).unwrap();
         assert_eq!(templates.len(), 1);
-        assert_eq!(templates[0].id, template_id);
         assert_eq!(templates[0].name, "assistant");
     }
 

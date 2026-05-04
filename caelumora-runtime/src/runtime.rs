@@ -2,6 +2,9 @@ use std::sync::Arc;
 use caelumora_model::tool::ToolExecutor;
 use crate::driver::ollama::OllamaClient;
 use crate::llm::LLMClient;
+use crate::moderator::Moderator;
+use crate::recorder::Recorder;
+use anyhow::Result;
 
 pub struct RuntimeManager {
     tool_executor: Arc<dyn ToolExecutor>,
@@ -22,5 +25,13 @@ impl RuntimeManager {
     
     pub fn llm_client(&self) -> Arc<dyn LLMClient> {
         self.llm_client.clone()
+    }
+
+    pub fn moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
+        todo!()
+    }
+
+    pub fn recorder(&self, kind: &String) -> Result<Box<dyn Recorder>> {
+        todo!()
     }
 }
