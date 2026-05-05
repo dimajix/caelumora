@@ -47,7 +47,8 @@ impl LoopState {
         // Append message to context
         let mut state_guard = self.state.lock().await;
         // TODO: Apply history filter
-        state_guard.history.push(message.clone());
+        let context = state_guard.context.digest();
+        state_guard.history.push(message.clone(), context);
         // TODO: Apply context filter
         state_guard.context.push(message.clone());
         drop(state_guard);
@@ -64,14 +65,14 @@ impl LoopState {
         let state_guard = self.state.lock().await;
         let context = state_guard.context.clone();
         drop(state_guard);
-        context
+        context.messages()
     }
 
     async fn history(&self) -> Vec<Message> {
         let state_guard = self.state.lock().await;
         let history = state_guard.history.clone();
         drop(state_guard);
-        history
+        history.messages()
     }
 }
 

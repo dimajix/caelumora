@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::message::Message;
+use crate::message::{Message, MessageContext, MessageHistory};
 use crate::template::AgentTemplate;
 
 
@@ -25,16 +25,16 @@ impl Agent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentState {
     /// Full message history
-    pub history: Vec<Message>,
+    pub history: MessageHistory,
     /// Possibly preprocessed history used as context
-    pub context: Vec<Message>,
+    pub context: MessageContext,
 }
 
 impl Default for AgentState {
     fn default() -> Self {
         Self {
-            history: Vec::new(),
-            context: Vec::new()
+            history: MessageHistory::new(),
+            context: MessageContext::new(),
         }
     }
 }

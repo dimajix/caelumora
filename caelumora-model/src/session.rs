@@ -37,6 +37,13 @@ impl Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionState {
+    /// Full message history
+    pub history: Vec<Message>,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Participant {
     pub id: Uuid,
     pub name: String,

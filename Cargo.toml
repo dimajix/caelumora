@@ -2,7 +2,7 @@
 members = [
     "caelumora-model",
     "caelumora-runtime",
-    "caelumora-cli",
+    "caelumora-tui",
     "caelumora-rest",
 ]
 resolver = "2"
