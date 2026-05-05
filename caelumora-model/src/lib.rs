@@ -3,5 +3,7 @@ pub mod config;
 pub mod tool;
 pub mod message;
 pub mod session;
+pub mod store;
 pub mod user;
 pub mod template;
+pub mod driver;
