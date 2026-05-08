@@ -1,16 +1,15 @@
-use std::ffi::OsString;
-use std::fmt::Display;
-use std::fs;
-use std::path::{Path, PathBuf};
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde::de::DeserializeOwned;
-use uuid::Uuid;
 use crate::agent::{Agent, AgentState};
 use crate::session::{Session, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
 use crate::template::{AgentTemplate, SessionTemplate};
+use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
+use std::fmt::Display;
+use std::fs;
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct JsonFileStore {
@@ -160,9 +159,48 @@ fn sanitize_file_component(value: &str) -> String {
         .collect()
 }
 
-#[async_trait]
+
 impl TemplateStore for JsonFileStore {
-    async fn put_agent_template(&self, value: AgentTemplate) -> StoreResult<()> {
+    fn get_agent_template(&self, id: Uuid) -> StoreResult<AgentTemplate> {
+        let path = self.agent_template_path(id);
+        let loaded = read_json_opt::<Persisted<AgentTemplate>>(&path)?.map(|p| p.value);
+        require_entity(loaded, "agent_template", id.to_string())
+    }
+
+    fn find_agent_template_by_name(&self, name: &str) -> StoreResult<AgentTemplate> {
+        let templates = self.list_agent_templates()?;
+        require_entity(
+            templates.into_iter().find(|t| t.name == name),
+            "agent_template",
+            name.to_string(),
+        )
+    }
+
+    fn list_agent_templates(&self) -> StoreResult<Vec<AgentTemplate>> {
+        Ok(read_all_from_dir::<Persisted<AgentTemplate>>(&self.agent_templates_dir())?
+            .into_iter()
+            .map(|p| p.value)
+            .collect())
+    }
+
+    fn get_session_template(&self, name: &str) -> StoreResult<SessionTemplate> {
+        let path = self.session_template_path(name);
+        let loaded = read_json_opt::<Persisted<SessionTemplate>>(&path)?.map(|p| p.value);
+        require_entity(loaded, "session_template", name.to_string())
+    }
+
+    fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate> {
+        self.get_session_template(name)
+    }
+
+    fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>> {
+        Ok(read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir())?
+            .into_iter()
+            .map(|p| p.value)
+            .collect())
+    }
+
+    fn put_agent_template(&self, value: AgentTemplate) -> StoreResult<()> {
         let path = self.agent_template_path(value.id);
         write_json_atomic(
             &path,
@@ -174,33 +212,11 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    async fn get_agent_template(&self, id: Uuid) -> StoreResult<AgentTemplate> {
-        let path = self.agent_template_path(id);
-        let loaded = read_json_opt::<Persisted<AgentTemplate>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "agent_template", id.to_string())
-    }
-
-    async fn find_agent_template_by_name(&self, name: &str) -> StoreResult<AgentTemplate> {
-        let templates = self.list_agent_templates().await?;
-        require_entity(
-            templates.into_iter().find(|t| t.name == name),
-            "agent_template",
-            name.to_string(),
-        )
-    }
-
-    async fn list_agent_templates(&self) -> StoreResult<Vec<AgentTemplate>> {
-        Ok(read_all_from_dir::<Persisted<AgentTemplate>>(&self.agent_templates_dir())?
-            .into_iter()
-            .map(|p| p.value)
-            .collect())
-    }
-
-    async fn delete_agent_template(&self, id: Uuid) -> StoreResult<bool> {
+    fn delete_agent_template(&self, id: Uuid) -> StoreResult<bool> {
         delete_if_exists(&self.agent_template_path(id))
     }
 
-    async fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()> {
+    fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()> {
         let path = self.session_template_path(&value.name);
         write_json_atomic(
             &path,
@@ -212,31 +228,15 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    async fn get_session_template(&self, name: &str) -> StoreResult<SessionTemplate> {
-        let path = self.session_template_path(name);
-        let loaded = read_json_opt::<Persisted<SessionTemplate>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "session_template", name.to_string())
-    }
-
-    async fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate> {
-        self.get_session_template(name).await
-    }
-
-    async fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>> {
-        Ok(read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir())?
-            .into_iter()
-            .map(|p| p.value)
-            .collect())
-    }
-
-    async fn delete_session_template(&self, name: &str) -> StoreResult<bool> {
+    fn delete_session_template(&self, name: &str) -> StoreResult<bool> {
         delete_if_exists(&self.session_template_path(name))
     }
 }
 
-#[async_trait]
+
+
 impl StateStore for JsonFileStore {
-    async fn create_agent(&self, value: Agent) -> StoreResult<()> {
+    fn create_agent(&self, value: Agent) -> StoreResult<()> {
         let path = self.agent_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
@@ -251,13 +251,13 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    async fn get_agent(&self, id: Uuid) -> StoreResult<Agent> {
+    fn get_agent(&self, id: Uuid) -> StoreResult<Agent> {
         let path = self.agent_path(id);
         let loaded = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent", id.to_string())
     }
 
-    async fn update_agent(&self, value: Agent) -> StoreResult<()> {
+    fn update_agent(&self, value: Agent) -> StoreResult<()> {
         let path = self.agent_path(value.id);
         if !path.exists() {
             return Err(StoreError::NotFound {
@@ -275,7 +275,7 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    async fn create_session(&self, value: Session) -> StoreResult<()> {
+    fn create_session(&self, value: Session) -> StoreResult<()> {
         let path = self.session_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
@@ -290,13 +290,13 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    async fn get_session(&self, id: Uuid) -> StoreResult<Session> {
+    fn get_session(&self, id: Uuid) -> StoreResult<Session> {
         let path = self.session_path(id);
         let loaded = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session", id.to_string())
     }
 
-    async fn update_session(&self, value: Session) -> StoreResult<()> {
+    fn update_session(&self, value: Session) -> StoreResult<()> {
         let path = self.session_path(value.id);
         if !path.exists() {
             return Err(StoreError::NotFound {
@@ -314,13 +314,13 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    async fn get_agent_state(&self, agent_id: Uuid) -> StoreResult<AgentState> {
+    fn get_agent_state(&self, agent_id: Uuid) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         let loaded = read_json_opt::<Persisted<AgentState>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_state", agent_id.to_string())
     }
 
-    async fn put_agent_state(&self, agent_id: Uuid, state: AgentState) -> StoreResult<()> {
+    fn put_agent_state(&self, agent_id: Uuid, state: AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
         write_json_atomic(
             &path,
@@ -332,13 +332,13 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    async fn get_session_state(&self, session_id: Uuid) -> StoreResult<SessionState> {
+    fn get_session_state(&self, session_id: Uuid) -> StoreResult<SessionState> {
         let path = self.session_state_path(session_id);
         let loaded = read_json_opt::<Persisted<SessionState>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session_state", session_id.to_string())
     }
 
-    async fn put_session_state(&self, session_id: Uuid, state: SessionState) -> StoreResult<()> {
+    fn put_session_state(&self, session_id: Uuid, state: SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
         write_json_atomic(
             &path,
@@ -383,16 +383,15 @@ mod tests {
         let store = JsonFileStore::new(dir.path()).unwrap();
 
         let agent_template = make_agent_template();
-        store.put_agent_template(agent_template.clone()).await.unwrap();
+        store.put_agent_template(agent_template.clone()).unwrap();
 
-        let found = store.get_agent_template(agent_template.id).await.unwrap();
+        let found = store.get_agent_template(agent_template.id).unwrap();
         assert_eq!(found.name, agent_template.name);
 
         let session_template = make_session_template();
-        store.put_session_template(session_template.clone()).await.unwrap();
+        store.put_session_template(session_template.clone()).unwrap();
         let found_session = store
             .find_session_template_by_name(&session_template.name)
-            .await
             .unwrap();
         assert_eq!(found_session.name, session_template.name);
     }
@@ -407,15 +406,15 @@ mod tests {
         let mut t2 = make_agent_template();
         t2.name = "assistant-b".to_string();
 
-        store.put_agent_template(t1.clone()).await.unwrap();
-        store.put_agent_template(t2.clone()).await.unwrap();
+        store.put_agent_template(t1.clone()).unwrap();
+        store.put_agent_template(t2.clone()).unwrap();
 
-        let templates = store.list_agent_templates().await.unwrap();
+        let templates = store.list_agent_templates().unwrap();
         assert_eq!(templates.len(), 2);
 
-        assert!(store.delete_agent_template(t1.id).await.unwrap());
-        assert!(!store.delete_agent_template(t1.id).await.unwrap());
-        let err = store.get_agent_template(t1.id).await.unwrap_err();
+        assert!(store.delete_agent_template(t1.id).unwrap());
+        assert!(!store.delete_agent_template(t1.id).unwrap());
+        let err = store.get_agent_template(t1.id).unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "agent_template", .. }));
     }
 
@@ -426,14 +425,14 @@ mod tests {
 
         let template = make_agent_template();
         let agent = Agent::new(template, "assistant-1".to_string());
-        store.create_agent(agent.clone()).await.unwrap();
+        store.create_agent(agent.clone()).unwrap();
 
-        let loaded = store.get_agent(agent.id).await.unwrap();
+        let loaded = store.get_agent(agent.id).unwrap();
         assert_eq!(loaded.name, agent.name);
 
         let state = AgentState::default();
-        store.put_agent_state(agent.id, state).await.unwrap();
-        store.get_agent_state(agent.id).await.unwrap();
+        store.put_agent_state(agent.id, state).unwrap();
+        store.get_agent_state(agent.id).unwrap();
     }
 
     #[tokio::test]
@@ -444,15 +443,15 @@ mod tests {
         let template = make_agent_template();
         let agent = Agent::new(template, "assistant-1".to_string());
 
-        store.create_agent(agent.clone()).await.unwrap();
-        let conflict = store.create_agent(agent.clone()).await.unwrap_err();
+        store.create_agent(agent.clone()).unwrap();
+        let conflict = store.create_agent(agent.clone()).unwrap_err();
         assert!(matches!(conflict, StoreError::Conflict(_)));
 
         let missing_agent = Agent {
             id: Uuid::new_v4(),
             ..agent
         };
-        let not_found = store.update_agent(missing_agent).await.unwrap_err();
+        let not_found = store.update_agent(missing_agent).unwrap_err();
         assert!(matches!(not_found, StoreError::NotFound { entity: "agent", .. }));
     }
 }

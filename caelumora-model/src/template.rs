@@ -10,6 +10,8 @@ pub struct AgentTemplate {
     pub capabilities: Vec<String>,
     // ContextFilters
     // Tools
+    // Memory
+    // Knowledge
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +34,7 @@ pub enum ParticipantKindTemplate {
     },
     AgentTemplate {
         template_id: Uuid,
+        agent_name: String
     },
 }
 

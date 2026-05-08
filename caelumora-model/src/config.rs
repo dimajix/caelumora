@@ -9,13 +9,6 @@ use crate::template::{ParticipantTemplate, SessionTemplate};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum AgentsTemplateDocument {
-    List(Vec<AgentTemplate>),
-    Wrapped { agents: Vec<AgentTemplate> },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
 enum AgentTemplatesDocument {
     List(Vec<AgentTemplate>),
     Wrapped { agent_templates: Vec<AgentTemplate> },
@@ -112,7 +105,10 @@ mod tests {
 
     #[test]
     fn parses_wrapped_agent_templates() {
-        let yaml = "agent_templates:\n  - name: assistant\n    description: Helper\n    capabilities:\n      - summarize\n";
+        let agent_id = Uuid::new_v4();
+        let yaml = format!(
+            "agent_templates:\n  - id: {agent_id}\n    name: assistant\n    description: Helper\n    capabilities:\n      - summarize\n"
+        );
 
         let templates = parse_agent_templates_yaml(&yaml).unwrap();
         assert_eq!(templates.len(), 1);
@@ -123,7 +119,7 @@ mod tests {
     fn parses_wrapped_session_templates() {
         let agent_id = Uuid::new_v4();
         let yaml = format!(
-            "session_templates:\n  - name: ops\n    participants:\n      - name: bot\n        kind:\n          AgentTemplate:\n            template_id: {agent_id}\n"
+            "session_templates:\n  - name: ops\n    participants:\n      - name: bot\n        kind:\n          AgentTemplate:\n            agent_name: agent_007\n            template_id: {agent_id}\n"
         );
 
         let sessions = parse_session_templates_yaml(&yaml).unwrap();
