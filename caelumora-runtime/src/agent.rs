@@ -56,6 +56,10 @@ impl LoopState {
         Some(message)
     }
 
+    async fn reflect(&self) {
+
+    }
+
     async fn respond_partial(&self, message: Message) -> Option<Message> {
         // TODO: Apply emit filter
         Some(message)
@@ -201,6 +205,7 @@ impl AgentLoop {
     }
 
     async fn reflect(&self) -> Result<()> {
+        self.agent_state.reflect().await;
         // Placeholder for post-processing and logging
         Ok(())
     }

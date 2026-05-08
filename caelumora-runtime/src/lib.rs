@@ -6,3 +6,4 @@ pub mod llm;
 pub mod driver;
 pub mod recorder;
 pub mod runner;
+pub mod event;

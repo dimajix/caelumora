@@ -172,6 +172,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "caelumora-client-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "caelumora-local-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-model"
 version = "0.1.0"
 dependencies = [
@@ -190,7 +212,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "caelumora-rest"
+name = "caelumora-rest-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "caelumora-rest-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",

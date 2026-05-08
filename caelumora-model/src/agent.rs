@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::message::{Message, MessageContext, MessageHistory};
+use crate::message::{MessageContext, MessageHistory};
 use crate::template::AgentTemplate;
 
 

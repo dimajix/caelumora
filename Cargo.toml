@@ -3,7 +3,10 @@ members = [
     "caelumora-model",
     "caelumora-runtime",
     "caelumora-tui",
-    "caelumora-rest",
+    "caelumora-client-api",
+    "caelumora-local-client",
+    "caelumora-rest-client",
+    "caelumora-rest-server",
 ]
 resolver = "2"
 

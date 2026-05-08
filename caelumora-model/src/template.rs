@@ -8,6 +8,8 @@ pub struct AgentTemplate {
     pub name: String,
     pub description: String,
     pub capabilities: Vec<String>,
+    // ContextFilters
+    // Tools
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
