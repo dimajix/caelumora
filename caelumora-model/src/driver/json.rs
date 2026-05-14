@@ -160,7 +160,6 @@ fn sanitize_file_component(value: &str) -> String {
         .collect()
 }
 
-
 impl TemplateStore for JsonFileStore {
     fn get_personality(&self, id: Uuid) -> StoreResult<Personality> {
         let path = self.agent_template_path(id);
@@ -168,10 +167,12 @@ impl TemplateStore for JsonFileStore {
         require_entity(loaded, "agent_template", id.to_string())
     }
 
-    fn find_personality_by_name(&self, name: &str, _scope: &Scope) -> StoreResult<Personality> {
+    fn find_personality_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Personality> {
         let templates = self.list_personalities()?;
         require_entity(
-            templates.into_iter().find(|t| t.metadata.name == name),
+            templates
+                .into_iter()
+                .find(|t| t.metadata.name == name && t.metadata.scope == *scope),
             "agent_template",
             name.to_string(),
         )
@@ -184,10 +185,15 @@ impl TemplateStore for JsonFileStore {
             .collect())
     }
 
-    fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate> {
-        let path = self.session_template_path(name);
-        let loaded = read_json_opt::<Persisted<SessionTemplate>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "session_template", name.to_string())
+    fn find_session_template_by_name(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
+        let templates = self.list_session_templates()?;
+        require_entity(
+            templates
+                .into_iter()
+                .find(|t| t.metadata.name == name && t.metadata.scope == *scope),
+            "session_template",
+            name.to_string(),
+        )
     }
 
     fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>> {
@@ -402,7 +408,10 @@ mod tests {
         let session_template = make_session_template();
         store.put_session_template(session_template.clone()).unwrap();
         let found_session = store
-            .find_session_template_by_name(&session_template.metadata.name)
+            .find_session_template_by_name(
+                &session_template.metadata.name,
+                &session_template.metadata.scope,
+            )
             .unwrap();
         assert_eq!(
             found_session.metadata.name,

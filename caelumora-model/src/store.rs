@@ -34,7 +34,7 @@ pub trait TemplateStore {
     fn put_personality(&self, value: Personality) -> StoreResult<()>;
     fn delete_personality(&self, id: Uuid) -> StoreResult<bool>;
 
-    fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate>;
+    fn find_session_template_by_name(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
     fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>>;
     fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()>;
     fn delete_session_template(&self, id: Uuid) -> StoreResult<bool>;
