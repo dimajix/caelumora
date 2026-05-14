@@ -268,6 +268,14 @@ impl StateStore for JsonFileStore {
         require_entity(loaded, "agent", id.to_string())
     }
 
+    fn find_agent_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
+        let agents = read_all_from_dir::<Persisted<Agent>>(&self.agents_dir())?;
+        Ok(agents
+            .into_iter()
+            .map(|p| p.value)
+            .find(|a| a.metadata.name == name && a.metadata.scope == *scope))
+    }
+
     fn update_agent(&self, value: Agent) -> StoreResult<()> {
         let path = self.agent_path(value.id);
         if !path.exists() {
