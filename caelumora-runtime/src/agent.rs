@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 
+#[derive(Debug)]
 struct LoopState {
     agent_id: Uuid,
     agent: Agent,
@@ -81,7 +82,7 @@ impl LoopState {
 }
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AgentLoop {
     runtime_manager: Arc<RuntimeManager>,
     agent_state: Arc<LoopState>,

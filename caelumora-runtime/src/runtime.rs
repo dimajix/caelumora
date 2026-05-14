@@ -1,20 +1,21 @@
-use std::sync::Arc;
-use caelumora_model::tool::ToolExecutor;
 use crate::driver::ollama::OllamaClient;
 use crate::llm::LLMClient;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
+use crate::tool::{DummyToolExecutor, ToolExecutor};
 use anyhow::Result;
+use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct RuntimeManager {
     tool_executor: Arc<dyn ToolExecutor>,
     llm_client: Arc<dyn LLMClient>,
 }
 
 impl RuntimeManager {
-    pub fn new(tool_executor: Arc<dyn ToolExecutor>) -> Self {
+    pub fn new() -> Self {
         Self {
-            tool_executor,
+            tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
         }
     }

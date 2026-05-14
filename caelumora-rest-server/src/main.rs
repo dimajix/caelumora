@@ -128,7 +128,7 @@ async fn create_agent(
 ) -> Json<Uuid> {
     // In a real application, we would fetch the template from a TemplateManager or database.
     // For now, we'll create a dummy template with the provided ID.
-    let template = caelumora_model::agent::AgentTemplate {
+    let template = caelumora_model::agent::Personality {
         id: payload.template_id,
         name: format!("Template for {}", payload.name),
         description: "Auto-generated template".to_string(),

@@ -1,16 +1,19 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use uuid::Uuid;
 use anyhow::Result;
 
 use dashmap::DashSet;
 use caelumora_model::message::Message;
 
-pub trait Moderator : Send + Sync {
+pub trait Moderator : Send + Sync + Debug {
     fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>>;
     fn add_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()>;
     fn remove_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()>;
 }
 
+
+#[derive(Debug)]
 pub struct BroadcastModerator {
     agents: DashSet<Uuid>,
 }
@@ -22,7 +25,6 @@ impl BroadcastModerator {
         }
     }
 }
-
 
 impl Moderator for BroadcastModerator {
     fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>> {

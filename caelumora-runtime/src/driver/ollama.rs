@@ -11,29 +11,6 @@ use uuid::Uuid;
 
 use crate::llm::LLMClient;
 
-#[derive(Clone)]
-pub struct OllamaClient {
-    http: reqwest::Client,
-    base_url: String,
-    model: String,
-}
-
-impl Default for OllamaClient {
-    fn default() -> Self {
-        Self::from_env()
-    }
-}
-
-impl OllamaClient {
-    pub fn from_env() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            base_url: env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
-            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string()),
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {
     model: String,
@@ -60,11 +37,34 @@ impl From<&Message> for OllamaChatMessage {
             MessageRole::System => "system",
             MessageRole::Tool => "tool",
         }
-        .to_string();
+            .to_string();
 
         Self {
             role,
             content: value.content.clone().unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OllamaClient {
+    http: reqwest::Client,
+    base_url: String,
+    model: String,
+}
+
+impl Default for OllamaClient {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+impl OllamaClient {
+    pub fn from_env() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base_url: env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
+            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string()),
         }
     }
 }

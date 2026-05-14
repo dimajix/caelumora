@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+use std::fmt::Debug;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -37,9 +37,4 @@ pub enum ExecutionStatus {
     Completed,
     Failed,
     Cancelled,
-}
-
-#[async_trait]
-pub trait ToolExecutor: Send + Sync {
-    async fn execute(&self, tool: &Tool, input: serde_json::Value, execution: &mut ToolExecution) -> anyhow::Result<serde_json::Value>;
 }

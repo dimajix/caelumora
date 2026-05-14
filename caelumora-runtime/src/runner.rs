@@ -15,6 +15,7 @@ pub enum LoopCommand {
     },
 }
 
+#[derive(Debug)]
 pub struct LoopRunner {
     pub processor: Box<dyn MessageProcessor>,
     req_rx: mpsc::UnboundedReceiver<LoopCommand>,

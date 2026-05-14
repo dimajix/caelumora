@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use sha256::Sha256Digest;
 use async_trait::async_trait;
 use anyhow::Result;
@@ -133,7 +134,7 @@ pub trait MessageFilter: Send + Sync {
 }
 
 #[async_trait]
-pub trait MessageProcessor: Send + Sync {
+pub trait MessageProcessor: Send + Sync + Debug {
     async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>>;
 }
 

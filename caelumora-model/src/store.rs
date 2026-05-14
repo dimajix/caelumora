@@ -1,8 +1,9 @@
 use uuid::Uuid;
 
-use crate::agent::{Agent, AgentState};
-use crate::session::{Session, SessionState};
-use crate::template::{AgentTemplate, SessionTemplate};
+use crate::agent::{Agent, AgentState, Personality};
+use crate::meta::Scope;
+use crate::session::{Session, SessionContext, SessionState};
+use crate::template::{SessionTemplate};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -20,24 +21,23 @@ pub type StoreResult<T> = Result<T, StoreError>;
 
 
 pub trait EntityResolver {
-    fn get_session_template(&self, name: &str) -> StoreResult<SessionTemplate>;
-    fn get_agent_template(&self, id: Uuid) -> StoreResult<AgentTemplate>;
-    fn get_agent(&self, id: Uuid) -> StoreResult<Agent>;
+    fn get_session_template(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
+    fn get_personality(&self, name: &str, scope: &Scope) -> StoreResult<Personality>;
+    fn get_or_create_agent(&self, name: &str, scope: &Scope, personality_id: Uuid) -> StoreResult<Agent>;
 }
 
 
 pub trait TemplateStore {
-    fn get_agent_template(&self, id: Uuid) -> StoreResult<AgentTemplate>;
-    fn find_agent_template_by_name(&self, name: &str) -> StoreResult<AgentTemplate>;
-    fn list_agent_templates(&self) -> StoreResult<Vec<AgentTemplate>>;
-    fn put_agent_template(&self, value: AgentTemplate) -> StoreResult<()>;
-    fn delete_agent_template(&self, id: Uuid) -> StoreResult<bool>;
+    fn get_personality(&self, id: Uuid) -> StoreResult<Personality>;
+    fn find_personality_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Personality>;
+    fn list_personalities(&self) -> StoreResult<Vec<Personality>>;
+    fn put_personality(&self, value: Personality) -> StoreResult<()>;
+    fn delete_personality(&self, id: Uuid) -> StoreResult<bool>;
 
-    fn get_session_template(&self, name: &str) -> StoreResult<SessionTemplate>;
     fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate>;
     fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>>;
     fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()>;
-    fn delete_session_template(&self, name: &str) -> StoreResult<bool>;
+    fn delete_session_template(&self, id: Uuid) -> StoreResult<bool>;
 }
 
 

@@ -1,23 +1,38 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::message::{MessageContext, MessageHistory};
-use crate::template::AgentTemplate;
+use crate::meta::{Metadata, Scope};
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Personality {
+    pub id: Uuid,
+    pub metadata: Metadata,
+    // ContextFilters
+    // Tools
+    // Memory
+    // Knowledge
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: Uuid,
-    pub template_id: Uuid,
-    pub name: String,
+    pub metadata: Metadata,
+    pub personality_id: Uuid,
 }
 
 impl Agent {
-    pub fn new(template:AgentTemplate, name:String) -> Self {
+    pub fn new(name:String, scope:Scope, personality: &Personality) -> Self {
         let agent_id = Uuid::new_v4();
         Agent {
             id: agent_id,
-            template_id: template.id,
-            name,
+            personality_id: personality.id,
+            metadata: Metadata {
+                name,
+                scope,
+                description: personality.metadata.description.clone(),
+                ..Metadata::default()
+            }
         }
     }
 }

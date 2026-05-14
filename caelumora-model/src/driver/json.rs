@@ -1,7 +1,7 @@
-use crate::agent::{Agent, AgentState};
+use crate::agent::{Agent, AgentState, Personality};
 use crate::session::{Session, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
-use crate::template::{AgentTemplate, SessionTemplate};
+use crate::template::{SessionTemplate};
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use crate::meta::Scope;
 
 #[derive(Debug, Clone)]
 pub struct JsonFileStore {
@@ -161,36 +162,32 @@ fn sanitize_file_component(value: &str) -> String {
 
 
 impl TemplateStore for JsonFileStore {
-    fn get_agent_template(&self, id: Uuid) -> StoreResult<AgentTemplate> {
+    fn get_personality(&self, id: Uuid) -> StoreResult<Personality> {
         let path = self.agent_template_path(id);
-        let loaded = read_json_opt::<Persisted<AgentTemplate>>(&path)?.map(|p| p.value);
+        let loaded = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_template", id.to_string())
     }
 
-    fn find_agent_template_by_name(&self, name: &str) -> StoreResult<AgentTemplate> {
-        let templates = self.list_agent_templates()?;
+    fn find_personality_by_name(&self, name: &str, _scope: &Scope) -> StoreResult<Personality> {
+        let templates = self.list_personalities()?;
         require_entity(
-            templates.into_iter().find(|t| t.name == name),
+            templates.into_iter().find(|t| t.metadata.name == name),
             "agent_template",
             name.to_string(),
         )
     }
 
-    fn list_agent_templates(&self) -> StoreResult<Vec<AgentTemplate>> {
-        Ok(read_all_from_dir::<Persisted<AgentTemplate>>(&self.agent_templates_dir())?
+    fn list_personalities(&self) -> StoreResult<Vec<Personality>> {
+        Ok(read_all_from_dir::<Persisted<Personality>>(&self.agent_templates_dir())?
             .into_iter()
             .map(|p| p.value)
             .collect())
     }
 
-    fn get_session_template(&self, name: &str) -> StoreResult<SessionTemplate> {
+    fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate> {
         let path = self.session_template_path(name);
         let loaded = read_json_opt::<Persisted<SessionTemplate>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session_template", name.to_string())
-    }
-
-    fn find_session_template_by_name(&self, name: &str) -> StoreResult<SessionTemplate> {
-        self.get_session_template(name)
     }
 
     fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>> {
@@ -200,7 +197,7 @@ impl TemplateStore for JsonFileStore {
             .collect())
     }
 
-    fn put_agent_template(&self, value: AgentTemplate) -> StoreResult<()> {
+    fn put_personality(&self, value: Personality) -> StoreResult<()> {
         let path = self.agent_template_path(value.id);
         write_json_atomic(
             &path,
@@ -212,12 +209,12 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn delete_agent_template(&self, id: Uuid) -> StoreResult<bool> {
+    fn delete_personality(&self, id: Uuid) -> StoreResult<bool> {
         delete_if_exists(&self.agent_template_path(id))
     }
 
     fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()> {
-        let path = self.session_template_path(&value.name);
+        let path = self.session_template_path(&value.metadata.name);
         write_json_atomic(
             &path,
             &Persisted {
@@ -228,8 +225,16 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn delete_session_template(&self, name: &str) -> StoreResult<bool> {
-        delete_if_exists(&self.session_template_path(name))
+    fn delete_session_template(&self, id: Uuid) -> StoreResult<bool> {
+        let template = self
+            .list_session_templates()?
+            .into_iter()
+            .find(|t| t.id == id);
+
+        match template {
+            Some(t) => delete_if_exists(&self.session_template_path(&t.metadata.name)),
+            None => Ok(false),
+        }
     }
 }
 
@@ -353,27 +358,33 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::meta::{Metadata, Scope};
+    use chrono::Utc;
     use tempfile::tempdir;
 
     use super::*;
-    use crate::template::{ParticipantKindTemplate, ParticipantTemplate};
+    use crate::template::{ParticipantTemplate, ScopeTemplate};
 
-    fn make_agent_template() -> AgentTemplate {
-        AgentTemplate {
+    fn make_agent_template() -> Personality {
+        Personality {
             id: Uuid::new_v4(),
-            name: "assistant".to_string(),
-            description: "Helpful assistant".to_string(),
-            capabilities: vec!["summarize".to_string()],
+            metadata: Metadata {
+                name: "assistant".to_string(),
+                description: "Helpful assistant".to_string(),
+                ..Metadata::default()
+            },
         }
     }
 
     fn make_session_template() -> SessionTemplate {
         SessionTemplate {
-            name: "pairing".to_string(),
-            participants: vec![ParticipantTemplate {
-                name: "user".to_string(),
-                kind: ParticipantKindTemplate::User,
-            }],
+            id: Uuid::new_v4(),
+            metadata: Metadata {
+                name: "pairing".to_string(),
+                ..Metadata::default()
+            },
+            scope: ScopeTemplate::GlobalScope,
+            participants: vec![ParticipantTemplate::User],
         }
     }
 
@@ -383,17 +394,20 @@ mod tests {
         let store = JsonFileStore::new(dir.path()).unwrap();
 
         let agent_template = make_agent_template();
-        store.put_agent_template(agent_template.clone()).unwrap();
+        store.put_personality(agent_template.clone()).unwrap();
 
-        let found = store.get_agent_template(agent_template.id).unwrap();
-        assert_eq!(found.name, agent_template.name);
+        let found = store.get_personality(agent_template.id).unwrap();
+        assert_eq!(found.metadata.name, agent_template.metadata.name);
 
         let session_template = make_session_template();
         store.put_session_template(session_template.clone()).unwrap();
         let found_session = store
-            .find_session_template_by_name(&session_template.name)
+            .find_session_template_by_name(&session_template.metadata.name)
             .unwrap();
-        assert_eq!(found_session.name, session_template.name);
+        assert_eq!(
+            found_session.metadata.name,
+            session_template.metadata.name
+        );
     }
 
     #[tokio::test]
@@ -402,19 +416,19 @@ mod tests {
         let store = JsonFileStore::new(dir.path()).unwrap();
 
         let mut t1 = make_agent_template();
-        t1.name = "assistant-a".to_string();
+        t1.metadata.name = "assistant-a".to_string();
         let mut t2 = make_agent_template();
-        t2.name = "assistant-b".to_string();
+        t2.metadata.name = "assistant-b".to_string();
 
-        store.put_agent_template(t1.clone()).unwrap();
-        store.put_agent_template(t2.clone()).unwrap();
+        store.put_personality(t1.clone()).unwrap();
+        store.put_personality(t2.clone()).unwrap();
 
-        let templates = store.list_agent_templates().unwrap();
+        let templates = store.list_personalities().unwrap();
         assert_eq!(templates.len(), 2);
 
-        assert!(store.delete_agent_template(t1.id).unwrap());
-        assert!(!store.delete_agent_template(t1.id).unwrap());
-        let err = store.get_agent_template(t1.id).unwrap_err();
+        assert!(store.delete_personality(t1.id).unwrap());
+        assert!(!store.delete_personality(t1.id).unwrap());
+        let err = store.get_personality(t1.id).unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "agent_template", .. }));
     }
 
@@ -424,11 +438,15 @@ mod tests {
         let store = JsonFileStore::new(dir.path()).unwrap();
 
         let template = make_agent_template();
-        let agent = Agent::new(template, "assistant-1".to_string());
+        let agent = Agent::new(
+            "assistant-1".to_string(),
+            Scope::GlobalScope,
+            &template,
+        );
         store.create_agent(agent.clone()).unwrap();
 
         let loaded = store.get_agent(agent.id).unwrap();
-        assert_eq!(loaded.name, agent.name);
+        assert_eq!(loaded.metadata.name, agent.metadata.name);
 
         let state = AgentState::default();
         store.put_agent_state(agent.id, state).unwrap();
@@ -441,7 +459,11 @@ mod tests {
         let store = JsonFileStore::new(dir.path()).unwrap();
 
         let template = make_agent_template();
-        let agent = Agent::new(template, "assistant-1".to_string());
+        let agent = Agent::new(
+            "assistant-1".to_string(),
+            Scope::GlobalScope,
+            &template,
+        );
 
         store.create_agent(agent.clone()).unwrap();
         let conflict = store.create_agent(agent.clone()).unwrap_err();

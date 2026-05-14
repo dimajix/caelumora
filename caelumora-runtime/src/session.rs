@@ -8,7 +8,7 @@ use anyhow::Result;
 use async_stream::try_stream;
 use async_trait::async_trait;
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
-use caelumora_model::session::{ParticipantKind, Session};
+use caelumora_model::session::{Participant, Session};
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::{BoxStream, FuturesUnordered};
@@ -127,7 +127,7 @@ impl RouterState {
 }
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SessionLoop {
     session: Arc<Session>,
     agents: Arc<HashMap<Uuid, LoopRunner>>,
@@ -172,9 +172,9 @@ impl SessionLoop {
         // TODO
         let mut agents = HashMap::new();
         for p in session.participants.iter() {
-            match &p.kind {
-                ParticipantKind::User => {},
-                ParticipantKind::Agent(agent) => {
+            match &p {
+                Participant::User => {},
+                Participant::Agent(agent) => {
                     let l = AgentLoop::new(agent.clone(), runtime_manager.clone());
                     let runner = LoopRunner::new(Box::new(l));
                     agents.insert(agent.id.clone(), runner);

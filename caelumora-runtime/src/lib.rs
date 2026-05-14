@@ -7,3 +7,4 @@ pub mod driver;
 pub mod recorder;
 pub mod runner;
 pub mod event;
+pub mod tool;
