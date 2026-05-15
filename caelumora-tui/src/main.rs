@@ -3,6 +3,7 @@ use std::sync::Arc;
 use clap::Parser;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+use caelumora_model::driver::memory::MemoryStore;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 
@@ -64,9 +65,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize Agent (Integration Point)
     // In a real app, you would inject your OpenAI/Anthropic client here.
+    let store = Arc::new(MemoryStore::new());
+    let runtime = Arc::new(RuntimeManager::new(store));
     let session = ...;
-    let runtime_manager = Arc::new(RuntimeManager::new());
-    let sessionLoop = SessionLoop::new(session, runtime_manager);
+    let sessionLoop = SessionLoop::new(session, runtime);
 
     // Start the interactive loop
     run_repl(sessionLoop).await?;

@@ -311,6 +311,7 @@ name = "caelumora-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "caelumora-model",
  "caelumora-runtime",
  "clap",
  "rustyline",

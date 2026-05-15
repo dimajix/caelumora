@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use crate::meta::Scope;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
 }

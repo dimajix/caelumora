@@ -24,13 +24,12 @@ struct LoopState {
     // result_filter
 }
 impl LoopState {
-    fn new(agent: Agent) -> Self {
-        let agent_state = AgentState::default();
+    fn new(agent: Agent, state:AgentState) -> Self {
         let agent_id = agent.id.clone();
         Self {
             agent_id,
             agent,
-            state: Mutex::new(agent_state)
+            state: Mutex::new(state)
         }
     }
 
@@ -152,13 +151,14 @@ impl AgentLoop {
     pub fn new(
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
-    ) -> Self {
-        let agent_handler = LoopState::new(agent);
-        Self {
+    ) -> Result<Self> {
+        let state = runtime_manager.state_store().get_agent_state(agent.id)?;
+        let agent_handler = LoopState::new(agent, state);
+        Ok(Self {
             runtime_manager: runtime_manager,
             agent_state: Arc::new(agent_handler),
             max_iterations: 5
-        }
+        })
     }
 
     pub fn agent_id(&self) -> Uuid {

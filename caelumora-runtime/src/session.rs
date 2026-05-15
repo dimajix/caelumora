@@ -169,13 +169,12 @@ impl MessageProcessor for SessionLoop {
 
 impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        // TODO
         let mut agents = HashMap::new();
         for p in session.participants.iter() {
             match &p {
                 Participant::User => {},
                 Participant::Agent(agent) => {
-                    let l = AgentLoop::new(agent.clone(), runtime_manager.clone());
+                    let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
                     let runner = LoopRunner::new(Box::new(l));
                     agents.insert(agent.id.clone(), runner);
                 }

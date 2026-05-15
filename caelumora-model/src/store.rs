@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use uuid::Uuid;
 
 use crate::agent::{Agent, AgentState, Personality};
@@ -20,12 +21,13 @@ pub enum StoreError {
 pub type StoreResult<T> = Result<T, StoreError>;
 
 
-pub trait EntityResolver {
+pub trait EntityResolver : Debug {
     fn get_session_template(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
     fn get_personality(&self, name: &str, scope: &Scope) -> StoreResult<Personality>;
     fn get_or_create_agent(&self, name: &str, scope: &Scope, personality_id: Uuid) -> StoreResult<Agent>;
 }
 
+#[derive(Debug)]
 pub struct StoreBackedEntityResolver<TS, SS> {
     template_store: TS,
     state_store: SS,
@@ -66,7 +68,7 @@ where
 }
 
 
-pub trait TemplateStore {
+pub trait TemplateStore : Debug + Sync + Send {
     fn get_personality(&self, id: Uuid) -> StoreResult<Personality>;
     fn find_personality_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Personality>;
     fn list_personalities(&self) -> StoreResult<Vec<Personality>>;
@@ -80,7 +82,7 @@ pub trait TemplateStore {
 }
 
 
-pub trait StateStore {
+pub trait StateStore : Debug + Sync + Send {
     fn create_agent(&self, value: Agent) -> StoreResult<()>;
     fn get_agent(&self, id: Uuid) -> StoreResult<Agent>;
     fn find_agent_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Option<Agent>>;
@@ -99,12 +101,12 @@ pub trait StateStore {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
+    use std::sync::RwLock;
     use super::*;
     use crate::meta::Metadata;
     use crate::template::ScopeTemplate;
 
+    #[derive(Debug)]
     struct MockTemplateStore {
         personality: Personality,
     }
@@ -159,13 +161,14 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     struct MockStateStore {
-        agents: RefCell<Vec<Agent>>,
+        agents: RwLock<Vec<Agent>>,
     }
 
     impl StateStore for MockStateStore {
         fn create_agent(&self, value: Agent) -> StoreResult<()> {
-            self.agents.borrow_mut().push(value);
+            self.agents.write().unwrap().push(value);
             Ok(())
         }
 
@@ -176,7 +179,8 @@ mod tests {
         fn find_agent_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
             Ok(self
                 .agents
-                .borrow()
+                .read()
+                .unwrap()
                 .iter()
                 .find(|a| a.metadata.name == name && a.metadata.scope == *scope)
                 .cloned())
@@ -237,7 +241,7 @@ mod tests {
                 personality: personality.clone(),
             },
             MockStateStore {
-                agents: RefCell::new(vec![existing.clone()]),
+                agents: RwLock::new(vec![existing.clone()]),
             },
         );
 
@@ -252,7 +256,7 @@ mod tests {
     fn get_or_create_agent_creates_agent_when_missing() {
         let personality = personality_template();
         let state_store = MockStateStore {
-            agents: RefCell::new(Vec::new()),
+            agents: RwLock::new(Vec::new()),
         };
 
         let resolver = StoreBackedEntityResolver::new(
