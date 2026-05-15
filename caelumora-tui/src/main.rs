@@ -1,22 +1,34 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use clap::Parser;
-use futures_util::StreamExt;
-use rustyline::error::ReadlineError;
-use rustyline::Editor;
-use uuid::Uuid;
-use chrono::Utc;
 use caelumora_model::agent::Personality;
 use caelumora_model::driver::memory::MemoryStore;
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor, MessageRole};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::session::SessionContext;
-use caelumora_model::store::{EntityResolver, StoreResult, TemplateStore, StateStore, StoreBackedEntityResolver};
+use caelumora_model::store::{
+    StoreBackedEntityResolver, StoreResult, TemplateStore,
+};
 use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplate};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
+use chrono::Utc;
+use clap::Parser;
+use env_logger::WriteStyle;
+use futures_util::StreamExt;
+use log::{info, LevelFilter};
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
+use std::path::PathBuf;
+use std::sync::Arc;
+use uuid::Uuid;
 
 
+fn init_logging() {
+    let mut builder = env_logger::Builder::new();
+
+    builder
+        .filter(None, LevelFilter::Info)
+        .write_style(WriteStyle::Always)
+        .init();
+}
 
 fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
     let personality = Personality {
@@ -53,8 +65,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
     Ok(template)
 }
 
-
-async fn run_repl(mut agent: SessionLoop) -> anyhow::Result<()> {
+async fn run_repl(mut session: SessionLoop) -> anyhow::Result<()> {
     let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new()?;
     //rl.set_class_name("chat-agent-class");
     //rl.append_history(vec![])?;
@@ -66,13 +77,17 @@ async fn run_repl(mut agent: SessionLoop) -> anyhow::Result<()> {
         match readline {
             Ok(line) => {
                 let input = line.trim();
-                if input.is_empty() { continue; }
-                if input == "exit" || input == "quit" { break; }
+                if input.is_empty() {
+                    continue;
+                }
+                if input == "exit" || input == "quit" {
+                    break;
+                }
 
                 // Perform the agent response
                 let user_message = Message {
                     id: Uuid::new_v4(),
-                    session_id: agent.id(),
+                    session_id: session.id(),
                     sender_id: Uuid::nil(),
                     sender_name: "user".to_string(),
                     role: MessageRole::User,
@@ -83,7 +98,9 @@ async fn run_repl(mut agent: SessionLoop) -> anyhow::Result<()> {
                     metadata: Default::default(),
                 };
 
-                let mut stream = agent.process_messages(vec![user_message]).await;
+                info!("dispatch: input msg={:?}", user_message);
+
+                let mut stream = session.process_messages(vec![user_message]).await;
                 while let Some(event) = stream.next().await {
                     match event {
                         Ok(MessageEvent::Partial(message) | MessageEvent::Complete(message)) => {
@@ -131,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Override config with CLI args
     //let final_name = args.name.unwrap_or(config.agent_name.clone());
+    init_logging();
 
     // Initialize Agent (Integration Point)
     // In a real app, you would inject your OpenAI/Anthropic client here.

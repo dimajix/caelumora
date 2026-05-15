@@ -7,6 +7,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
+use log::info;
 
 
 pub enum LoopCommand {
@@ -19,9 +20,16 @@ pub enum LoopCommand {
 }
 
 async fn dispatch(mut rx: UnboundedReceiver<LoopCommand>, mut processor: Box<dyn MessageProcessor>) {
+    let id = processor.id();
+    let name = processor.name();
+    let kind = processor.kind();
     while let Some(cmd) = rx.recv().await {
         match cmd {
             LoopCommand::HandleRequest { request, reply_to} => {
+                info!(
+                    "dispatch: handling request for processor id={}, kind={}, name={}",
+                    id, kind, name
+                );
                 let result = processor.process_messages(request);
                 let _ = reply_to.send(result.await);
             }
@@ -33,6 +41,7 @@ async fn dispatch(mut rx: UnboundedReceiver<LoopCommand>, mut processor: Box<dyn
 #[derive(Debug, Clone)]
 pub struct LoopRunner {
     id: Uuid,
+    kind: String,
     name: String,
     tx: mpsc::UnboundedSender<LoopCommand>,
 }
@@ -40,14 +49,19 @@ pub struct LoopRunner {
 impl LoopRunner {
     pub fn spawn(proc: Box<dyn MessageProcessor>) -> (LoopRunner, JoinHandle<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut runner = LoopRunner {
+        let runner = LoopRunner {
             id: proc.id(),
+            kind: proc.kind(),
             name: proc.name(),
             tx: tx,
         };
         let task = tokio::spawn(async move {
             dispatch(rx, proc).await;
         });
+        info!(
+            "spawn: created task for processor id={}, kind={}, name={}",
+            runner.id, runner.kind, runner.name
+        );
         (runner, task)
     }
 

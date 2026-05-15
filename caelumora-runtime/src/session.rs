@@ -15,6 +15,7 @@ use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::info;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -73,6 +74,7 @@ impl RouterState {
     async fn route_messages(&mut self, messages: Vec<Message>, tx:mpsc::UnboundedSender<SessionEvent>) -> Result<()> {
         let routes = self.moderator.route(messages.as_slice());
         let agents = self.agents.clone();
+        info!("route_messages: process messages={:?}", messages);
 
         if self.num_route_decisions >= self.max_route_decisions {
             return Err(anyhow::anyhow!("Failed to send messages back into SessionLoop"));
@@ -86,6 +88,7 @@ impl RouterState {
             let target_messages = route.1;
             return if !target_messages.is_empty() && !target_messages.iter().any(|m| m.sender_id == target_id) {
                 if let Some(agent_loop) = agents.get(&target_id) {
+                    info!("route_messages: send msg {:?} to agent {target_id}", target_messages);
                     Some(agent_loop.send_messages(target_messages))
                 } else {
                     None
@@ -95,10 +98,8 @@ impl RouterState {
             }
         });
 
-        // And now process each BoxStream
-        let mut pending = FuturesUnordered::new();
-
         // Wait until we receive a BoxStream from all agents
+        let mut pending = FuturesUnordered::new();
         for result in join_all(futures).await {
             let state = MessageStream::new(result);
             pending.push(state.next_event());
@@ -115,6 +116,7 @@ impl RouterState {
                 }
                 None => {
                     // If that was the last event of that stream, request routing of the full event set again
+                    info!("route_messages: submit messages={:?}", messages);
                     tx.send(RouteRequest(stream.all_messages()))
                         .map_err(|_| anyhow::anyhow!("Failed to send messages back into SessionLoop"))?
                 }
@@ -158,6 +160,7 @@ impl MessageProcessor for SessionLoop {
 
         let stream = try_stream! {
             // Send initial messages as request
+            info!("process_messages: submit messages={:?}", messages);
             if let Err(_e) = tx.send(RouteRequest(messages)) {
                 Err(anyhow::anyhow!("Failed to send command"))?
             }

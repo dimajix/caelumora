@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use anyhow::Result;
 use async_stream::stream;
 use chrono::Utc;
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -80,13 +81,27 @@ impl LLMClient for OllamaClient {
         };
 
         let http = self.http.clone();
+        let model = self.model.clone();
+        let context_len = context.len();
 
         let output = stream! {
+            info!(
+                "ollama: sending chat request model={}, context_messages={}, url={}",
+                model,
+                context_len,
+                url
+            );
             let response = http.post(url).json(&request).send().await?;
             let body: OllamaChatResponse = response.error_for_status()?.json().await?;
             let content = body
                 .message
                 .and_then(|msg| if msg.content.is_empty() { None } else { Some(msg.content) });
+
+            info!(
+                "ollama: received chat response model={}, has_content={}",
+                model,
+                content.is_some()
+            );
 
             let message = Message {
                 id: Uuid::new_v4(),
