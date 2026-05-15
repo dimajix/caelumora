@@ -74,6 +74,7 @@ impl OllamaClient {
 impl LLMClient for OllamaClient {
     async fn chat_completion(&self, context: &[Message]) -> BoxStream<'static, Result<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
+        let message_ids: Vec<_> = context.iter().map(|m| m.id).collect();
         let request = OllamaChatRequest {
             model: self.model.clone(),
             messages: context.iter().map(OllamaChatMessage::from).collect(),
@@ -86,9 +87,9 @@ impl LLMClient for OllamaClient {
 
         let output = stream! {
             info!(
-                "ollama: sending chat request model={}, context_messages={}, url={}",
+                "ollama: sending chat request model={}, context={:?}, url={}",
                 model,
-                context_len,
+                message_ids,
                 url
             );
             let response = http.post(url).json(&request).send().await?;

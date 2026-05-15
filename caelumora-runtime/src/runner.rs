@@ -47,6 +47,10 @@ pub struct LoopRunner {
 }
 
 impl LoopRunner {
+    pub fn id(&self) -> Uuid { self.id }
+    pub fn kind(&self) -> String { self.kind.clone() }
+    pub fn name(&self) -> String { self.name.clone() }
+
     pub fn spawn(proc: Box<dyn MessageProcessor>) -> (LoopRunner, JoinHandle<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let runner = LoopRunner {

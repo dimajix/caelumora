@@ -4,12 +4,13 @@ use uuid::Uuid;
 use anyhow::Result;
 
 use dashmap::DashSet;
+use caelumora_model::agent::Agent;
 use caelumora_model::message::Message;
 
 pub trait Moderator : Send + Sync + Debug {
     fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>>;
-    fn add_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()>;
-    fn remove_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()>;
+    fn add_agent(&self, agent: &Agent) -> Result<()>;
+    fn remove_agent(&self, agent: &Agent) -> Result<()>;
 }
 
 
@@ -34,13 +35,13 @@ impl Moderator for BroadcastModerator {
             .collect()
     }
 
-    fn add_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()> {
-        self.agents.insert(agent_loop.agent_id());
+    fn add_agent(&self, agent: &Agent) -> Result<()> {
+        self.agents.insert(agent.id);
         Ok(())
     }
 
-    fn remove_agent(&self, agent_loop: &crate::agent::AgentLoop) -> Result<()> {
-        self.agents.remove(&agent_loop.agent_id());
+    fn remove_agent(&self, agent: &Agent) -> Result<()> {
+        self.agents.remove(&agent.id);
         Ok(())
     }
 }

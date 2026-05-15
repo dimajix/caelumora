@@ -19,7 +19,7 @@ use rustyline::Editor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
-
+use caelumora_runtime::runner::LoopRunner;
 
 fn init_logging() {
     let mut builder = env_logger::Builder::new();
@@ -65,7 +65,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
     Ok(template)
 }
 
-async fn run_repl(mut session: SessionLoop) -> anyhow::Result<()> {
+async fn run_repl(mut session: LoopRunner) -> anyhow::Result<()> {
     let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new()?;
     //rl.set_class_name("chat-agent-class");
     //rl.append_history(vec![])?;
@@ -100,7 +100,7 @@ async fn run_repl(mut session: SessionLoop) -> anyhow::Result<()> {
 
                 info!("dispatch: input msg={:?}", user_message);
 
-                let mut stream = session.process_messages(vec![user_message]).await;
+                let mut stream = session.send_messages(vec![user_message]).await;
                 while let Some(event) = stream.next().await {
                     match event {
                         Ok(MessageEvent::Partial(message) | MessageEvent::Complete(message)) => {
@@ -163,9 +163,10 @@ async fn main() -> anyhow::Result<()> {
     };
     let session = template.instantiate("default-session".to_string(), &context)?;
     let session_loop = SessionLoop::new(session, runtime)?;
+    let (session_runner, _) = LoopRunner::spawn(Box::new(session_loop));
 
     // Start the interactive loop
-    run_repl(session_loop).await?;
+    run_repl(session_runner).await?;
 
     Ok(())
 }

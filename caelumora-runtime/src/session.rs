@@ -1,3 +1,4 @@
+use std::arch::x86_64::_mm256_mask_roundscale_pd;
 use crate::agent::AgentLoop;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
@@ -12,8 +13,9 @@ use caelumora_model::session::{Participant, Session};
 use dashmap::DashMap;
 use futures::future::join_all;
 use futures::stream::{BoxStream, FuturesUnordered};
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use log::info;
 use tokio::sync::mpsc;
@@ -71,11 +73,12 @@ impl RouterState {
         }
     }
 
-    async fn route_messages(&mut self, messages: Vec<Message>, tx:mpsc::UnboundedSender<SessionEvent>) -> Result<()> {
+    async fn route_messages(&mut self, messages: Vec<Message>) -> Result<Vec<BoxStream<'static,Result<MessageEvent>>>> {
         let routes = self.moderator.route(messages.as_slice());
-        let agents = self.agents.clone();
-        info!("route_messages: process messages={:?}", messages);
+        let message_ids: Vec<_> = messages.iter().map(|m| m.id).collect();
+        info!("route_messages: decide routing messages={:?} targets={:?}", message_ids, routes.keys());
 
+        let agents = self.agents.clone();
         if self.num_route_decisions >= self.max_route_decisions {
             return Err(anyhow::anyhow!("Failed to send messages back into SessionLoop"));
         }
@@ -88,7 +91,8 @@ impl RouterState {
             let target_messages = route.1;
             return if !target_messages.is_empty() && !target_messages.iter().any(|m| m.sender_id == target_id) {
                 if let Some(agent_loop) = agents.get(&target_id) {
-                    info!("route_messages: send msg {:?} to agent {target_id}", target_messages);
+                    let message_ids: Vec<_> = target_messages.iter().map(|m| m.id).collect();
+                    info!("route_messages: send messages={:?} target={target_id}", message_ids);
                     Some(agent_loop.send_messages(target_messages))
                 } else {
                     None
@@ -98,34 +102,9 @@ impl RouterState {
             }
         });
 
-        // Wait until we receive a BoxStream from all agents
-        let mut pending = FuturesUnordered::new();
-        for result in join_all(futures).await {
-            let state = MessageStream::new(result);
-            pending.push(state.next_event());
-        }
-
-        while let Some(result) = pending.next().await {
-            let (stream, event) = result?;
-
-            match event {
-                Some(event) => {
-                    tx.send(AgentEvent(event))
-                        .map_err(|_| anyhow::anyhow!("Failed to send messages back into SessionLoop"))?;
-                    pending.push(stream.next_event());
-                }
-                None => {
-                    // If that was the last event of that stream, request routing of the full event set again
-                    info!("route_messages: submit messages={:?}", messages);
-                    tx.send(RouteRequest(stream.all_messages()))
-                        .map_err(|_| anyhow::anyhow!("Failed to send messages back into SessionLoop"))?
-                }
-            }
-        }
-
-        Ok(())
+        let streams = join_all(futures).await;
+        Ok(streams)
     }
-
 }
 
 
@@ -156,24 +135,33 @@ impl MessageProcessor for SessionLoop {
         messages: Vec<Message>,
     ) -> BoxStream<'static, Result<MessageEvent>> {
         let mut state = RouterState::new(self);
-        let (tx,mut rx) = mpsc::unbounded_channel();
 
         let stream = try_stream! {
-            // Send initial messages as request
-            info!("process_messages: submit messages={:?}", messages);
-            if let Err(_e) = tx.send(RouteRequest(messages)) {
-                Err(anyhow::anyhow!("Failed to send command"))?
+            let mut pending = FuturesUnordered::new();
+            let routes = state.route_messages(messages).await?;
+            for route in routes {
+                let stream = MessageStream::new(route);
+                pending.push(stream.next_event());
             }
 
-            // Now process each event as it arrives in the channel
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    RouteRequest(msg) => {
-                        // TODO: Apply recorder
-                        state.route_messages(msg, tx.clone()).await?;
-                    }
-                    AgentEvent(ev) => {
+            while let Some(result) = pending.next().await {
+                let (stream, event) = result?;
+
+                match event {
+                    Some(ev) => {
+                        let n = stream.next_event();
+                        pending.push(n);
                         yield ev
+                    }
+                    None => {
+                        // If that was the last event of that stream, request routing of the full event set again
+                        let messages = stream.all_messages;
+                        info!("route_messages: submit messages={:?}", messages);
+                        let routes = state.route_messages(messages).await?;
+                        for route in routes {
+                            let stream = MessageStream::new(route);
+                            pending.push(stream.next_event());
+                        }
                     }
                 }
             }
@@ -185,18 +173,20 @@ impl MessageProcessor for SessionLoop {
 impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let mut agents = HashMap::new();
+        let moderator = runtime_manager.moderator(&"".to_string())?;
+        let recorder = runtime_manager.recorder(&"".to_string())?;
         for p in session.participants.iter() {
             match &p {
                 Participant::User => {},
                 Participant::Agent(agent) => {
                     let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
                     let (runner, _) = LoopRunner::spawn(Box::new(l));
+                    moderator.add_agent(agent)?;
                     agents.insert(agent.id.clone(), runner);
                 }
             }
         };
-        let moderator = runtime_manager.moderator(&"".to_string())?;
-        let recorder = runtime_manager.recorder(&"".to_string())?;
+
         Ok(Self {
             session: Arc::new(session),
             agents: Arc::new(agents),
