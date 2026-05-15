@@ -1,7 +1,7 @@
 use crate::driver::ollama::OllamaClient;
 use crate::llm::LLMClient;
-use crate::moderator::Moderator;
-use crate::recorder::Recorder;
+use crate::moderator::{BroadcastModerator, Moderator};
+use crate::recorder::{BlackholeRecorder, Recorder};
 use crate::tool::{DummyToolExecutor, ToolExecutor};
 use anyhow::Result;
 use std::sync::Arc;
@@ -35,10 +35,10 @@ impl RuntimeManager {
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
     pub fn moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
-        todo!()
+        Ok(Box::new(BroadcastModerator::new()))
     }
 
     pub fn recorder(&self, kind: &String) -> Result<Box<dyn Recorder>> {
-        todo!()
+        Ok(Box::new(BlackholeRecorder::new()))
     }
 }

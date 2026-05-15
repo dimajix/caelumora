@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::agent::{Agent, AgentState, Personality};
@@ -29,12 +30,12 @@ pub trait EntityResolver : Debug {
 
 #[derive(Debug)]
 pub struct StoreBackedEntityResolver<TS, SS> {
-    template_store: TS,
-    state_store: SS,
+    template_store: Arc<TS>,
+    state_store: Arc<SS>,
 }
 
 impl<TS, SS> StoreBackedEntityResolver<TS, SS> {
-    pub fn new(template_store: TS, state_store: SS) -> Self {
+    pub fn new(template_store: Arc<TS>, state_store: Arc<SS>) -> Self {
         Self {
             template_store,
             state_store,
@@ -62,7 +63,7 @@ where
 
         let personality = self.template_store.get_personality(personality_id)?;
         let agent = Agent::new(name.to_string(), scope.clone(), &personality);
-        self.state_store.create_agent(agent.clone())?;
+        self.state_store.create_agent(&agent)?;
         Ok(agent)
     }
 }
@@ -72,35 +73,36 @@ pub trait TemplateStore : Debug + Sync + Send {
     fn get_personality(&self, id: Uuid) -> StoreResult<Personality>;
     fn find_personality_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Personality>;
     fn list_personalities(&self) -> StoreResult<Vec<Personality>>;
-    fn put_personality(&self, value: Personality) -> StoreResult<()>;
+    fn put_personality(&self, value: &Personality) -> StoreResult<()>;
     fn delete_personality(&self, id: Uuid) -> StoreResult<bool>;
 
     fn find_session_template_by_name(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
     fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>>;
-    fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()>;
+    fn put_session_template(&self, value: &SessionTemplate) -> StoreResult<()>;
     fn delete_session_template(&self, id: Uuid) -> StoreResult<bool>;
 }
 
 
 pub trait StateStore : Debug + Sync + Send {
-    fn create_agent(&self, value: Agent) -> StoreResult<()>;
+    fn create_agent(&self, value: &Agent) -> StoreResult<()>;
     fn get_agent(&self, id: Uuid) -> StoreResult<Agent>;
     fn find_agent_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Option<Agent>>;
-    fn update_agent(&self, value: Agent) -> StoreResult<()>;
+    fn update_agent(&self, value: &Agent) -> StoreResult<()>;
 
-    fn create_session(&self, value: Session) -> StoreResult<()>;
+    fn create_session(&self, value: &Session) -> StoreResult<()>;
     fn get_session(&self, id: Uuid) -> StoreResult<Session>;
-    fn update_session(&self, value: Session) -> StoreResult<()>;
+    fn update_session(&self, value: &Session) -> StoreResult<()>;
 
     fn get_agent_state(&self, agent_id: Uuid) -> StoreResult<AgentState>;
-    fn put_agent_state(&self, agent_id: Uuid, state: AgentState) -> StoreResult<()>;
+    fn put_agent_state(&self, agent_id: Uuid, state: &AgentState) -> StoreResult<()>;
 
     fn get_session_state(&self, session_id: Uuid) -> StoreResult<SessionState>;
-    fn put_session_state(&self, session_id: Uuid, state: SessionState) -> StoreResult<()>;
+    fn put_session_state(&self, session_id: Uuid, state: &SessionState) -> StoreResult<()>;
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::RwLock;
     use super::*;
     use crate::meta::Metadata;
@@ -167,8 +169,8 @@ mod tests {
     }
 
     impl StateStore for MockStateStore {
-        fn create_agent(&self, value: Agent) -> StoreResult<()> {
-            self.agents.write().unwrap().push(value);
+        fn create_agent(&self, value: &Agent) -> StoreResult<()> {
+            self.agents.write().unwrap().push(value.clone());
             Ok(())
         }
 
@@ -186,11 +188,11 @@ mod tests {
                 .cloned())
         }
 
-        fn update_agent(&self, _value: Agent) -> StoreResult<()> {
+        fn update_agent(&self, _value: &Agent) -> StoreResult<()> {
             unimplemented!()
         }
 
-        fn create_session(&self, _value: Session) -> StoreResult<()> {
+        fn create_session(&self, _value: &Session) -> StoreResult<()> {
             unimplemented!()
         }
 
@@ -198,7 +200,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn update_session(&self, _value: Session) -> StoreResult<()> {
+        fn update_session(&self, _value: &Session) -> StoreResult<()> {
             unimplemented!()
         }
 
@@ -206,7 +208,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn put_agent_state(&self, _agent_id: Uuid, _state: AgentState) -> StoreResult<()> {
+        fn put_agent_state(&self, _agent_id: Uuid, _state: &AgentState) -> StoreResult<()> {
             unimplemented!()
         }
 
@@ -214,7 +216,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn put_session_state(&self, _session_id: Uuid, _state: SessionState) -> StoreResult<()> {
+        fn put_session_state(&self, _session_id: Uuid, _state: &SessionState) -> StoreResult<()> {
             unimplemented!()
         }
     }
@@ -237,12 +239,12 @@ mod tests {
         let existing = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality);
 
         let resolver = StoreBackedEntityResolver::new(
-            MockTemplateStore {
+            Arc::new(MockTemplateStore {
                 personality: personality.clone(),
-            },
-            MockStateStore {
+            }),
+            Arc::new(MockStateStore {
                 agents: RwLock::new(vec![existing.clone()]),
-            },
+            }),
         );
 
         let resolved = resolver
@@ -255,14 +257,14 @@ mod tests {
     #[test]
     fn get_or_create_agent_creates_agent_when_missing() {
         let personality = personality_template();
-        let state_store = MockStateStore {
+        let state_store = Arc::new(MockStateStore {
             agents: RwLock::new(Vec::new()),
-        };
+        });
 
         let resolver = StoreBackedEntityResolver::new(
-            MockTemplateStore {
+            Arc::new(MockTemplateStore {
                 personality: personality.clone(),
-            },
+            }),
             state_store,
         );
 

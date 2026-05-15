@@ -1,15 +1,61 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use clap::Parser;
+use futures_util::StreamExt;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+use uuid::Uuid;
+use chrono::Utc;
+use caelumora_model::agent::Personality;
 use caelumora_model::driver::memory::MemoryStore;
+use caelumora_model::message::{Message, MessageEvent, MessageProcessor, MessageRole};
+use caelumora_model::meta::{Metadata, Scope};
+use caelumora_model::session::SessionContext;
+use caelumora_model::store::{EntityResolver, StoreResult, TemplateStore, StateStore, StoreBackedEntityResolver};
+use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplate};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 
 
-async fn run_repl(agent: SessionLoop) -> anyhow::Result<()> {
-    let mut rl = Editor::new()?;
+
+fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
+    let personality = Personality {
+        id: Uuid::new_v4(),
+        metadata: Metadata {
+            name: "simple-assistant".to_string(),
+            scope: Scope::GlobalScope,
+            description: "Simple helper personality".to_string(),
+            ..Metadata::default()
+        },
+    };
+    store.put_personality(&personality)?;
+
+    let template = SessionTemplate {
+        id: Uuid::new_v4(),
+        metadata: Metadata {
+            name: "simple-session".to_string(),
+            scope: Scope::GlobalScope,
+            description: "Simple user+assistant session".to_string(),
+            ..Metadata::default()
+        },
+        scope: ScopeTemplate::GlobalScope,
+        participants: vec![
+            ParticipantTemplate::User,
+            ParticipantTemplate::Agent {
+                name: "assistant".to_string(),
+                scope: ScopeTemplate::GlobalScope,
+                personality_id: personality.id,
+            },
+        ],
+    };
+    store.put_session_template(&template)?;
+
+    Ok(template)
+}
+
+
+async fn run_repl(mut agent: SessionLoop) -> anyhow::Result<()> {
+    let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new()?;
     //rl.set_class_name("chat-agent-class");
     //rl.append_history(vec![])?;
 
@@ -24,13 +70,36 @@ async fn run_repl(agent: SessionLoop) -> anyhow::Result<()> {
                 if input == "exit" || input == "quit" { break; }
 
                 // Perform the agent response
-                match agent.respond(input).await {
-                    Ok(response) => {
-                        println!("{}", response);
-                        rl.add_history_entry(input)?;
+                let user_message = Message {
+                    id: Uuid::new_v4(),
+                    session_id: agent.id(),
+                    sender_id: Uuid::nil(),
+                    sender_name: "user".to_string(),
+                    role: MessageRole::User,
+                    content: Some(input.to_string()),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    timestamp: Utc::now(),
+                    metadata: Default::default(),
+                };
+
+                let mut stream = agent.process_messages(vec![user_message]).await;
+                while let Some(event) = stream.next().await {
+                    match event {
+                        Ok(MessageEvent::Partial(message) | MessageEvent::Complete(message)) => {
+                            if let Some(content) = message.content {
+                                println!("{}", content);
+                            }
+                        }
+                        Ok(MessageEvent::EndOfTurn) => {}
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            break;
+                        }
                     }
-                    Err(e) => eprintln!("Error: {}", e),
                 }
+
+                rl.add_history_entry(input)?;
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
@@ -55,7 +124,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let _args = Args::parse();
 
     // Load Config
     //let config = load_config(args.config).context("Failed to load configuration")?;
@@ -66,12 +135,19 @@ async fn main() -> anyhow::Result<()> {
     // Initialize Agent (Integration Point)
     // In a real app, you would inject your OpenAI/Anthropic client here.
     let store = Arc::new(MemoryStore::new());
-    let runtime = Arc::new(RuntimeManager::new(store));
-    let session = ...;
-    let sessionLoop = SessionLoop::new(session, runtime);
+    let runtime = Arc::new(RuntimeManager::new(store.clone()));
+    let template = setup_templates(&store)?;
+
+    let context = SessionContext {
+        id: Uuid::new_v4(),
+        owner: Uuid::nil(),
+        resolver: Box::new(StoreBackedEntityResolver::new(store.clone(), store.clone())),
+    };
+    let session = template.instantiate("default-session".to_string(), &context)?;
+    let session_loop = SessionLoop::new(session, runtime)?;
 
     // Start the interactive loop
-    run_repl(sessionLoop).await?;
+    run_repl(session_loop).await?;
 
     Ok(())
 }

@@ -11,7 +11,7 @@ use futures::TryStreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-
+use caelumora_model::store::StoreResult;
 
 #[derive(Debug)]
 struct LoopState {
@@ -152,7 +152,15 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let state = runtime_manager.state_store().get_agent_state(agent.id)?;
+        let store = runtime_manager.state_store();
+        let state = match store.get_agent_state(agent.id) {
+            Ok(s) => s,
+            Err(NotFound) => {
+                let state = AgentState::default();
+                store.put_agent_state(agent.id, &state);
+                state
+            }
+        };
         let agent_handler = LoopState::new(agent, state);
         Ok(Self {
             runtime_manager: runtime_manager,

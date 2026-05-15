@@ -61,12 +61,12 @@ impl TemplateStore for MemoryStore {
         Ok(values.values().cloned().collect())
     }
 
-    fn put_personality(&self, value: Personality) -> StoreResult<()> {
+    fn put_personality(&self, value: &Personality) -> StoreResult<()> {
         let mut values = self
             .personalities
             .write()
             .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(value.id, value);
+        values.insert(value.id, value.clone());
         Ok(())
     }
 
@@ -101,12 +101,12 @@ impl TemplateStore for MemoryStore {
         Ok(values.values().cloned().collect())
     }
 
-    fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()> {
+    fn put_session_template(&self, value: &SessionTemplate) -> StoreResult<()> {
         let mut values = self
             .session_templates
             .write()
             .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(value.metadata.name.clone(), value);
+        values.insert(value.metadata.name.clone(), value.clone());
         Ok(())
     }
 
@@ -127,7 +127,7 @@ impl TemplateStore for MemoryStore {
 }
 
 impl StateStore for MemoryStore {
-    fn create_agent(&self, value: Agent) -> StoreResult<()> {
+    fn create_agent(&self, value: &Agent) -> StoreResult<()> {
         let mut values = self
             .agents
             .write()
@@ -135,7 +135,7 @@ impl StateStore for MemoryStore {
         if values.contains_key(&value.id) {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
         }
-        values.insert(value.id, value);
+        values.insert(value.id, value.clone());
         Ok(())
     }
 
@@ -158,7 +158,7 @@ impl StateStore for MemoryStore {
             .cloned())
     }
 
-    fn update_agent(&self, value: Agent) -> StoreResult<()> {
+    fn update_agent(&self, value: &Agent) -> StoreResult<()> {
         let mut values = self
             .agents
             .write()
@@ -169,11 +169,11 @@ impl StateStore for MemoryStore {
                 id: value.id.to_string(),
             });
         }
-        values.insert(value.id, value);
+        values.insert(value.id, value.clone());
         Ok(())
     }
 
-    fn create_session(&self, value: Session) -> StoreResult<()> {
+    fn create_session(&self, value: &Session) -> StoreResult<()> {
         let mut values = self
             .sessions
             .write()
@@ -181,7 +181,7 @@ impl StateStore for MemoryStore {
         if values.contains_key(&value.id) {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
         }
-        values.insert(value.id, value);
+        values.insert(value.id, value.clone());
         Ok(())
     }
 
@@ -193,7 +193,7 @@ impl StateStore for MemoryStore {
         require_entity(values.get(&id).cloned(), "session", id.to_string())
     }
 
-    fn update_session(&self, value: Session) -> StoreResult<()> {
+    fn update_session(&self, value: &Session) -> StoreResult<()> {
         let mut values = self
             .sessions
             .write()
@@ -204,7 +204,7 @@ impl StateStore for MemoryStore {
                 id: value.id.to_string(),
             });
         }
-        values.insert(value.id, value);
+        values.insert(value.id, value.clone());
         Ok(())
     }
 
@@ -216,12 +216,12 @@ impl StateStore for MemoryStore {
         require_entity(values.get(&agent_id).cloned(), "agent_state", agent_id.to_string())
     }
 
-    fn put_agent_state(&self, agent_id: Uuid, state: AgentState) -> StoreResult<()> {
+    fn put_agent_state(&self, agent_id: Uuid, state: &AgentState) -> StoreResult<()> {
         let mut values = self
             .agent_states
             .write()
             .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(agent_id, state);
+        values.insert(agent_id, state.clone());
         Ok(())
     }
 
@@ -237,12 +237,12 @@ impl StateStore for MemoryStore {
         )
     }
 
-    fn put_session_state(&self, session_id: Uuid, state: SessionState) -> StoreResult<()> {
+    fn put_session_state(&self, session_id: Uuid, state: &SessionState) -> StoreResult<()> {
         let mut values = self
             .session_states
             .write()
             .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(session_id, state);
+        values.insert(session_id, state.clone());
         Ok(())
     }
 }
@@ -281,10 +281,10 @@ mod tests {
     fn personality_lookup_honors_scope() {
         let store = MemoryStore::new();
         store
-            .put_personality(make_personality("assistant", Scope::GlobalScope))
+            .put_personality(&make_personality("assistant", Scope::GlobalScope))
             .unwrap();
         store
-            .put_personality(make_personality(
+            .put_personality(&make_personality(
                 "assistant",
                 Scope::UserScope {
                     user_id: Uuid::new_v4(),
@@ -306,10 +306,10 @@ mod tests {
         };
 
         store
-            .put_session_template(make_session_template("pairing", Scope::GlobalScope))
+            .put_session_template(&make_session_template("pairing", Scope::GlobalScope))
             .unwrap();
         store
-            .put_session_template(make_session_template("pairing", user_scope.clone()))
+            .put_session_template(&make_session_template("pairing", user_scope.clone()))
             .unwrap();
 
         let loaded = store
@@ -324,8 +324,8 @@ mod tests {
         let personality = make_personality("assistant", Scope::GlobalScope);
         let agent = Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality);
 
-        store.create_agent(agent.clone()).unwrap();
-        let conflict = store.create_agent(agent).unwrap_err();
+        store.create_agent(&agent).unwrap();
+        let conflict = store.create_agent(&agent).unwrap_err();
         assert!(matches!(conflict, StoreError::Conflict(_)));
     }
 }

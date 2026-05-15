@@ -313,9 +313,12 @@ dependencies = [
  "anyhow",
  "caelumora-model",
  "caelumora-runtime",
+ "chrono",
  "clap",
+ "futures-util",
  "rustyline",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

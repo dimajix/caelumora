@@ -203,7 +203,7 @@ impl TemplateStore for JsonFileStore {
             .collect())
     }
 
-    fn put_personality(&self, value: Personality) -> StoreResult<()> {
+    fn put_personality(&self, value: &Personality) -> StoreResult<()> {
         let path = self.agent_template_path(value.id);
         write_json_atomic(
             &path,
@@ -219,7 +219,7 @@ impl TemplateStore for JsonFileStore {
         delete_if_exists(&self.agent_template_path(id))
     }
 
-    fn put_session_template(&self, value: SessionTemplate) -> StoreResult<()> {
+    fn put_session_template(&self, value: &SessionTemplate) -> StoreResult<()> {
         let path = self.session_template_path(&value.metadata.name);
         write_json_atomic(
             &path,
@@ -247,7 +247,7 @@ impl TemplateStore for JsonFileStore {
 
 
 impl StateStore for JsonFileStore {
-    fn create_agent(&self, value: Agent) -> StoreResult<()> {
+    fn create_agent(&self, value: &Agent) -> StoreResult<()> {
         let path = self.agent_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
@@ -276,7 +276,7 @@ impl StateStore for JsonFileStore {
             .find(|a| a.metadata.name == name && a.metadata.scope == *scope))
     }
 
-    fn update_agent(&self, value: Agent) -> StoreResult<()> {
+    fn update_agent(&self, value: &Agent) -> StoreResult<()> {
         let path = self.agent_path(value.id);
         if !path.exists() {
             return Err(StoreError::NotFound {
@@ -294,7 +294,7 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn create_session(&self, value: Session) -> StoreResult<()> {
+    fn create_session(&self, value: &Session) -> StoreResult<()> {
         let path = self.session_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
@@ -315,7 +315,7 @@ impl StateStore for JsonFileStore {
         require_entity(loaded, "session", id.to_string())
     }
 
-    fn update_session(&self, value: Session) -> StoreResult<()> {
+    fn update_session(&self, value: &Session) -> StoreResult<()> {
         let path = self.session_path(value.id);
         if !path.exists() {
             return Err(StoreError::NotFound {
@@ -339,7 +339,7 @@ impl StateStore for JsonFileStore {
         require_entity(loaded, "agent_state", agent_id.to_string())
     }
 
-    fn put_agent_state(&self, agent_id: Uuid, state: AgentState) -> StoreResult<()> {
+    fn put_agent_state(&self, agent_id: Uuid, state: &AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
         write_json_atomic(
             &path,
@@ -357,7 +357,7 @@ impl StateStore for JsonFileStore {
         require_entity(loaded, "session_state", session_id.to_string())
     }
 
-    fn put_session_state(&self, session_id: Uuid, state: SessionState) -> StoreResult<()> {
+    fn put_session_state(&self, session_id: Uuid, state: &SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
         write_json_atomic(
             &path,
@@ -379,7 +379,7 @@ mod tests {
     use super::*;
     use crate::template::{ParticipantTemplate, ScopeTemplate};
 
-    fn make_agent_template() -> Personality {
+    fn make_personality() -> Personality {
         Personality {
             id: Uuid::new_v4(),
             metadata: Metadata {
@@ -407,14 +407,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = JsonFileStore::new(dir.path()).unwrap();
 
-        let agent_template = make_agent_template();
-        store.put_personality(agent_template.clone()).unwrap();
+        let personality = make_personality();
+        store.put_personality(&personality).unwrap();
 
-        let found = store.get_personality(agent_template.id).unwrap();
-        assert_eq!(found.metadata.name, agent_template.metadata.name);
+        let found = store.get_personality(personality.id).unwrap();
+        assert_eq!(found.metadata.name, personality.metadata.name);
 
         let session_template = make_session_template();
-        store.put_session_template(session_template.clone()).unwrap();
+        store.put_session_template(&session_template).unwrap();
         let found_session = store
             .find_session_template_by_name(
                 &session_template.metadata.name,
@@ -432,13 +432,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = JsonFileStore::new(dir.path()).unwrap();
 
-        let mut t1 = make_agent_template();
+        let mut t1 = make_personality();
         t1.metadata.name = "assistant-a".to_string();
-        let mut t2 = make_agent_template();
+        let mut t2 = make_personality();
         t2.metadata.name = "assistant-b".to_string();
 
-        store.put_personality(t1.clone()).unwrap();
-        store.put_personality(t2.clone()).unwrap();
+        store.put_personality(&t1).unwrap();
+        store.put_personality(&t2).unwrap();
 
         let templates = store.list_personalities().unwrap();
         assert_eq!(templates.len(), 2);
@@ -454,19 +454,19 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = JsonFileStore::new(dir.path()).unwrap();
 
-        let template = make_agent_template();
+        let template = make_personality();
         let agent = Agent::new(
             "assistant-1".to_string(),
             Scope::GlobalScope,
             &template,
         );
-        store.create_agent(agent.clone()).unwrap();
+        store.create_agent(&agent).unwrap();
 
         let loaded = store.get_agent(agent.id).unwrap();
         assert_eq!(loaded.metadata.name, agent.metadata.name);
 
         let state = AgentState::default();
-        store.put_agent_state(agent.id, state).unwrap();
+        store.put_agent_state(agent.id, &state).unwrap();
         store.get_agent_state(agent.id).unwrap();
     }
 
@@ -475,22 +475,22 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = JsonFileStore::new(dir.path()).unwrap();
 
-        let template = make_agent_template();
+        let template = make_personality();
         let agent = Agent::new(
             "assistant-1".to_string(),
             Scope::GlobalScope,
             &template,
         );
 
-        store.create_agent(agent.clone()).unwrap();
-        let conflict = store.create_agent(agent.clone()).unwrap_err();
+        store.create_agent(&agent).unwrap();
+        let conflict = store.create_agent(&agent).unwrap_err();
         assert!(matches!(conflict, StoreError::Conflict(_)));
 
         let missing_agent = Agent {
             id: Uuid::new_v4(),
             ..agent
         };
-        let not_found = store.update_agent(missing_agent).unwrap_err();
+        let not_found = store.update_agent(&missing_agent).unwrap_err();
         assert!(matches!(not_found, StoreError::NotFound { entity: "agent", .. }));
     }
 }
