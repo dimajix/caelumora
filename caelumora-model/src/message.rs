@@ -135,6 +135,9 @@ pub trait MessageFilter: Send + Sync {
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync + Debug {
+    fn id(&self) -> Uuid;
+    fn kind(&self) -> String;
+    fn name(&self) -> String;
     async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>>;
 }
 

@@ -137,6 +137,18 @@ pub struct SessionLoop {
 
 #[async_trait]
 impl MessageProcessor for SessionLoop {
+    fn id(&self) -> Uuid {
+        self.session.id
+    }
+
+    fn kind(&self) -> String {
+        "session".to_string()
+    }
+
+    fn name(&self) -> String {
+        self.session.metadata.name.clone()
+    }
+
     async fn process_messages(
         &mut self,
         messages: Vec<Message>,
@@ -175,7 +187,7 @@ impl SessionLoop {
                 Participant::User => {},
                 Participant::Agent(agent) => {
                     let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
-                    let runner = LoopRunner::new(Box::new(l));
+                    let (runner, _) = LoopRunner::spawn(Box::new(l));
                     agents.insert(agent.id.clone(), runner);
                 }
             }

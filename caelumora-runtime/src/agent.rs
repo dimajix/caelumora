@@ -15,7 +15,6 @@ use caelumora_model::store::StoreResult;
 
 #[derive(Debug)]
 struct LoopState {
-    agent_id: Uuid,
     agent: Agent,
     state: Mutex<AgentState>,
     // perceive_filter (input)
@@ -27,7 +26,6 @@ impl LoopState {
     fn new(agent: Agent, state:AgentState) -> Self {
         let agent_id = agent.id.clone();
         Self {
-            agent_id,
             agent,
             state: Mutex::new(state)
         }
@@ -90,6 +88,18 @@ pub struct AgentLoop {
 
 #[async_trait]
 impl MessageProcessor for AgentLoop {
+    fn id(&self) -> Uuid {
+        self.agent_state.agent.id
+    }
+
+    fn kind(&self) -> String {
+        "agent".to_string()
+    }
+
+    fn name(&self) -> String {
+        self.agent_state.agent.metadata.name.clone()
+    }
+
     async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
         // We create a new LoopState instance, which will be owned by the stream
         let state = self.clone();
@@ -170,7 +180,7 @@ impl AgentLoop {
     }
 
     pub fn agent_id(&self) -> Uuid {
-        self.agent_state.agent_id
+        self.agent_state.agent.id
     }
 
     async fn perceive(&self, messages: Vec<Message>) {
@@ -180,7 +190,7 @@ impl AgentLoop {
     async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
         let agent_state = self.agent_state.clone();
-        let agent_id = agent_state.agent_id.clone();
+        let agent_id = agent_state.agent.id;
         let context = agent_state.context().await;
         let mut messages = llm_client.chat_completion(context.as_slice()).await;
 
