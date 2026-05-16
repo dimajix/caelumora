@@ -1,13 +1,13 @@
-use async_trait::async_trait;
 use anyhow::Result;
 use async_stream::stream;
+use async_trait::async_trait;
+use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use chrono::Utc;
-use log::info;
+use futures::stream::BoxStream;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use futures::stream::BoxStream;
-use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use uuid::Uuid;
 
 use crate::llm::LLMClient;
@@ -38,7 +38,7 @@ impl From<&Message> for OllamaChatMessage {
             MessageRole::System => "system",
             MessageRole::Tool => "tool",
         }
-            .to_string();
+        .to_string();
 
         Self {
             role,
@@ -64,7 +64,8 @@ impl OllamaClient {
     pub fn from_env() -> Self {
         Self {
             http: reqwest::Client::new(),
-            base_url: env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
+            base_url: env::var("OLLAMA_BASE_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
             model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string()),
         }
     }
@@ -72,7 +73,10 @@ impl OllamaClient {
 
 #[async_trait]
 impl LLMClient for OllamaClient {
-    async fn chat_completion(&self, context: &[Message]) -> BoxStream<'static, Result<MessageEvent>> {
+    async fn chat_completion(
+        &self,
+        context: &[Message],
+    ) -> BoxStream<'static, Result<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
         let message_ids: Vec<_> = context.iter().map(|m| m.id).collect();
         let request = OllamaChatRequest {
@@ -86,7 +90,7 @@ impl LLMClient for OllamaClient {
         let context_len = context.len();
 
         let output = stream! {
-            info!(
+            debug!(
                 "ollama: sending chat request model={}, context={:?}, url={}",
                 model,
                 message_ids,
@@ -98,7 +102,7 @@ impl LLMClient for OllamaClient {
                 .message
                 .and_then(|msg| if msg.content.is_empty() { None } else { Some(msg.content) });
 
-            info!(
+            debug!(
                 "ollama: received chat response model={}, has_content={}",
                 model,
                 content.is_some()

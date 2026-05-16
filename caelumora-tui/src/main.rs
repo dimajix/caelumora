@@ -54,7 +54,12 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
         participants: vec![
             ParticipantTemplate::User,
             ParticipantTemplate::Agent {
-                name: "assistant".to_string(),
+                name: "assistant a".to_string(),
+                scope: ScopeTemplate::GlobalScope,
+                personality_id: personality.id,
+            },
+            ParticipantTemplate::Agent {
+                name: "assistant b".to_string(),
                 scope: ScopeTemplate::GlobalScope,
                 personality_id: personality.id,
             },
@@ -103,9 +108,11 @@ async fn run_repl(mut session: LoopRunner) -> anyhow::Result<()> {
                 let mut stream = session.send_messages(vec![user_message]).await;
                 while let Some(event) = stream.next().await {
                     match event {
-                        Ok(MessageEvent::Partial(message) | MessageEvent::Complete(message)) => {
+                        Ok(MessageEvent::Partial(message)) => {
+                        }
+                        Ok(MessageEvent::Complete(message)) => {
                             if let Some(content) = message.content {
-                                println!("{}", content);
+                                println!("{}> {}", message.sender_name, content);
                             }
                         }
                         Ok(MessageEvent::EndOfTurn) => {}

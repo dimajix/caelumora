@@ -191,6 +191,7 @@ impl AgentLoop {
         let llm_client = self.runtime_manager.llm_client();
         let agent_state = self.agent_state.clone();
         let agent_id = agent_state.agent.id;
+        let agent_name = agent_state.agent.metadata.name.clone();
         let context = agent_state.context().await;
         let mut messages = llm_client.chat_completion(context.as_slice()).await;
 
@@ -198,7 +199,7 @@ impl AgentLoop {
             while let Some(event) = messages.try_next().await? {
                 match event {
                     Partial(mut message) => {
-                        // Fix sender ID
+                        message.sender_name = agent_name.clone();
                         message.sender_id = agent_id;
                         if let Some(msg) = agent_state.respond_partial(message).await {
                         // Emit message
@@ -206,7 +207,7 @@ impl AgentLoop {
                         }
                     },
                     Complete(mut message) => {
-                        // Fix sender ID
+                        message.sender_name = agent_name.clone();
                         message.sender_id = agent_id;
                         if let Some(msg) = agent_state.respond_complete(message).await {
                         // Emit message

@@ -1,14 +1,13 @@
 use anyhow::Result;
+use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
 use futures::future::ready;
 use futures::stream::{once, BoxStream, StreamExt};
 use futures::TryStreamExt;
+use log::{debug, info};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
-use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
-use log::info;
-
 
 pub enum LoopCommand {
     // We pass the oneshot sender inside the command
@@ -19,14 +18,17 @@ pub enum LoopCommand {
     },
 }
 
-async fn dispatch(mut rx: UnboundedReceiver<LoopCommand>, mut processor: Box<dyn MessageProcessor>) {
+async fn dispatch(
+    mut rx: UnboundedReceiver<LoopCommand>,
+    mut processor: Box<dyn MessageProcessor>,
+) {
     let id = processor.id();
     let name = processor.name();
     let kind = processor.kind();
     while let Some(cmd) = rx.recv().await {
         match cmd {
-            LoopCommand::HandleRequest { request, reply_to} => {
-                info!(
+            LoopCommand::HandleRequest { request, reply_to } => {
+                debug!(
                     "dispatch: handling request for processor id={}, kind={}, name={}",
                     id, kind, name
                 );
@@ -37,7 +39,6 @@ async fn dispatch(mut rx: UnboundedReceiver<LoopCommand>, mut processor: Box<dyn
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct LoopRunner {
     id: Uuid,
@@ -47,9 +48,15 @@ pub struct LoopRunner {
 }
 
 impl LoopRunner {
-    pub fn id(&self) -> Uuid { self.id }
-    pub fn kind(&self) -> String { self.kind.clone() }
-    pub fn name(&self) -> String { self.name.clone() }
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn kind(&self) -> String {
+        self.kind.clone()
+    }
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
 
     pub fn spawn(proc: Box<dyn MessageProcessor>) -> (LoopRunner, JoinHandle<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -69,7 +76,10 @@ impl LoopRunner {
         (runner, task)
     }
 
-    pub async fn send_messages(&self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
+    pub async fn send_messages(
+        &self,
+        messages: Vec<Message>,
+    ) -> BoxStream<'static, Result<MessageEvent>> {
         // 1. Create the "Return Address"
         let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -87,8 +97,7 @@ impl LoopRunner {
         // 3. Wait for the response
         match rx.await {
             Ok(result) => result,
-            Err(_e) => once(ready(Err(anyhow::anyhow!("Error receiving result"))))
-                .boxed(),
+            Err(_e) => once(ready(Err(anyhow::anyhow!("Error receiving result")))).boxed(),
         }
     }
 }

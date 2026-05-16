@@ -5,14 +5,13 @@ use anyhow::Result;
 
 use dashmap::DashSet;
 use caelumora_model::agent::Agent;
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, MessageRole};
 
 pub trait Moderator : Send + Sync + Debug {
     fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>>;
     fn add_agent(&self, agent: &Agent) -> Result<()>;
     fn remove_agent(&self, agent: &Agent) -> Result<()>;
 }
-
 
 #[derive(Debug)]
 pub struct BroadcastModerator {
@@ -29,9 +28,10 @@ impl BroadcastModerator {
 
 impl Moderator for BroadcastModerator {
     fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>> {
+        let user_messages = replace_role(messages, MessageRole::User);
         self.agents.iter()
-            .filter(|id| !messages.iter().any(|m| m.sender_id == **id))
-            .map(|id| (*id, messages.to_vec()))
+            .filter(|id| !user_messages.iter().any(|m| m.sender_id == **id))
+            .map(|id| (*id, user_messages.to_vec()))
             .collect()
     }
 
@@ -44,4 +44,10 @@ impl Moderator for BroadcastModerator {
         self.agents.remove(&agent.id);
         Ok(())
     }
+}
+
+fn replace_role(messages:&[Message], role:MessageRole) -> Vec<Message> {
+    let mut result = messages.to_vec();
+    result.iter_mut().for_each(|m| { m.role = role.clone() });
+    result
 }

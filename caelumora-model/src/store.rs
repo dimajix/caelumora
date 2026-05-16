@@ -133,7 +133,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn put_personality(&self, _value: Personality) -> StoreResult<()> {
+        fn put_personality(&self, _value: &Personality) -> StoreResult<()> {
             unimplemented!()
         }
 
@@ -154,7 +154,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn put_session_template(&self, _value: SessionTemplate) -> StoreResult<()> {
+        fn put_session_template(&self, _value: &SessionTemplate) -> StoreResult<()> {
             unimplemented!()
         }
 

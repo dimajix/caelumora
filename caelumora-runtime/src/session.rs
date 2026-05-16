@@ -17,7 +17,7 @@ use futures::{FutureExt, StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
-use log::info;
+use log::{debug, info};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -69,18 +69,18 @@ impl RouterState {
             agents: lp.agents.clone(),
             moderator: lp.moderator.clone(),
             num_route_decisions: 0,
-            max_route_decisions: 3
+            max_route_decisions: 6
         }
     }
 
     async fn route_messages(&mut self, messages: Vec<Message>) -> Result<Vec<BoxStream<'static,Result<MessageEvent>>>> {
         let routes = self.moderator.route(messages.as_slice());
         let message_ids: Vec<_> = messages.iter().map(|m| m.id).collect();
-        info!("route_messages: decide routing messages={:?} targets={:?}", message_ids, routes.keys());
+        debug!("route_messages: decide routing messages={:?} targets={:?}", message_ids, routes.keys());
 
         let agents = self.agents.clone();
         if self.num_route_decisions >= self.max_route_decisions {
-            return Err(anyhow::anyhow!("Failed to send messages back into SessionLoop"));
+            return Err(anyhow::anyhow!("Too many routings, stopping further propagation"));
         }
         self.num_route_decisions = self.num_route_decisions + 1;
 
@@ -92,7 +92,7 @@ impl RouterState {
             return if !target_messages.is_empty() && !target_messages.iter().any(|m| m.sender_id == target_id) {
                 if let Some(agent_loop) = agents.get(&target_id) {
                     let message_ids: Vec<_> = target_messages.iter().map(|m| m.id).collect();
-                    info!("route_messages: send messages={:?} target={target_id}", message_ids);
+                    debug!("route_messages: send messages={:?} target={target_id}", message_ids);
                     Some(agent_loop.send_messages(target_messages))
                 } else {
                     None
@@ -156,7 +156,7 @@ impl MessageProcessor for SessionLoop {
                     None => {
                         // If that was the last event of that stream, request routing of the full event set again
                         let messages = stream.all_messages;
-                        info!("route_messages: submit messages={:?}", messages);
+                        debug!("process_messages: route messages={:?}", messages);
                         let routes = state.route_messages(messages).await?;
                         for route in routes {
                             let stream = MessageStream::new(route);
