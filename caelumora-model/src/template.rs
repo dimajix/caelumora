@@ -1,6 +1,6 @@
-use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
+use crate::meta::Scope::{ChannelScope, GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
-use crate::session::{Participant, Session, SessionContext};
+use crate::session::{Channel, Participant, Session, SessionContext};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -33,21 +33,38 @@ impl ScopeTemplate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelTemplate {
+    pub name: String,
+    pub participants: Vec<ParticipantTemplate>,
+}
+
+impl ChannelTemplate {
+    pub fn instantiate(&self, context: &SessionContext) -> anyhow::Result<Channel> {
+        let mut participants = Vec::new();
+
+        for participant in &self.participants {
+            participants.push(participant.instantiate(context)?);
+        }
+
+        Ok(Channel::new(self.name.clone(), participants))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTemplate {
     pub id: Uuid,
     pub metadata: Metadata,
     pub scope: ScopeTemplate,
-    pub participants: Vec<ParticipantTemplate>,
+    pub channels: Vec<ChannelTemplate>,
 }
 
 impl SessionTemplate {
     pub fn instantiate(&self, name:String, context:&SessionContext) -> anyhow::Result<Session> {
         let now = Utc::now();
-        let resolver = &context.resolver;
-        let mut participants = Vec::new();
 
-        for participant in &self.participants {
-            participants.push(participant.instantiate(context)?);
+        let mut channels = Vec::new();
+        for channel in &self.channels {
+            channels.push(channel.instantiate(context)?)
         }
 
         Ok(Session {
@@ -58,7 +75,7 @@ impl SessionTemplate {
                 description: self.metadata.description.clone(),
                 ..Metadata::default()
             },
-            participants,
+            channels,
             created_at: now,
             updated_at: now,
         })

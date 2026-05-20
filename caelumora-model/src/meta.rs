@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Scope {
+    ChannelScope { session_id:Uuid, channel:String },
     SessionScope { session_id:Uuid },
     UserScope { user_id:Uuid },
     GroupScope { group_id:Uuid },

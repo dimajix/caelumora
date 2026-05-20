@@ -85,9 +85,11 @@ impl LLMClient for OllamaClient {
             stream: false,
         };
 
+        let sender_id = Uuid::nil();
+        let sender_name= "ollama".to_string();
+
         let http = self.http.clone();
         let model = self.model.clone();
-        let context_len = context.len();
 
         let output = stream! {
             debug!(
@@ -110,9 +112,8 @@ impl LLMClient for OllamaClient {
 
             let message = Message {
                 id: Uuid::new_v4(),
-                session_id: Uuid::nil(),
-                sender_id: Uuid::nil(),
-                sender_name: "ollama".to_string(),
+                sender_id,
+                sender_name,
                 role: MessageRole::Assistant,
                 content,
                 reasoning: None,
@@ -121,8 +122,8 @@ impl LLMClient for OllamaClient {
                 metadata: HashMap::new(),
             };
 
-            yield Ok(MessageEvent::Complete(message));
-            yield Ok(MessageEvent::EndOfTurn);
+            yield Ok(MessageEvent::Complete(message.clone()));
+            yield Ok(MessageEvent::EndOfTurn(vec![message]));
         };
 
         Box::pin(output)

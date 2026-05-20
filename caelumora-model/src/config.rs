@@ -120,13 +120,13 @@ mod tests {
         let session_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
         let yaml = format!(
-            "session_templates:\n  - id: {session_id}\n    metadata:\n      name: ops\n      scope: GlobalScope\n      owner: {owner_id}\n      description: Ops flow\n    scope: GlobalScope\n    participants:\n      - User\n"
+            "session_templates:\n  - id: {session_id}\n    metadata:\n      name: ops\n      scope: GlobalScope\n      owner: {owner_id}\n      description: Ops flow\n    scope: GlobalScope\n    channels:\n      - name: general\n        participants:\n          - User\n"
         );
 
         let sessions = parse_session_templates_yaml(&yaml).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].metadata.name, "ops");
-        assert_eq!(sessions[0].participants.len(), 1);
+        assert_eq!(sessions[0].channels.len(), 1);
     }
 
     #[test]

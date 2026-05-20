@@ -1,9 +1,8 @@
-use crate::llm::LLMClient;
 use crate::runtime::RuntimeManager;
 use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentState, Agent};
+use caelumora_model::agent::{Agent, AgentState};
 use caelumora_model::message::MessageEvent::{Complete, Partial};
 use caelumora_model::message::{Message, MessageEvent, MessageProcessor, ToolCall, ToolResult};
 use futures::stream::BoxStream;
@@ -11,7 +10,6 @@ use futures::TryStreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use caelumora_model::store::StoreResult;
 
 #[derive(Debug)]
 struct LoopState {
@@ -35,9 +33,9 @@ impl LoopState {
         // TODO: Apply perceive filter
         let mut state_guard = self.state.lock().await;
         // TODO: Apply history filter
-        state_guard.history.extend(messages.to_vec());
+        state_guard.history.extend(messages.clone());
         // TODO: Apply context filter
-        state_guard.context.extend(messages.to_vec());
+        state_guard.context.extend(messages);
         drop(state_guard);
     }
 
@@ -135,9 +133,8 @@ impl MessageProcessor for AgentLoop {
                             // Emit message
                             yield Ok(llm_event);
                         },
-                        MessageEvent::EndOfTurn => {
+                        MessageEvent::EndOfTurn( ref _vec) => {
                             yield Ok(llm_event);
-                            break;
                         }
                     }
                 }
@@ -151,7 +148,7 @@ impl MessageProcessor for AgentLoop {
             // After the loop or if we have enough context, perform a final reflection
             state.reflect().await?;
 
-            yield Ok(MessageEvent::EndOfTurn);
+            //yield Ok(MessageEvent::EndOfTurn);
         };
         Box::pin(stream)
     }
@@ -167,13 +164,13 @@ impl AgentLoop {
             Ok(s) => s,
             Err(NotFound) => {
                 let state = AgentState::default();
-                store.put_agent_state(agent.id, &state);
+                store.put_agent_state(agent.id, &state)?;
                 state
             }
         };
         let agent_handler = LoopState::new(agent, state);
         Ok(Self {
-            runtime_manager: runtime_manager,
+            runtime_manager,
             agent_state: Arc::new(agent_handler),
             max_iterations: 5
         })
@@ -202,7 +199,6 @@ impl AgentLoop {
                         message.sender_name = agent_name.clone();
                         message.sender_id = agent_id;
                         if let Some(msg) = agent_state.respond_partial(message).await {
-                        // Emit message
                             yield Ok(Partial(msg));
                         }
                     },
@@ -210,13 +206,15 @@ impl AgentLoop {
                         message.sender_name = agent_name.clone();
                         message.sender_id = agent_id;
                         if let Some(msg) = agent_state.respond_complete(message).await {
-                        // Emit message
                             yield Ok(Complete(msg));
                         }
                     },
-                    MessageEvent::EndOfTurn => {
-                        yield Ok(MessageEvent::EndOfTurn);
-                        break;
+                    MessageEvent::EndOfTurn(mut messages) => {
+                        for mut m in &mut messages {
+                            m.sender_name = agent_name.clone();
+                            m.sender_id = agent_id;
+                        }
+                        yield Ok(MessageEvent::EndOfTurn(messages));
                     }
                 }
             }

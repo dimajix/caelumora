@@ -373,11 +373,10 @@ impl StateStore for JsonFileStore {
 #[cfg(test)]
 mod tests {
     use crate::meta::{Metadata, Scope};
-    use chrono::Utc;
     use tempfile::tempdir;
 
     use super::*;
-    use crate::template::{ParticipantTemplate, ScopeTemplate};
+    use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
 
     fn make_personality() -> Personality {
         Personality {
@@ -398,7 +397,10 @@ mod tests {
                 ..Metadata::default()
             },
             scope: ScopeTemplate::GlobalScope,
-            participants: vec![ParticipantTemplate::User],
+            channels: vec![ChannelTemplate {
+                name: "general".to_string(),
+                participants: vec![ParticipantTemplate::User],
+            }],
         }
     }
 

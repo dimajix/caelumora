@@ -108,14 +108,14 @@ async fn run_repl(mut session: LoopRunner) -> anyhow::Result<()> {
                 let mut stream = session.send_messages(vec![user_message]).await;
                 while let Some(event) = stream.next().await {
                     match event {
-                        Ok(MessageEvent::Partial(message)) => {
+                        Ok(MessageEvent::Partial(_message)) => {
                         }
                         Ok(MessageEvent::Complete(message)) => {
                             if let Some(content) = message.content {
                                 println!("{}> {}", message.sender_name, content);
                             }
                         }
-                        Ok(MessageEvent::EndOfTurn) => {}
+                        Ok(MessageEvent::EndOfTurn(_messages)) => {}
                         Err(e) => {
                             eprintln!("Error: {}", e);
                             break;

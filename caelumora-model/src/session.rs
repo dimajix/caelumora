@@ -14,10 +14,27 @@ pub struct SessionContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Channel {
+    pub id: Uuid,
+    pub name: String,
+    pub participants: Vec<Participant>,
+}
+
+impl Channel {
+    pub fn new(name: String, participants: Vec<Participant>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            participants
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
     pub metadata: Metadata,
-    pub participants: Vec<Participant>,
+    pub channels: Vec<Channel>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

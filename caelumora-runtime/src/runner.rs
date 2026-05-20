@@ -39,7 +39,7 @@ async fn dispatch(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LoopRunner {
     id: Uuid,
     kind: String,

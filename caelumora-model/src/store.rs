@@ -146,7 +146,7 @@ mod tests {
                 id: Uuid::new_v4(),
                 metadata: Metadata::default(),
                 scope: ScopeTemplate::GlobalScope,
-                participants: Vec::new(),
+                channels: Vec::new(),
             })
         }
 

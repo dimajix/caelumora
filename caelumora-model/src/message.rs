@@ -32,7 +32,6 @@ pub struct ToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: Uuid,
-    pub session_id: Uuid,
     pub sender_id: Uuid,
     pub sender_name: String,
     pub role: MessageRole,
@@ -117,6 +116,12 @@ impl MessageHistory {
 }
 
 
+#[async_trait]
+pub trait MessageFilter: Send + Sync {
+    async fn process(&self, message: Message) -> Result<Message>;
+}
+
+
 #[derive(Debug, Clone)]
 pub enum MessageEvent {
     /// A partial piece of a message (e.g., a single sentence or a chunk of tokens)
@@ -124,13 +129,7 @@ pub enum MessageEvent {
     /// A complete message that is now ready to be routed/processed
     Complete(Message),
     /// A signal that this agent has finished its current turn
-    EndOfTurn,
-}
-
-
-#[async_trait]
-pub trait MessageFilter: Send + Sync {
-    async fn process(&self, message: Message) -> Result<Message>;
+    EndOfTurn(Vec<Message>),
 }
 
 #[async_trait]
@@ -148,7 +147,6 @@ mod tests {
     fn make_message(id: Uuid) -> Message {
         Message {
             id,
-            session_id: Uuid::nil(),
             sender_id: Uuid::nil(),
             sender_name: "tester".to_string(),
             role: MessageRole::User,

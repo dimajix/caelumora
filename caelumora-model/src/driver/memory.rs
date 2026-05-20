@@ -251,7 +251,7 @@ impl StateStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::meta::Metadata;
-    use crate::template::{ParticipantTemplate, ScopeTemplate};
+    use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
 
     fn make_personality(name: &str, scope: Scope) -> Personality {
         Personality {
@@ -273,7 +273,10 @@ mod tests {
                 ..Metadata::default()
             },
             scope: ScopeTemplate::GlobalScope,
-            participants: vec![ParticipantTemplate::User],
+            channels: vec![ChannelTemplate {
+                name: "general".to_string(),
+                participants: vec![ParticipantTemplate::User],
+            }],
         }
     }
 

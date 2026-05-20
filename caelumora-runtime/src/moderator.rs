@@ -5,10 +5,11 @@ use anyhow::Result;
 
 use dashmap::DashSet;
 use caelumora_model::agent::Agent;
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::{Message, MessageEvent, MessageRole};
+use crate::actor::ActorEvent;
 
 pub trait Moderator : Send + Sync + Debug {
-    fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>>;
+    fn route(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent>;
     fn add_agent(&self, agent: &Agent) -> Result<()>;
     fn remove_agent(&self, agent: &Agent) -> Result<()>;
 }
@@ -26,13 +27,30 @@ impl BroadcastModerator {
     }
 }
 
+impl BroadcastModerator {
+    fn handle_end_of_turn(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent> {
+        if let MessageEvent::EndOfTurn(messages) = &event.event {
+            let user_messages = replace_role(messages, MessageRole::User);
+            self.agents.iter()
+                .filter(|id| !user_messages.iter().any(|m| m.sender_id == **id))
+                .map(|id| (*id, event.next(*id, MessageEvent::EndOfTurn(user_messages.clone()))))
+                .collect()
+        }
+        else {
+            HashMap::new()
+        }
+    }
+}
 impl Moderator for BroadcastModerator {
-    fn route(&self, messages: &[Message]) -> HashMap<Uuid,Vec<Message>> {
-        let user_messages = replace_role(messages, MessageRole::User);
-        self.agents.iter()
-            .filter(|id| !user_messages.iter().any(|m| m.sender_id == **id))
-            .map(|id| (*id, user_messages.to_vec()))
-            .collect()
+    fn route(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent> {
+        match event.event {
+            MessageEvent::EndOfTurn(_) => {
+                self.handle_end_of_turn(event)
+            }
+            _ => {
+                HashMap::new()
+            }
+        }
     }
 
     fn add_agent(&self, agent: &Agent) -> Result<()> {

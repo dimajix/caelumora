@@ -1,197 +1,30 @@
-use std::arch::x86_64::_mm256_mask_roundscale_pd;
-use crate::agent::AgentLoop;
-use crate::moderator::Moderator;
-use crate::recorder::Recorder;
-use crate::runner::LoopRunner;
+use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
-use crate::session::SessionEvent::{AgentEvent, RouteRequest};
 use anyhow::Result;
-use async_stream::try_stream;
-use async_trait::async_trait;
-use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
-use caelumora_model::session::{Participant, Session};
+use caelumora_model::message::MessageProcessor;
+use caelumora_model::session::Session;
 use dashmap::DashMap;
-use futures::future::join_all;
-use futures::stream::{BoxStream, FuturesUnordered};
-use futures::{FutureExt, StreamExt, TryStreamExt};
-use std::collections::HashMap;
-use std::future::Future;
+use futures::StreamExt;
 use std::sync::Arc;
-use log::{debug, info};
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
-enum SessionEvent {
-    AgentEvent(MessageEvent),
-    RouteRequest(Vec<Message>)
-}
-
-
-struct MessageStream {
-    stream: BoxStream<'static, Result<MessageEvent>>,
-    all_messages: Vec<Message>,
-}
-
-impl MessageStream {
-    fn new(stream: BoxStream<'static, Result<MessageEvent>>) -> Self {
-        Self {
-            stream,
-            all_messages: Vec::new(),
-        }
-    }
-
-    async fn next_event(mut self) -> Result<(Self, Option<MessageEvent>)> {
-        let event = self.stream.try_next().await?;
-        if let Some(MessageEvent::Complete(message)) = &event {
-            self.all_messages.push(message.clone());
-        }
-
-        Ok((self, event))
-    }
-
-    fn all_messages(
-        self,
-    ) -> Vec<Message> {
-        self.all_messages
-    }
-}
-
-
-struct RouterState {
-    agents: Arc<HashMap<Uuid, LoopRunner>>,
-    moderator: Arc<Box<dyn Moderator>>,
-    num_route_decisions: i32,
-    max_route_decisions: i32
-}
-impl RouterState {
-    fn new(lp:&SessionLoop) -> Self {
-        Self {
-            agents: lp.agents.clone(),
-            moderator: lp.moderator.clone(),
-            num_route_decisions: 0,
-            max_route_decisions: 6
-        }
-    }
-
-    async fn route_messages(&mut self, messages: Vec<Message>) -> Result<Vec<BoxStream<'static,Result<MessageEvent>>>> {
-        let routes = self.moderator.route(messages.as_slice());
-        let message_ids: Vec<_> = messages.iter().map(|m| m.id).collect();
-        debug!("route_messages: decide routing messages={:?} targets={:?}", message_ids, routes.keys());
-
-        let agents = self.agents.clone();
-        if self.num_route_decisions >= self.max_route_decisions {
-            return Err(anyhow::anyhow!("Too many routings, stopping further propagation"));
-        }
-        self.num_route_decisions = self.num_route_decisions + 1;
-
-        // First, route all messages to all agents...
-        let futures = routes.into_iter().flat_map(|route| {
-            // Do not propagate message to sender again
-            let target_id = route.0;
-            let target_messages = route.1;
-            return if !target_messages.is_empty() && !target_messages.iter().any(|m| m.sender_id == target_id) {
-                if let Some(agent_loop) = agents.get(&target_id) {
-                    let message_ids: Vec<_> = target_messages.iter().map(|m| m.id).collect();
-                    debug!("route_messages: send messages={:?} target={target_id}", message_ids);
-                    Some(agent_loop.send_messages(target_messages))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
-
-        let streams = join_all(futures).await;
-        Ok(streams)
-    }
-}
-
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SessionLoop {
     session: Arc<Session>,
-    agents: Arc<HashMap<Uuid, LoopRunner>>,
-    moderator: Arc<Box<dyn Moderator>>,
-    recorder: Arc<Box<dyn Recorder>>,
+    channels: Vec<ChannelLoop>,
 }
 
-#[async_trait]
-impl MessageProcessor for SessionLoop {
-    fn id(&self) -> Uuid {
-        self.session.id
-    }
-
-    fn kind(&self) -> String {
-        "session".to_string()
-    }
-
-    fn name(&self) -> String {
-        self.session.metadata.name.clone()
-    }
-
-    async fn process_messages(
-        &mut self,
-        messages: Vec<Message>,
-    ) -> BoxStream<'static, Result<MessageEvent>> {
-        let mut state = RouterState::new(self);
-
-        let stream = try_stream! {
-            let mut pending = FuturesUnordered::new();
-            let routes = state.route_messages(messages).await?;
-            for route in routes {
-                let stream = MessageStream::new(route);
-                pending.push(stream.next_event());
-            }
-
-            while let Some(result) = pending.next().await {
-                let (stream, event) = result?;
-
-                match event {
-                    Some(ev) => {
-                        let n = stream.next_event();
-                        pending.push(n);
-                        yield ev
-                    }
-                    None => {
-                        // If that was the last event of that stream, request routing of the full event set again
-                        let messages = stream.all_messages;
-                        debug!("process_messages: route messages={:?}", messages);
-                        let routes = state.route_messages(messages).await?;
-                        for route in routes {
-                            let stream = MessageStream::new(route);
-                            pending.push(stream.next_event());
-                        }
-                    }
-                }
-            }
-        };
-        Box::pin(stream)
-    }
-}
 
 impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        let mut agents = HashMap::new();
-        let moderator = runtime_manager.moderator(&"".to_string())?;
-        let recorder = runtime_manager.recorder(&"".to_string())?;
-        for p in session.participants.iter() {
-            match &p {
-                Participant::User => {},
-                Participant::Agent(agent) => {
-                    let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
-                    let (runner, _) = LoopRunner::spawn(Box::new(l));
-                    moderator.add_agent(agent)?;
-                    agents.insert(agent.id.clone(), runner);
-                }
-            }
-        };
+        let channels = Vec::new();
+        for c in &session.channels {
+            let l = ChannelLoop::new(&session, c.clone(), runtime_manager.clone());
+        }
 
         Ok(Self {
             session: Arc::new(session),
-            agents: Arc::new(agents),
-            moderator: Arc::new(moderator),
-            recorder: Arc::new(recorder),
+            channels,
         })
     }
 
@@ -201,6 +34,10 @@ impl SessionLoop {
 
     pub fn id(&self) -> Uuid {
         self.session.id
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        todo!()
     }
 }
 
