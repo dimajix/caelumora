@@ -4,7 +4,6 @@ use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::Result;
-use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::session::{Channel, Participant, Session};
 use log::{debug, info};
 use std::collections::HashMap;
@@ -101,7 +100,7 @@ impl ChannelLoop {
     async fn route_event(&self, actors: &Arc<HashMap<Uuid,ActorHandle>>, event: &ActorEvent) -> Result<()> {
         let routes = self.moderator.route(&event);
 
-        if event.span_depth >= self.max_route_decisions {
+        if event.context.span_depth >= self.max_route_decisions {
             return Err(anyhow::anyhow!("Too many routings, stopping further propagation"));
         }
 
@@ -110,13 +109,13 @@ impl ChannelLoop {
             // Do not propagate message to sender again
             let target_id = route.0;
             let mut target_event = route.1;
-            target_event.channel_id = self.channel_id;
-            target_event.session_id = self.session_id;
-            target_event.span_id = event.span_id;
-            target_event.span_depth = event.span_depth + 1;
-            if target_event.sender_id != target_id {
+            target_event.context.channel_id = self.channel_id;
+            target_event.context.session_id = self.session_id;
+            target_event.context.span_id = event.context.span_id;
+            target_event.context.span_depth = event.context.span_depth + 1;
+            if target_event.context.sender_id != target_id {
                 if let Some(actor) = actors.get(&target_id) {
-                    debug!("route_messages: send event from={} to target={target_id}", target_event.sender_id);
+                    debug!("route_messages: send event from={} to target={target_id}", target_event.context.sender_id);
                     if let Err(e) = actor.request_tx.try_send(target_event) {
                         todo!()
                     }

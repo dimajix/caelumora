@@ -1,31 +1,59 @@
 use async_trait::async_trait;
+use caelumora_model::user::User;
 use chrono::{DateTime, Utc};
-use caelumora_model::message::{Message, MessageEvent, MessageProcessor};
 use log::{info, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
-use caelumora_model::user::User;
+use crate::message::{MessageEvent, MessageProcessor};
+use crate::security::SecurityContext;
 
-pub struct ActorEvent {
-    pub timestamp: DateTime<Utc>,
+#[derive(Debug, Clone)]
+pub struct EventContext {
     pub session_id: Uuid,
     pub channel_id: Uuid,
     pub sender_id: Uuid,
     pub span_id: Uuid,
     pub span_depth: i32,
-    pub event: MessageEvent
 }
 
-impl ActorEvent {
-    pub fn new(session_id: Uuid, channel_id: Uuid, sender_id:Uuid, event: MessageEvent) -> Self {
+impl EventContext {
+    pub fn new(session_id: Uuid, channel_id: Uuid, sender_id:Uuid) -> Self {
         Self {
-            timestamp: Utc::now(),
             session_id,
             channel_id,
             sender_id,
             span_id: Uuid::new_v4(),
             span_depth: 0,
+        }
+    }
+
+    pub fn next(&self, sender_id:Uuid) -> Self {
+        Self {
+            session_id: self.session_id,
+            channel_id: self.channel_id,
+            sender_id,
+            span_id: self.span_id,
+            span_depth: self.span_depth + 1,
+        }
+    }
+
+}
+
+#[derive(Debug, Clone)]
+pub struct ActorEvent {
+    pub timestamp: DateTime<Utc>,
+    pub security: SecurityContext,
+    pub context: EventContext,
+    pub event: MessageEvent
+}
+
+impl ActorEvent {
+    pub fn new(security: SecurityContext, context: EventContext, event: MessageEvent) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            security,
+            context,
             event
         }
     }
@@ -33,11 +61,8 @@ impl ActorEvent {
     pub fn next(&self, sender_id:Uuid, event:MessageEvent) -> Self {
         Self {
             timestamp: Utc::now(),
-            session_id: self.session_id,
-            channel_id: self.channel_id,
-            sender_id,
-            span_id: self.span_id,
-            span_depth: self.span_depth + 1,
+            security: self.security.next(sender_id),
+            context: self.context.next(sender_id),
             event
         }
     }
@@ -76,7 +101,7 @@ impl MessageProcessorActor {
 impl MessageProcessorActor {
     async fn handle_end_of_turn(&mut self, event:ActorEvent, tx: &Sender<ActorEvent>) {
         if let MessageEvent::EndOfTurn(messages) = &event.event {
-            let mut response = self.processor.process_messages(messages.clone()).await;
+            let mut response = self.processor.process_messages(messages.clone(), &event.security).await;
             while let Some(event_result) = response.next().await {
                 match event_result {
                     Ok(ev) => {

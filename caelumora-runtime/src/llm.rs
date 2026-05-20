@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use anyhow::Result;
 use futures::stream::BoxStream;
-use caelumora_model::message::{Message, MessageEvent};
-
+use caelumora_model::message::{Message};
+use crate::message::MessageEvent;
 
 #[async_trait]
 pub trait LLMClient: Send + Sync + Debug {

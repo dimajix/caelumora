@@ -3,13 +3,14 @@ use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentState};
-use caelumora_model::message::MessageEvent::{Complete, Partial};
-use caelumora_model::message::{Message, MessageEvent, MessageProcessor, ToolCall, ToolResult};
+use caelumora_model::message::{Message, ToolCall, ToolResult};
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use crate::message::{MessageEvent, MessageProcessor};
+use crate::security::SecurityContext;
 
 #[derive(Debug)]
 struct LoopState {
@@ -98,7 +99,7 @@ impl MessageProcessor for AgentLoop {
         self.agent_state.agent.metadata.name.clone()
     }
 
-    async fn process_messages(&mut self, messages: Vec<Message>) -> BoxStream<'static, Result<MessageEvent>> {
+    async fn process_messages(&mut self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
         // We create a new LoopState instance, which will be owned by the stream
         let state = self.clone();
 
@@ -119,7 +120,7 @@ impl MessageProcessor for AgentLoop {
 
                 while let Some(llm_event) = response.try_next().await? {
                     match llm_event {
-                        Complete(ref llm_message) => {
+                        MessageEvent::Complete(ref llm_message) => {
                             // Execute all tools
                             let tool_calls = llm_message.tool_calls.clone();
                             for c in tool_calls {
@@ -129,7 +130,7 @@ impl MessageProcessor for AgentLoop {
                             // Emit message
                             yield Ok(llm_event);
                         },
-                        Partial(ref _msg) => {
+                        MessageEvent::Partial(ref _msg) => {
                             // Emit message
                             yield Ok(llm_event);
                         },
@@ -195,18 +196,18 @@ impl AgentLoop {
         let result = stream! {
             while let Some(event) = messages.try_next().await? {
                 match event {
-                    Partial(mut message) => {
+                    MessageEvent::Partial(mut message) => {
                         message.sender_name = agent_name.clone();
                         message.sender_id = agent_id;
                         if let Some(msg) = agent_state.respond_partial(message).await {
-                            yield Ok(Partial(msg));
+                            yield Ok(MessageEvent::Partial(msg));
                         }
                     },
-                    Complete(mut message) => {
+                    MessageEvent::Complete(mut message) => {
                         message.sender_name = agent_name.clone();
                         message.sender_id = agent_id;
                         if let Some(msg) = agent_state.respond_complete(message).await {
-                            yield Ok(Complete(msg));
+                            yield Ok(MessageEvent::Complete(msg));
                         }
                     },
                     MessageEvent::EndOfTurn(mut messages) => {

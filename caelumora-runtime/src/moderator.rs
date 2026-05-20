@@ -1,12 +1,13 @@
+use anyhow::Result;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use uuid::Uuid;
-use anyhow::Result;
 
-use dashmap::DashSet;
-use caelumora_model::agent::Agent;
-use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use crate::actor::ActorEvent;
+use crate::message::MessageEvent;
+use caelumora_model::agent::Agent;
+use caelumora_model::message::{Message, MessageRole};
+use dashmap::DashSet;
 
 pub trait Moderator : Send + Sync + Debug {
     fn route(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent>;

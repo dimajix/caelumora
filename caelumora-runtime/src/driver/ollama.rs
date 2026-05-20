@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
-use caelumora_model::message::{Message, MessageEvent, MessageRole};
+use caelumora_model::message::{Message, MessageRole};
 use chrono::Utc;
 use futures::stream::BoxStream;
 use log::{debug, info};
@@ -11,6 +11,7 @@ use std::env;
 use uuid::Uuid;
 
 use crate::llm::LLMClient;
+use crate::message::MessageEvent;
 
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {

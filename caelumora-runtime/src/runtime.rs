@@ -6,10 +6,11 @@ use crate::tool::{DummyToolExecutor, ToolExecutor};
 use anyhow::Result;
 use std::sync::Arc;
 use caelumora_model::store::StateStore;
-
+use crate::security::{DummySecurityManager, SecurityManager};
 
 #[derive(Debug)]
 pub struct RuntimeManager {
+    security_manager: Arc<dyn SecurityManager>,
     state_store: Arc<dyn StateStore>,
     tool_executor: Arc<dyn ToolExecutor>,
     llm_client: Arc<dyn LLMClient>,
@@ -18,12 +19,15 @@ pub struct RuntimeManager {
 impl RuntimeManager {
     pub fn new(state_store: Arc<dyn StateStore>) -> Self {
         Self {
+            security_manager: Arc::new(DummySecurityManager::new()),
             state_store,
             tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
         }
     }
 
+    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
+    
     pub fn tool_executor(&self) -> Arc<dyn ToolExecutor> {
         self.tool_executor.clone()
     }

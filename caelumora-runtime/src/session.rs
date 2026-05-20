@@ -1,10 +1,8 @@
 use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
 use anyhow::Result;
-use caelumora_model::message::MessageProcessor;
 use caelumora_model::session::Session;
 use dashmap::DashMap;
-use futures::StreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
 
