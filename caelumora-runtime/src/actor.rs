@@ -66,6 +66,15 @@ impl ActorEvent {
             event
         }
     }
+
+    pub fn with_event(mut self, event: MessageEvent) -> Self {
+        self.event = event;
+        self
+    }
+    pub fn with_security(mut self, security_context: SecurityContext) -> Self {
+        self.security = security_context;
+        self
+    }
 }
 
 
@@ -179,4 +188,3 @@ impl Actor for UserActor {
         todo!()
     }
 }
-
