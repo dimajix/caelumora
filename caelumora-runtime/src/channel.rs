@@ -30,6 +30,7 @@ pub struct ChannelLoop {
     session_id: SessionId,
     channel: Arc<Channel>,
     runtime_manager: Arc<RuntimeManager>,
+    actors: HashMap<ActorId,Arc<Box<dyn Actor>>>,
     moderator: Box<dyn Moderator>,
     recorder: Box<dyn Recorder>,
     max_route_decisions: i32,
@@ -41,17 +42,56 @@ impl ChannelLoop {
         let moderator = runtime_manager.moderator(&"".to_string())?;
         let recorder = runtime_manager.recorder(&"".to_string())?;
 
+        let mut actors = HashMap::new();
+        for participant in &channel.participants {
+            let actor = Self::create_actor(participant, runtime_manager.clone())?;
+            moderator.add_actor(&actor);
+            actors.insert(actor.id(), Arc::new(actor));
+        }
+
         Ok(Self {
             id: channel.id,
             name: channel.name.clone(),
             session_id: session.id,
             channel: Arc::new(channel),
             runtime_manager,
+            actors,
             moderator,
             recorder,
             max_route_decisions: 100,
             run_lock: Mutex::new(())
         })
+    }
+
+    pub fn id(&self) -> ChannelId { self.id }
+    pub fn name(&self) -> String { self.name.clone() }
+
+    pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<Box<dyn Actor>>> {
+        self.actors.values().find(|c| c.id() == actor_id).map(|c| c.clone())
+    }
+    pub fn actor_by_name(&self, name: &str) -> Option<Arc<Box<dyn Actor>>> {
+        self.actors.values().find(|c| c.name() == name).map(|c| c.clone())
+    }
+
+    fn create_actor(participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
+        match participant {
+            Participant::User => {
+                let user = User {
+                    id: UserId(Uuid::new_v4()),
+                    username: "user".to_string(),
+                    email: String::new(),
+                    roles: vec!["user".to_string()],
+                };
+                let actor = UserActor::new(user.clone());
+                Ok(Box::new(actor))
+            },
+            Participant::Agent(agent) => {
+                let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
+                let actor = MessageProcessorActor::new(Box::new(l));
+                //self.moderator.add_actor(&actor);
+                Ok(Box::new(actor))
+            }
+        }
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -76,37 +116,15 @@ impl ChannelLoop {
 
     fn spawn_actors(&self, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
         let mut actors = HashMap::new();
-        for p in &self.channel.participants {
-            let actor = self.spawn_participant(p, event_tx.clone(), join_set)?;
-            actors.insert(actor.id, actor);
+        for (id, actor) in &self.actors {
+            let handle = self.spawn_actor(actor.clone(), event_tx.clone(), join_set);
+            actors.insert(*id, handle);
         };
 
         Ok(actors)
     }
 
-    fn spawn_participant(&self, participant: &Participant, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> Result<ActorHandle> {
-        match participant {
-            Participant::User => {
-                let user = User {
-                    id: UserId(Uuid::new_v4()),
-                    username: "user".to_string(),
-                    email: String::new(),
-                    roles: vec!["user".to_string()],
-                };
-                let actor = UserActor::new(user.clone());
-                Ok(self.spawn_actor(Box::new(actor), event_tx, join_set))
-            },
-            Participant::Agent(agent) => {
-                let l = AgentLoop::new(agent.clone(), self.runtime_manager.clone())?;
-                let actor:Box<dyn Actor> = Box::new(MessageProcessorActor::new(Box::new(l)));
-                self.moderator.add_actor(&actor);
-                Ok(self.spawn_actor(actor, event_tx, join_set))
-            }
-        }
-
-    }
-
-    fn spawn_actor(&self, mut actor: Box<dyn Actor>, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
+    fn spawn_actor(&self, actor: Arc<Box<dyn Actor>>, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
         let (msg_tx, msg_rx) = mpsc::channel(10);
         let event_tx = event_tx.clone();

@@ -1,8 +1,11 @@
+use std::fmt::Debug;
+use anyhow::anyhow;
+use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::user::User;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -82,12 +85,12 @@ impl ActorEvent {
 
 
 #[async_trait]
-pub trait Actor : Send + Sync {
+pub trait Actor : Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;
 
-    async fn run(&mut self, rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>);
+    async fn run(&self, rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) -> Result<()>;
 }
 
 
@@ -96,7 +99,8 @@ pub struct MessageProcessorActor {
     id: ActorId,
     kind: String,
     name: String,
-    processor: Box<dyn MessageProcessor>
+    processor: Box<dyn MessageProcessor>,
+    run_lock: Mutex<()>
 }
 
 impl MessageProcessorActor {
@@ -106,12 +110,13 @@ impl MessageProcessorActor {
             kind: processor.kind(),
             name: processor.name(),
             processor,
+            run_lock: Mutex::new(())
         }
     }
 }
 
 impl MessageProcessorActor {
-    async fn handle_end_of_turn(&mut self, event:ActorEvent, tx: &Sender<ActorEvent>) {
+    async fn handle_end_of_turn(&self, event:ActorEvent, tx: &Sender<ActorEvent>) {
         if let MessageEvent::EndOfTurn(messages) = &event.event {
             let mut response = self.processor.process_messages(messages.clone(), &event.security).await;
             while let Some(event_result) = response.next().await {
@@ -145,7 +150,10 @@ impl Actor for MessageProcessorActor {
         self.name.clone()
     }
 
-    async fn run(&mut self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) {
+    async fn run(&self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) -> Result<()>{
+        let _guard = self.run_lock.try_lock()
+            .map_err(|_| anyhow!("Already running"))?;
+
         info!("Actor {} is starting", self.id);
         while let Some(cmd) = rx.recv().await {
             match cmd.event {
@@ -156,17 +164,20 @@ impl Actor for MessageProcessorActor {
             }
         }
         info!("Actor {} has finished finished", self.id);
+        Ok(())
     }
 
 }
 
 
+#[derive(Debug)]
 pub struct UserActor {
     user: User,
     user_rx: Receiver<MessageEvent>,
     user_tx: Sender<MessageEvent>,
     actor_rx: Receiver<MessageEvent>,
     actor_tx: Sender<MessageEvent>,
+    run_lock: Mutex<()>
 }
 
 impl UserActor {
@@ -179,6 +190,7 @@ impl UserActor {
             user_tx: utx,
             actor_rx: arx,
             actor_tx: atx,
+            run_lock: Mutex::new(())
         }
     }
 }
@@ -197,7 +209,10 @@ impl Actor for UserActor {
         self.user.username.clone()
     }
 
-    async fn run(&mut self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) {
+    async fn run(&self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) -> Result<()> {
+        let _guard = self.run_lock.try_lock()
+            .map_err(|_| anyhow!("Already running"))?;
+
         info!("Actor {} is starting", self.user.id);
         while let Some(event) = rx.recv().await {
             if let Err(e) = self.actor_tx.try_send(event.event) {
@@ -205,5 +220,6 @@ impl Actor for UserActor {
             }
         }
         info!("Actor {} has finished finished", self.user.id);
+        Ok(())
     }
 }

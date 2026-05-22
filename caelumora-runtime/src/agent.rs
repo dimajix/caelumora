@@ -39,7 +39,7 @@ impl MessageProcessor for AgentLoop {
         self.agent.metadata.name.clone()
     }
 
-    async fn process_messages(&mut self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
+    async fn process_messages(&self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
         let state = self.clone();
         let max_iterations = self.max_iterations;
         let security_context = security_context.clone();

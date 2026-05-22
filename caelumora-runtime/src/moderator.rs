@@ -1,11 +1,8 @@
-use anyhow::Result;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use uuid::Uuid;
 
 use crate::actor::{Actor, ActorEvent};
 use crate::message::MessageEvent;
-use caelumora_model::agent::Agent;
 use caelumora_model::message::{ActorId, Message, MessageRole};
 use dashmap::DashSet;
 

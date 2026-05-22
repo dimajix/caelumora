@@ -17,25 +17,34 @@ struct ChannelHandle {
 pub struct SessionLoop {
     session: Arc<Session>,
     runtime_manager: Arc<RuntimeManager>,
+    channels: HashMap<ChannelId,Arc<ChannelLoop>>,
     run_lock: Mutex<()>
 }
 
 impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+        let mut channels = HashMap::new();
+        for channel in &session.channels {
+            let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone())?;
+            channels.insert(cl.id(), Arc::new(cl));
+        }
         let session_ref = Arc::new(session);
 
         Ok(Self {
             session: session_ref,
             runtime_manager,
+            channels,
             run_lock: Mutex::new(())
         })
     }
 
-    pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Channel> {
-        self.session.channels.iter().find(|c| c.id == channel_id).map(|c| c.clone())
+    pub fn id(&self) -> SessionId { self.session.id }
+
+    pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
+        self.channels.values().find(|c| c.id() == channel_id).map(|c| c.clone())
     }
-    pub fn channel_by_name(&self, name: &str) -> Option<Channel> {
-        self.session.channels.iter().find(|c| c.name == name).map(|c| c.clone())
+    pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
+        self.channels.values().find(|c| c.name() == name).map(|c| c.clone())
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -54,20 +63,19 @@ impl SessionLoop {
 
     fn spawn_channels(&self, join_set: &mut JoinSet<ChannelId>) -> Result<HashMap<ChannelId, ChannelHandle>> {
         let mut channels = HashMap::new();
-        for channel in &self.session.channels {
+        for (id, channel) in &self.channels {
             let handle = self.spawn_channel(channel.clone(), join_set)?;
-            channels.insert(channel.id, handle);
+            channels.insert(id.clone(), handle);
         };
 
         Ok(channels)
     }
 
-    fn spawn_channel(&self, channel: Channel, join_set: &mut JoinSet<ChannelId>) -> Result<ChannelHandle> {
-        let id = channel.id;
-        let cl = ChannelLoop::new(&self.session, channel, self.runtime_manager.clone())?;
+    fn spawn_channel(&self, channel: Arc<ChannelLoop>, join_set: &mut JoinSet<ChannelId>) -> Result<ChannelHandle> {
+        let id = channel.id();
         let abort_handle = join_set.spawn(async move {
-            let _ = cl.run().await;
-            id
+            let _ = channel.run().await;
+            channel.id()
         });
 
         let handle = ChannelHandle {

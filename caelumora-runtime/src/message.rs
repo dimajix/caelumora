@@ -25,5 +25,5 @@ pub trait MessageProcessor: Send + Sync + Debug {
     fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;
-    async fn process_messages(&mut self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, anyhow::Result<MessageEvent>>;
+    async fn process_messages(&self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, anyhow::Result<MessageEvent>>;
 }
