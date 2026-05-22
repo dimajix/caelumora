@@ -3,20 +3,20 @@ use std::sync::RwLock;
 
 use uuid::Uuid;
 
-use crate::agent::{Agent, AgentState, Personality};
+use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
-use crate::session::{Session, SessionState};
+use crate::session::{Session, SessionId, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
-use crate::template::SessionTemplate;
+use crate::template::{SessionTemplate, SessionTemplateId};
 
 #[derive(Debug, Default)]
 pub struct MemoryStore {
-    personalities: RwLock<HashMap<Uuid, Personality>>,
+    personalities: RwLock<HashMap<PersonalityId, Personality>>,
     session_templates: RwLock<HashMap<String, SessionTemplate>>,
-    agents: RwLock<HashMap<Uuid, Agent>>,
-    sessions: RwLock<HashMap<Uuid, Session>>,
-    agent_states: RwLock<HashMap<Uuid, AgentState>>,
-    session_states: RwLock<HashMap<Uuid, SessionState>>,
+    agents: RwLock<HashMap<AgentId, Agent>>,
+    sessions: RwLock<HashMap<SessionId, Session>>,
+    agent_states: RwLock<HashMap<AgentId, AgentState>>,
+    session_states: RwLock<HashMap<SessionId, SessionState>>,
 }
 
 impl MemoryStore {
@@ -30,7 +30,7 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
 }
 
 impl TemplateStore for MemoryStore {
-    fn get_personality(&self, id: Uuid) -> StoreResult<Personality> {
+    fn get_personality(&self, id: PersonalityId) -> StoreResult<Personality> {
         let values = self
             .personalities
             .read()
@@ -70,7 +70,7 @@ impl TemplateStore for MemoryStore {
         Ok(())
     }
 
-    fn delete_personality(&self, id: Uuid) -> StoreResult<bool> {
+    fn delete_personality(&self, id: PersonalityId) -> StoreResult<bool> {
         let mut values = self
             .personalities
             .write()
@@ -110,7 +110,7 @@ impl TemplateStore for MemoryStore {
         Ok(())
     }
 
-    fn delete_session_template(&self, id: Uuid) -> StoreResult<bool> {
+    fn delete_session_template(&self, id: SessionTemplateId) -> StoreResult<bool> {
         let mut values = self
             .session_templates
             .write()
@@ -139,7 +139,7 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    fn get_agent(&self, id: Uuid) -> StoreResult<Agent> {
+    fn get_agent(&self, id: AgentId) -> StoreResult<Agent> {
         let values = self
             .agents
             .read()
@@ -185,7 +185,7 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    fn get_session(&self, id: Uuid) -> StoreResult<Session> {
+    fn get_session(&self, id: SessionId) -> StoreResult<Session> {
         let values = self
             .sessions
             .read()
@@ -208,7 +208,7 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    fn get_agent_state(&self, agent_id: Uuid) -> StoreResult<AgentState> {
+    fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let values = self
             .agent_states
             .read()
@@ -216,7 +216,7 @@ impl StateStore for MemoryStore {
         require_entity(values.get(&agent_id).cloned(), "agent_state", agent_id.to_string())
     }
 
-    fn put_agent_state(&self, agent_id: Uuid, state: &AgentState) -> StoreResult<()> {
+    fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
         let mut values = self
             .agent_states
             .write()
@@ -225,7 +225,7 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    fn get_session_state(&self, session_id: Uuid) -> StoreResult<SessionState> {
+    fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
         let values = self
             .session_states
             .read()
@@ -237,7 +237,7 @@ impl StateStore for MemoryStore {
         )
     }
 
-    fn put_session_state(&self, session_id: Uuid, state: &SessionState) -> StoreResult<()> {
+    fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         let mut values = self
             .session_states
             .write()
@@ -252,10 +252,11 @@ mod tests {
     use super::*;
     use crate::meta::Metadata;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
+    use crate::user::UserId;
 
     fn make_personality(name: &str, scope: Scope) -> Personality {
         Personality {
-            id: Uuid::new_v4(),
+            id: PersonalityId(Uuid::new_v4()),
             metadata: Metadata {
                 name: name.to_string(),
                 scope,
@@ -266,7 +267,7 @@ mod tests {
 
     fn make_session_template(name: &str, scope: Scope) -> SessionTemplate {
         SessionTemplate {
-            id: Uuid::new_v4(),
+            id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {
                 name: name.to_string(),
                 scope,
@@ -290,7 +291,7 @@ mod tests {
             .put_personality(&make_personality(
                 "assistant",
                 Scope::UserScope {
-                    user_id: Uuid::new_v4(),
+                    user_id: UserId(Uuid::new_v4()),
                 },
             ))
             .unwrap();
@@ -305,7 +306,7 @@ mod tests {
     fn session_template_lookup_honors_scope() {
         let store = MemoryStore::new();
         let user_scope = Scope::UserScope {
-            user_id: Uuid::new_v4(),
+            user_id: UserId(Uuid::new_v4()),
         };
 
         store

@@ -1,7 +1,7 @@
-use crate::agent::{Agent, AgentState, Personality};
-use crate::session::{Session, SessionState};
+use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::session::{Session, SessionId, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
-use crate::template::{SessionTemplate};
+use crate::template::{SessionTemplate, SessionTemplateId};
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ impl JsonFileStore {
 
     fn ensure_layout(&self) -> StoreResult<()> {
         let dirs = [
-            self.agent_templates_dir(),
+            self.personality_dir(),
             self.session_templates_dir(),
             self.agents_dir(),
             self.sessions_dir(),
@@ -40,7 +40,7 @@ impl JsonFileStore {
         Ok(())
     }
 
-    fn agent_templates_dir(&self) -> PathBuf {
+    fn personality_dir(&self) -> PathBuf {
         self.root.join("templates").join("agents")
     }
 
@@ -64,8 +64,8 @@ impl JsonFileStore {
         self.root.join("runtime").join("session_state")
     }
 
-    fn agent_template_path(&self, id: Uuid) -> PathBuf {
-        self.agent_templates_dir().join(format!("{id}.json"))
+    fn personality_path(&self, id: PersonalityId) -> PathBuf {
+        self.personality_dir().join(format!("{id}.json"))
     }
 
     fn session_template_path(&self, name: &str) -> PathBuf {
@@ -73,19 +73,19 @@ impl JsonFileStore {
             .join(format!("{}.json", sanitize_file_component(name)))
     }
 
-    fn agent_path(&self, id: Uuid) -> PathBuf {
+    fn agent_path(&self, id: AgentId) -> PathBuf {
         self.agents_dir().join(format!("{id}.json"))
     }
 
-    fn session_path(&self, id: Uuid) -> PathBuf {
+    fn session_path(&self, id: SessionId) -> PathBuf {
         self.sessions_dir().join(format!("{id}.json"))
     }
 
-    fn agent_state_path(&self, id: Uuid) -> PathBuf {
+    fn agent_state_path(&self, id: AgentId) -> PathBuf {
         self.agent_states_dir().join(format!("{id}.json"))
     }
 
-    fn session_state_path(&self, id: Uuid) -> PathBuf {
+    fn session_state_path(&self, id: SessionId) -> PathBuf {
         self.session_states_dir().join(format!("{id}.json"))
     }
 }
@@ -161,8 +161,8 @@ fn sanitize_file_component(value: &str) -> String {
 }
 
 impl TemplateStore for JsonFileStore {
-    fn get_personality(&self, id: Uuid) -> StoreResult<Personality> {
-        let path = self.agent_template_path(id);
+    fn get_personality(&self, id: PersonalityId) -> StoreResult<Personality> {
+        let path = self.personality_path(id);
         let loaded = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_template", id.to_string())
     }
@@ -179,7 +179,7 @@ impl TemplateStore for JsonFileStore {
     }
 
     fn list_personalities(&self) -> StoreResult<Vec<Personality>> {
-        Ok(read_all_from_dir::<Persisted<Personality>>(&self.agent_templates_dir())?
+        Ok(read_all_from_dir::<Persisted<Personality>>(&self.personality_dir())?
             .into_iter()
             .map(|p| p.value)
             .collect())
@@ -204,7 +204,7 @@ impl TemplateStore for JsonFileStore {
     }
 
     fn put_personality(&self, value: &Personality) -> StoreResult<()> {
-        let path = self.agent_template_path(value.id);
+        let path = self.personality_path(value.id);
         write_json_atomic(
             &path,
             &Persisted {
@@ -215,8 +215,8 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn delete_personality(&self, id: Uuid) -> StoreResult<bool> {
-        delete_if_exists(&self.agent_template_path(id))
+    fn delete_personality(&self, id: PersonalityId) -> StoreResult<bool> {
+        delete_if_exists(&self.personality_path(id))
     }
 
     fn put_session_template(&self, value: &SessionTemplate) -> StoreResult<()> {
@@ -231,7 +231,7 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn delete_session_template(&self, id: Uuid) -> StoreResult<bool> {
+    fn delete_session_template(&self, id: SessionTemplateId) -> StoreResult<bool> {
         let template = self
             .list_session_templates()?
             .into_iter()
@@ -262,7 +262,7 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_agent(&self, id: Uuid) -> StoreResult<Agent> {
+    fn get_agent(&self, id: AgentId) -> StoreResult<Agent> {
         let path = self.agent_path(id);
         let loaded = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent", id.to_string())
@@ -309,7 +309,7 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_session(&self, id: Uuid) -> StoreResult<Session> {
+    fn get_session(&self, id: SessionId) -> StoreResult<Session> {
         let path = self.session_path(id);
         let loaded = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session", id.to_string())
@@ -333,13 +333,13 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_agent_state(&self, agent_id: Uuid) -> StoreResult<AgentState> {
+    fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         let loaded = read_json_opt::<Persisted<AgentState>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_state", agent_id.to_string())
     }
 
-    fn put_agent_state(&self, agent_id: Uuid, state: &AgentState) -> StoreResult<()> {
+    fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
         write_json_atomic(
             &path,
@@ -351,13 +351,13 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_session_state(&self, session_id: Uuid) -> StoreResult<SessionState> {
+    fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
         let path = self.session_state_path(session_id);
         let loaded = read_json_opt::<Persisted<SessionState>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session_state", session_id.to_string())
     }
 
-    fn put_session_state(&self, session_id: Uuid, state: &SessionState) -> StoreResult<()> {
+    fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
         write_json_atomic(
             &path,
@@ -380,7 +380,7 @@ mod tests {
 
     fn make_personality() -> Personality {
         Personality {
-            id: Uuid::new_v4(),
+            id: PersonalityId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "assistant".to_string(),
                 description: "Helpful assistant".to_string(),
@@ -391,7 +391,7 @@ mod tests {
 
     fn make_session_template() -> SessionTemplate {
         SessionTemplate {
-            id: Uuid::new_v4(),
+            id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "pairing".to_string(),
                 ..Metadata::default()
@@ -489,7 +489,7 @@ mod tests {
         assert!(matches!(conflict, StoreError::Conflict(_)));
 
         let missing_agent = Agent {
-            id: Uuid::new_v4(),
+            id: AgentId(Uuid::new_v4()),
             ..agent
         };
         let not_found = store.update_agent(&missing_agent).unwrap_err();

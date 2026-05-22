@@ -1,12 +1,33 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use sha256::Sha256Digest;
-use async_trait::async_trait;
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha256::Sha256Digest;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use derive_more::Display;
 use uuid::Uuid;
-use futures::stream::BoxStream;
+use crate::agent::AgentId;
+use crate::user::UserId;
+
+#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MessageId(pub Uuid);
+
+
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ActorId {
+    None,
+    User(UserId),
+    Agent(AgentId)
+}
+impl ActorId {
+    fn id(&self) -> Uuid {
+        match &self {
+            ActorId::None => {Uuid::nil()}
+            ActorId::User(id) => {id.0}
+            ActorId::Agent(id) => {id.0}
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MessageRole {
@@ -31,8 +52,8 @@ pub struct ToolResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
-    pub id: Uuid,
-    pub sender_id: Uuid,
+    pub id: MessageId,
+    pub sender_id: ActorId,
     pub sender_name: String,
     pub role: MessageRole,
     pub content: Option<String>,
@@ -120,10 +141,10 @@ impl MessageHistory {
 mod tests {
     use super::*;
 
-    fn make_message(id: Uuid) -> Message {
+    fn make_message(id: MessageId) -> Message {
         Message {
             id,
-            sender_id: Uuid::nil(),
+            sender_id: ActorId::None,
             sender_name: "tester".to_string(),
             role: MessageRole::User,
             content: Some("hello".to_string()),
@@ -144,7 +165,7 @@ mod tests {
 
     #[test]
     fn message_context_push_updates_recursive_digest() {
-        let message_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let message_id = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
         let message = make_message(message_id);
 
         let mut context = MessageContext::new();
@@ -158,9 +179,9 @@ mod tests {
 
     #[test]
     fn message_context_extend_builds_recursive_digest_chain() {
-        let id1 = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-        let id2 = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
-        let id3 = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
+        let id1 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
+        let id2 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap());
+        let id3 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap());
         let m1 = make_message(id1);
         let m2 = make_message(id2);
         let m3 = make_message(id3);
@@ -183,9 +204,9 @@ mod tests {
 
     #[test]
     fn message_context_extend_matches_repeated_push_digest() {
-        let id1 = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
-        let id2 = Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap();
-        let id3 = Uuid::parse_str("00000000-0000-0000-0000-000000000013").unwrap();
+        let id1 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap());
+        let id2 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap());
+        let id3 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000013").unwrap());
         let messages = vec![make_message(id1), make_message(id2), make_message(id3)];
 
         let mut extend_context = MessageContext::new();

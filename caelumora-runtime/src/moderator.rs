@@ -3,36 +3,36 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use uuid::Uuid;
 
-use crate::actor::ActorEvent;
+use crate::actor::{Actor, ActorEvent};
 use crate::message::MessageEvent;
 use caelumora_model::agent::Agent;
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::{ActorId, Message, MessageRole};
 use dashmap::DashSet;
 
 pub trait Moderator : Send + Sync + Debug {
-    fn route(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent>;
-    fn add_agent(&self, agent: &Agent) -> Result<()>;
-    fn remove_agent(&self, agent: &Agent) -> Result<()>;
+    fn route(&self, event: &ActorEvent) -> HashMap<ActorId,ActorEvent>;
+    fn add_actor(&self, actor: &Box<dyn Actor>) -> ();
+    fn remove_actor(&self, actor: &Box<dyn Actor>) -> ();
 }
 
 #[derive(Debug)]
 pub struct BroadcastModerator {
-    agents: DashSet<Uuid>,
+    actors: DashSet<ActorId>,
 }
 
 impl BroadcastModerator {
     pub fn new() -> Self {
         Self {
-            agents: DashSet::new(),
+            actors: DashSet::new(),
         }
     }
 }
 
 impl BroadcastModerator {
-    fn handle_end_of_turn(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent> {
+    fn handle_end_of_turn(&self, event: &ActorEvent) -> HashMap<ActorId,ActorEvent> {
         if let MessageEvent::EndOfTurn(messages) = &event.event {
             let user_messages = replace_role(messages, MessageRole::User);
-            self.agents.iter()
+            self.actors.iter()
                 .filter(|id| !user_messages.iter().any(|m| m.sender_id == **id))
                 .map(|id| (*id, event.next(*id, MessageEvent::EndOfTurn(user_messages.clone()))))
                 .collect()
@@ -43,7 +43,7 @@ impl BroadcastModerator {
     }
 }
 impl Moderator for BroadcastModerator {
-    fn route(&self, event: &ActorEvent) -> HashMap<Uuid,ActorEvent> {
+    fn route(&self, event: &ActorEvent) -> HashMap<ActorId,ActorEvent> {
         match event.event {
             MessageEvent::EndOfTurn(_) => {
                 self.handle_end_of_turn(event)
@@ -54,14 +54,12 @@ impl Moderator for BroadcastModerator {
         }
     }
 
-    fn add_agent(&self, agent: &Agent) -> Result<()> {
-        self.agents.insert(agent.id);
-        Ok(())
+    fn add_actor(&self, actor: &Box<dyn Actor>) -> () {
+        self.actors.insert(actor.id());
     }
 
-    fn remove_agent(&self, agent: &Agent) -> Result<()> {
-        self.agents.remove(&agent.id);
-        Ok(())
+    fn remove_actor(&self, agent: &Box<dyn Actor>) -> () {
+        self.actors.remove(&agent.id());
     }
 }
 

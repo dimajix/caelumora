@@ -2,28 +2,38 @@ use crate::agent::Agent;
 use crate::message::Message;
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::store::EntityResolver;
+use crate::user::UserId;
 
+#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(pub Uuid);
 
 pub struct SessionContext {
-    pub id: Uuid,
-    pub owner: Uuid,
+    pub id: SessionId,
+    pub owner: UserId,
     pub resolver: Box<dyn EntityResolver>
 }
 
+#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ChannelId(pub Uuid);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
-    pub id: Uuid,
+    pub id: ChannelId,
     pub name: String,
     pub participants: Vec<Participant>,
 }
 
 impl Channel {
     pub fn new(name: String, participants: Vec<Participant>) -> Self {
+        let id = ChannelId(Uuid::new_v4());
         Self {
-            id: Uuid::new_v4(),
+            id,
             name,
             participants
         }
@@ -32,7 +42,7 @@ impl Channel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
-    pub id: Uuid,
+    pub id: SessionId,
     pub metadata: Metadata,
     pub channels: Vec<Channel>,
     pub created_at: DateTime<Utc>,

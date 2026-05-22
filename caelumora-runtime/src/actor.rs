@@ -2,23 +2,26 @@ use async_trait::async_trait;
 use caelumora_model::user::User;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
+use caelumora_model::message::ActorId;
+use caelumora_model::session::{ChannelId, SessionId};
 use crate::message::{MessageEvent, MessageProcessor};
 use crate::security::SecurityContext;
 
 #[derive(Debug, Clone)]
 pub struct EventContext {
-    pub session_id: Uuid,
-    pub channel_id: Uuid,
-    pub sender_id: Uuid,
+    pub session_id: SessionId,
+    pub channel_id: ChannelId,
+    pub sender_id: ActorId,
     pub span_id: Uuid,
     pub span_depth: i32,
 }
 
 impl EventContext {
-    pub fn new(session_id: Uuid, channel_id: Uuid, sender_id:Uuid) -> Self {
+    pub fn new(session_id: SessionId, channel_id: ChannelId, sender_id:ActorId) -> Self {
         Self {
             session_id,
             channel_id,
@@ -28,7 +31,7 @@ impl EventContext {
         }
     }
 
-    pub fn next(&self, sender_id:Uuid) -> Self {
+    pub fn next(&self, sender_id:ActorId) -> Self {
         Self {
             session_id: self.session_id,
             channel_id: self.channel_id,
@@ -58,7 +61,7 @@ impl ActorEvent {
         }
     }
 
-    pub fn next(&self, sender_id:Uuid, event:MessageEvent) -> Self {
+    pub fn next(&self, sender_id:ActorId, event:MessageEvent) -> Self {
         Self {
             timestamp: Utc::now(),
             security: self.security.next(sender_id),
@@ -80,7 +83,7 @@ impl ActorEvent {
 
 #[async_trait]
 pub trait Actor : Send + Sync {
-    fn id(&self) -> Uuid;
+    fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;
 
@@ -90,7 +93,7 @@ pub trait Actor : Send + Sync {
 
 #[derive(Debug)]
 pub struct MessageProcessorActor {
-    id: Uuid,
+    id: ActorId,
     kind: String,
     name: String,
     processor: Box<dyn MessageProcessor>
@@ -132,7 +135,7 @@ impl MessageProcessorActor {
 
 #[async_trait]
 impl Actor for MessageProcessorActor {
-    fn id(&self) -> Uuid {
+    fn id(&self) -> ActorId {
         self.id
     }
     fn kind(&self) -> String {
@@ -159,21 +162,31 @@ impl Actor for MessageProcessorActor {
 
 
 pub struct UserActor {
-    user: User
+    user: User,
+    user_rx: Receiver<MessageEvent>,
+    user_tx: Sender<MessageEvent>,
+    actor_rx: Receiver<MessageEvent>,
+    actor_tx: Sender<MessageEvent>,
 }
 
 impl UserActor {
     pub fn new(user:User) -> Self {
+        let (utx,urx) = mpsc::channel(100);
+        let (atx,arx) = mpsc::channel(100);
         Self {
-            user
+            user,
+            user_rx: urx,
+            user_tx: utx,
+            actor_rx: arx,
+            actor_tx: atx,
         }
     }
 }
 
 #[async_trait]
 impl Actor for UserActor {
-    fn id(&self) -> Uuid {
-        todo!()
+    fn id(&self) -> ActorId {
+        ActorId::User(self.user.id)
     }
 
     fn kind(&self) -> String{
@@ -184,7 +197,13 @@ impl Actor for UserActor {
         self.user.username.clone()
     }
 
-    async fn run(&mut self, rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) {
-        todo!()
+    async fn run(&mut self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) {
+        info!("Actor {} is starting", self.user.id);
+        while let Some(event) = rx.recv().await {
+            if let Err(e) = self.actor_tx.try_send(event.event) {
+                warn!("Cannot send event back")
+            }
+        }
+        info!("Actor {} has finished finished", self.user.id);
     }
 }

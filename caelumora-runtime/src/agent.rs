@@ -2,8 +2,8 @@ use crate::runtime::RuntimeManager;
 use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
-use caelumora_model::agent::{Agent, AgentState};
-use caelumora_model::message::{Message, ToolCall, ToolResult};
+use caelumora_model::agent::{Agent, AgentId, AgentState};
+use caelumora_model::message::{ActorId, Message, ToolCall, ToolResult};
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
@@ -27,8 +27,8 @@ pub struct AgentLoop {
 
 #[async_trait]
 impl MessageProcessor for AgentLoop {
-    fn id(&self) -> Uuid {
-        self.agent.id
+    fn id(&self) -> ActorId {
+        ActorId::Agent(self.agent.id)
     }
 
     fn kind(&self) -> String {
@@ -124,7 +124,7 @@ impl AgentLoop {
         }
     }
 
-    pub fn agent_id(&self) -> Uuid {
+    pub fn agent_id(&self) -> AgentId {
         self.agent.id
     }
 
@@ -176,7 +176,7 @@ impl AgentLoop {
     async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
         let agent_state = self.clone();
-        let agent_id = agent_state.agent.id;
+        let agent_id = ActorId::Agent(agent_state.agent.id);
         let agent_name = agent_state.agent.metadata.name.clone();
         let context = agent_state.context().await;
         let mut messages = llm_client.chat_completion(context.as_slice()).await;

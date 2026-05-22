@@ -2,8 +2,10 @@ use crate::meta::Scope::{ChannelScope, GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
 use crate::session::{Channel, Participant, Session, SessionContext};
 use chrono::Utc;
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use crate::agent::PersonalityId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScopeTemplate {
@@ -50,9 +52,14 @@ impl ChannelTemplate {
     }
 }
 
+
+#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionTemplateId(pub Uuid);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTemplate {
-    pub id: Uuid,
+    pub id: SessionTemplateId,
     pub metadata: Metadata,
     pub scope: ScopeTemplate,
     pub channels: Vec<ChannelTemplate>,
@@ -88,7 +95,7 @@ pub enum ParticipantTemplate {
     Agent {
         name: String,
         scope: ScopeTemplate,
-        personality_id: Uuid,
+        personality_id: PersonalityId,
     },
 }
 

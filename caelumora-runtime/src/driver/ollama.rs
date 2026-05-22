@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use chrono::Utc;
 use futures::stream::BoxStream;
 use log::{debug, info};
@@ -86,7 +86,7 @@ impl LLMClient for OllamaClient {
             stream: false,
         };
 
-        let sender_id = Uuid::nil();
+        let sender_id = ActorId::None;
         let sender_name= "ollama".to_string();
 
         let http = self.http.clone();
@@ -112,7 +112,7 @@ impl LLMClient for OllamaClient {
             );
 
             let message = Message {
-                id: Uuid::new_v4(),
+                id: MessageId(Uuid::new_v4()),
                 sender_id,
                 sender_name,
                 role: MessageRole::Assistant,

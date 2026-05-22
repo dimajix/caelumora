@@ -1,9 +1,8 @@
-use std::fmt::Debug;
-use async_trait::async_trait;
-use futures::stream::BoxStream;
-use uuid::Uuid;
-use caelumora_model::message::Message;
 use crate::security::SecurityContext;
+use async_trait::async_trait;
+use caelumora_model::message::{ActorId, Message};
+use futures::stream::BoxStream;
+use std::fmt::Debug;
 
 #[async_trait]
 pub trait MessageFilter: Send + Sync {
@@ -23,7 +22,7 @@ pub enum MessageEvent {
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync + Debug {
-    fn id(&self) -> Uuid;
+    fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;
     async fn process_messages(&mut self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, anyhow::Result<MessageEvent>>;
