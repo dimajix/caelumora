@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use uuid::Uuid;
 use caelumora_model::message::ActorId;
 
 #[derive(Debug, Clone)]

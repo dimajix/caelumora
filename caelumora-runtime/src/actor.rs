@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use caelumora_model::user::User;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 use caelumora_model::message::ActorId;
-use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use crate::message::{MessageEvent, MessageProcessor};
 use crate::security::SecurityContext;
 
@@ -172,26 +172,42 @@ impl Actor for MessageProcessorActor {
 
 #[derive(Debug)]
 pub struct UserActor {
+    session_id: SessionId,
+    channel_id: ChannelId,
+    security_context: SecurityContext,
     user: User,
-    user_rx: Receiver<MessageEvent>,
+    user_rx: Mutex<Receiver<MessageEvent>>,
     user_tx: Sender<MessageEvent>,
-    actor_rx: Receiver<MessageEvent>,
+    actor_rx: Mutex<Receiver<MessageEvent>>,
     actor_tx: Sender<MessageEvent>,
-    run_lock: Mutex<()>
 }
 
 impl UserActor {
-    pub fn new(user:User) -> Self {
+    pub fn new(session: &Session, channel: &Channel, user:User) -> Self {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
         Self {
+            session_id: session.id,
+            channel_id: channel.id,
+            security_context: SecurityContext {
+                initiator_id: ActorId::User(user.id),
+                sender_id: ActorId::User(user.id),
+            },
             user,
-            user_rx: urx,
+            user_rx: Mutex::new(urx),
             user_tx: utx,
-            actor_rx: arx,
+            actor_rx: Mutex::new(arx),
             actor_tx: atx,
-            run_lock: Mutex::new(())
         }
+    }
+
+    pub async fn send_message(&self, message: MessageEvent) -> Result<()> {
+        self.user_tx.send(message).await?;
+        Ok(())
+    }
+
+    pub async fn lock_receiver(&self) -> MutexGuard<Receiver<MessageEvent>> {
+        self.actor_rx.lock().await
     }
 }
 
@@ -210,13 +226,47 @@ impl Actor for UserActor {
     }
 
     async fn run(&self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) -> Result<()> {
-        let _guard = self.run_lock.try_lock()
+        let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("Already running"))?;
+        let mut rx_closed = false;
+        let mut user_rx_closed = false;
 
         info!("Actor {} is starting", self.user.id);
-        while let Some(event) = rx.recv().await {
-            if let Err(e) = self.actor_tx.try_send(event.event) {
-                warn!("Cannot send event back")
+        while !rx_closed || !user_rx_closed {
+            tokio::select! {
+                maybe_event = rx.recv(), if !rx_closed => {
+                    match maybe_event {
+                        Some(event) => {
+                            if let Err(e) = self.actor_tx.send(event.event.clone()).await {
+                                warn!("Actor {} cannot forward event because of an error: {}", self.user.id, e);
+                                rx_closed = true;
+                                user_rx_closed = true;
+                                continue;
+                            }
+                        }
+                        None => {
+                            rx_closed = true;
+                        }
+                    }
+                }
+                maybe_message = user_rx.recv(), if !user_rx_closed => {
+                    match maybe_message {
+                        Some(message) => {
+                            let context = EventContext::new(self.session_id, self.channel_id, self.id());
+                            let event = ActorEvent::new(self.security_context.clone(), context, message);
+                            if let Err(e) = tx.send(event).await {
+                                warn!("Actor {} cannot forward user message because of an error: {}", self.user.id, e);
+                                rx_closed = true;
+                                user_rx_closed = true;
+                                continue;
+                            }
+                        }
+                        None => {
+                            user_rx_closed = true;
+                        }
+                    }
+                }
+                else => break,
             }
         }
         info!("Actor {} has finished finished", self.user.id);

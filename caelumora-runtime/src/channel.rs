@@ -4,16 +4,16 @@ use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
+use caelumora_model::message::ActorId;
 use caelumora_model::session::{Channel, ChannelId, Participant, Session, SessionId};
 use caelumora_model::user::{User, UserId};
 use log::{debug, info};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
-use caelumora_model::message::ActorId;
 
 struct ActorHandle {
     id: ActorId,
@@ -44,7 +44,7 @@ impl ChannelLoop {
 
         let mut actors = HashMap::new();
         for participant in &channel.participants {
-            let actor = Self::create_actor(participant, runtime_manager.clone())?;
+            let actor = Self::create_actor(session, &channel, participant, runtime_manager.clone())?;
             moderator.add_actor(&actor);
             actors.insert(actor.id(), Arc::new(actor));
         }
@@ -73,7 +73,7 @@ impl ChannelLoop {
         self.actors.values().find(|c| c.name() == name).map(|c| c.clone())
     }
 
-    fn create_actor(participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
+    fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
             Participant::User => {
                 let user = User {
@@ -82,7 +82,7 @@ impl ChannelLoop {
                     email: String::new(),
                     roles: vec!["user".to_string()],
                 };
-                let actor = UserActor::new(user.clone());
+                let actor = UserActor::new(session, channel, user.clone());
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
