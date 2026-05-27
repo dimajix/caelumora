@@ -1,12 +1,12 @@
+use crate::agent::AgentId;
+use crate::user::UserId;
 use chrono::{DateTime, Utc};
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use derive_more::Display;
 use uuid::Uuid;
-use crate::agent::AgentId;
-use crate::user::UserId;
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

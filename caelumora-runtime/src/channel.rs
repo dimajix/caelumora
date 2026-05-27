@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::message::ActorId;
 use caelumora_model::session::{Channel, ChannelId, Participant, Session, SessionId};
 use caelumora_model::user::{User, UserId};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::any::Any;
@@ -112,6 +112,7 @@ impl ChannelLoop {
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
 
         while let Some(event) = event_rx.recv().await {
+            debug!("Received actor event {:?}", event);
             self.recorder.record(&event);
             if let Err(e) = self.route_event(&actors, &event).await {
                 todo!()
@@ -137,7 +138,10 @@ impl ChannelLoop {
         let (msg_tx, msg_rx) = mpsc::channel(10);
         let event_tx = event_tx.clone();
         let abort_handle = join_set.spawn(async move {
-            actor.run(msg_rx, event_tx).await;
+            let result = actor.run(msg_rx, event_tx).await;
+            if let Err(e) = result {
+                warn!("Failed to spawn actor {}: {}", actor.id(), e)
+            }
             id
         });
 
@@ -164,11 +168,12 @@ impl ChannelLoop {
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = event.context.span_id;
             target_event.context.span_depth = event.context.span_depth + 1;
+            debug!("Routing event from {:?} to {:?}", target_event.context.sender_id, target_id);
             if target_event.context.sender_id != target_id {
                 if let Some(actor) = actors.get(&target_id) {
                     debug!("route_messages: send event from={} to target={target_id}", target_event.context.sender_id);
                     if let Err(e) = actor.request_tx.try_send(target_event) {
-                        todo!()
+                        warn!("Could not forward event to {}", actor.id)
                     }
                 }
             }

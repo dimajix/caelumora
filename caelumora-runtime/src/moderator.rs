@@ -31,7 +31,7 @@ impl BroadcastModerator {
             let user_messages = replace_role(messages, MessageRole::User);
             self.actors.iter()
                 .filter(|id| !user_messages.iter().any(|m| m.sender_id == **id))
-                .map(|id| (*id, event.next(*id, MessageEvent::EndOfTurn(user_messages.clone()))))
+                .map(|id| (*id, event.forward()))
                 .collect()
         }
         else {

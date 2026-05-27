@@ -1,19 +1,20 @@
-use std::any::Any;
-use std::fmt::Debug;
+use crate::message::{MessageEvent, MessageProcessor};
+use crate::security::SecurityContext;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::user::User;
-use chrono::{DateTime, Utc};
-use log::{info, warn};
-use tokio::sync::{mpsc, Mutex, MutexGuard};
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_stream::StreamExt;
-use uuid::Uuid;
 use caelumora_model::message::ActorId;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
-use crate::message::{MessageEvent, MessageProcessor};
-use crate::security::SecurityContext;
+use caelumora_model::user::User;
+use chrono::{DateTime, Utc};
+use derive_more::Display;
+use log::{debug, info, warn};
+use std::any::Any;
+use std::fmt::Debug;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{mpsc, Mutex, MutexGuard};
+use tokio_stream::StreamExt;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct EventContext {
@@ -44,7 +45,6 @@ impl EventContext {
             span_depth: self.span_depth + 1,
         }
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +71,14 @@ impl ActorEvent {
             security: self.security.next(sender_id),
             context: self.context.next(sender_id),
             event
+        }
+    }
+    pub fn forward(&self) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            security: self.security.clone(),
+            context: self.context.clone(),
+            event: self.event.clone(),
         }
     }
 
@@ -153,18 +161,19 @@ impl Actor for MessageProcessorActor {
 
     async fn run(&self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) -> Result<()>{
         let _guard = self.run_lock.try_lock()
-            .map_err(|_| anyhow!("Already running"))?;
+            .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
-        info!("Actor {} is starting", self.id);
-        while let Some(cmd) = rx.recv().await {
-            match cmd.event {
+        info!("AgentActor {} is starting", self.id());
+        while let Some(event) = rx.recv().await {
+            debug!("AgentActor {} received actor event: {:?}", self.id(), event);
+            match event.event {
                 MessageEvent::EndOfTurn(_) => {
-                    self.handle_end_of_turn(cmd, &tx).await
+                    self.handle_end_of_turn(event, &tx).await
                 }
                 _ => {}
             }
         }
-        info!("Actor {} has finished finished", self.id);
+        info!("AgentActor {} has finished finished", self.id());
         Ok(())
     }
 
@@ -228,18 +237,19 @@ impl Actor for UserActor {
 
     async fn run(&self, mut rx: Receiver<ActorEvent>, tx: Sender<ActorEvent>) -> Result<()> {
         let mut user_rx = self.user_rx.try_lock()
-            .map_err(|_| anyhow!("Already running"))?;
+            .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
         let mut rx_closed = false;
         let mut user_rx_closed = false;
 
-        info!("Actor {} is starting", self.user.id);
+        info!("UserActor {} is starting", self.id());
         while !rx_closed || !user_rx_closed {
             tokio::select! {
                 maybe_event = rx.recv(), if !rx_closed => {
                     match maybe_event {
                         Some(event) => {
-                            if let Err(e) = self.actor_tx.send(event.event.clone()).await {
-                                warn!("Actor {} cannot forward event because of an error: {}", self.user.id, e);
+                            debug!("UserActor {} received actor event: {:?}", self.id(), event);
+                            if let Err(e) = self.actor_tx.send(event.event).await {
+                                warn!("UserActor {} cannot forward event because of an error: {}", self.id(), e);
                                 rx_closed = true;
                                 user_rx_closed = true;
                                 continue;
@@ -253,10 +263,11 @@ impl Actor for UserActor {
                 maybe_message = user_rx.recv(), if !user_rx_closed => {
                     match maybe_message {
                         Some(message) => {
+                            debug!("Received user message: {:?}", message);
                             let context = EventContext::new(self.session_id, self.channel_id, self.id());
                             let event = ActorEvent::new(self.security_context.clone(), context, message);
                             if let Err(e) = tx.send(event).await {
-                                warn!("Actor {} cannot forward user message because of an error: {}", self.user.id, e);
+                                warn!("UserActor {} cannot forward user message because of an error: {}", self.id(), e);
                                 rx_closed = true;
                                 user_rx_closed = true;
                                 continue;
@@ -270,7 +281,7 @@ impl Actor for UserActor {
                 else => break,
             }
         }
-        info!("Actor {} has finished finished", self.user.id);
+        info!("UserActor {} has finished finished", self.id());
         Ok(())
     }
 }

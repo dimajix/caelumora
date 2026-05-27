@@ -16,7 +16,7 @@ use caelumora_runtime::session::SessionLoop;
 use chrono::Utc;
 use clap::Parser;
 use env_logger::WriteStyle;
-use log::{info, LevelFilter};
+use log::{error, info, LevelFilter};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::path::PathBuf;
@@ -186,7 +186,10 @@ async fn main() -> anyhow::Result<()> {
     let runner = tokio::spawn({
         let session_loop = session_loop.clone();
         async move {
-            let _ = session_loop.run().await;
+            let result = session_loop.run().await;
+            if let Err(e) = result {
+                error!("Cannot start session loop: {}", e)
+            }
         }
     });
 
