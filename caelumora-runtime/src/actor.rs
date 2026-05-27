@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::fmt::Debug;
 use anyhow::anyhow;
 use anyhow::Result;
@@ -85,7 +86,7 @@ impl ActorEvent {
 
 
 #[async_trait]
-pub trait Actor : Debug + Send + Sync {
+pub trait Actor : Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;

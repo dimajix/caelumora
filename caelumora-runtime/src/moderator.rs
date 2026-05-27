@@ -8,8 +8,8 @@ use dashmap::DashSet;
 
 pub trait Moderator : Send + Sync + Debug {
     fn route(&self, event: &ActorEvent) -> HashMap<ActorId,ActorEvent>;
-    fn add_actor(&self, actor: &Box<dyn Actor>) -> ();
-    fn remove_actor(&self, actor: &Box<dyn Actor>) -> ();
+    fn add_actor(&self, actor: &dyn Actor) -> ();
+    fn remove_actor(&self, actor: &dyn Actor) -> ();
 }
 
 #[derive(Debug)]
@@ -51,11 +51,11 @@ impl Moderator for BroadcastModerator {
         }
     }
 
-    fn add_actor(&self, actor: &Box<dyn Actor>) -> () {
+    fn add_actor(&self, actor: &dyn Actor) -> () {
         self.actors.insert(actor.id());
     }
 
-    fn remove_actor(&self, agent: &Box<dyn Actor>) -> () {
+    fn remove_actor(&self, agent: &dyn Actor) -> () {
         self.actors.remove(&agent.id());
     }
 }

@@ -10,6 +10,7 @@ use caelumora_model::user::{User, UserId};
 use log::{debug, info};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::any::Any;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
@@ -30,7 +31,7 @@ pub struct ChannelLoop {
     session_id: SessionId,
     channel: Arc<Channel>,
     runtime_manager: Arc<RuntimeManager>,
-    actors: HashMap<ActorId,Arc<Box<dyn Actor>>>,
+    actors: HashMap<ActorId,Arc<dyn Actor>>,
     moderator: Box<dyn Moderator>,
     recorder: Box<dyn Recorder>,
     max_route_decisions: i32,
@@ -45,8 +46,8 @@ impl ChannelLoop {
         let mut actors = HashMap::new();
         for participant in &channel.participants {
             let actor = Self::create_actor(session, &channel, participant, runtime_manager.clone())?;
-            moderator.add_actor(&actor);
-            actors.insert(actor.id(), Arc::new(actor));
+            moderator.add_actor(actor.as_ref());
+            actors.insert(actor.id(), Arc::from(actor));
         }
 
         Ok(Self {
@@ -66,11 +67,18 @@ impl ChannelLoop {
     pub fn id(&self) -> ChannelId { self.id }
     pub fn name(&self) -> String { self.name.clone() }
 
-    pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<Box<dyn Actor>>> {
+    pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         self.actors.values().find(|c| c.id() == actor_id).map(|c| c.clone())
     }
-    pub fn actor_by_name(&self, name: &str) -> Option<Arc<Box<dyn Actor>>> {
+    pub fn actor_by_name(&self, name: &str) -> Option<Arc<dyn Actor>> {
         self.actors.values().find(|c| c.name() == name).map(|c| c.clone())
+    }
+
+    pub fn user_actor(&self) -> Option<Arc<UserActor>> {
+        self.actors.values().find_map(|actor| {
+            let any_actor: Arc<dyn Any + Send + Sync> = actor.clone();
+            Arc::downcast::<UserActor>(any_actor).ok()
+        })
     }
 
     fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
@@ -124,7 +132,7 @@ impl ChannelLoop {
         Ok(actors)
     }
 
-    fn spawn_actor(&self, actor: Arc<Box<dyn Actor>>, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
+    fn spawn_actor(&self, actor: Arc<dyn Actor>, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
         let (msg_tx, msg_rx) = mpsc::channel(10);
         let event_tx = event_tx.clone();

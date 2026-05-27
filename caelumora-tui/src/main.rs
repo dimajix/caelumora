@@ -1,25 +1,27 @@
 use caelumora_model::agent::Personality;
 use caelumora_model::driver::memory::MemoryStore;
-use caelumora_model::message::{Message, MessageEvent, MessageProcessor, MessageRole};
+use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::meta::{Metadata, Scope};
-use caelumora_model::session::SessionContext;
+use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::{
-    StoreBackedEntityResolver, StoreResult, TemplateStore,
+    StoreBackedEntityResolver, TemplateStore,
 };
-use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplate};
+use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_model::user::UserId;
+use caelumora_model::agent::PersonalityId;
+use caelumora_runtime::actor::{Actor, UserActor};
+use caelumora_runtime::message::MessageEvent;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 use chrono::Utc;
 use clap::Parser;
 use env_logger::WriteStyle;
-use futures_util::StreamExt;
 use log::{info, LevelFilter};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
-use caelumora_runtime::runner::LoopRunner;
 
 fn init_logging() {
     let mut builder = env_logger::Builder::new();
@@ -32,7 +34,7 @@ fn init_logging() {
 
 fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
     let personality = Personality {
-        id: Uuid::new_v4(),
+        id: PersonalityId(Uuid::new_v4()),
         metadata: Metadata {
             name: "simple-assistant".to_string(),
             scope: Scope::GlobalScope,
@@ -43,7 +45,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
     store.put_personality(&personality)?;
 
     let template = SessionTemplate {
-        id: Uuid::new_v4(),
+        id: SessionTemplateId(Uuid::new_v4()),
         metadata: Metadata {
             name: "simple-session".to_string(),
             scope: Scope::GlobalScope,
@@ -51,18 +53,23 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
             ..Metadata::default()
         },
         scope: ScopeTemplate::GlobalScope,
-        participants: vec![
-            ParticipantTemplate::User,
-            ParticipantTemplate::Agent {
-                name: "assistant a".to_string(),
-                scope: ScopeTemplate::GlobalScope,
-                personality_id: personality.id,
-            },
-            ParticipantTemplate::Agent {
-                name: "assistant b".to_string(),
-                scope: ScopeTemplate::GlobalScope,
-                personality_id: personality.id,
-            },
+        channels: vec![
+            ChannelTemplate {
+                name: "main".to_string(),
+                participants: vec![
+                    ParticipantTemplate::User,
+                    ParticipantTemplate::Agent {
+                        name: "assistant a".to_string(),
+                        scope: ScopeTemplate::GlobalScope,
+                        personality_id: personality.id,
+                    },
+                    ParticipantTemplate::Agent {
+                        name: "assistant b".to_string(),
+                        scope: ScopeTemplate::GlobalScope,
+                        personality_id: personality.id,
+                    },
+                ],
+            }
         ],
     };
     store.put_session_template(&template)?;
@@ -70,7 +77,9 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
     Ok(template)
 }
 
-async fn run_repl(mut session: LoopRunner) -> anyhow::Result<()> {
+async fn run_repl(user_actor: Arc<UserActor>) -> anyhow::Result<()> {
+    let mut receiver = user_actor.lock_receiver().await;
+
     let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new()?;
     //rl.set_class_name("chat-agent-class");
     //rl.append_history(vec![])?;
@@ -91,9 +100,8 @@ async fn run_repl(mut session: LoopRunner) -> anyhow::Result<()> {
 
                 // Perform the agent response
                 let user_message = Message {
-                    id: Uuid::new_v4(),
-                    session_id: session.id(),
-                    sender_id: Uuid::nil(),
+                    id: MessageId(Uuid::new_v4()),
+                    sender_id: user_actor.id(),
                     sender_name: "user".to_string(),
                     role: MessageRole::User,
                     content: Some(input.to_string()),
@@ -105,19 +113,24 @@ async fn run_repl(mut session: LoopRunner) -> anyhow::Result<()> {
 
                 info!("dispatch: input msg={:?}", user_message);
 
-                let mut stream = session.send_messages(vec![user_message]).await;
-                while let Some(event) = stream.next().await {
+                user_actor
+                    .send_message(MessageEvent::EndOfTurn(vec![user_message]))
+                    .await?;
+
+                while let Some(event) = receiver.recv().await {
                     match event {
-                        Ok(MessageEvent::Partial(_message)) => {
-                        }
-                        Ok(MessageEvent::Complete(message)) => {
+                        MessageEvent::Partial(_) => {}
+                        MessageEvent::Complete(message) => {
                             if let Some(content) = message.content {
                                 println!("{}> {}", message.sender_name, content);
                             }
                         }
-                        Ok(MessageEvent::EndOfTurn(_messages)) => {}
-                        Err(e) => {
-                            eprintln!("Error: {}", e);
+                        MessageEvent::EndOfTurn(messages) => {
+                            for message in messages {
+                                if let Some(content) = message.content {
+                                    println!("{}> {}", message.sender_name, content);
+                                }
+                            }
                             break;
                         }
                     }
@@ -164,16 +177,27 @@ async fn main() -> anyhow::Result<()> {
     let template = setup_templates(&store)?;
 
     let context = SessionContext {
-        id: Uuid::new_v4(),
-        owner: Uuid::nil(),
+        id: SessionId(Uuid::new_v4()),
+        owner: UserId(Uuid::nil()),
         resolver: Box::new(StoreBackedEntityResolver::new(store.clone(), store.clone())),
     };
     let session = template.instantiate("default-session".to_string(), &context)?;
-    let session_loop = SessionLoop::new(session, runtime)?;
-    let (session_runner, _) = LoopRunner::spawn(Box::new(session_loop));
+    let session_loop = Arc::new(SessionLoop::new(session, runtime)?);
+    let runner = tokio::spawn({
+        let session_loop = session_loop.clone();
+        async move {
+            let _ = session_loop.run().await;
+        }
+    });
+
+    let user_actor = session_loop
+        .channel_by_name("main")
+        .and_then(|channel| channel.user_actor())
+        .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
 
     // Start the interactive loop
-    run_repl(session_runner).await?;
+    run_repl(user_actor).await?;
+    runner.abort();
 
     Ok(())
 }
