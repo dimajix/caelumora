@@ -9,7 +9,6 @@ use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 use crate::meta::Scope;
 
 #[derive(Debug)]
@@ -374,7 +373,7 @@ impl StateStore for JsonFileStore {
 mod tests {
     use crate::meta::{Metadata, Scope};
     use tempfile::tempdir;
-
+    use uuid::Uuid;
     use super::*;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
 

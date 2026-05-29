@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
@@ -104,6 +103,7 @@ pub trait StateStore : Debug + Sync + Send {
 mod tests {
     use std::sync::Arc;
     use std::sync::RwLock;
+    use uuid::Uuid;
     use super::*;
     use crate::meta::Metadata;
     use crate::template::{ScopeTemplate, SessionTemplateId};

@@ -20,7 +20,7 @@ pub enum ActorId {
     Agent(AgentId)
 }
 impl ActorId {
-    fn id(&self) -> Uuid {
+    pub fn id(&self) -> Uuid {
         match &self {
             ActorId::None => {Uuid::nil()}
             ActorId::User(id) => {id.0}

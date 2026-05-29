@@ -7,7 +7,6 @@ use caelumora_model::message::ActorId;
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::user::User;
 use chrono::{DateTime, Utc};
-use derive_more::Display;
 use log::{debug, info, warn};
 use std::any::Any;
 use std::fmt::Debug;
@@ -216,7 +215,7 @@ impl UserActor {
         Ok(())
     }
 
-    pub async fn lock_receiver(&self) -> MutexGuard<Receiver<MessageEvent>> {
+    pub async fn lock_receiver(&self) -> MutexGuard<'_, Receiver<MessageEvent>> {
         self.actor_rx.lock().await
     }
 }

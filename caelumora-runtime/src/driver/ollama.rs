@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use chrono::Utc;
 use futures::stream::BoxStream;
-use log::{debug, info};
+use log::{debug};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;

@@ -38,11 +38,11 @@ impl RuntimeManager {
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
-    pub fn moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
+    pub fn moderator(&self, _kind: &String) -> Result<Box<dyn Moderator>> {
         Ok(Box::new(BroadcastModerator::new()))
     }
 
-    pub fn recorder(&self, kind: &String) -> Result<Box<dyn Recorder>> {
+    pub fn recorder(&self, _kind: &String) -> Result<Box<dyn Recorder>> {
         Ok(Box::new(BlackholeRecorder::new()))
     }
 }

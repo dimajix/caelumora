@@ -1,16 +1,16 @@
+use crate::message::{MessageEvent, MessageProcessor};
 use crate::runtime::RuntimeManager;
+use crate::security::SecurityContext;
 use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, AgentState};
 use caelumora_model::message::{ActorId, Message, ToolCall, ToolResult};
+use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
-use crate::message::{MessageEvent, MessageProcessor};
-use crate::security::SecurityContext;
 
 
 #[derive(Debug)]
@@ -41,8 +41,11 @@ impl MessageProcessor for AgentLoop {
 
     async fn process_messages(&self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
         let state = self.clone();
+        let agent_id = ActorId::Agent(state.agent.id);
+        let agent_name = state.agent.metadata.name.clone();
         let max_iterations = self.max_iterations;
         let security_context = security_context.clone();
+
         let stream = stream! {
             // --- PHASE 1: PERCEIVE ---
             // Pre-process the incoming batch
@@ -56,38 +59,47 @@ impl MessageProcessor for AgentLoop {
                 // Call LLM with the current context
                 // The LLM returns a stream of tokens or structured parts
                 let mut response = state.plan().await;
-                while let Some(llm_event) = response.try_next().await? {
-                    match llm_event {
-                        MessageEvent::Complete(ref llm_message) => {
-                            // Execute all tools
-                            let tool_calls = llm_message.tool_calls.clone();
-                            for c in tool_calls {
-                                let r = state.execute(&c, &security_context);
-                                //yield r;
+                while let Some(event) = response.try_next().await? {
+                    match event {
+                        MessageEvent::Partial(mut message) => {
+                            message.sender_name = agent_name.clone();
+                            message.sender_id = agent_id;
+                            if let Some(msg) = state.respond_partial(message).await {
+                                yield Ok(MessageEvent::Partial(msg));
                             }
-                            // Emit message
-                            yield Ok(llm_event);
                         },
-                        MessageEvent::Partial(ref _msg) => {
-                            // Emit message
-                            yield Ok(llm_event);
-                        },
-                        MessageEvent::EndOfTurn( ref _vec) => {
-                            yield Ok(llm_event);
+                        MessageEvent::Complete(mut message) => {
+                            message.sender_name = agent_name.clone();
+                            message.sender_id = agent_id;
+                            let tool_calls = message.tool_calls.clone();
+                            if let Some(msg) = state.respond_complete(message).await {
+                                yield Ok(MessageEvent::Complete(msg));
+                            }
+                            // Execute all tools
+                            for c in tool_calls {
+                                let _r = state.execute(&c, &security_context);
+                                //yield r;
+                            }                        },
+                        MessageEvent::EndOfTurn(mut messages) => {
+                            for m in &mut messages {
+                                m.sender_name = agent_name.clone();
+                                m.sender_id = agent_id;
+                            }
+                            yield Ok(MessageEvent::EndOfTurn(messages));
                         }
                     }
-                }
+                };
 
                 // Check if the LLM finished with a "Final Answer" or "Reflect" signal
                 // TODO with "break"
-                break;
+                //break;
             }
 
             // --- PHASE 4: REFLECT ---
             // After the loop or if we have enough context, perform a final reflection
             state.reflect().await?;
 
-            yield Ok(MessageEvent::EndOfTurn(Vec::new()));
+            //yield Ok(MessageEvent::EndOfTurn(Vec::new()));
         };
         Box::pin(stream)
     }
@@ -101,10 +113,13 @@ impl AgentLoop {
         let store = runtime_manager.state_store();
         let state = match store.get_agent_state(agent.id) {
             Ok(s) => s,
-            Err(NotFound) => {
+            Err(StoreError::NotFound{entity: _, id:_}) => {
                 let state = AgentState::default();
                 store.put_agent_state(agent.id, &state)?;
                 state
+            }
+            Err(e) => {
+                Err(e)?
             }
         };
         Ok(Self {
@@ -176,42 +191,11 @@ impl AgentLoop {
     async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
         let agent_state = self.clone();
-        let agent_id = ActorId::Agent(agent_state.agent.id);
-        let agent_name = agent_state.agent.metadata.name.clone();
         let context = agent_state.context().await;
-        let mut messages = llm_client.chat_completion(context.as_slice()).await;
-
-        let result = stream! {
-            while let Some(event) = messages.try_next().await? {
-                match event {
-                    MessageEvent::Partial(mut message) => {
-                        message.sender_name = agent_name.clone();
-                        message.sender_id = agent_id;
-                        if let Some(msg) = agent_state.respond_partial(message).await {
-                            yield Ok(MessageEvent::Partial(msg));
-                        }
-                    },
-                    MessageEvent::Complete(mut message) => {
-                        message.sender_name = agent_name.clone();
-                        message.sender_id = agent_id;
-                        if let Some(msg) = agent_state.respond_complete(message).await {
-                            yield Ok(MessageEvent::Complete(msg));
-                        }
-                    },
-                    MessageEvent::EndOfTurn(mut messages) => {
-                        for mut m in &mut messages {
-                            m.sender_name = agent_name.clone();
-                            m.sender_id = agent_id;
-                        }
-                        yield Ok(MessageEvent::EndOfTurn(messages));
-                    }
-                }
-            }
-        };
-        Box::pin(result)
+        llm_client.chat_completion(context.as_slice()).await
     }
 
-    async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
+    async fn execute(&self, _call: &ToolCall, _security: &SecurityContext) -> Result<ToolResult> {
         // 1. Execute tool
         // 2. Add tool result to history and context
         // 3. Return some message

@@ -1,4 +1,4 @@
-use crate::meta::Scope::{ChannelScope, GlobalScope, SessionScope, UserScope};
+use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
 use crate::session::{Channel, Participant, Session, SessionContext};
 use chrono::Utc;
@@ -25,7 +25,7 @@ impl ScopeTemplate {
                 UserScope { user_id: context.owner }
             }
             ScopeTemplate::GroupScope => {
-                !todo!()
+                todo!()
             }
             ScopeTemplate::GlobalScope => {
                 GlobalScope

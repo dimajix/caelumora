@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use uuid::Uuid;
-
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};

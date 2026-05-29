@@ -22,7 +22,7 @@ impl DummyToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DummyToolExecutor {
-    async fn execute(&self, tool: &Tool, input: Value, execution: &mut ToolExecution) -> anyhow::Result<Value> {
+    async fn execute(&self, _tool: &Tool, _input: Value, _execution: &mut ToolExecution) -> anyhow::Result<Value> {
         todo!()
     }
 }

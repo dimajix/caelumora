@@ -1,7 +1,7 @@
 use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,10 +52,10 @@ impl SessionLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        let channels = self.spawn_channels(&mut join_set);
+        let _channels = self.spawn_channels(&mut join_set);
 
         while let Some(res) = join_set.join_next().await {
-            let idx = res?;
+            let _idx = res?;
         }
 
         Ok(())

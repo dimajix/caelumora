@@ -107,16 +107,14 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel.name, self.id);
-        let (event_tx, mut event_rx) = mpsc::channel(10);
+        let (event_tx, mut event_rx) = mpsc::channel(100);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
 
         while let Some(event) = event_rx.recv().await {
             debug!("Received actor event {:?}", event);
             self.recorder.record(&event);
-            if let Err(e) = self.route_event(&actors, &event).await {
-                todo!()
-            }
+            self.route_event(&actors, &event).await
         }
 
         info!("Channel {}/{} stopped", self.channel.name, self.id);
@@ -152,11 +150,12 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: &ActorEvent) -> Result<()> {
+    async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: &ActorEvent) {
         let routes = self.moderator.route(&event);
 
         if event.context.span_depth >= self.max_route_decisions {
-            return Err(anyhow::anyhow!("Too many routings, stopping further propagation"));
+            warn!("Too many routings, stopping further propagation");
+            return
         }
 
         // First, route all messages to all agents...
@@ -164,6 +163,7 @@ impl ChannelLoop {
             // Do not propagate message to sender again
             let target_id = route.0;
             let mut target_event = route.1;
+            let sender_id = target_event.context.sender_id;
             target_event.context.channel_id = self.id;
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = event.context.span_id;
@@ -173,12 +173,10 @@ impl ChannelLoop {
                 if let Some(actor) = actors.get(&target_id) {
                     debug!("route_messages: send event from={} to target={target_id}", target_event.context.sender_id);
                     if let Err(e) = actor.request_tx.try_send(target_event) {
-                        warn!("Could not forward event to {}", actor.id)
+                        warn!("Could not forward event from {} to {}: {}", sender_id, target_id, e)
                     }
                 }
             }
         }
-
-        Ok(())
     }
 }

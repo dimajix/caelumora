@@ -21,6 +21,8 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 fn init_logging() {
@@ -79,75 +81,108 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
 
 async fn run_repl(user_actor: Arc<UserActor>) -> anyhow::Result<()> {
     let mut receiver = user_actor.lock_receiver().await;
-
-    let mut rl = Editor::<(), rustyline::history::DefaultHistory>::new()?;
-    //rl.set_class_name("chat-agent-class");
-    //rl.append_history(vec![])?;
+    let mut input_rx = spawn_rustyline_input();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
+    run_repl_select_loop(user_actor.clone(), &mut receiver, &mut input_rx).await
+}
 
-    loop {
-        let readline = rl.readline(">> ");
-        match readline {
-            Ok(line) => {
-                let input = line.trim();
-                if input.is_empty() {
-                    continue;
-                }
-                if input == "exit" || input == "quit" {
-                    break;
-                }
+fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
+    thread::spawn(move || {
+        let mut rl = match Editor::<(), rustyline::history::DefaultHistory>::new() {
+            Ok(rl) => rl,
+            Err(err) => {
+                let _ = input_tx.send(Err(ReadlineError::Io(std::io::Error::other(err.to_string()))));
+                return;
+            }
+        };
 
-                // Perform the agent response
-                let user_message = Message {
-                    id: MessageId(Uuid::new_v4()),
-                    sender_id: user_actor.id(),
-                    sender_name: "user".to_string(),
-                    role: MessageRole::User,
-                    content: Some(input.to_string()),
-                    reasoning: None,
-                    tool_calls: vec![],
-                    timestamp: Utc::now(),
-                    metadata: Default::default(),
-                };
-
-                info!("dispatch: input msg={:?}", user_message);
-
-                user_actor
-                    .send_message(MessageEvent::EndOfTurn(vec![user_message]))
-                    .await?;
-
-                while let Some(event) = receiver.recv().await {
-                    match event {
-                        MessageEvent::Partial(_) => {}
-                        MessageEvent::Complete(message) => {
-                            if let Some(content) = message.content {
-                                println!("{}> {}", message.sender_name, content);
-                            }
-                        }
-                        MessageEvent::EndOfTurn(messages) => {
-                            for message in messages {
-                                if let Some(content) = message.content {
-                                    println!("{}> {}", message.sender_name, content);
-                                }
-                            }
-                            break;
-                        }
+        loop {
+            match rl.readline(">> ") {
+                Ok(line) => {
+                    if input_tx.send(Ok(line)).is_err() {
+                        break;
                     }
                 }
+                Err(err) => {
+                    let _ = input_tx.send(Err(err));
+                    break;
+                }
+            }
+        }
+    });
 
-                rl.add_history_entry(input)?;
+    input_rx
+}
+
+async fn run_repl_select_loop(
+    user_actor: Arc<UserActor>,
+    receiver: &mut tokio::sync::mpsc::Receiver<MessageEvent>,
+    input_rx: &mut mpsc::UnboundedReceiver<Result<String, ReadlineError>>,
+) -> anyhow::Result<()> {
+    loop {
+        tokio::select! {
+            maybe_event = receiver.recv() => {
+                match maybe_event {
+                    Some(MessageEvent::Partial(_)) => {}
+                    Some(MessageEvent::Complete(message)) => {
+                        if let Some(content) = message.content {
+                            println!("\r{}> {}", message.sender_name, content);
+                        }
+                    }
+                    Some(MessageEvent::EndOfTurn(messages)) => {
+                        for message in messages {
+                            if let Some(content) = message.content {
+                                println!("\r{}> {}", message.sender_name, content);
+                            }
+                        }
+                    }
+                    None => break,
+                }
             }
-            Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
-                break;
-            }
-            Err(err) => {
-                println!("Error: {:?}", err);
-                break;
+            maybe_input = input_rx.recv() => {
+                match maybe_input {
+                    Some(Ok(line)) => {
+                        let input = line.trim();
+                        if input.is_empty() {
+                            continue;
+                        }
+                        if input == "exit" || input == "quit" {
+                            break;
+                        }
+
+                        let user_message = Message {
+                            id: MessageId(Uuid::new_v4()),
+                            sender_id: user_actor.id(),
+                            sender_name: "user".to_string(),
+                            role: MessageRole::User,
+                            content: Some(input.to_string()),
+                            reasoning: None,
+                            tool_calls: vec![],
+                            timestamp: Utc::now(),
+                            metadata: Default::default(),
+                        };
+
+                        info!("dispatch: input msg={:?}", user_message);
+                        user_actor
+                            .send_message(MessageEvent::EndOfTurn(vec![user_message]))
+                            .await?;
+                    }
+                    Some(Err(ReadlineError::Interrupted)) => {
+                        println!("CTRL-C");
+                        break;
+                    }
+                    Some(Err(err)) => {
+                        println!("Error: {:?}", err);
+                        break;
+                    }
+                    None => break,
+                }
             }
         }
     }
+
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use crate::actor::{Actor, ActorEvent};
@@ -28,10 +28,12 @@ impl BroadcastModerator {
 impl BroadcastModerator {
     fn handle_end_of_turn(&self, event: &ActorEvent) -> HashMap<ActorId,ActorEvent> {
         if let MessageEvent::EndOfTurn(messages) = &event.event {
+            let sender_ids:HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
             let user_messages = replace_role(messages, MessageRole::User);
+            let forward_event = event.forward().with_event(MessageEvent::EndOfTurn(user_messages));
             self.actors.iter()
-                .filter(|id| !user_messages.iter().any(|m| m.sender_id == **id))
-                .map(|id| (*id, event.forward()))
+                .filter(|id| !sender_ids.contains(id))
+                .map(|id| (*id, forward_event.clone()))
                 .collect()
         }
         else {
