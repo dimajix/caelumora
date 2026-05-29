@@ -5,11 +5,12 @@ use anyhow::Result;
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, AgentState};
-use caelumora_model::message::{ActorId, Message, ToolCall, ToolResult};
+use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
+use log::{debug, info, warn};
 use tokio::sync::Mutex;
 
 
@@ -92,7 +93,7 @@ impl MessageProcessor for AgentLoop {
 
                 // Check if the LLM finished with a "Final Answer" or "Reflect" signal
                 // TODO with "break"
-                //break;
+                break;
             }
 
             // --- PHASE 4: REFLECT ---
@@ -192,6 +193,23 @@ impl AgentLoop {
         let llm_client = self.runtime_manager.llm_client();
         let agent_state = self.clone();
         let context = agent_state.context().await;
+
+        if context.len() > 1 {
+            let mut last_role = context.first().map(|m| m.role).unwrap();
+            for m in &context[1..] {
+                let next_role = m.role;
+                if next_role == last_role && next_role != MessageRole::Tool {
+                    let conversation = format_conversation(context.as_slice());
+                    warn!("Context contains consecutive messages with same role: {}", conversation)
+                }
+                last_role = next_role;
+            }
+        }
+
+        info!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
+            self.agent.metadata.name,
+            format_conversation(context.as_slice()),
+            self.agent.metadata.name);
         llm_client.chat_completion(context.as_slice()).await
     }
 

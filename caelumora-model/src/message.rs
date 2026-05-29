@@ -5,7 +5,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ impl ActorId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -62,7 +62,28 @@ pub struct Message {
     pub timestamp: DateTime<Utc>,
     pub metadata: HashMap<String, String>,
 }
+impl Default for Message {
+    fn default() -> Self {
+        Message {
+            id: MessageId::default(),
+            sender_id: ActorId::None,
+            sender_name: "".to_string(),
+            role: MessageRole::System,
+            content: None,
+            reasoning: None,
+            tool_calls: Vec::new(),
+            timestamp: Utc::now(),
+            metadata: HashMap::new()
+        }
+    }
+}
 
+pub fn format_conversation(messages:&[Message]) -> String {
+    messages.iter()
+        .map(|m| format!("{:?}:{}> {}", m.role, m.sender_name,  m.content.clone().unwrap_or(String::new()).as_str()))
+        .reduce(|l,r| l + "\n" + r.as_str())
+        .unwrap_or(String::new())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextEntry {

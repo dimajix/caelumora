@@ -106,9 +106,10 @@ impl LLMClient for OllamaClient {
                 .and_then(|msg| if msg.content.is_empty() { None } else { Some(msg.content) });
 
             debug!(
-                "ollama: received chat response model={}, has_content={}",
+                "ollama: received chat response model={}, context={:?}, content={:?}",
                 model,
-                content.is_some()
+                request.messages,
+                content
             );
 
             let message = Message {

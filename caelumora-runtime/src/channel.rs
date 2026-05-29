@@ -4,7 +4,7 @@ use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::message::ActorId;
+use caelumora_model::message::{ActorId, Message, MessageId};
 use caelumora_model::session::{Channel, ChannelId, Participant, Session, SessionId};
 use caelumora_model::user::{User, UserId};
 use log::{debug, info, warn};
@@ -15,6 +15,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
+use crate::message::MessageEvent;
 
 struct ActorHandle {
     id: ActorId,
@@ -107,7 +108,7 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel.name, self.id);
-        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
 
@@ -151,6 +152,7 @@ impl ChannelLoop {
     }
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: &ActorEvent) {
+        let default_message = Message::default();
         let routes = self.moderator.route(&event);
 
         if event.context.span_depth >= self.max_route_decisions {
@@ -164,6 +166,18 @@ impl ChannelLoop {
             let target_id = route.0;
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
+            let event_desc = match &target_event.event {
+                MessageEvent::Partial(m) => {
+                    format!("Partial(sender_id={}, sender_name={}, role={:?}, mid={})", m.sender_id, m.sender_name, m.role, m.id)
+                }
+                MessageEvent::Complete(m) => {
+                    format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", m.sender_id, m.sender_name, m.role, m.id)
+                }
+                MessageEvent::EndOfTurn(v) => {
+                    let m = v.last().unwrap_or(&default_message);
+                    format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", m.sender_id, m.sender_name, m.role, m.id)
+                }
+            };
             target_event.context.channel_id = self.id;
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = event.context.span_id;
@@ -171,9 +185,9 @@ impl ChannelLoop {
             debug!("Routing event from {:?} to {:?}", target_event.context.sender_id, target_id);
             if target_event.context.sender_id != target_id {
                 if let Some(actor) = actors.get(&target_id) {
-                    debug!("route_messages: send event from={} to target={target_id}", target_event.context.sender_id);
+                    debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
                     if let Err(e) = actor.request_tx.try_send(target_event) {
-                        warn!("Could not forward event from {} to {}: {}", sender_id, target_id, e)
+                        warn!("Could not forward event {} from={} to={}: {}", event_desc, sender_id, target_id, e)
                     }
                 }
             }

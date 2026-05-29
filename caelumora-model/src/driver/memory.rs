@@ -247,6 +247,7 @@ impl StateStore for MemoryStore {
 
 #[cfg(test)]
 mod tests {
+    use uuid::Uuid;
     use super::*;
     use crate::meta::Metadata;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
