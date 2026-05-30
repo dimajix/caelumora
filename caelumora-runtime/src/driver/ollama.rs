@@ -80,6 +80,7 @@ impl LLMClient for OllamaClient {
     ) -> BoxStream<'static, Result<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
         let message_ids: Vec<_> = context.iter().map(|m| m.id).collect();
+        let prev_id = context.iter().map(|m| m.id).last().unwrap_or(MessageId::default());
         let request = OllamaChatRequest {
             model: self.model.clone(),
             messages: context.iter().map(OllamaChatMessage::from).collect(),
@@ -114,6 +115,7 @@ impl LLMClient for OllamaClient {
 
             let message = Message {
                 id: MessageId(Uuid::new_v4()),
+                prev_id,
                 sender_id,
                 sender_name,
                 role: MessageRole::Assistant,

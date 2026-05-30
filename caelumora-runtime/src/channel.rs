@@ -1,4 +1,4 @@
-use crate::actor::{Actor, ActorEvent, MessageProcessorActor, UserActor};
+use crate::actor::{Actor, ActorEvent, Envelope, MessageProcessorActor, UserActor};
 use crate::agent::AgentLoop;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
@@ -20,7 +20,7 @@ use crate::message::MessageEvent;
 struct ActorHandle {
     id: ActorId,
     abort_handle: AbortHandle,
-    request_tx: Sender<ActorEvent>,
+    request_tx: Sender<Envelope>,
 }
 
 
@@ -122,7 +122,7 @@ impl ChannelLoop {
         Ok(())
     }
 
-    fn spawn_actors(&self, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
+    fn spawn_actors(&self, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
         let mut actors = HashMap::new();
         for (id, actor) in &self.actors {
             let handle = self.spawn_actor(actor.clone(), event_tx.clone(), join_set);
@@ -132,7 +132,7 @@ impl ChannelLoop {
         Ok(actors)
     }
 
-    fn spawn_actor(&self, actor: Arc<dyn Actor>, event_tx:Sender<ActorEvent>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
+    fn spawn_actor(&self, actor: Arc<dyn Actor>, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
         let (msg_tx, msg_rx) = mpsc::channel(10);
         let event_tx = event_tx.clone();
@@ -151,9 +151,13 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: &ActorEvent) {
+    async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: &Envelope) {
         let default_message = Message::default();
-        let routes = self.moderator.route(&event);
+        let mut routes = self.moderator.route(&event);
+
+        // Always route back event to source, this helps the Actor to rebuild the full
+        // history in correct order
+        routes.push((event.context.sender_id, event.clone()));
 
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
@@ -166,16 +170,23 @@ impl ChannelLoop {
             let target_id = route.0;
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
+            let ctx = &target_event.context;
             let event_desc = match &target_event.event {
-                MessageEvent::Partial(m) => {
-                    format!("Partial(sender_id={}, sender_name={}, role={:?}, mid={})", m.sender_id, m.sender_name, m.role, m.id)
+                ActorEvent::PartialMessageGenerated(m) => {
+                    format!("Partial(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
                 }
-                MessageEvent::Complete(m) => {
-                    format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", m.sender_id, m.sender_name, m.role, m.id)
+                ActorEvent::CompleteMessageGenerated(m) => {
+                    format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
                 }
-                MessageEvent::EndOfTurn(v) => {
+                ActorEvent::FullResponseGenerated(v) => {
                     let m = v.last().unwrap_or(&default_message);
-                    format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", m.sender_id, m.sender_name, m.role, m.id)
+                    format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+                }
+                ActorEvent::ResponseRequested => {
+                    format!("ResponseRequested(sender_id={}, sender_name={}", ctx.sender_id, ctx.sender_name)
+                }
+                _ => {
+                    format!("{:?}", target_event.event)
                 }
             };
             target_event.context.channel_id = self.id;
@@ -183,12 +194,10 @@ impl ChannelLoop {
             target_event.context.span_id = event.context.span_id;
             target_event.context.span_depth = event.context.span_depth + 1;
             debug!("Routing event from {:?} to {:?}", target_event.context.sender_id, target_id);
-            if target_event.context.sender_id != target_id {
-                if let Some(actor) = actors.get(&target_id) {
-                    debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
-                    if let Err(e) = actor.request_tx.try_send(target_event) {
-                        warn!("Could not forward event {} from={} to={}: {}", event_desc, sender_id, target_id, e)
-                    }
+            if let Some(actor) = actors.get(&target_id) {
+                debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
+                if let Err(e) = actor.request_tx.try_send(target_event) {
+                    warn!("Could not forward event {} from={} to={}: {}", event_desc, sender_id, target_id, e)
                 }
             }
         }

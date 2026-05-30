@@ -53,6 +53,7 @@ pub struct ToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: MessageId,
+    pub prev_id: MessageId,
     pub sender_id: ActorId,
     pub sender_name: String,
     pub role: MessageRole,
@@ -66,6 +67,7 @@ impl Default for Message {
     fn default() -> Self {
         Message {
             id: MessageId::default(),
+            prev_id: MessageId::default(),
             sender_id: ActorId::None,
             sender_name: "".to_string(),
             role: MessageRole::System,
@@ -165,6 +167,7 @@ mod tests {
     fn make_message(id: MessageId) -> Message {
         Message {
             id,
+            prev_id: MessageId::default(),
             sender_id: ActorId::None,
             sender_name: "tester".to_string(),
             role: MessageRole::User,

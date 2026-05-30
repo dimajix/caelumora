@@ -80,7 +80,8 @@ impl MessageProcessor for AgentLoop {
                             for c in tool_calls {
                                 let _r = state.execute(&c, &security_context);
                                 //yield r;
-                            }                        },
+                            }
+                        },
                         MessageEvent::EndOfTurn(mut messages) => {
                             for m in &mut messages {
                                 m.sender_name = agent_name.clone();
@@ -170,13 +171,13 @@ impl AgentLoop {
 
     async fn respond_complete(&self, message: Message) -> Option<Message> {
         // Append message to context
-        let mut state_guard = self.state.lock().await;
+        //let mut state_guard = self.state.lock().await;
         // TODO: Apply history filter
-        let context = state_guard.context.digest();
-        state_guard.history.push(message.clone(), context);
+        //let context = state_guard.context.digest();
+        // state_guard.history.push(message.clone(), context);
         // TODO: Apply context filter
-        state_guard.context.push(message.clone());
-        drop(state_guard);
+        //state_guard.context.push(message.clone());
+        //drop(state_guard);
         // TODO: Apply emit filter
         Some(message)
     }
@@ -200,7 +201,7 @@ impl AgentLoop {
                 let next_role = m.role;
                 if next_role == last_role && next_role != MessageRole::Tool {
                     let conversation = format_conversation(context.as_slice());
-                    warn!("Context contains consecutive messages with same role: {}", conversation)
+                    debug!("Context contains consecutive messages with same role: {}", conversation)
                 }
                 last_role = next_role;
             }

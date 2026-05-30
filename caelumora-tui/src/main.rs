@@ -9,7 +9,7 @@ use caelumora_model::store::{
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserId;
 use caelumora_model::agent::PersonalityId;
-use caelumora_runtime::actor::{Actor, UserActor};
+use caelumora_runtime::actor::{Actor, ActorEvent, UserActor};
 use caelumora_runtime::message::MessageEvent;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
@@ -118,25 +118,26 @@ fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineErr
 
 async fn run_repl_select_loop(
     user_actor: Arc<UserActor>,
-    receiver: &mut tokio::sync::mpsc::Receiver<MessageEvent>,
+    receiver: &mut mpsc::Receiver<ActorEvent>,
     input_rx: &mut mpsc::UnboundedReceiver<Result<String, ReadlineError>>,
 ) -> anyhow::Result<()> {
     loop {
         tokio::select! {
             maybe_event = receiver.recv() => {
                 match maybe_event {
-                    Some(MessageEvent::Partial(_)) => {}
-                    Some(MessageEvent::Complete(message)) => {
+                    Some(ActorEvent::CompleteMessageGenerated(message)) => {
                         if let Some(content) = message.content {
                             println!("\r{}> {}", message.sender_name, content);
                         }
                     }
-                    Some(MessageEvent::EndOfTurn(messages)) => {
+                    Some(ActorEvent::FullResponseGenerated(messages)) => {
                         for message in messages {
                             if let Some(content) = message.content {
                                 println!("\r{}> {}", message.sender_name, content);
                             }
                         }
+                    }
+                    Some(_) => {
                     }
                     None => break,
                 }
@@ -154,6 +155,7 @@ async fn run_repl_select_loop(
 
                         let user_message = Message {
                             id: MessageId(Uuid::new_v4()),
+                            prev_id: MessageId::default(),
                             sender_id: user_actor.id(),
                             sender_name: "user".to_string(),
                             role: MessageRole::User,
@@ -166,7 +168,7 @@ async fn run_repl_select_loop(
 
                         info!("dispatch: input msg={:?}", user_message);
                         user_actor
-                            .send_message(MessageEvent::EndOfTurn(vec![user_message]))
+                            .send_message(ActorEvent::FullResponseGenerated(vec![user_message]))
                             .await?;
                     }
                     Some(Err(ReadlineError::Interrupted)) => {
