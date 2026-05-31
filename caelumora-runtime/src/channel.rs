@@ -9,13 +9,12 @@ use caelumora_model::session::{Channel, ChannelId, Participant, Session, Session
 use caelumora_model::user::{User, UserId};
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 use std::any::Any;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
-use crate::message::MessageEvent;
 
 struct ActorHandle {
     id: ActorId,
@@ -33,15 +32,15 @@ pub struct ChannelLoop {
     channel: Arc<Channel>,
     runtime_manager: Arc<RuntimeManager>,
     actors: HashMap<ActorId,Arc<dyn Actor>>,
-    moderator: Box<dyn Moderator>,
-    recorder: Box<dyn Recorder>,
+    moderator: Mutex<Box<dyn Moderator>>,
+    recorder: Mutex<Box<dyn Recorder>>,
     max_route_decisions: i32,
     run_lock: Mutex<()>
 }
 
 impl ChannelLoop {
     pub fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        let moderator = runtime_manager.moderator(&"".to_string())?;
+        let mut moderator = runtime_manager.moderator(&"".to_string())?;
         let recorder = runtime_manager.recorder(&"".to_string())?;
 
         let mut actors = HashMap::new();
@@ -58,8 +57,8 @@ impl ChannelLoop {
             channel: Arc::new(channel),
             runtime_manager,
             actors,
-            moderator,
-            recorder,
+            moderator: Mutex::new(moderator),
+            recorder: Mutex::new(recorder),
             max_route_decisions: 100,
             run_lock: Mutex::new(())
         })
@@ -97,7 +96,6 @@ impl ChannelLoop {
             Participant::Agent(agent) => {
                 let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
                 let actor = MessageProcessorActor::new(Box::new(l));
-                //self.moderator.add_actor(&actor);
                 Ok(Box::new(actor))
             }
         }
@@ -114,7 +112,9 @@ impl ChannelLoop {
 
         while let Some(event) = event_rx.recv().await {
             debug!("Received actor event {:?}", event);
-            self.recorder.record(&event);
+            let mut recorder = self.recorder.lock().await;
+            recorder.record(&event);
+            drop(recorder);
             self.route_event(&actors, &event).await
         }
 
@@ -153,7 +153,9 @@ impl ChannelLoop {
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: &Envelope) {
         let default_message = Message::default();
-        let mut routes = self.moderator.route(&event);
+        let mut moderator = self.moderator.lock().await;
+        let mut routes = moderator.route(&event);
+        drop(moderator);
 
         // Always route back event to source, this helps the Actor to rebuild the full
         // history in correct order

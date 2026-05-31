@@ -1,6 +1,6 @@
 use crate::driver::ollama::OllamaClient;
 use crate::llm::LLMClient;
-use crate::moderator::{BroadcastModerator, Moderator};
+use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
 use crate::recorder::{BlackholeRecorder, Recorder};
 use crate::tool::{DummyToolExecutor, ToolExecutor};
 use anyhow::Result;
@@ -38,8 +38,13 @@ impl RuntimeManager {
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
-    pub fn moderator(&self, _kind: &String) -> Result<Box<dyn Moderator>> {
-        Ok(Box::new(BroadcastModerator::new()))
+    pub fn moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
+        match kind.as_str() {
+            "broadcast" => Ok(Box::new(BroadcastModerator::new())),
+            "random" => Ok(Box::new(RandomModerator::new())),
+            "round_robin" => Ok(Box::new(RoundRobinModerator::new())),
+            _ => Err(anyhow::anyhow!("Unsupported moderator type: {}", kind))
+        }
     }
 
     pub fn recorder(&self, _kind: &String) -> Result<Box<dyn Recorder>> {

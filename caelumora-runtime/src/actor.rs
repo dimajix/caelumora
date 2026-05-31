@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use log::{debug, info, warn};
 use std::any::Any;
 use std::fmt::Debug;
+use std::mem;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tokio_stream::StreamExt;
@@ -182,8 +183,8 @@ impl MessageProcessorActor {
 }
 
 impl MessageProcessorActor {
-    async fn request_response(&self, messages:&Vec<Message>, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {
-        let mut response = self.processor.process_messages(messages.clone(), event_security).await;
+    async fn request_response(&self, messages:&mut Vec<Message>, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {
+        let mut response = self.processor.process_messages(mem::take(messages), event_security).await;
         while let Some(event_result) = response.next().await {
             match event_result {
                 Ok(ev) => {
@@ -223,8 +224,11 @@ impl Actor for MessageProcessorActor {
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
+
         let mut buffer = Vec::new();
-        let mut messsages = Vec::new();
+        let mut messages = Vec::new();
+        let mut response_requested = false;
+
         while rx.recv_many(&mut buffer, 100).await > 0 {
             debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
             let last_security = buffer.last().unwrap().security.clone();
@@ -232,19 +236,23 @@ impl Actor for MessageProcessorActor {
             for event in &mut buffer {
                 match &mut event.event {
                     ActorEvent::FullResponseGenerated(m) => {
-                        messsages.append(m);
+                        messages.append(m);
                     }
                     ActorEvent::ResponseRequested => {
-                        if !messsages.is_empty() {
-                            self.request_response(&messsages, &last_context, &last_security, &tx).await;
-                            messsages.clear();
-                        }
+                        response_requested = true;
                     }
                     _ => {}
                 }
             }
             buffer.clear();
+            
+            if response_requested && !messages.is_empty() {
+                self.request_response(&mut messages, &last_context, &last_security, &tx).await;
+                messages.clear();
+                response_requested = false;
+            }
         }
+
         info!("AgentActor {} has finished finished", self.id());
         Ok(())
     }
