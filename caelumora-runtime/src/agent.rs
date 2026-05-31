@@ -207,7 +207,7 @@ impl AgentLoop {
             }
         }
 
-        info!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
+        debug!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
             self.agent.metadata.name,
             format_conversation(context.as_slice()),
             self.agent.metadata.name);

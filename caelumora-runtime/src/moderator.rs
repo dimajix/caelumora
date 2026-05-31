@@ -6,6 +6,8 @@ use rand::seq::{IndexedRandom};
 use crate::actor::{Actor, ActorEvent, Envelope, UserActor};
 use caelumora_model::message::{ActorId, Message, MessageRole};
 use dashmap::DashSet;
+use rand::prelude::ThreadRng;
+use rand::rngs::StdRng;
 
 pub trait Moderator : Send + Sync + Debug {
     fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)>;
@@ -121,12 +123,14 @@ impl Moderator for BroadcastModerator {
 #[derive(Debug)]
 pub struct RandomModerator {
     actors: ModeratorActors,
+    rng: StdRng
 }
 
 impl RandomModerator {
     pub fn new() -> Self {
         Self {
             actors: ModeratorActors::new(),
+            rng: rand::make_rng()
         }
     }
 
@@ -136,8 +140,7 @@ impl RandomModerator {
 
             // Pick random actor for response
             let possible_actors = self.actors.actor_candidates(messages);
-            let mut rng = rand::rng();
-            if let Some(id) = possible_actors.choose(&mut rng) {
+            if let Some(id) = possible_actors.choose(&mut self.rng) {
                 let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
                 routes.push((*id, request_response_event));
             }
