@@ -44,11 +44,13 @@ impl ModeratorActors {
     }
 
     fn forward_routes(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
+        let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         let user_messages = replace_role(messages, MessageRole::User);
         let forward_event = event.forward_with_response(user_messages);
 
         self.agent_actors.iter()
             .chain(self.user_actors.iter())
+            .filter(|id| !sender_ids.contains(id))
             .map(|id| (*id, forward_event.clone()))
             .collect()
     }
