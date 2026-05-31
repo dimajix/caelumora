@@ -275,6 +275,7 @@ mod tests {
             scope: ScopeTemplate::GlobalScope,
             channels: vec![ChannelTemplate {
                 name: "general".to_string(),
+                moderator: "broadcast".to_string(),
                 participants: vec![ParticipantTemplate::User],
             }],
         }

@@ -40,7 +40,7 @@ pub struct ChannelLoop {
 
 impl ChannelLoop {
     pub fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        let mut moderator = runtime_manager.moderator(&"".to_string())?;
+        let mut moderator = runtime_manager.moderator(&channel.moderator)?;
         let recorder = runtime_manager.recorder(&"".to_string())?;
 
         let mut actors = HashMap::new();

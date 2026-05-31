@@ -37,6 +37,7 @@ impl ScopeTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelTemplate {
     pub name: String,
+    pub moderator: String,
     pub participants: Vec<ParticipantTemplate>,
 }
 
@@ -48,7 +49,11 @@ impl ChannelTemplate {
             participants.push(participant.instantiate(context)?);
         }
 
-        Ok(Channel::new(self.name.clone(), participants))
+        Ok(Channel::new(
+            self.name.clone(),
+            self.moderator.clone(),
+            participants,
+        ))
     }
 }
 

@@ -10,7 +10,6 @@ use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTempl
 use caelumora_model::user::UserId;
 use caelumora_model::agent::PersonalityId;
 use caelumora_runtime::actor::{Actor, ActorEvent, UserActor};
-use caelumora_runtime::message::MessageEvent;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 use chrono::Utc;
@@ -58,6 +57,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
         channels: vec![
             ChannelTemplate {
                 name: "main".to_string(),
+                moderator: "round_robin".to_string(),
                 participants: vec![
                     ParticipantTemplate::User,
                     ParticipantTemplate::Agent {

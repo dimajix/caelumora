@@ -26,15 +26,17 @@ pub struct ChannelId(pub Uuid);
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub moderator: String,
     pub participants: Vec<Participant>,
 }
 
 impl Channel {
-    pub fn new(name: String, participants: Vec<Participant>) -> Self {
+    pub fn new(name: String, moderator: String, participants: Vec<Participant>) -> Self {
         let id = ChannelId(Uuid::new_v4());
         Self {
             id,
             name,
+            moderator,
             participants
         }
     }
