@@ -3,11 +3,11 @@ use std::collections::{HashSet};
 use std::fmt::Debug;
 use rand::seq::{IndexedRandom};
 
-use crate::actor::{Actor, ActorEvent, Envelope, UserActor};
 use caelumora_model::message::{ActorId, Message, MessageRole};
 use dashmap::DashSet;
-use rand::prelude::ThreadRng;
 use rand::rngs::StdRng;
+use crate::actor::{Actor, ActorEvent, Envelope};
+use crate::actor_impl::user::UserActor;
 
 pub trait Moderator : Send + Sync + Debug {
     fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)>;

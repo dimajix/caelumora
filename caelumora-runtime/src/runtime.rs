@@ -1,4 +1,4 @@
-use crate::driver::ollama::OllamaClient;
+use crate::llm_impl::ollama::OllamaClient;
 use crate::llm::LLMClient;
 use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
 use crate::recorder::{BlackholeRecorder, Recorder};

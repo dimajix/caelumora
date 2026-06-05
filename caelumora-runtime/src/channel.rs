@@ -1,20 +1,22 @@
-use crate::actor::{Actor, ActorEvent, Envelope, MessageProcessorActor, UserActor};
 use crate::agent::AgentLoop;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::message::{ActorId, Message, MessageId};
+use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::{Channel, ChannelId, Participant, Session, SessionId};
 use caelumora_model::user::{User, UserId};
 use log::{debug, info, warn};
-use std::collections::HashMap;
-use std::sync::{Arc, MutexGuard};
 use std::any::Any;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
+use crate::actor::{Actor, ActorEvent, Envelope};
+use crate::actor_impl::agent::AgentActor;
+use crate::actor_impl::user::UserActor;
 
 struct ActorHandle {
     id: ActorId,
@@ -95,7 +97,7 @@ impl ChannelLoop {
             },
             Participant::Agent(agent) => {
                 let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
-                let actor = MessageProcessorActor::new(Box::new(l));
+                let actor = AgentActor::new(l);
                 Ok(Box::new(actor))
             }
         }

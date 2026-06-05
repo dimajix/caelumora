@@ -9,7 +9,7 @@ use caelumora_model::store::{
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserId;
 use caelumora_model::agent::PersonalityId;
-use caelumora_runtime::actor::{Actor, ActorEvent, UserActor};
+use caelumora_runtime::actor::{Actor, ActorEvent};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 use chrono::Utc;
@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use caelumora_runtime::actor_impl::user::UserActor;
 
 fn init_logging() {
     let mut builder = env_logger::Builder::new();
