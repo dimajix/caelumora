@@ -92,8 +92,7 @@ impl AgentLoopState {
     }
     async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
-        let agent_state = self.clone();
-        let context = agent_state.context().await;
+        let context = self.context().await;
 
         if context.len() > 1 {
             let mut last_role = context.first().map(|m| m.role).unwrap();
@@ -160,7 +159,7 @@ impl AgentLoop {
         let agent_id = ActorId::Agent(state.agent.id);
         let agent_name = state.agent.metadata.name.clone();
         let max_iterations = self.max_iterations;
-        let security_context = security_context.clone();
+        let security_context = security_context.next(self.id());
 
         let stream = stream! {
             let mut loop_count = 0;
@@ -190,6 +189,7 @@ impl AgentLoop {
                             // Execute all tools
                             for c in tool_calls {
                                 let _r = state.execute(&c, &security_context);
+                                // Send back to llm!
                                 //yield r;
                             }
                         },

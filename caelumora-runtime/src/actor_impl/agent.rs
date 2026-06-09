@@ -106,5 +106,4 @@ impl Actor for AgentActor {
         info!("AgentActor {} has finished finished", self.id());
         Ok(())
     }
-
 }

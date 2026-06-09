@@ -33,6 +33,8 @@ impl UserActor {
             security_context: SecurityContext {
                 initiator_id: ActorId::User(user.id),
                 sender_id: ActorId::User(user.id),
+                session_id: session.id,
+                channel_id: channel.id
             },
             user,
             user_rx: Mutex::new(urx),

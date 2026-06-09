@@ -38,7 +38,7 @@ impl RuntimeManager {
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
-    pub fn moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
+    pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
         match kind.as_str() {
             "broadcast" => Ok(Box::new(BroadcastModerator::new())),
             "random" => Ok(Box::new(RandomModerator::new())),
@@ -47,7 +47,7 @@ impl RuntimeManager {
         }
     }
 
-    pub fn recorder(&self, _kind: &String) -> Result<Box<dyn Recorder>> {
+    pub fn new_recorder(&self, _kind: &String) -> Result<Box<dyn Recorder>> {
         Ok(Box::new(BlackholeRecorder::new()))
     }
 }
