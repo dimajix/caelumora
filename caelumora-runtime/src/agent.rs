@@ -1,15 +1,16 @@
 use crate::message::{MessageEvent};
 use crate::runtime::RuntimeManager;
 use crate::security::SecurityContext;
+use crate::component::{ComponentContainer, TurnContext};
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentState};
+use caelumora_model::agent::{Agent, AgentState, PipelineConfig, PipelineStage};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use tokio::sync::Mutex;
 
 
@@ -18,14 +19,12 @@ struct AgentLoopState {
     agent: Agent,
     runtime_manager: Arc<RuntimeManager>,
     state: Mutex<AgentState>,
-    // perceive_filter (input)
-    // history_filter (storage)
-    // context_filter
-    // result_filter
+    components: ComponentContainer,
 }
 impl AgentLoopState {
     fn new(agent: Agent,
-           runtime_manager: Arc<RuntimeManager>
+           runtime_manager: Arc<RuntimeManager>,
+           pipeline_config: PipelineConfig,
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
         let state = match store.get_agent_state(agent.id) {
@@ -41,8 +40,9 @@ impl AgentLoopState {
         };
         Ok(Self {
             agent,
-            runtime_manager,
+            runtime_manager: runtime_manager.clone(),
             state: Mutex::new(state),
+            components: ComponentContainer::from_config(&pipeline_config, runtime_manager.component_registry().as_ref())?,
         })
     }
     async fn context(&self) -> Vec<Message> {
@@ -60,26 +60,52 @@ impl AgentLoopState {
     }
 
     async fn perceive(&self, messages: Vec<Message>) -> () {
-        // TODO: Apply perceive filter
+        let original_messages = messages.clone();
+        let mut turn_context = TurnContext::default();
+        let perceived = self
+            .components
+            .run_stage(PipelineStage::PerceiveIn, messages, &mut turn_context)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("PerceiveIn stage failed: {}", e);
+                original_messages
+            });
+
+        let history_messages = self
+            .components
+            .run_stage(PipelineStage::HistoryWrite, perceived.clone(), &mut turn_context)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("HistoryWrite stage failed: {}", e);
+                perceived.clone()
+            });
+
+        let context_messages = self
+            .components
+            .run_stage(PipelineStage::ContextBuild, perceived, &mut turn_context)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("ContextBuild stage failed: {}", e);
+                history_messages.clone()
+            });
+
         let mut state_guard = self.state.lock().await;
-        // TODO: Apply history filter
-        state_guard.history.extend(messages.clone());
-        // TODO: Apply context filter
-        state_guard.context.extend(messages);
+        state_guard.history.extend(history_messages);
+        state_guard.context.extend(context_messages);
         drop(state_guard);
     }
 
     async fn respond_complete(&self, message: Message) -> Option<Message> {
-        // Append message to context
-        //let mut state_guard = self.state.lock().await;
-        // TODO: Apply history filter
-        //let context = state_guard.context.digest();
-        // state_guard.history.push(message.clone(), context);
-        // TODO: Apply context filter
-        //state_guard.context.push(message.clone());
-        //drop(state_guard);
-        // TODO: Apply emit filter
-        Some(message)
+        let mut turn_context = TurnContext::default();
+        let mut output = self
+            .components
+            .run_stage(PipelineStage::EmitOut, vec![message], &mut turn_context)
+            .await
+            .ok()?;
+        if output.is_empty() {
+            return None;
+        }
+        Some(output.remove(0))
     }
 
     async fn reflect(&self) -> Result<()> {
@@ -87,12 +113,29 @@ impl AgentLoopState {
     }
 
     async fn respond_partial(&self, message: Message) -> Option<Message> {
-        // TODO: Apply emit filter
-        Some(message)
+        let mut turn_context = TurnContext::default();
+        let mut output = self
+            .components
+            .run_stage(PipelineStage::EmitOut, vec![message], &mut turn_context)
+            .await
+            .ok()?;
+        if output.is_empty() {
+            return None;
+        }
+        Some(output.remove(0))
     }
     async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
         let context = self.context().await;
+        let mut turn_context = TurnContext::default();
+        let context = self
+            .components
+            .run_stage(PipelineStage::PlanPre, context.clone(), &mut turn_context)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("PlanPre stage failed: {}", e);
+                context
+            });
 
         if context.len() > 1 {
             let mut last_role = context.first().map(|m| m.role).unwrap();
@@ -134,8 +177,7 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let store = runtime_manager.state_store();
-        let state = AgentLoopState::new(agent, runtime_manager)?;
+        let state = AgentLoopState::new(agent, runtime_manager, PipelineConfig::default())?;
         Ok(Self {
             state: Arc::new(state),
             max_iterations: 10

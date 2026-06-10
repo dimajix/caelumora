@@ -3,6 +3,7 @@ use crate::llm::LLMClient;
 use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
 use crate::recorder::{BlackholeRecorder, Recorder};
 use crate::tool::{DummyToolExecutor, ToolExecutor};
+use crate::component::ComponentRegistry;
 use anyhow::Result;
 use std::sync::Arc;
 use caelumora_model::store::StateStore;
@@ -14,6 +15,7 @@ pub struct RuntimeManager {
     state_store: Arc<dyn StateStore>,
     tool_executor: Arc<dyn ToolExecutor>,
     llm_client: Arc<dyn LLMClient>,
+    component_registry: Arc<ComponentRegistry>,
 }
 
 impl RuntimeManager {
@@ -23,6 +25,7 @@ impl RuntimeManager {
             state_store,
             tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
+            component_registry: Arc::new(ComponentRegistry::new()),
         }
     }
 
@@ -37,6 +40,10 @@ impl RuntimeManager {
     }
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
+
+    pub fn component_registry(&self) -> Arc<ComponentRegistry> {
+        self.component_registry.clone()
+    }
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
         match kind.as_str() {

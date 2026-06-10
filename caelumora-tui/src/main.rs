@@ -1,4 +1,4 @@
-use caelumora_model::agent::Personality;
+use caelumora_model::agent::{Personality, PipelineConfig};
 use caelumora_model::driver::memory::MemoryStore;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::meta::{Metadata, Scope};
@@ -43,6 +43,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
             description: "Simple helper personality".to_string(),
             ..Metadata::default()
         },
+        pipeline: PipelineConfig::default(),
     };
     store.put_personality(&personality)?;
 

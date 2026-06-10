@@ -385,6 +385,7 @@ mod tests {
                 description: "Helpful assistant".to_string(),
                 ..Metadata::default()
             },
+            pipeline: crate::agent::PipelineConfig::default(),
         }
     }
 
