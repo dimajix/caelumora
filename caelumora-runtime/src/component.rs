@@ -21,13 +21,39 @@ pub struct ComponentDescriptor {
 }
 
 #[async_trait]
-pub trait PipelineProcessor: Send + Sync + std::fmt::Debug {
+pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str;
-
-    async fn process(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>>;
+    async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>>;
 }
 
-pub type ComponentFactory = Arc<dyn Fn(ComponentDescriptor) -> Result<Arc<dyn PipelineProcessor>> + Send + Sync>;
+pub trait PerceiveInProcessor: MessageProcessor {}
+pub trait HistoryWriteProcessor: MessageProcessor {}
+pub trait ContextBuildProcessor: MessageProcessor {}
+pub trait PlanPreProcessor: MessageProcessor {}
+pub trait EmitOutProcessor: MessageProcessor {}
+
+#[derive(Debug, Clone)]
+pub struct ComponentCapabilities {
+    pub perceive_in: Option<Arc<dyn PerceiveInProcessor>>,
+    pub history_write: Option<Arc<dyn HistoryWriteProcessor>>,
+    pub context_build: Option<Arc<dyn ContextBuildProcessor>>,
+    pub plan_pre: Option<Arc<dyn PlanPreProcessor>>,
+    pub emit_out: Option<Arc<dyn EmitOutProcessor>>,
+}
+
+impl ComponentCapabilities {
+    pub fn empty() -> Self {
+        Self {
+            perceive_in: None,
+            history_write: None,
+            context_build: None,
+            plan_pre: None,
+            emit_out: None,
+        }
+    }
+}
+
+pub type ComponentFactory = Arc<dyn Fn(ComponentDescriptor) -> Result<ComponentCapabilities> + Send + Sync>;
 
 #[derive(Default)]
 pub struct ComponentRegistry {
@@ -51,7 +77,7 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentNodeConfig) -> Result<Arc<dyn PipelineProcessor>> {
+    fn build(&self, node: &ComponentNodeConfig) -> Result<ComponentCapabilities> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(anyhow!("Unsupported component kind: {}", node.kind));
         };
@@ -68,7 +94,17 @@ impl ComponentRegistry {
 struct ComponentNode {
     id: String,
     fail_policy: ComponentFailPolicy,
-    processor: Arc<dyn PipelineProcessor>,
+    capabilities: ComponentCapabilities,
+}
+
+#[derive(Debug, Clone)]
+pub struct StageProcessor<T>
+where
+    T: ?Sized + Send + Sync,
+{
+    pub id: String,
+    pub fail_policy: ComponentFailPolicy,
+    pub processor: Arc<T>,
 }
 
 #[derive(Debug, Default)]
@@ -133,7 +169,7 @@ impl ComponentContainer {
                 ComponentNode {
                     id,
                     fail_policy: node_config.fail_policy,
-                    processor,
+                    capabilities: processor,
                 },
             );
         }
@@ -161,39 +197,97 @@ impl ComponentContainer {
         Self::default()
     }
 
-    pub async fn run_stage(
+    fn stage_nodes(
         &self,
         stage: PipelineStage,
-        mut input: Vec<Message>,
-        context: &mut TurnContext,
-    ) -> Result<Vec<Message>> {
+    ) -> Result<Vec<&ComponentNode>> {
         let Some(component_ids) = self.stages.get(&stage) else {
-            return Ok(input);
+            return Ok(Vec::new());
         };
 
+        let mut nodes = Vec::with_capacity(component_ids.len());
         for component_id in component_ids {
             let node = self
                 .nodes
                 .get(component_id)
                 .ok_or_else(|| anyhow!("Unknown component node '{}'", component_id))?;
-            let current = std::mem::take(&mut input);
-            match node.processor.process(current, context).await {
-                Ok(output) => {
-                    input = output;
-                }
-                Err(e) => match node.fail_policy {
-                    ComponentFailPolicy::FailOpen => {
-                        log::warn!(
-                            "Component '{}' failed in stage {:?} with fail-open policy: {}",
-                            node.id,
-                            stage,
-                            e
-                        );
-                    }
-                    ComponentFailPolicy::FailClosed => return Err(e),
-                },
-            }
+            nodes.push(node);
         }
-        Ok(input)
+        Ok(nodes)
+    }
+
+    pub fn perceive_in_processors(&self) -> Result<Vec<StageProcessor<dyn PerceiveInProcessor>>> {
+        self.stage_nodes(PipelineStage::PerceiveIn).map(|nodes| {
+            nodes
+                .into_iter()
+                .filter_map(|n| {
+                    n.capabilities.perceive_in.as_ref().map(|processor| StageProcessor {
+                        id: n.id.clone(),
+                        fail_policy: n.fail_policy,
+                        processor: Arc::clone(processor),
+                    })
+                })
+                .collect()
+        })
+    }
+
+    pub fn history_write_processors(&self) -> Result<Vec<StageProcessor<dyn HistoryWriteProcessor>>> {
+        self.stage_nodes(PipelineStage::HistoryWrite).map(|nodes| {
+            nodes
+                .into_iter()
+                .filter_map(|n| {
+                    n.capabilities.history_write.as_ref().map(|processor| StageProcessor {
+                        id: n.id.clone(),
+                        fail_policy: n.fail_policy,
+                        processor: Arc::clone(processor),
+                    })
+                })
+                .collect()
+        })
+    }
+
+    pub fn context_build_processors(&self) -> Result<Vec<StageProcessor<dyn ContextBuildProcessor>>> {
+        self.stage_nodes(PipelineStage::ContextBuild).map(|nodes| {
+            nodes
+                .into_iter()
+                .filter_map(|n| {
+                    n.capabilities.context_build.as_ref().map(|processor| StageProcessor {
+                        id: n.id.clone(),
+                        fail_policy: n.fail_policy,
+                        processor: Arc::clone(processor),
+                    })
+                })
+                .collect()
+        })
+    }
+
+    pub fn plan_pre_processors(&self) -> Result<Vec<StageProcessor<dyn PlanPreProcessor>>> {
+        self.stage_nodes(PipelineStage::PlanPre).map(|nodes| {
+            nodes
+                .into_iter()
+                .filter_map(|n| {
+                    n.capabilities.plan_pre.as_ref().map(|processor| StageProcessor {
+                        id: n.id.clone(),
+                        fail_policy: n.fail_policy,
+                        processor: Arc::clone(processor),
+                    })
+                })
+                .collect()
+        })
+    }
+
+    pub fn emit_out_processors(&self) -> Result<Vec<StageProcessor<dyn EmitOutProcessor>>> {
+        self.stage_nodes(PipelineStage::EmitOut).map(|nodes| {
+            nodes
+                .into_iter()
+                .filter_map(|n| {
+                    n.capabilities.emit_out.as_ref().map(|processor| StageProcessor {
+                        id: n.id.clone(),
+                        fail_policy: n.fail_policy,
+                        processor: Arc::clone(processor),
+                    })
+                })
+                .collect()
+        })
     }
 }

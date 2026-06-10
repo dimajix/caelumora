@@ -1,10 +1,10 @@
 use crate::message::{MessageEvent};
 use crate::runtime::RuntimeManager;
 use crate::security::SecurityContext;
-use crate::component::{ComponentContainer, TurnContext};
+use crate::component::{ComponentContainer, MessageProcessor, StageProcessor, TurnContext};
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentState, PipelineConfig, PipelineStage};
+use caelumora_model::agent::{Agent, AgentState, ComponentFailPolicy, PipelineConfig, PipelineStage};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -38,11 +38,12 @@ impl AgentLoopState {
                 Err(e)?
             }
         };
+        let  components = ComponentContainer::from_config(&pipeline_config, runtime_manager.component_registry().as_ref())?;
         Ok(Self {
             agent,
             runtime_manager: runtime_manager.clone(),
             state: Mutex::new(state),
-            components: ComponentContainer::from_config(&pipeline_config, runtime_manager.component_registry().as_ref())?,
+            components,
         })
     }
     async fn context(&self) -> Vec<Message> {
@@ -62,27 +63,38 @@ impl AgentLoopState {
     async fn perceive(&self, messages: Vec<Message>) -> () {
         let original_messages = messages.clone();
         let mut turn_context = TurnContext::default();
-        let perceived = self
-            .components
-            .run_stage(PipelineStage::PerceiveIn, messages, &mut turn_context)
+        let perceived_processors = self.components.perceive_in_processors().unwrap_or_else(|e| {
+            warn!("Failed to resolve PerceiveIn processors: {}", e);
+            Vec::new()
+        });
+        let perceived = Self::apply_stage_processors(PipelineStage::PerceiveIn, perceived_processors, messages, &mut turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
                 original_messages
             });
 
-        let history_messages = self
-            .components
-            .run_stage(PipelineStage::HistoryWrite, perceived.clone(), &mut turn_context)
-            .await
-            .unwrap_or_else(|e| {
-                warn!("HistoryWrite stage failed: {}", e);
-                perceived.clone()
-            });
+        let history_write_processors = self.components.history_write_processors().unwrap_or_else(|e| {
+            warn!("Failed to resolve HistoryWrite processors: {}", e);
+            Vec::new()
+        });
+        let history_messages = Self::apply_stage_processors(
+            PipelineStage::HistoryWrite,
+            history_write_processors,
+            perceived.clone(),
+            &mut turn_context,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            warn!("HistoryWrite stage failed: {}", e);
+            perceived.clone()
+        });
 
-        let context_messages = self
-            .components
-            .run_stage(PipelineStage::ContextBuild, perceived, &mut turn_context)
+        let context_build_processors = self.components.context_build_processors().unwrap_or_else(|e| {
+            warn!("Failed to resolve ContextBuild processors: {}", e);
+            Vec::new()
+        });
+        let context_messages = Self::apply_stage_processors(PipelineStage::ContextBuild, context_build_processors, perceived, &mut turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("ContextBuild stage failed: {}", e);
@@ -97,9 +109,8 @@ impl AgentLoopState {
 
     async fn respond_complete(&self, message: Message) -> Option<Message> {
         let mut turn_context = TurnContext::default();
-        let mut output = self
-            .components
-            .run_stage(PipelineStage::EmitOut, vec![message], &mut turn_context)
+        let emit_out_processors = self.components.emit_out_processors().ok()?;
+        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], &mut turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -114,9 +125,8 @@ impl AgentLoopState {
 
     async fn respond_partial(&self, message: Message) -> Option<Message> {
         let mut turn_context = TurnContext::default();
-        let mut output = self
-            .components
-            .run_stage(PipelineStage::EmitOut, vec![message], &mut turn_context)
+        let emit_out_processors = self.components.emit_out_processors().ok()?;
+        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], &mut turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -128,9 +138,11 @@ impl AgentLoopState {
         let llm_client = self.runtime_manager.llm_client();
         let context = self.context().await;
         let mut turn_context = TurnContext::default();
-        let context = self
-            .components
-            .run_stage(PipelineStage::PlanPre, context.clone(), &mut turn_context)
+        let plan_pre_processors = self.components.plan_pre_processors().unwrap_or_else(|e| {
+            warn!("Failed to resolve PlanPre processors: {}", e);
+            Vec::new()
+        });
+        let context = Self::apply_stage_processors(PipelineStage::PlanPre, plan_pre_processors, context.clone(), &mut turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
@@ -161,6 +173,37 @@ impl AgentLoopState {
         // 2. Add tool result to history and context
         // 3. Return some message
         todo!()
+    }
+
+    async fn apply_stage_processors<T>(
+        stage: PipelineStage,
+        processors: Vec<StageProcessor<T>>,
+        mut input: Vec<Message>,
+        context: &mut TurnContext,
+    ) -> Result<Vec<Message>>
+    where
+        T: MessageProcessor + ?Sized + Send + Sync,
+    {
+        for stage_processor in processors {
+            let current = std::mem::take(&mut input);
+            match stage_processor.processor.process_messages(current, context).await {
+                Ok(output) => {
+                    input = output;
+                }
+                Err(e) => match stage_processor.fail_policy {
+                    ComponentFailPolicy::FailOpen => {
+                        warn!(
+                            "Component '{}' failed in stage {:?} with fail-open policy: {}",
+                            stage_processor.id,
+                            stage,
+                            e
+                        );
+                    }
+                    ComponentFailPolicy::FailClosed => return Err(e),
+                },
+            }
+        }
+        Ok(input)
     }
 
 }
