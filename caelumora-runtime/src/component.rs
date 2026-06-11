@@ -26,29 +26,30 @@ pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
     async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>>;
 }
 
+#[async_trait]
+pub trait ContextProvider: Send + Sync + std::fmt::Debug {
+    async fn current_context(&self) -> Result<Vec<Message>>;
+}
+
 pub trait PerceiveInProcessor: MessageProcessor {}
-pub trait HistoryWriteProcessor: MessageProcessor {}
-pub trait ContextBuildProcessor: MessageProcessor {}
 pub trait PlanPreProcessor: MessageProcessor {}
 pub trait EmitOutProcessor: MessageProcessor {}
 
 #[derive(Debug, Clone)]
 pub struct ComponentCapabilities {
     pub perceive_in: Option<Arc<dyn PerceiveInProcessor>>,
-    pub history_write: Option<Arc<dyn HistoryWriteProcessor>>,
-    pub context_build: Option<Arc<dyn ContextBuildProcessor>>,
     pub plan_pre: Option<Arc<dyn PlanPreProcessor>>,
     pub emit_out: Option<Arc<dyn EmitOutProcessor>>,
+    pub context_provider: Option<Arc<dyn ContextProvider>>,
 }
 
 impl ComponentCapabilities {
     pub fn empty() -> Self {
         Self {
             perceive_in: None,
-            history_write: None,
-            context_build: None,
             plan_pre: None,
             emit_out: None,
+            context_provider: None,
         }
     }
 }
@@ -111,6 +112,7 @@ where
 pub struct ComponentContainer {
     nodes: HashMap<String, ComponentNode>,
     stages: HashMap<PipelineStage, Vec<String>>,
+    node_order: Vec<String>,
 }
 
 impl ComponentContainer {
@@ -161,7 +163,7 @@ impl ComponentContainer {
         }
 
         let mut nodes = HashMap::new();
-        for id in ordered {
+        for id in ordered.iter().cloned() {
             let node_config = config_by_id.get(&id).unwrap();
             let processor = registry.build(node_config)?;
             nodes.insert(
@@ -190,7 +192,11 @@ impl ComponentContainer {
                 .extend(binding.components.clone());
         }
 
-        Ok(Self { nodes, stages })
+        Ok(Self {
+            nodes,
+            stages,
+            node_order: ordered,
+        })
     }
 
     pub fn empty() -> Self {
@@ -231,36 +237,6 @@ impl ComponentContainer {
         })
     }
 
-    pub fn history_write_processors(&self) -> Result<Vec<StageProcessor<dyn HistoryWriteProcessor>>> {
-        self.stage_nodes(PipelineStage::HistoryWrite).map(|nodes| {
-            nodes
-                .into_iter()
-                .filter_map(|n| {
-                    n.capabilities.history_write.as_ref().map(|processor| StageProcessor {
-                        id: n.id.clone(),
-                        fail_policy: n.fail_policy,
-                        processor: Arc::clone(processor),
-                    })
-                })
-                .collect()
-        })
-    }
-
-    pub fn context_build_processors(&self) -> Result<Vec<StageProcessor<dyn ContextBuildProcessor>>> {
-        self.stage_nodes(PipelineStage::ContextBuild).map(|nodes| {
-            nodes
-                .into_iter()
-                .filter_map(|n| {
-                    n.capabilities.context_build.as_ref().map(|processor| StageProcessor {
-                        id: n.id.clone(),
-                        fail_policy: n.fail_policy,
-                        processor: Arc::clone(processor),
-                    })
-                })
-                .collect()
-        })
-    }
-
     pub fn plan_pre_processors(&self) -> Result<Vec<StageProcessor<dyn PlanPreProcessor>>> {
         self.stage_nodes(PipelineStage::PlanPre).map(|nodes| {
             nodes
@@ -289,5 +265,22 @@ impl ComponentContainer {
                 })
                 .collect()
         })
+    }
+
+    pub fn context_providers(&self) -> Result<Vec<Arc<dyn ContextProvider>>> {
+        self.node_order
+            .iter()
+            .map(|id| {
+                self.nodes
+                    .get(id)
+                    .ok_or_else(|| anyhow!("Unknown component node '{}'", id))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(|nodes| {
+                nodes
+                    .into_iter()
+                    .filter_map(|n| n.capabilities.context_provider.as_ref().map(Arc::clone))
+                    .collect()
+            })
     }
 }

@@ -21,8 +21,6 @@ pub struct Personality {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum PipelineStage {
     PerceiveIn,
-    HistoryWrite,
-    ContextBuild,
     PlanPre,
     EmitOut,
 }
