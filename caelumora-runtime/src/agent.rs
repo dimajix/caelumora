@@ -1,11 +1,16 @@
 use crate::message::{MessageEvent};
 use crate::runtime::RuntimeManager;
 use crate::security::SecurityContext;
-use crate::component::{ComponentContainer, ContextProvider, MessageProcessor, PerceiveInProcessor, StageProcessor, TurnContext};
+use crate::component::{
+    ComponentContainer, ContextProvider, MessageProcessor, StageProcessor, TurnContext,
+    STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
+};
 use anyhow::Result;
-use async_trait::async_trait;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentState, ComponentFailPolicy, PipelineConfig, PipelineStage};
+use caelumora_model::agent::{
+    Agent, AgentState, ComponentFailPolicy, ComponentNodeConfig, PipelineBindingConfig, PipelineConfig,
+    PipelineStage,
+};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -14,65 +19,10 @@ use std::sync::Arc;
 use log::{debug, warn};
 use tokio::sync::Mutex;
 
-
-#[derive(Debug)]
-struct StateHistoryWriter {
-    state: Arc<Mutex<AgentState>>,
-}
-
-#[async_trait]
-impl MessageProcessor for StateHistoryWriter {
-    fn name(&self) -> &str {
-        "state_history_writer"
-    }
-
-    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
-        let mut state_guard = self.state.lock().await;
-        state_guard.history.extend(input.clone());
-        Ok(input)
-    }
-}
-
-impl PerceiveInProcessor for StateHistoryWriter {}
-
-#[derive(Debug)]
-struct StateContextAppender {
-    state: Arc<Mutex<AgentState>>,
-}
-
-#[async_trait]
-impl MessageProcessor for StateContextAppender {
-    fn name(&self) -> &str {
-        "state_context_appender"
-    }
-
-    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
-        let mut state_guard = self.state.lock().await;
-        state_guard.context.extend(input.clone());
-        Ok(input)
-    }
-}
-
-impl PerceiveInProcessor for StateContextAppender {}
-
-#[derive(Debug)]
-struct StateContextProvider {
-    state: Arc<Mutex<AgentState>>,
-}
-
-#[async_trait]
-impl ContextProvider for StateContextProvider {
-    async fn current_context(&self) -> Result<Vec<Message>> {
-        let state_guard = self.state.lock().await;
-        Ok(state_guard.context.messages())
-    }
-}
-
 #[derive(Debug)]
 struct AgentLoopState {
     agent: Agent,
     runtime_manager: Arc<RuntimeManager>,
-    state: Arc<Mutex<AgentState>>,
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
 }
@@ -93,40 +43,24 @@ impl AgentLoopState {
                 Err(e)?
             }
         };
-        let  components = ComponentContainer::from_config(&pipeline_config, runtime_manager.component_registry().as_ref())?;
         let state = Arc::new(Mutex::new(state));
+        let components = ComponentContainer::from_config_with_state(
+            &pipeline_config,
+            runtime_manager.component_registry().as_ref(),
+            Some(state.clone()),
+        )?;
         let context_provider = components
             .context_providers()
             .ok()
             .and_then(|providers| providers.into_iter().next())
-            .unwrap_or_else(|| Arc::new(StateContextProvider { state: state.clone() }));
+            .ok_or_else(|| anyhow::anyhow!("No context provider configured in pipeline"))?;
 
         Ok(Self {
             agent,
             runtime_manager: runtime_manager.clone(),
-            state,
             components,
             context_provider,
         })
-    }
-
-    fn state_perceive_processors(&self) -> Vec<StageProcessor<dyn PerceiveInProcessor>> {
-        vec![
-            StageProcessor {
-                id: "state_history_writer".to_string(),
-                fail_policy: ComponentFailPolicy::FailClosed,
-                processor: Arc::new(StateHistoryWriter {
-                    state: self.state.clone(),
-                }),
-            },
-            StageProcessor {
-                id: "state_context_appender".to_string(),
-                fail_policy: ComponentFailPolicy::FailClosed,
-                processor: Arc::new(StateContextAppender {
-                    state: self.state.clone(),
-                }),
-            },
-        ]
     }
 
     async fn perceive(&self, messages: Vec<Message>) -> () {
@@ -143,19 +77,7 @@ impl AgentLoopState {
                 original_messages.clone()
             });
 
-        let context_messages = Self::apply_stage_processors(
-            PipelineStage::PerceiveIn,
-            self.state_perceive_processors(),
-            perceived,
-            &mut turn_context,
-        )
-            .await
-            .unwrap_or_else(|e| {
-                warn!("State storage processors failed in PerceiveIn stage: {}", e);
-                original_messages.clone()
-            });
-
-        let _ = context_messages;
+        let _ = perceived;
     }
 
     async fn respond_complete(&self, message: Message) -> Option<Message> {
@@ -278,7 +200,7 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let state = AgentLoopState::new(agent, runtime_manager, PipelineConfig::default())?;
+        let state = AgentLoopState::new(agent, runtime_manager, default_agent_pipeline_config())?;
         Ok(Self {
             state: Arc::new(state),
             max_iterations: 10
@@ -361,9 +283,45 @@ impl AgentLoop {
     }
 }
 
+fn default_agent_pipeline_config() -> PipelineConfig {
+    PipelineConfig {
+        component_nodes: vec![
+            ComponentNodeConfig {
+                id: STATE_HISTORY_WRITER_KIND.to_string(),
+                kind: STATE_HISTORY_WRITER_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: Vec::new(),
+                fail_policy: ComponentFailPolicy::FailClosed,
+            },
+            ComponentNodeConfig {
+                id: STATE_CONTEXT_APPENDER_KIND.to_string(),
+                kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: vec![STATE_HISTORY_WRITER_KIND.to_string()],
+                fail_policy: ComponentFailPolicy::FailClosed,
+            },
+            ComponentNodeConfig {
+                id: STATE_CONTEXT_PROVIDER_KIND.to_string(),
+                kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: vec![STATE_CONTEXT_APPENDER_KIND.to_string()],
+                fail_policy: ComponentFailPolicy::FailClosed,
+            },
+        ],
+        pipeline_bindings: vec![PipelineBindingConfig {
+            stage: PipelineStage::PerceiveIn,
+            components: vec![
+                STATE_HISTORY_WRITER_KIND.to_string(),
+                STATE_CONTEXT_APPENDER_KIND.to_string(),
+            ],
+        }],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::{StateContextAppender, StateContextProvider, StateHistoryWriter};
     use caelumora_model::message::{ActorId, MessageId};
     use chrono::Utc;
     use std::collections::HashMap;

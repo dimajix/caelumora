@@ -1,10 +1,15 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::{ComponentFailPolicy, ComponentNodeConfig, PipelineConfig, PipelineStage};
+use caelumora_model::agent::{AgentState, ComponentFailPolicy, ComponentNodeConfig, PipelineConfig, PipelineStage};
 use caelumora_model::message::Message;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use tokio::sync::Mutex;
+
+pub const STATE_HISTORY_WRITER_KIND: &str = "state_history_writer";
+pub const STATE_CONTEXT_APPENDER_KIND: &str = "state_context_appender";
+pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
 
 #[derive(Debug, Default, Clone)]
 pub struct TurnContext {
@@ -18,6 +23,7 @@ pub struct ComponentDescriptor {
     pub kind: String,
     pub params: Value,
     pub deps: Vec<String>,
+    pub state: Option<Arc<Mutex<AgentState>>>,
 }
 
 #[async_trait]
@@ -78,7 +84,7 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentNodeConfig) -> Result<ComponentCapabilities> {
+    fn build(&self, node: &ComponentNodeConfig, state: Option<Arc<Mutex<AgentState>>>) -> Result<ComponentCapabilities> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(anyhow!("Unsupported component kind: {}", node.kind));
         };
@@ -87,7 +93,61 @@ impl ComponentRegistry {
             kind: node.kind.clone(),
             params: node.params.clone(),
             deps: node.deps.clone(),
+            state,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct StateHistoryWriter {
+    pub state: Arc<Mutex<AgentState>>,
+}
+
+#[async_trait]
+impl MessageProcessor for StateHistoryWriter {
+    fn name(&self) -> &str {
+        STATE_HISTORY_WRITER_KIND
+    }
+
+    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
+        let mut state_guard = self.state.lock().await;
+        state_guard.history.extend(input.clone());
+        Ok(input)
+    }
+}
+
+impl PerceiveInProcessor for StateHistoryWriter {}
+
+#[derive(Debug)]
+pub struct StateContextAppender {
+    pub state: Arc<Mutex<AgentState>>,
+}
+
+#[async_trait]
+impl MessageProcessor for StateContextAppender {
+    fn name(&self) -> &str {
+        STATE_CONTEXT_APPENDER_KIND
+    }
+
+    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
+        let mut state_guard = self.state.lock().await;
+        state_guard.context.extend(input.clone());
+        Ok(input)
+    }
+}
+
+impl PerceiveInProcessor for StateContextAppender {}
+
+#[derive(Debug)]
+pub struct StateContextProvider {
+    pub state: Arc<Mutex<AgentState>>,
+}
+
+#[async_trait]
+impl ContextProvider for StateContextProvider {
+    async fn current_context(&self) -> Result<Vec<Message>> {
+        let state_guard = self.state.lock().await;
+        Ok(state_guard.context.messages())
     }
 }
 
@@ -117,6 +177,14 @@ pub struct ComponentContainer {
 
 impl ComponentContainer {
     pub fn from_config(config: &PipelineConfig, registry: &ComponentRegistry) -> Result<Self> {
+        Self::from_config_with_state(config, registry, None)
+    }
+
+    pub fn from_config_with_state(
+        config: &PipelineConfig,
+        registry: &ComponentRegistry,
+        state: Option<Arc<Mutex<AgentState>>>,
+    ) -> Result<Self> {
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
         let mut config_by_id: HashMap<String, &ComponentNodeConfig> = HashMap::new();
@@ -165,7 +233,7 @@ impl ComponentContainer {
         let mut nodes = HashMap::new();
         for id in ordered.iter().cloned() {
             let node_config = config_by_id.get(&id).unwrap();
-            let processor = registry.build(node_config)?;
+            let processor = registry.build(node_config, state.clone())?;
             nodes.insert(
                 id.clone(),
                 ComponentNode {

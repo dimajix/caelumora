@@ -3,7 +3,10 @@ use crate::llm::LLMClient;
 use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
 use crate::recorder::{BlackholeRecorder, Recorder};
 use crate::tool::{DummyToolExecutor, ToolExecutor};
-use crate::component::ComponentRegistry;
+use crate::component::{
+    ComponentCapabilities, ComponentRegistry, STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND,
+    STATE_HISTORY_WRITER_KIND, StateContextAppender, StateContextProvider, StateHistoryWriter,
+};
 use anyhow::Result;
 use std::sync::Arc;
 use caelumora_model::store::StateStore;
@@ -20,12 +23,50 @@ pub struct RuntimeManager {
 
 impl RuntimeManager {
     pub fn new(state_store: Arc<dyn StateStore>) -> Self {
+        let mut component_registry = ComponentRegistry::new();
+        component_registry.register(
+            STATE_HISTORY_WRITER_KIND,
+            Arc::new(|descriptor| {
+                let state = descriptor
+                    .state
+                    .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
+                Ok(ComponentCapabilities {
+                    perceive_in: Some(Arc::new(StateHistoryWriter { state })),
+                    ..ComponentCapabilities::empty()
+                })
+            }),
+        );
+        component_registry.register(
+            STATE_CONTEXT_APPENDER_KIND,
+            Arc::new(|descriptor| {
+                let state = descriptor
+                    .state
+                    .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
+                Ok(ComponentCapabilities {
+                    perceive_in: Some(Arc::new(StateContextAppender { state })),
+                    ..ComponentCapabilities::empty()
+                })
+            }),
+        );
+        component_registry.register(
+            STATE_CONTEXT_PROVIDER_KIND,
+            Arc::new(|descriptor| {
+                let state = descriptor
+                    .state
+                    .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
+                Ok(ComponentCapabilities {
+                    context_provider: Some(Arc::new(StateContextProvider { state })),
+                    ..ComponentCapabilities::empty()
+                })
+            }),
+        );
+
         Self {
             security_manager: Arc::new(DummySecurityManager::new()),
             state_store,
             tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
-            component_registry: Arc::new(ComponentRegistry::new()),
+            component_registry: Arc::new(component_registry),
         }
     }
 
