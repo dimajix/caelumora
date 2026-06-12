@@ -8,7 +8,7 @@ use crate::component::{
 };
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentId, AgentState, ComponentFailPolicy, ComponentNodeConfig, PipelineBindingConfig, PipelineConfig, PipelineStage};
+use caelumora_model::agent::{Agent, AgentId, AgentState, ComponentFailPolicy, ComponentNodeConfig, ComponentBindingConfig, ComponentConfig, PipelineStage};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -30,7 +30,7 @@ struct AgentLoopState {
 impl AgentLoopState {
     fn new(agent: Agent,
            runtime_manager: Arc<RuntimeManager>,
-           pipeline_config: PipelineConfig,
+           pipeline_config: ComponentConfig,
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
         let state = match store.get_agent_state(agent.id) {
@@ -294,8 +294,8 @@ impl AgentLoop {
     }
 }
 
-fn default_agent_pipeline_config() -> PipelineConfig {
-    PipelineConfig {
+fn default_agent_pipeline_config() -> ComponentConfig {
+    ComponentConfig {
         component_nodes: vec![
             ComponentNodeConfig {
                 id: STATE_HISTORY_WRITER_KIND.to_string(),
@@ -319,7 +319,7 @@ fn default_agent_pipeline_config() -> PipelineConfig {
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
         ],
-        pipeline_bindings: vec![PipelineBindingConfig {
+        component_bindings: vec![ComponentBindingConfig {
             stage: PipelineStage::PerceiveIn,
             components: vec![
                 STATE_HISTORY_WRITER_KIND.to_string(),
@@ -332,11 +332,12 @@ fn default_agent_pipeline_config() -> PipelineConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{StateContextAppender, StateContextProvider, StateHistoryWriter};
     use caelumora_model::message::{ActorId, MessageId};
     use chrono::Utc;
     use std::collections::HashMap;
     use uuid::Uuid;
+    use crate::component_impl::context::{StateContextAppender, StateContextProvider};
+    use crate::component_impl::history::StateHistoryWriter;
 
     fn make_message(content: &str) -> Message {
         Message {

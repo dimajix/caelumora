@@ -5,11 +5,13 @@ use crate::recorder::{BlackholeRecorder, Recorder};
 use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::{
     ComponentCapabilities, ComponentRegistry, STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND,
-    STATE_HISTORY_WRITER_KIND, StateContextAppender, StateContextProvider, StateHistoryWriter,
+    STATE_HISTORY_WRITER_KIND,
 };
 use anyhow::Result;
 use std::sync::Arc;
 use caelumora_model::store::StateStore;
+use crate::component_impl::context::{StateContextAppender, StateContextProvider};
+use crate::component_impl::history::StateHistoryWriter;
 use crate::security::{DummySecurityManager, SecurityManager};
 
 #[derive(Debug)]

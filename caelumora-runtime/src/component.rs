@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentState, ComponentFailPolicy, ComponentNodeConfig, PipelineConfig, PipelineStage};
+use caelumora_model::agent::{AgentState, ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, PipelineStage};
 use caelumora_model::message::Message;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -98,58 +98,6 @@ impl ComponentRegistry {
     }
 }
 
-#[derive(Debug)]
-pub struct StateHistoryWriter {
-    pub state: Arc<Mutex<AgentState>>,
-}
-
-#[async_trait]
-impl MessageProcessor for StateHistoryWriter {
-    fn name(&self) -> &str {
-        STATE_HISTORY_WRITER_KIND
-    }
-
-    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
-        let mut state_guard = self.state.lock().await;
-        state_guard.history.extend(input.clone());
-        Ok(input)
-    }
-}
-
-impl PerceiveInProcessor for StateHistoryWriter {}
-
-#[derive(Debug)]
-pub struct StateContextAppender {
-    pub state: Arc<Mutex<AgentState>>,
-}
-
-#[async_trait]
-impl MessageProcessor for StateContextAppender {
-    fn name(&self) -> &str {
-        STATE_CONTEXT_APPENDER_KIND
-    }
-
-    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
-        let mut state_guard = self.state.lock().await;
-        state_guard.context.extend(input.clone());
-        Ok(input)
-    }
-}
-
-impl PerceiveInProcessor for StateContextAppender {}
-
-#[derive(Debug)]
-pub struct StateContextProvider {
-    pub state: Arc<Mutex<AgentState>>,
-}
-
-#[async_trait]
-impl ContextProvider for StateContextProvider {
-    async fn current_context(&self) -> Result<Vec<Message>> {
-        let state_guard = self.state.lock().await;
-        Ok(state_guard.context.messages())
-    }
-}
 
 #[derive(Debug)]
 struct ComponentNode {
@@ -176,12 +124,12 @@ pub struct ComponentContainer {
 }
 
 impl ComponentContainer {
-    pub fn from_config(config: &PipelineConfig, registry: &ComponentRegistry) -> Result<Self> {
+    pub fn from_config(config: &ComponentConfig, registry: &ComponentRegistry) -> Result<Self> {
         Self::from_config_with_state(config, registry, None)
     }
 
     pub fn from_config_with_state(
-        config: &PipelineConfig,
+        config: &ComponentConfig,
         registry: &ComponentRegistry,
         state: Option<Arc<Mutex<AgentState>>>,
     ) -> Result<Self> {
@@ -245,7 +193,7 @@ impl ComponentContainer {
         }
 
         let mut stages: HashMap<PipelineStage, Vec<String>> = HashMap::new();
-        for binding in &config.pipeline_bindings {
+        for binding in &config.component_bindings {
             for component_id in &binding.components {
                 if !nodes.contains_key(component_id) {
                     return Err(anyhow!(

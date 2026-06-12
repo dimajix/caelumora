@@ -13,3 +13,4 @@ pub mod channel;
 pub mod message;
 pub mod security;
 pub mod component;
+pub mod component_impl;

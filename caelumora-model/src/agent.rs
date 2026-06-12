@@ -15,7 +15,7 @@ pub struct Personality {
     pub id: PersonalityId,
     pub metadata: Metadata,
     #[serde(default)]
-    pub pipeline: PipelineConfig,
+    pub pipeline: ComponentConfig,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -26,18 +26,18 @@ pub enum PipelineStage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineConfig {
+pub struct ComponentConfig {
     #[serde(default)]
     pub component_nodes: Vec<ComponentNodeConfig>,
     #[serde(default)]
-    pub pipeline_bindings: Vec<PipelineBindingConfig>,
+    pub component_bindings: Vec<ComponentBindingConfig>,
 }
 
-impl Default for PipelineConfig {
+impl Default for ComponentConfig {
     fn default() -> Self {
         Self {
             component_nodes: Vec::new(),
-            pipeline_bindings: Vec::new(),
+            component_bindings: Vec::new(),
         }
     }
 }
@@ -62,7 +62,7 @@ pub enum ComponentFailPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineBindingConfig {
+pub struct ComponentBindingConfig {
     pub stage: PipelineStage,
     #[serde(default)]
     pub components: Vec<String>,
