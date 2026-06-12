@@ -2,15 +2,13 @@ use crate::message::{MessageEvent};
 use crate::runtime::RuntimeManager;
 use crate::security::SecurityContext;
 use crate::component::{
-    ComponentContainer, ContextProvider, MessageProcessor, StageProcessor, TurnContext,
+    ComponentContainer, ContextProvider, EmitOutProcessor, MessageProcessor, PerceiveInProcessor,
+    PlanPreProcessor, StageProcessor, TurnContext,
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
 };
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{
-    Agent, AgentState, ComponentFailPolicy, ComponentNodeConfig, PipelineBindingConfig, PipelineConfig,
-    PipelineStage,
-};
+use caelumora_model::agent::{Agent, AgentId, AgentState, ComponentFailPolicy, ComponentNodeConfig, PipelineBindingConfig, PipelineConfig, PipelineStage};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -25,6 +23,9 @@ struct AgentLoopState {
     runtime_manager: Arc<RuntimeManager>,
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
+    perceive_in_processors: Vec<StageProcessor<dyn PerceiveInProcessor>>,
+    emit_out_processors: Option<Vec<StageProcessor<dyn EmitOutProcessor>>>,
+    plan_pre_processors: Vec<StageProcessor<dyn PlanPreProcessor>>,
 }
 impl AgentLoopState {
     fn new(agent: Agent,
@@ -54,23 +55,30 @@ impl AgentLoopState {
             .ok()
             .and_then(|providers| providers.into_iter().next())
             .ok_or_else(|| anyhow::anyhow!("No context provider configured in pipeline"))?;
+        let perceive_in_processors = components.perceive_in_processors().unwrap_or_else(|e| {
+            warn!("Failed to resolve PerceiveIn processors: {}", e);
+            Vec::new()
+        });
+        let emit_out_processors = components.emit_out_processors().ok();
+        let plan_pre_processors = components.plan_pre_processors().unwrap_or_else(|e| {
+            warn!("Failed to resolve PlanPre processors: {}", e);
+            Vec::new()
+        });
 
         Ok(Self {
             agent,
             runtime_manager: runtime_manager.clone(),
             components,
             context_provider,
+            perceive_in_processors,
+            emit_out_processors,
+            plan_pre_processors,
         })
     }
 
-    async fn perceive(&self, messages: Vec<Message>) -> () {
+    async fn perceive(&mut self, messages: Vec<Message>, turn_context: &mut TurnContext) -> () {
         let original_messages = messages.clone();
-        let mut turn_context = TurnContext::default();
-        let perceived_processors = self.components.perceive_in_processors().unwrap_or_else(|e| {
-            warn!("Failed to resolve PerceiveIn processors: {}", e);
-            Vec::new()
-        });
-        let perceived = Self::apply_stage_processors(PipelineStage::PerceiveIn, perceived_processors, messages, &mut turn_context)
+        let perceived = Self::apply_stage_processors(PipelineStage::PerceiveIn, &self.perceive_in_processors, messages, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
@@ -80,10 +88,9 @@ impl AgentLoopState {
         let _ = perceived;
     }
 
-    async fn respond_complete(&self, message: Message) -> Option<Message> {
-        let mut turn_context = TurnContext::default();
-        let emit_out_processors = self.components.emit_out_processors().ok()?;
-        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], &mut turn_context)
+    async fn respond_complete(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
+        let emit_out_processors = self.emit_out_processors.as_ref()?;
+        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -92,14 +99,13 @@ impl AgentLoopState {
         Some(output.remove(0))
     }
 
-    async fn reflect(&self) -> Result<()> {
+    async fn reflect(&mut self) -> Result<()> {
         Ok(())
     }
 
-    async fn respond_partial(&self, message: Message) -> Option<Message> {
-        let mut turn_context = TurnContext::default();
-        let emit_out_processors = self.components.emit_out_processors().ok()?;
-        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], &mut turn_context)
+    async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
+        let emit_out_processors = self.emit_out_processors.as_ref()?;
+        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -107,7 +113,7 @@ impl AgentLoopState {
         }
         Some(output.remove(0))
     }
-    async fn plan(&self) -> BoxStream<'static, Result<MessageEvent>> {
+    async fn plan(&mut self, turn_context: &mut TurnContext) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
         let context = self
             .context_provider
@@ -117,12 +123,7 @@ impl AgentLoopState {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let mut turn_context = TurnContext::default();
-        let plan_pre_processors = self.components.plan_pre_processors().unwrap_or_else(|e| {
-            warn!("Failed to resolve PlanPre processors: {}", e);
-            Vec::new()
-        });
-        let context = Self::apply_stage_processors(PipelineStage::PlanPre, plan_pre_processors, context.clone(), &mut turn_context)
+        let context = Self::apply_stage_processors(PipelineStage::PlanPre, &self.plan_pre_processors, context.clone(), turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
@@ -157,7 +158,7 @@ impl AgentLoopState {
 
     async fn apply_stage_processors<T>(
         stage: PipelineStage,
-        processors: Vec<StageProcessor<T>>,
+        processors: &[StageProcessor<T>],
         mut input: Vec<Message>,
         context: &mut TurnContext,
     ) -> Result<Vec<Message>>
@@ -191,7 +192,9 @@ impl AgentLoopState {
 
 #[derive(Debug)]
 pub struct AgentLoop {
-    state: Arc<AgentLoopState>,
+    state: Arc<Mutex<AgentLoopState>>,
+    id: AgentId,
+    name: String,
     max_iterations: i32
 }
 
@@ -200,47 +203,55 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
+        let id = agent.id;
+        let name = agent.metadata.name.clone();
         let state = AgentLoopState::new(agent, runtime_manager, default_agent_pipeline_config())?;
         Ok(Self {
-            state: Arc::new(state),
+            state: Arc::new(Mutex::new(state)),
+            id,
+            name,
             max_iterations: 10
         })
     }
 
     pub fn id(&self) -> ActorId {
-        ActorId::Agent(self.state.agent.id)
+        ActorId::Agent(self.id)
     }
 
     pub fn name(&self) -> String {
-        self.state.agent.metadata.name.clone()
+        self.name.clone()
     }
 
-    pub async fn send_messages(&self, messages: Vec<Message>, security_context: &SecurityContext) {
-        self.state.perceive(messages).await
+    pub async fn send_messages(&self, messages: Vec<Message>, _security_context: &SecurityContext) {
+        let mut turn_context = TurnContext::default();
+        let mut state = self.state.lock().await;
+        state.perceive(messages, &mut turn_context).await
     }
 
     pub async fn request_response(&self, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
-        let state = self.state.clone();
-        let agent_id = ActorId::Agent(state.agent.id);
-        let agent_name = state.agent.metadata.name.clone();
+        let state_arc = self.state.clone();
+        let agent_id = ActorId::Agent(self.id);
+        let agent_name = self.name.clone();
         let max_iterations = self.max_iterations;
         let security_context = security_context.next(self.id());
 
         let stream = stream! {
+            let mut state = state_arc.lock().await;
             let mut loop_count = 0;
+            let mut turn_context = TurnContext::default();
             while loop_count < max_iterations {
                 loop_count += 1;
 
                 // --- PHASE 2: PLAN ---
                 // Call LLM with the current context
                 // The LLM returns a stream of tokens or structured parts
-                let mut response = state.plan().await;
+                let mut response = state.plan(&mut turn_context).await;
                 while let Some(event) = response.try_next().await? {
                     match event {
                         MessageEvent::Partial(mut message) => {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
-                            if let Some(msg) = state.respond_partial(message).await {
+                            if let Some(msg) = state.respond_partial(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Partial(msg));
                             }
                         },
@@ -248,7 +259,7 @@ impl AgentLoop {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
                             let tool_calls = message.tool_calls.clone();
-                            if let Some(msg) = state.respond_complete(message).await {
+                            if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
                             // Execute all tools
