@@ -261,7 +261,7 @@ mod tests {
                 scope,
                 ..Metadata::default()
             },
-            pipeline: crate::agent::ComponentConfig::default(),
+            components: crate::component::ComponentConfig::default(),
         }
     }
 

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentState, ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, PipelineStage};
+use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, ComponentType};
+use caelumora_model::agent::{AgentState};
 use caelumora_model::message::Message;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -119,7 +120,7 @@ where
 #[derive(Debug, Default)]
 pub struct ComponentContainer {
     nodes: HashMap<String, ComponentNode>,
-    stages: HashMap<PipelineStage, Vec<String>>,
+    stages: HashMap<ComponentType, Vec<String>>,
     node_order: Vec<String>,
 }
 
@@ -192,7 +193,7 @@ impl ComponentContainer {
             );
         }
 
-        let mut stages: HashMap<PipelineStage, Vec<String>> = HashMap::new();
+        let mut stages: HashMap<ComponentType, Vec<String>> = HashMap::new();
         for binding in &config.component_bindings {
             for component_id in &binding.components {
                 if !nodes.contains_key(component_id) {
@@ -221,7 +222,7 @@ impl ComponentContainer {
 
     fn stage_nodes(
         &self,
-        stage: PipelineStage,
+        stage: ComponentType,
     ) -> Result<Vec<&ComponentNode>> {
         let Some(component_ids) = self.stages.get(&stage) else {
             return Ok(Vec::new());
@@ -239,7 +240,7 @@ impl ComponentContainer {
     }
 
     pub fn perceive_in_processors(&self) -> Result<Vec<StageProcessor<dyn PerceiveInProcessor>>> {
-        self.stage_nodes(PipelineStage::PerceiveIn).map(|nodes| {
+        self.stage_nodes(ComponentType::PerceiveIn).map(|nodes| {
             nodes
                 .into_iter()
                 .filter_map(|n| {
@@ -254,7 +255,7 @@ impl ComponentContainer {
     }
 
     pub fn plan_pre_processors(&self) -> Result<Vec<StageProcessor<dyn PlanPreProcessor>>> {
-        self.stage_nodes(PipelineStage::PlanPre).map(|nodes| {
+        self.stage_nodes(ComponentType::PlanPre).map(|nodes| {
             nodes
                 .into_iter()
                 .filter_map(|n| {
@@ -269,7 +270,7 @@ impl ComponentContainer {
     }
 
     pub fn emit_out_processors(&self) -> Result<Vec<StageProcessor<dyn EmitOutProcessor>>> {
-        self.stage_nodes(PipelineStage::EmitOut).map(|nodes| {
+        self.stage_nodes(ComponentType::EmitOut).map(|nodes| {
             nodes
                 .into_iter()
                 .filter_map(|n| {

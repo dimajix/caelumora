@@ -8,7 +8,8 @@ use crate::component::{
 };
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentId, AgentState, ComponentFailPolicy, ComponentNodeConfig, ComponentBindingConfig, ComponentConfig, PipelineStage};
+use caelumora_model::agent::{Agent, AgentId, AgentState};
+use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentBindingConfig, ComponentConfig, ComponentType};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -78,7 +79,7 @@ impl AgentLoopState {
 
     async fn perceive(&mut self, messages: Vec<Message>, turn_context: &mut TurnContext) -> () {
         let original_messages = messages.clone();
-        let perceived = Self::apply_stage_processors(PipelineStage::PerceiveIn, &self.perceive_in_processors, messages, turn_context)
+        let perceived = Self::apply_stage_processors(ComponentType::PerceiveIn, &self.perceive_in_processors, messages, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
@@ -90,7 +91,7 @@ impl AgentLoopState {
 
     async fn respond_complete(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
         let emit_out_processors = self.emit_out_processors.as_ref()?;
-        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], turn_context)
+        let mut output = Self::apply_stage_processors(ComponentType::EmitOut, emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -105,7 +106,7 @@ impl AgentLoopState {
 
     async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
         let emit_out_processors = self.emit_out_processors.as_ref()?;
-        let mut output = Self::apply_stage_processors(PipelineStage::EmitOut, emit_out_processors, vec![message], turn_context)
+        let mut output = Self::apply_stage_processors(ComponentType::EmitOut, emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -123,7 +124,7 @@ impl AgentLoopState {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let context = Self::apply_stage_processors(PipelineStage::PlanPre, &self.plan_pre_processors, context.clone(), turn_context)
+        let context = Self::apply_stage_processors(ComponentType::PlanPre, &self.plan_pre_processors, context.clone(), turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
@@ -157,7 +158,7 @@ impl AgentLoopState {
     }
 
     async fn apply_stage_processors<T>(
-        stage: PipelineStage,
+        stage: ComponentType,
         processors: &[StageProcessor<T>],
         mut input: Vec<Message>,
         context: &mut TurnContext,
@@ -320,7 +321,7 @@ fn default_agent_pipeline_config() -> ComponentConfig {
             },
         ],
         component_bindings: vec![ComponentBindingConfig {
-            stage: PipelineStage::PerceiveIn,
+            stage: ComponentType::PerceiveIn,
             components: vec![
                 STATE_HISTORY_WRITER_KIND.to_string(),
                 STATE_CONTEXT_APPENDER_KIND.to_string(),

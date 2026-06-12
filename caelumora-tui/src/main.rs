@@ -1,4 +1,4 @@
-use caelumora_model::agent::{Personality, ComponentConfig};
+use caelumora_model::agent::{Personality};
 use caelumora_model::driver::memory::MemoryStore;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::meta::{Metadata, Scope};
@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use caelumora_model::component::ComponentConfig;
 use caelumora_runtime::actor_impl::user::UserActor;
 
 fn init_logging() {
@@ -43,7 +44,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
             description: "Simple helper personality".to_string(),
             ..Metadata::default()
         },
-        pipeline: ComponentConfig::default(),
+        components: ComponentConfig::default(),
     };
     store.put_personality(&personality)?;
 

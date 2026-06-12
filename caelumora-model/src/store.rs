@@ -231,7 +231,7 @@ mod tests {
                 owner: UserId(Uuid::new_v4()),
                 description: "Helpful assistant".to_string(),
             },
-            pipeline: crate::agent::ComponentConfig::default(),
+            components: crate::component::ComponentConfig::default(),
         }
     }
 
