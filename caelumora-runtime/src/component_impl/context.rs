@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use caelumora_model::agent::AgentState;
 use caelumora_model::message::Message;
-use crate::component::{ContextProvider, MessageProcessor, PerceiveInProcessor, TurnContext, STATE_CONTEXT_APPENDER_KIND};
+use crate::component::{
+    ComponentCapabilities, ComponentRegistry, ContextProvider, MessageProcessor, PerceiveInProcessor,
+    TurnContext, STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND,
+};
 
 #[derive(Debug)]
 pub struct StateContextAppender {
@@ -37,4 +40,32 @@ impl ContextProvider for StateContextProvider {
         let state_guard = self.state.lock().await;
         Ok(state_guard.context.messages())
     }
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        STATE_CONTEXT_APPENDER_KIND,
+        Arc::new(|descriptor| {
+            let state = descriptor
+                .state
+                .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
+            Ok(ComponentCapabilities {
+                perceive_in: Some(Arc::new(StateContextAppender { state })),
+                ..ComponentCapabilities::empty()
+            })
+        }),
+    );
+
+    registry.register(
+        STATE_CONTEXT_PROVIDER_KIND,
+        Arc::new(|descriptor| {
+            let state = descriptor
+                .state
+                .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
+            Ok(ComponentCapabilities {
+                context_provider: Some(Arc::new(StateContextProvider { state })),
+                ..ComponentCapabilities::empty()
+            })
+        }),
+    );
 }

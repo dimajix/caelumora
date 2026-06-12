@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use caelumora_model::agent::AgentState;
 use caelumora_model::message::Message;
-use crate::component::{MessageProcessor, PerceiveInProcessor, TurnContext, STATE_HISTORY_WRITER_KIND};
+use crate::component::{
+    ComponentCapabilities, ComponentRegistry, MessageProcessor, PerceiveInProcessor, TurnContext,
+    STATE_HISTORY_WRITER_KIND,
+};
 
 #[derive(Debug)]
 pub struct StateHistoryWriter {
@@ -25,4 +28,19 @@ impl MessageProcessor for StateHistoryWriter {
 }
 
 impl PerceiveInProcessor for StateHistoryWriter {}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        STATE_HISTORY_WRITER_KIND,
+        Arc::new(|descriptor| {
+            let state = descriptor
+                .state
+                .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
+            Ok(ComponentCapabilities {
+                perceive_in: Some(Arc::new(StateHistoryWriter { state })),
+                ..ComponentCapabilities::empty()
+            })
+        }),
+    );
+}
 
