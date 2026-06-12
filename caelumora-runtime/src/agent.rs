@@ -52,16 +52,16 @@ impl AgentLoopState {
             Some(state.clone()),
         )?;
         let context_provider = components
-            .context_providers()
+            .get_all::<dyn ContextProvider>()
             .ok()
             .and_then(|providers| providers.into_iter().next())
             .ok_or_else(|| anyhow::anyhow!("No context provider configured in pipeline"))?;
-        let perceive_in_processors = components.perceive_in_processors().unwrap_or_else(|e| {
+        let perceive_in_processors = components.stage_processors::<dyn PerceiveInProcessor>(ComponentType::PerceiveIn).unwrap_or_else(|e| {
             warn!("Failed to resolve PerceiveIn processors: {}", e);
             Vec::new()
         });
-        let emit_out_processors = components.emit_out_processors().ok();
-        let plan_pre_processors = components.plan_pre_processors().unwrap_or_else(|e| {
+        let emit_out_processors = components.stage_processors::<dyn EmitOutProcessor>(ComponentType::EmitOut).ok();
+        let plan_pre_processors = components.stage_processors::<dyn PlanPreProcessor>(ComponentType::PlanPre).unwrap_or_else(|e| {
             warn!("Failed to resolve PlanPre processors: {}", e);
             Vec::new()
         });

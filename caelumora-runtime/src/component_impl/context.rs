@@ -49,10 +49,9 @@ pub fn register(registry: &mut ComponentRegistry) {
             let state = descriptor
                 .state
                 .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
-            Ok(ComponentCapabilities {
-                perceive_in: Some(Arc::new(StateContextAppender { state })),
-                ..ComponentCapabilities::empty()
-            })
+            let mut capabilities = ComponentCapabilities::empty();
+            capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateContextAppender { state }));
+            Ok(capabilities)
         }),
     );
 
@@ -62,10 +61,9 @@ pub fn register(registry: &mut ComponentRegistry) {
             let state = descriptor
                 .state
                 .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
-            Ok(ComponentCapabilities {
-                context_provider: Some(Arc::new(StateContextProvider { state })),
-                ..ComponentCapabilities::empty()
-            })
+            let mut capabilities = ComponentCapabilities::empty();
+            capabilities.insert::<dyn ContextProvider>(Arc::new(StateContextProvider { state }));
+            Ok(capabilities)
         }),
     );
 }

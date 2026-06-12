@@ -4,6 +4,7 @@ use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, Compo
 use caelumora_model::agent::{AgentState};
 use caelumora_model::message::Message;
 use serde_json::Value;
+use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -42,22 +43,25 @@ pub trait PerceiveInProcessor: MessageProcessor {}
 pub trait PlanPreProcessor: MessageProcessor {}
 pub trait EmitOutProcessor: MessageProcessor {}
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct ComponentCapabilities {
-    pub perceive_in: Option<Arc<dyn PerceiveInProcessor>>,
-    pub plan_pre: Option<Arc<dyn PlanPreProcessor>>,
-    pub emit_out: Option<Arc<dyn EmitOutProcessor>>,
-    pub context_provider: Option<Arc<dyn ContextProvider>>,
+    map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
 impl ComponentCapabilities {
     pub fn empty() -> Self {
-        Self {
-            perceive_in: None,
-            plan_pre: None,
-            emit_out: None,
-            context_provider: None,
-        }
+        Self::default()
+    }
+
+    pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
+        self.map.insert(TypeId::of::<T>(), Arc::new(value) as Arc<dyn Any + Send + Sync>);
+    }
+
+    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.map
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref::<Arc<T>>())
+            .cloned()
     }
 }
 
@@ -239,52 +243,28 @@ impl ComponentContainer {
         Ok(nodes)
     }
 
-    pub fn perceive_in_processors(&self) -> Result<Vec<StageProcessor<dyn PerceiveInProcessor>>> {
-        self.stage_nodes(ComponentType::PerceiveIn).map(|nodes| {
+    pub fn stage_processors<T>(&self, stage: ComponentType) -> Result<Vec<StageProcessor<T>>>
+    where
+        T: MessageProcessor + ?Sized + Send + Sync + 'static,
+    {
+        self.stage_nodes(stage).map(|nodes| {
             nodes
                 .into_iter()
                 .filter_map(|n| {
-                    n.capabilities.perceive_in.as_ref().map(|processor| StageProcessor {
+                    n.capabilities.get::<T>().map(|processor| StageProcessor {
                         id: n.id.clone(),
                         fail_policy: n.fail_policy,
-                        processor: Arc::clone(processor),
+                        processor,
                     })
                 })
                 .collect()
         })
     }
 
-    pub fn plan_pre_processors(&self) -> Result<Vec<StageProcessor<dyn PlanPreProcessor>>> {
-        self.stage_nodes(ComponentType::PlanPre).map(|nodes| {
-            nodes
-                .into_iter()
-                .filter_map(|n| {
-                    n.capabilities.plan_pre.as_ref().map(|processor| StageProcessor {
-                        id: n.id.clone(),
-                        fail_policy: n.fail_policy,
-                        processor: Arc::clone(processor),
-                    })
-                })
-                .collect()
-        })
-    }
-
-    pub fn emit_out_processors(&self) -> Result<Vec<StageProcessor<dyn EmitOutProcessor>>> {
-        self.stage_nodes(ComponentType::EmitOut).map(|nodes| {
-            nodes
-                .into_iter()
-                .filter_map(|n| {
-                    n.capabilities.emit_out.as_ref().map(|processor| StageProcessor {
-                        id: n.id.clone(),
-                        fail_policy: n.fail_policy,
-                        processor: Arc::clone(processor),
-                    })
-                })
-                .collect()
-        })
-    }
-
-    pub fn context_providers(&self) -> Result<Vec<Arc<dyn ContextProvider>>> {
+    pub fn get_all<T>(&self) -> Result<Vec<Arc<T>>>
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
         self.node_order
             .iter()
             .map(|id| {
@@ -296,7 +276,7 @@ impl ComponentContainer {
             .map(|nodes| {
                 nodes
                     .into_iter()
-                    .filter_map(|n| n.capabilities.context_provider.as_ref().map(Arc::clone))
+                    .filter_map(|n| n.capabilities.get::<T>())
                     .collect()
             })
     }

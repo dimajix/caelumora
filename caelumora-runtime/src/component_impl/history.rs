@@ -36,10 +36,9 @@ pub fn register(registry: &mut ComponentRegistry) {
             let state = descriptor
                 .state
                 .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
-            Ok(ComponentCapabilities {
-                perceive_in: Some(Arc::new(StateHistoryWriter { state })),
-                ..ComponentCapabilities::empty()
-            })
+            let mut capabilities = ComponentCapabilities::empty();
+            capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryWriter { state }));
+            Ok(capabilities)
         }),
     );
 }
