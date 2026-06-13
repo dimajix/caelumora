@@ -9,7 +9,9 @@ use crate::component::{
 use anyhow::Result;
 use async_stream::stream;
 use caelumora_model::agent::{Agent, AgentId, AgentState};
-use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentBindingConfig, ComponentConfig};
+use caelumora_model::component::{
+    ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE, STAGE_PLAN, STAGE_EMIT
+};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -294,6 +296,7 @@ fn default_agent_pipeline_config() -> ComponentConfig {
                 kind: STATE_HISTORY_WRITER_KIND.to_string(),
                 params: serde_json::Value::Null,
                 deps: Vec::new(),
+                tags: vec![STAGE_PERCEIVE.to_string()],
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
             ComponentNodeConfig {
@@ -301,6 +304,7 @@ fn default_agent_pipeline_config() -> ComponentConfig {
                 kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
                 params: serde_json::Value::Null,
                 deps: vec![STATE_HISTORY_WRITER_KIND.to_string()],
+                tags: vec![STAGE_PERCEIVE.to_string()],
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
             ComponentNodeConfig {
@@ -308,16 +312,10 @@ fn default_agent_pipeline_config() -> ComponentConfig {
                 kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
                 params: serde_json::Value::Null,
                 deps: vec![STATE_CONTEXT_APPENDER_KIND.to_string()],
+                tags: Vec::new(),
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
         ],
-        component_bindings: vec![ComponentBindingConfig {
-            stage: "perceive".to_string(),
-            components: vec![
-                STATE_HISTORY_WRITER_KIND.to_string(),
-                STATE_CONTEXT_APPENDER_KIND.to_string(),
-            ],
-        }],
     }
 }
 

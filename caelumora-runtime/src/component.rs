@@ -108,6 +108,7 @@ impl ComponentRegistry {
 struct ComponentNode {
     id: String,
     fail_policy: ComponentFailPolicy,
+    tags: Vec<String>,
     capabilities: ComponentCapabilities,
 }
 
@@ -124,7 +125,6 @@ where
 #[derive(Debug, Default)]
 pub struct ComponentContainer {
     nodes: HashMap<String, ComponentNode>,
-    stages: HashMap<String, Vec<String>>,
     node_order: Vec<String>,
 }
 
@@ -192,30 +192,14 @@ impl ComponentContainer {
                 ComponentNode {
                     id,
                     fail_policy: node_config.fail_policy,
+                    tags: node_config.tags.clone(),
                     capabilities: processor,
                 },
             );
         }
 
-        let mut stages: HashMap<String, Vec<String>> = HashMap::new();
-        for binding in &config.component_bindings {
-            for component_id in &binding.components {
-                if !nodes.contains_key(component_id) {
-                    return Err(anyhow!(
-                        "Stage binding references unknown component '{}'",
-                        component_id
-                    ));
-                }
-            }
-            stages
-                .entry(binding.stage.clone())
-                .or_default()
-                .extend(binding.components.clone());
-        }
-
         Ok(Self {
             nodes,
-            stages,
             node_order: ordered,
         })
     }
@@ -226,29 +210,27 @@ impl ComponentContainer {
 
     fn nodes(
         &self,
-        stage: &str,
+        tag: &str,
     ) -> Result<Vec<&ComponentNode>> {
-        let Some(component_ids) = self.stages.get(stage) else {
-            return Ok(Vec::new());
-        };
-
-        let mut nodes = Vec::with_capacity(component_ids.len());
-        for component_id in component_ids {
+        let mut nodes = Vec::new();
+        for id in &self.node_order {
             let node = self
                 .nodes
-                .get(component_id)
-                .ok_or_else(|| anyhow!("Unknown component node '{}'", component_id))?;
-            nodes.push(node);
+                .get(id)
+                .ok_or_else(|| anyhow!("Unknown component node '{}'", id))?;
+            if node.tags.iter().any(|t| t == tag) {
+                nodes.push(node);
+            }
         }
         Ok(nodes)
     }
 
 
-    pub fn get_all<T>(&self, stage: Option<&str>) -> Result<Vec<StageProcessor<T>>>
+    pub fn get_all<T>(&self, tag: Option<&str>) -> Result<Vec<StageProcessor<T>>>
     where
         T: ?Sized + Send + Sync + 'static,
     {
-        let nodes = match stage {
+        let nodes = match tag {
             Some(s) => self.nodes(s)?,
             None => self
                 .node_order
