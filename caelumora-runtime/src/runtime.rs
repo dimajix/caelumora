@@ -6,7 +6,7 @@ use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
 use anyhow::Result;
 use std::sync::Arc;
-use caelumora_model::store::StateStore;
+use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
 use crate::security::{DummySecurityManager, SecurityManager};
 
@@ -14,13 +14,14 @@ use crate::security::{DummySecurityManager, SecurityManager};
 pub struct RuntimeManager {
     security_manager: Arc<dyn SecurityManager>,
     state_store: Arc<dyn StateStore>,
+    template_store: Arc<dyn TemplateStore>,
     tool_executor: Arc<dyn ToolExecutor>,
     llm_client: Arc<dyn LLMClient>,
     component_registry: Arc<ComponentRegistry>,
 }
 
 impl RuntimeManager {
-    pub fn new(state_store: Arc<dyn StateStore>) -> Self {
+    pub fn new(state_store: Arc<dyn StateStore>, template_store: Arc<dyn TemplateStore>) -> Self {
         let mut component_registry = ComponentRegistry::new();
         history::register(&mut component_registry);
         context::register(&mut component_registry);
@@ -28,6 +29,7 @@ impl RuntimeManager {
         Self {
             security_manager: Arc::new(DummySecurityManager::new()),
             state_store,
+            template_store,
             tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
             component_registry: Arc::new(component_registry),
@@ -45,6 +47,8 @@ impl RuntimeManager {
     }
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
+
+    pub fn template_store(&self) -> Arc<dyn TemplateStore> { self.template_store.clone() }
 
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
         self.component_registry.clone()

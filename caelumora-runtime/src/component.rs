@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 pub const STATE_HISTORY_WRITER_KIND: &str = "state_history_writer";
 pub const STATE_CONTEXT_APPENDER_KIND: &str = "state_context_appender";
 pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
+pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
 
 #[derive(Debug, Default, Clone)]
 pub struct TurnContext {

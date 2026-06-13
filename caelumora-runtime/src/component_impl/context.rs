@@ -7,6 +7,7 @@ use caelumora_model::message::Message;
 use crate::component::{
     ComponentFacets, ComponentRegistry, ContextProvider, MessageProcessor, PerceiveInProcessor,
     SystemPromptProvider, TurnContext, STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND,
+    STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
 };
 use caelumora_model::message::MessageRole;
 
@@ -29,6 +30,18 @@ impl MessageProcessor for StateContextAppender {
 }
 
 impl PerceiveInProcessor for StateContextAppender {}
+
+#[derive(Debug)]
+pub struct StaticSystemPromptProvider {
+    pub prompt: String,
+}
+
+#[async_trait]
+impl SystemPromptProvider for StaticSystemPromptProvider {
+    async fn get_prompt(&self) -> Result<String> {
+        Ok(self.prompt.clone())
+    }
+}
 
 #[derive(Debug)]
 pub struct StateContextProvider {
@@ -91,6 +104,22 @@ pub fn register(registry: &mut ComponentRegistry) {
             capabilities.insert::<dyn ContextProvider>(Arc::new(StateContextProvider {
                 state,
                 prompt_providers
+            }));
+            Ok(capabilities)
+        }),
+    );
+
+    registry.register(
+        STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
+        Arc::new(|descriptor| {
+            let prompt = descriptor.params.get("prompt")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow::anyhow!("Component '{}' requires 'prompt' parameter", descriptor.id))?;
+
+            let mut capabilities = ComponentFacets::empty();
+            capabilities.insert::<dyn SystemPromptProvider>(Arc::new(StaticSystemPromptProvider {
+                prompt
             }));
             Ok(capabilities)
         }),

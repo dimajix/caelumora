@@ -23,8 +23,12 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use caelumora_model::component::ComponentConfig;
+use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_runtime::actor_impl::user::UserActor;
+use caelumora_runtime::component::{
+    STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
+    STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
+};
 
 fn init_logging() {
     let mut builder = env_logger::Builder::new();
@@ -36,6 +40,45 @@ fn init_logging() {
 }
 
 fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
+    let components = ComponentConfig {
+        component_nodes: vec![
+            ComponentNodeConfig {
+                id: "system-prompt".to_string(),
+                kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
+                params: serde_json::json!({
+                    "prompt": "You are a helpful assistant."
+                }),
+                deps: Vec::new(),
+                tags: Vec::new(),
+                fail_policy: ComponentFailPolicy::FailOpen,
+            },
+            ComponentNodeConfig {
+                id: STATE_HISTORY_WRITER_KIND.to_string(),
+                kind: STATE_HISTORY_WRITER_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: Vec::new(),
+                tags: vec![STAGE_PERCEIVE.to_string()],
+                fail_policy: ComponentFailPolicy::FailClosed,
+            },
+            ComponentNodeConfig {
+                id: STATE_CONTEXT_APPENDER_KIND.to_string(),
+                kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: Vec::new(),
+                tags: vec![STAGE_PERCEIVE.to_string()],
+                fail_policy: ComponentFailPolicy::FailClosed,
+            },
+            ComponentNodeConfig {
+                id: STATE_CONTEXT_PROVIDER_KIND.to_string(),
+                kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: vec!["system-prompt".to_string()],
+                tags: Vec::new(),
+                fail_policy: ComponentFailPolicy::FailClosed,
+            },
+        ],
+    };
+
     let personality = Personality {
         id: PersonalityId(Uuid::new_v4()),
         metadata: Metadata {
@@ -44,7 +87,7 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
             description: "Simple helper personality".to_string(),
             ..Metadata::default()
         },
-        components: ComponentConfig::default(),
+        components,
     };
     store.put_personality(&personality)?;
 
@@ -213,7 +256,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize Agent (Integration Point)
     // In a real app, you would inject your OpenAI/Anthropic client here.
     let store = Arc::new(MemoryStore::new());
-    let runtime = Arc::new(RuntimeManager::new(store.clone()));
+    let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
     let template = setup_templates(&store)?;
 
     let context = SessionContext {

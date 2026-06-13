@@ -321,6 +321,7 @@ dependencies = [
  "futures-util",
  "log",
  "rustyline",
+ "serde_json",
  "tokio",
  "uuid",
 ]

@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_stream::stream;
 use caelumora_model::agent::{Agent, AgentId, AgentState};
 use caelumora_model::component::{
-    ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE, STAGE_PLAN, STAGE_EMIT
+    ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE
 };
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
@@ -196,9 +196,10 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
+        let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
         let id = agent.id;
         let name = agent.metadata.name.clone();
-        let state = AgentLoopState::new(agent, runtime_manager, default_agent_pipeline_config())?;
+        let state = AgentLoopState::new(agent, runtime_manager, personality.components)?;
         Ok(Self {
             state: Arc::new(Mutex::new(state)),
             id,
