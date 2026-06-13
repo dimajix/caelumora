@@ -24,7 +24,7 @@ The project is organized as a Rust workspace with the following crates:
 ## Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: Detailed design of the system, modules, and data flow.
-- **[AGENT.md](AGENT.md)**: Guidelines for AI coding agents and contributors.
+- **[AGENTS.md](AGENTS.md)**: Guidelines for AI coding agents and contributors.
 - **[TODO.md](TODO.md)**: Current roadmap and pending tasks.
 
 ## Getting Started

@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use log::{debug, info, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
-use caelumora_model::message::ActorId;
+use uuid::Uuid;
+use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::user::User;
 use crate::actor::{Actor, ActorEvent, Envelope, EventContext};
@@ -44,13 +45,36 @@ impl UserActor {
         }
     }
 
-    pub async fn send_message(&self, message: ActorEvent) -> anyhow::Result<()> {
+    pub async fn send_message(&self, mut message: ActorEvent) -> anyhow::Result<()> {
+        match &mut message {
+            ActorEvent::PartialMessageGenerated(msg) => {
+                self.fixup_message(msg);
+            }
+            ActorEvent::CompleteMessageGenerated(msg) => {
+                self.fixup_message(msg);
+            }
+            ActorEvent::FullResponseGenerated(msgs) => {
+                for m in msgs {
+                    self.fixup_message(m);
+                }
+            }
+            _ => {}
+        }
         self.user_tx.send(message).await?;
         Ok(())
     }
 
     pub async fn lock_receiver(&self) -> MutexGuard<'_, Receiver<ActorEvent>> {
         self.actor_rx.lock().await
+    }
+
+    fn fixup_message(&self, msg:& mut Message) {
+        if msg.id == MessageId::default() {
+            msg.id = MessageId(Uuid::new_v4());
+        }
+        msg.sender_id = self.id();
+        msg.sender_name = self.name();
+        msg.role = MessageRole::User;
     }
 }
 
