@@ -1,12 +1,14 @@
 use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
+use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+use crate::actor::Envelope;
 
 struct ChannelHandle {
     id: ChannelId,
@@ -45,6 +47,14 @@ impl SessionLoop {
     }
     pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
         self.channels.values().find(|c| c.name() == name).map(|c| c.clone())
+    }
+
+    pub fn get_channel_history(&self, channel_id: ChannelId) -> Option<Vec<Message>> {
+        self.channel_by_id(channel_id).map(|c| c.history_blocking())
+    }
+
+    pub fn subscribe_to_channel(&self, channel_id: ChannelId) -> Option<broadcast::Receiver<Envelope>> {
+        self.channel_by_id(channel_id).map(|c| c.subscribe())
     }
 
     pub async fn run(&self) -> Result<()> {

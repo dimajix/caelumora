@@ -1,5 +1,5 @@
 use crate::agent::Agent;
-use crate::message::Message;
+use crate::message::{Message, MessageHistory};
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
@@ -52,9 +52,23 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelState {
+    pub channel_id: ChannelId,
+    pub history: MessageHistory,
+}
+
+impl ChannelState {
+    pub fn new(channel_id: ChannelId) -> Self {
+        Self {
+            channel_id,
+            history: MessageHistory::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionState {
-    /// Full message history
-    pub history: Vec<Message>,
+    pub channels: std::collections::HashMap<ChannelId, ChannelState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

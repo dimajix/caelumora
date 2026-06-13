@@ -1,6 +1,9 @@
 use std::fmt::Debug;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use async_trait::async_trait;
-use crate::actor::Envelope;
+use caelumora_model::session::ChannelState;
+use crate::actor::{ActorEvent, Envelope};
 
 
 #[async_trait]
@@ -18,6 +21,32 @@ impl BlackholeRecorder {
     }
 }
 
+#[async_trait]
 impl Recorder for BlackholeRecorder {
     fn record(&mut self, _event: &Envelope) -> () {}
+}
+
+#[derive(Debug)]
+pub struct StatefulRecorder {
+    state: Arc<Mutex<ChannelState>>,
+}
+
+impl StatefulRecorder {
+    pub fn new(state: Arc<Mutex<ChannelState>>) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait]
+impl Recorder for StatefulRecorder {
+    fn record(&mut self, envelope: &Envelope) {
+        let mut state = self.state.blocking_lock();
+        match &envelope.event {
+            ActorEvent::CompleteMessageGenerated(msg) => {
+                state.history.push(msg.clone(), "".to_string());
+            }
+            // Handle other event types as needed
+            _ => {}
+        }
+    }
 }

@@ -1,15 +1,16 @@
 use crate::agent::AgentLoop;
 use crate::moderator::Moderator;
-use crate::recorder::Recorder;
+use crate::recorder::{Recorder, StatefulRecorder};
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::message::{ActorId, Message};
-use caelumora_model::session::{Channel, ChannelId, Participant, Session, SessionId};
+use caelumora_model::session::{Channel, ChannelId, ChannelState, Participant, Session, SessionId};
 use caelumora_model::user::{User, UserId};
 use log::{debug, info, warn};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
@@ -36,6 +37,8 @@ pub struct ChannelLoop {
     actors: HashMap<ActorId,Arc<dyn Actor>>,
     moderator: Mutex<Box<dyn Moderator>>,
     recorder: Mutex<Box<dyn Recorder>>,
+    state: Arc<Mutex<ChannelState>>,
+    event_tx: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
     run_lock: Mutex<()>
 }
@@ -43,7 +46,9 @@ pub struct ChannelLoop {
 impl ChannelLoop {
     pub fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
-        let recorder = runtime_manager.new_recorder(&"".to_string())?;
+        let state = Arc::new(Mutex::new(ChannelState::new(channel.id)));
+        let recorder = runtime_manager.new_recorder(state.clone())?;
+        let (event_tx, _) = broadcast::channel(100);
 
         let mut actors = HashMap::new();
         for participant in &channel.participants {
@@ -61,9 +66,23 @@ impl ChannelLoop {
             actors,
             moderator: Mutex::new(moderator),
             recorder: Mutex::new(recorder),
+            state,
+            event_tx,
             max_route_decisions: 100,
             run_lock: Mutex::new(())
         })
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
+        self.event_tx.subscribe()
+    }
+
+    pub async fn history(&self) -> Vec<Message> {
+        self.state.lock().await.history.messages()
+    }
+
+    pub fn history_blocking(&self) -> Vec<Message> {
+        self.state.blocking_lock().history.messages()
     }
 
     pub fn id(&self) -> ChannelId { self.id }
@@ -166,7 +185,7 @@ impl ChannelLoop {
 
         // Always route back event to source, this helps the Actor to rebuild the full
         // history in correct order
-        routes.push((event.context.sender_id, event));
+        routes.push((event.context.sender_id, event.clone()));
 
         // First, route all messages to all agents...
         for route in routes {
@@ -206,6 +225,8 @@ impl ChannelLoop {
                 }
             }
         }
+
+        let _ = self.event_tx.send(event);
     }
 
     async fn record_send_event(&self, event: &Envelope) {
