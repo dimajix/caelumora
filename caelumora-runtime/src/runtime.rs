@@ -1,7 +1,7 @@
 use crate::llm_impl::ollama::OllamaClient;
 use crate::llm::LLMClient;
 use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
-use crate::recorder::{BlackholeRecorder, Recorder};
+use crate::recorder::{Recorder};
 use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
 use anyhow::Result;

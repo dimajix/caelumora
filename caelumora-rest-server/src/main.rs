@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     response::sse::{Event, Sse},
-    routing::{delete, get, post},
+    routing::{delete, get},
     Json, Router,
 };
 use caelumora_model::driver::memory::MemoryStore;
@@ -65,11 +65,11 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/templates", get(list_templates))
         .route("/sessions", get(list_sessions).post(create_session))
-        .route("/sessions/:id", delete(terminate_session))
-        .route("/sessions/:id/channels", get(list_channels))
-        .route("/sessions/:id/channels/:cid", get(get_channel))
-        .route("/sessions/:id/channels/:cid/messages", get(get_channel_messages).post(send_message))
-        .route("/sessions/:id/channels/:cid/events", get(join_channel))
+        .route("/sessions/{id}", delete(terminate_session))
+        .route("/sessions/{id}/channels", get(list_channels))
+        .route("/sessions/{id}/channels/{cid}", get(get_channel))
+        .route("/sessions/{id}/channels/{cid}/messages", get(get_channel_messages).post(send_message))
+        .route("/sessions/{id}/channels/{cid}/events", get(join_channel))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;

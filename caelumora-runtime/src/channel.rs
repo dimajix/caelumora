@@ -1,6 +1,6 @@
 use crate::agent::AgentLoop;
 use crate::moderator::Moderator;
-use crate::recorder::{Recorder, StatefulRecorder};
+use crate::recorder::{Recorder};
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::message::{ActorId, Message};

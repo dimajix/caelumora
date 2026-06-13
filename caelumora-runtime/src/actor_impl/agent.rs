@@ -32,7 +32,7 @@ impl AgentActor {
 }
 
 impl AgentActor {
-    async fn send_messages(&self, messages:&mut Vec<Message>, event_context: &EventContext, event_security: &SecurityContext) {
+    async fn send_messages(&self, messages:&mut Vec<Message>, _event_context: &EventContext, event_security: &SecurityContext) {
         self.agent.send_messages(mem::take(messages), event_security).await;
     }
     async fn request_response(&self, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {

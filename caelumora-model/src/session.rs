@@ -1,5 +1,5 @@
 use crate::agent::Agent;
-use crate::message::{Message, MessageHistory};
+use crate::message::{MessageHistory};
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
