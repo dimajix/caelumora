@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
-import type { SessionResponse, ChannelResponse } from '../types';
+import type { SessionResponse, ChannelResponse, SessionTemplate } from '../types';
 import { api } from '../api';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -21,12 +21,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectChannel,
 }) => {
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
+  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   const [channels, setChannels] = useState<Record<string, ChannelResponse[]>>({});
 
   useEffect(() => {
     loadSessions();
+    loadTemplates();
   }, []);
+
+  const loadTemplates = async () => {
+    try {
+      const data = await api.getTemplates();
+      setTemplates(data);
+    } catch (error) {
+      console.error('Failed to load templates', error);
+    }
+  };
 
   const loadSessions = async () => {
     try {
@@ -53,7 +64,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleCreateSession = async () => {
     try {
-      const newSession = await api.createSession();
+      const template = templates[0];
+      if (!template) {
+        console.error('No session template available');
+        return;
+      }
+      const name = `New ${template.metadata.name}`;
+      const newSession = await api.createSession(template.id, name);
       setSessions(prev => [...prev, newSession]);
       toggleSession(newSession.id);
     } catch (error) {

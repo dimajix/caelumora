@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_stream::wrappers::BroadcastStream;
+use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 struct AppState {
@@ -70,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/sessions/{id}/channels/{cid}", get(get_channel))
         .route("/sessions/{id}/channels/{cid}/messages", get(get_channel_messages).post(send_message))
         .route("/sessions/{id}/channels/{cid}/events", get(join_channel))
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;

@@ -1,4 +1,4 @@
-import type { SessionResponse, ChannelResponse, Message, SendMessageRequest } from '../types';
+import type { SessionResponse, ChannelResponse, Message, CreateSessionRequest, SessionTemplate } from '../types';
 
 const API_BASE = '/api';
 
@@ -9,9 +9,21 @@ export const api = {
     return res.json();
   },
 
-  async createSession(templateId?: string): Promise<SessionResponse> {
-    const res = await fetch(`${API_BASE}/sessions${templateId ? `?template_id=${templateId}` : ''}`, {
+  async getTemplates(): Promise<SessionTemplate[]> {
+    const res = await fetch(`${API_BASE}/templates`);
+    if (!res.ok) throw new Error('Failed to fetch templates');
+    return res.json();
+  },
+
+  async createSession(templateId: string, name: string): Promise<SessionResponse> {
+    const payload: CreateSessionRequest = {
+      template_id: templateId,
+      name: name,
+    };
+    const res = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed to create session');
     return res.json();
@@ -30,11 +42,10 @@ export const api = {
   },
 
   async sendMessage(sessionId: string, channelId: string, content: string): Promise<void> {
-    const payload: SendMessageRequest = { content };
     const res = await fetch(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ content }),
     });
     if (!res.ok) throw new Error('Failed to send message');
   },

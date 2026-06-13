@@ -30,6 +30,15 @@ export interface ActorEvent {
   CompleteMessageGenerated?: Message;
 }
 
-export interface SendMessageRequest {
-  content: string;
+export interface SessionTemplate {
+  id: string;
+  metadata: {
+    name: string;
+    description?: string;
+  };
+}
+
+export interface CreateSessionRequest {
+  template_id: string;
+  name: string;
 }
