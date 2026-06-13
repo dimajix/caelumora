@@ -129,14 +129,10 @@ pub struct ComponentContainer {
 }
 
 impl ComponentContainer {
-    pub fn from_config(config: &ComponentConfig, registry: &ComponentRegistry) -> Result<Self> {
-        Self::from_config_with_state(config, registry, None)
-    }
-
-    pub fn from_config_with_state(
+    pub fn from_config(
         config: &ComponentConfig,
         registry: &ComponentRegistry,
-        state: Option<Arc<Mutex<AgentState>>>,
+        state: Option<AgentState>,
     ) -> Result<Self> {
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
@@ -184,6 +180,7 @@ impl ComponentContainer {
         }
 
         let mut nodes = HashMap::new();
+        let state = state.map(|x| Arc::new(Mutex::new(x)));
         for id in ordered.iter().cloned() {
             let node_config = config_by_id.get(&id).unwrap();
             let processor = registry.build(node_config, state.clone())?;

@@ -47,11 +47,10 @@ impl AgentLoopState {
                 Err(e)?
             }
         };
-        let state = Arc::new(Mutex::new(state));
-        let components = ComponentContainer::from_config_with_state(
+        let components = ComponentContainer::from_config(
             &pipeline_config,
             runtime_manager.component_registry().as_ref(),
-            Some(state.clone()),
+            Some(state),
         )?;
         let context_provider = components
             .get_all::<dyn ContextProvider>(None)
