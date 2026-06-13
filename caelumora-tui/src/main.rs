@@ -39,14 +39,14 @@ fn init_logging() {
         .init();
 }
 
-fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
-    let components = ComponentConfig {
+fn create_component_config(system_prompt: &str) -> ComponentConfig {
+    ComponentConfig {
         component_nodes: vec![
             ComponentNodeConfig {
                 id: "system-prompt".to_string(),
                 kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
                 params: serde_json::json!({
-                    "prompt": "You are a helpful assistant."
+                    "prompt": system_prompt
                 }),
                 deps: Vec::new(),
                 tags: Vec::new(),
@@ -77,19 +77,36 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
         ],
-    };
+    }
+}
 
-    let personality = Personality {
+fn create_personality(name: &str, description: &str, system_prompt: &str) -> Personality {
+    Personality {
         id: PersonalityId(Uuid::new_v4()),
         metadata: Metadata {
-            name: "simple-assistant".to_string(),
+            name: name.to_string(),
             scope: Scope::GlobalScope,
-            description: "Simple helper personality".to_string(),
+            description: description.to_string(),
             ..Metadata::default()
         },
-        components,
-    };
-    store.put_personality(&personality)?;
+        components: create_component_config(system_prompt),
+    }
+}
+
+fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
+    let personality_a = create_personality(
+        "jonathan-assistant",
+        "A helpful and polite assistant",
+        "Your name is Jonathan Heart. You are a helpful assistant."
+    );
+    store.put_personality(&personality_a)?;
+
+    let personality_b = create_personality(
+        "sassy-assistant",
+        "A sassy and witty assistant",
+        "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant."
+    );
+    store.put_personality(&personality_b)?;
 
     let template = SessionTemplate {
         id: SessionTemplateId(Uuid::new_v4()),
@@ -107,14 +124,14 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
                 participants: vec![
                     ParticipantTemplate::User,
                     ParticipantTemplate::Agent {
-                        name: "assistant a".to_string(),
+                        name: "Jonathan".to_string(),
                         scope: ScopeTemplate::GlobalScope,
-                        personality_id: personality.id,
+                        personality_id: personality_a.id,
                     },
                     ParticipantTemplate::Agent {
-                        name: "assistant b".to_string(),
+                        name: "Sarah".to_string(),
                         scope: ScopeTemplate::GlobalScope,
-                        personality_id: personality.id,
+                        personality_id: personality_b.id,
                     },
                 ],
             }
