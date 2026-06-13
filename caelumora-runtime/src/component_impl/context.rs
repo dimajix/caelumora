@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use caelumora_model::agent::AgentState;
 use caelumora_model::message::Message;
 use crate::component::{
-    ComponentCapabilities, ComponentRegistry, ContextProvider, MessageProcessor, PerceiveInProcessor,
+    ComponentFacets, ComponentRegistry, ContextProvider, MessageProcessor, PerceiveInProcessor,
     TurnContext, STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND,
 };
 
@@ -49,7 +49,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let state = descriptor
                 .state
                 .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
-            let mut capabilities = ComponentCapabilities::empty();
+            let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateContextAppender { state }));
             Ok(capabilities)
         }),
@@ -61,7 +61,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let state = descriptor
                 .state
                 .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
-            let mut capabilities = ComponentCapabilities::empty();
+            let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn ContextProvider>(Arc::new(StateContextProvider { state }));
             Ok(capabilities)
         }),

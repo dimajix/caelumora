@@ -3,7 +3,7 @@ use crate::runtime::RuntimeManager;
 use crate::security::SecurityContext;
 use crate::component::{
     ComponentContainer, ContextProvider, EmitOutProcessor, MessageProcessor, PerceiveInProcessor,
-    PlanPreProcessor, StageProcessor, TurnContext,
+    PlanPreProcessor, ComponentImpl, TurnContext,
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
 };
 use anyhow::Result;
@@ -26,9 +26,9 @@ struct AgentLoopState {
     runtime_manager: Arc<RuntimeManager>,
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
-    perceive_in_processors: Vec<StageProcessor<dyn PerceiveInProcessor>>,
-    emit_out_processors: Vec<StageProcessor<dyn EmitOutProcessor>>,
-    plan_pre_processors: Vec<StageProcessor<dyn PlanPreProcessor>>,
+    perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
+    emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
+    plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
 }
 impl AgentLoopState {
     fn new(agent: Agent,
@@ -57,7 +57,7 @@ impl AgentLoopState {
             .get_all::<dyn ContextProvider>(None)
             .ok()
             .and_then(|providers| providers.into_iter().next())
-            .map(|p| p.processor)
+            .map(|p| p.facet)
             .ok_or_else(|| anyhow::anyhow!("No context provider configured in pipeline"))?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
@@ -153,7 +153,7 @@ impl AgentLoopState {
     }
 
     async fn apply_stage_processors<T>(
-        processors: &[StageProcessor<T>],
+        processors: &[ComponentImpl<T>],
         mut input: Vec<Message>,
         context: &mut TurnContext,
     ) -> Result<Vec<Message>>
@@ -162,7 +162,7 @@ impl AgentLoopState {
     {
         for stage_processor in processors {
             let current = std::mem::take(&mut input);
-            match stage_processor.processor.process_messages(current, context).await {
+            match stage_processor.facet.process_messages(current, context).await {
                 Ok(output) => {
                     input = output;
                 }

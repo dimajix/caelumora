@@ -44,11 +44,11 @@ pub trait PlanPreProcessor: MessageProcessor {}
 pub trait EmitOutProcessor: MessageProcessor {}
 
 #[derive(Default, Debug, Clone)]
-pub struct ComponentCapabilities {
+pub struct ComponentFacets {
     map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
-impl ComponentCapabilities {
+impl ComponentFacets {
     pub fn empty() -> Self {
         Self::default()
     }
@@ -65,7 +65,7 @@ impl ComponentCapabilities {
     }
 }
 
-pub type ComponentFactory = Arc<dyn Fn(ComponentDescriptor) -> Result<ComponentCapabilities> + Send + Sync>;
+pub type ComponentFactory = Arc<dyn Fn(ComponentDescriptor) -> Result<ComponentFacets> + Send + Sync>;
 
 #[derive(Default)]
 pub struct ComponentRegistry {
@@ -89,7 +89,7 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentNodeConfig, state: Option<Arc<Mutex<AgentState>>>) -> Result<ComponentCapabilities> {
+    fn build(&self, node: &ComponentNodeConfig, state: Option<Arc<Mutex<AgentState>>>) -> Result<ComponentFacets> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(anyhow!("Unsupported component kind: {}", node.kind));
         };
@@ -109,17 +109,17 @@ struct ComponentNode {
     id: String,
     fail_policy: ComponentFailPolicy,
     tags: Vec<String>,
-    capabilities: ComponentCapabilities,
+    facets: ComponentFacets,
 }
 
 #[derive(Debug, Clone)]
-pub struct StageProcessor<T>
+pub struct ComponentImpl<T>
 where
     T: ?Sized + Send + Sync,
 {
     pub id: String,
     pub fail_policy: ComponentFailPolicy,
-    pub processor: Arc<T>,
+    pub facet: Arc<T>,
 }
 
 #[derive(Debug, Default)]
@@ -193,7 +193,7 @@ impl ComponentContainer {
                     id,
                     fail_policy: node_config.fail_policy,
                     tags: node_config.tags.clone(),
-                    capabilities: processor,
+                    facets: processor,
                 },
             );
         }
@@ -226,7 +226,7 @@ impl ComponentContainer {
     }
 
 
-    pub fn get_all<T>(&self, tag: Option<&str>) -> Result<Vec<StageProcessor<T>>>
+    pub fn get_all<T>(&self, tag: Option<&str>) -> Result<Vec<ComponentImpl<T>>>
     where
         T: ?Sized + Send + Sync + 'static,
     {
@@ -246,10 +246,10 @@ impl ComponentContainer {
         Ok(nodes
             .into_iter()
             .filter_map(|n| {
-                n.capabilities.get::<T>().map(|processor| StageProcessor {
+                n.facets.get::<T>().map(|processor| ComponentImpl {
                     id: n.id.clone(),
                     fail_policy: n.fail_policy,
-                    processor,
+                    facet: processor,
                 })
             })
             .collect())
