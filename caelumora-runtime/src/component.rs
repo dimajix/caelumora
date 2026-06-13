@@ -24,8 +24,13 @@ pub struct ComponentDescriptor {
     pub id: String,
     pub kind: String,
     pub params: Value,
-    pub deps: Vec<String>,
+    pub deps: HashMap<String, ComponentFacets>,
     pub state: Option<Arc<Mutex<AgentState>>>,
+}
+
+#[async_trait]
+pub trait SystemPromptProvider: Send + Sync + std::fmt::Debug {
+    async fn get_prompt(&self) -> Result<String>;
 }
 
 #[async_trait]
@@ -89,7 +94,7 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentNodeConfig, state: Option<Arc<Mutex<AgentState>>>) -> Result<ComponentFacets> {
+    fn build(&self, node: &ComponentNodeConfig, state: Option<Arc<Mutex<AgentState>>>, dep_facets: HashMap<String, ComponentFacets>) -> Result<ComponentFacets> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(anyhow!("Unsupported component kind: {}", node.kind));
         };
@@ -97,7 +102,7 @@ impl ComponentRegistry {
             id: node.id.clone(),
             kind: node.kind.clone(),
             params: node.params.clone(),
-            deps: node.deps.clone(),
+            deps: dep_facets,
             state,
         })
     }
@@ -179,18 +184,25 @@ impl ComponentContainer {
             return Err(anyhow!("Cycle detected in component graph"));
         }
 
-        let mut nodes = HashMap::new();
+        let mut nodes: HashMap<String, ComponentNode> = HashMap::new();
         let state = state.map(|x| Arc::new(Mutex::new(x)));
         for id in ordered.iter().cloned() {
             let node_config = config_by_id.get(&id).unwrap();
-            let processor = registry.build(node_config, state.clone())?;
+
+            let mut dep_facets = HashMap::new();
+            for dep_id in &node_config.deps {
+                let dep_node = nodes.get(dep_id).ok_or_else(|| anyhow!("Dependency '{}' not found for component '{}'", dep_id, id))?;
+                dep_facets.insert(dep_id.clone(), dep_node.facets.clone());
+            }
+
+            let facets = registry.build(node_config, state.clone(), dep_facets)?;
             nodes.insert(
                 id.clone(),
                 ComponentNode {
                     id,
                     fail_policy: node_config.fail_policy,
                     tags: node_config.tags.clone(),
-                    facets: processor,
+                    facets,
                 },
             );
         }

@@ -371,7 +371,7 @@ mod tests {
         let appender = StateContextAppender {
             state: state.clone(),
         };
-        let provider = StateContextProvider { state };
+        let provider = StateContextProvider { state, prompt_providers: vec![] };
         let input = vec![make_message("ctx")];
 
         let output = appender
