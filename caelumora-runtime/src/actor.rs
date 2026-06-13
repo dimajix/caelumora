@@ -8,10 +8,11 @@ use chrono::{DateTime, Utc};
 use std::any::Any;
 use std::fmt::Debug;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_stream::StreamExt;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventContext {
     pub session_id: SessionId,
     pub channel_id: ChannelId,
@@ -55,7 +56,7 @@ impl EventContext {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
     ToolExecutionRequested,
     ToolExecutionGranted,
@@ -82,7 +83,7 @@ impl ActorEvent {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
     pub timestamp: DateTime<Utc>,
     pub security: SecurityContext,

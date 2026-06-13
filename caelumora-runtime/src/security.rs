@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use caelumora_model::message::ActorId;
 use caelumora_model::session::{ChannelId, SessionId};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityContext {
     pub initiator_id: ActorId,
     pub sender_id: ActorId,
