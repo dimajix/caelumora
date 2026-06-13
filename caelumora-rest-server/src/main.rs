@@ -11,7 +11,7 @@ use caelumora_model::component::{
     ComponentConfig, ComponentFailPolicy, ComponentNodeConfig, STAGE_PERCEIVE,
 };
 use caelumora_model::meta::{Metadata, Scope};
-use caelumora_model::session::{SessionContext, SessionId};
+use caelumora_model::session::{ChannelId, SessionContext, SessionId};
 use caelumora_model::store::{StoreBackedEntityResolver, TemplateStore};
 use caelumora_model::template::{
     ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId,
@@ -26,11 +26,11 @@ use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use dashmap::DashMap;
 use futures::stream::Stream;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 struct AppState {
@@ -66,8 +66,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/templates", get(list_templates))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/:id", delete(terminate_session))
-        .route("/sessions/:id/messages", post(send_message))
-        .route("/sessions/:id/events", get(join_session))
+        .route("/sessions/:id/channels", get(list_channels))
+        .route("/sessions/:id/channels/:cid", get(get_channel))
+        .route("/sessions/:id/channels/:cid/messages", get(get_channel_messages).post(send_message))
+        .route("/sessions/:id/channels/:cid/events", get(join_channel))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
@@ -255,6 +257,64 @@ async fn terminate_session(
     }
 }
 
+#[derive(Serialize)]
+struct ChannelResponse {
+    id: ChannelId,
+    name: String,
+}
+
+async fn list_channels(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<ChannelResponse>>, axum::http::StatusCode> {
+    let session_id = SessionId(id);
+    let session_loop = state.session_manager.get_session(session_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    let channels = session_loop.channels()
+        .iter()
+        .map(|c| ChannelResponse {
+            id: c.id(),
+            name: c.name(),
+        })
+        .collect();
+
+    Ok(Json(channels))
+}
+
+async fn get_channel(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+) -> Result<Json<ChannelResponse>, axum::http::StatusCode> {
+    let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
+    let session_loop = state.session_manager.get_session(session_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    let channel = session_loop.channel_by_id(channel_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    Ok(Json(ChannelResponse {
+        id: channel.id(),
+        name: channel.name(),
+    }))
+}
+
+async fn get_channel_messages(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<caelumora_model::message::Message>>, axum::http::StatusCode> {
+    let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
+    let session_loop = state.session_manager.get_session(session_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    let history = session_loop.get_channel_history(channel_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    Ok(Json(history))
+}
+
 #[derive(Deserialize)]
 struct SendMessageRequest {
     content: String,
@@ -262,19 +322,22 @@ struct SendMessageRequest {
 
 async fn send_message(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
     Json(payload): Json<SendMessageRequest>,
 ) -> axum::http::StatusCode {
     let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
     let session_loop = match state.session_manager.get_session(session_id) {
         Some(s) => s,
         None => return axum::http::StatusCode::NOT_FOUND,
     };
 
-    // Find the UserActor in the main channel (or any channel for now)
-    // Simplified: just use the first channel's user actor
-    let user_actor = session_loop.channel_by_name("main")
-        .and_then(|c| c.user_actor());
+    let channel = match session_loop.channel_by_id(channel_id) {
+        Some(c) => c,
+        None => return axum::http::StatusCode::NOT_FOUND,
+    };
+
+    let user_actor = channel.user_actor();
 
     if let Some(user_actor) = user_actor {
         let message = ActorEvent::CompleteMessageGenerated(Message {
@@ -292,33 +355,35 @@ async fn send_message(
     }
 }
 
-async fn join_session(
+async fn join_channel(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, axum::http::StatusCode> {
     let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
     let session_loop = state.session_manager.get_session(session_id)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
-    let user_actor = session_loop.channel_by_name("main")
-        .and_then(|c| c.user_actor())
-        .ok_or(axum::http::StatusCode::BAD_REQUEST)?;
+    let channel = session_loop.channel_by_id(channel_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
-    // This is a bit tricky because user_actor.lock_receiver() returns a MutexGuard.
-    // We need to stream events from the user actor to the SSE.
-    // However, the UserActor's actor_rx is intended for ONE consumer (the TUI or here the SSE).
+    let receiver = channel.subscribe();
+    let stream = BroadcastStream::new(receiver);
 
-    let (tx, rx) = mpsc::unbounded_channel();
-    
-    tokio::spawn(async move {
-        let mut receiver = user_actor.lock_receiver().await;
-        while let Some(event) = receiver.recv().await {
-            let event_json = serde_json::to_string(&event).unwrap_or_default();
-            if tx.send(Result::<Event, Infallible>::Ok(Event::default().data(event_json))).is_err() {
-                break;
+    let sse_stream = stream.map(|res| {
+        match res {
+            Ok(envelope) => {
+                let event_json = serde_json::to_string(&envelope).unwrap_or_default();
+                Ok(Event::default().data(event_json))
+            }
+            Err(e) => {
+                tracing::error!("SSE stream error: {}", e);
+                // In SSE, we can just skip or send a comment. Here we just continue or the stream might close.
+                // For now, we return a default event or just map it.
+                Ok(Event::default().comment("stream error"))
             }
         }
     });
 
-    Ok(Sse::new(UnboundedReceiverStream::new(rx)))
+    Ok(Sse::new(sse_stream))
 }

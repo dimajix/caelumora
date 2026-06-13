@@ -42,6 +42,10 @@ impl SessionLoop {
 
     pub fn id(&self) -> SessionId { self.session.id }
 
+    pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
+        self.channels.values().cloned().collect()
+    }
+
     pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
         self.channels.values().find(|c| c.id() == channel_id).map(|c| c.clone())
     }
