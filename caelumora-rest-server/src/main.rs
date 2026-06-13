@@ -43,9 +43,14 @@ struct AppState {
     running_sessions: DashMap<SessionId, tokio::task::JoinHandle<()>>,
 }
 
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,tower_http=debug,axum::rejection=trace".into()))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     let memory_store = Arc::new(MemoryStore::new());
     let runtime_manager = Arc::new(RuntimeManager::new(
