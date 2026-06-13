@@ -42,8 +42,9 @@ Before making any changes, please refer to [ARCHITECTURE.md](ARCHITECTURE.md) fo
 1.  **Analyze**: Understand the requirement and how it fits into the architecture.
 2.  **Plan**: Identify the files that need modification and the tests required.
 3.  **Implement**: Apply minimal, focused changes following the coding style.
-4.  **Verify**: Run existing tests and add new ones to cover your changes.
-5.  **Refactor**: Ensure the code is clean and well-documented.
+4.  **Document**: Update `ARCHITECTURE.md` and/or `README.md` if your changes introduce new architectural concepts, modules, or significant features.
+5.  **Verify**: Run existing tests and add new ones to cover your changes.
+6.  **Refactor**: Ensure the code is clean and well-documented.
 
 ## Agent-Specific Tips
 *   When adding new components, remember to register them in the appropriate `ComponentRegistry`.
