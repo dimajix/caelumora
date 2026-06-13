@@ -228,12 +228,12 @@ impl ChannelLoop {
 
     async fn record_send_event(&self, event: &Envelope) {
         let mut recorder = self.recorder.lock().await;
-        recorder.record(&event);
+        recorder.record(&event).await;
         drop(recorder);
     }
     async fn record_receive_event(&self, event: &Envelope) {
         let mut recorder = self.recorder.lock().await;
-        recorder.record(&event);
+        recorder.record(&event).await;
         drop(recorder);
     }
 }

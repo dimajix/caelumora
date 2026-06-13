@@ -107,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 ) : (
                   <ChevronRight size={16} className="mr-2" />
                 )}
-                <span className="truncate">{session.name || `Session ${session.id.slice(0, 8)}`}</span>
+                <span className="truncate">{session.name || `Session ${session.id?.slice?.(0, 8) || session.id}`}</span>
               </button>
               
               {expandedSessions[session.id] && (
@@ -122,7 +122,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
                     >
                       <MessageSquare size={14} className="mr-2" />
-                      <span className="truncate">{channel.name || `Channel ${channel.id.slice(0, 8)}`}</span>
+                      <span className="truncate">{channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`}</span>
                     </button>
                   ))}
                   {(!channels[session.id] || channels[session.id].length === 0) && (

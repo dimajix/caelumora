@@ -17,7 +17,7 @@ struct ChannelHandle {
 
 #[derive(Debug)]
 pub struct SessionLoop {
-    session: Arc<Session>,
+    pub session: Arc<Session>,
     runtime_manager: Arc<RuntimeManager>,
     channels: HashMap<ChannelId,Arc<ChannelLoop>>,
     run_lock: Mutex<()>
@@ -106,7 +106,7 @@ impl SessionLoop {
 
 
 pub struct SessionManager {
-    sessions: DashMap<SessionId, Arc<SessionLoop>>,
+    pub sessions: DashMap<SessionId, Arc<SessionLoop>>,
     runtime_manager: Arc<RuntimeManager>,
 }
 

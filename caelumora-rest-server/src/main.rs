@@ -246,9 +246,15 @@ async fn create_session(
     }))
 }
 
-async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<SessionId>> {
-    let session_ids: Vec<SessionId> = state.running_sessions.iter().map(|r| *r.key()).collect();
-    Json(session_ids)
+async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<SessionResponse>> {
+    let sessions: Vec<SessionResponse> = state.session_manager.sessions.iter().map(|r| {
+        let session_loop = r.value();
+        SessionResponse {
+            id: session_loop.id(),
+            name: session_loop.session.metadata.name.clone(),
+        }
+    }).collect();
+    Json(sessions)
 }
 
 async fn terminate_session(

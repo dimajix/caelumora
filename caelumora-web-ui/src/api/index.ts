@@ -51,6 +51,6 @@ export const api = {
   },
 
   getEventSource(sessionId: string, channelId: string): EventSource {
-    return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/join`);
+    return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
   }
 };
