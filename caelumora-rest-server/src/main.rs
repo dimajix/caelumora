@@ -23,7 +23,7 @@ use caelumora_runtime::component::{
     STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
 };
 use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::session::SessionManager;
+use caelumora_runtime::session::{SessionLoop, SessionManager};
 use dashmap::DashMap;
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -353,20 +353,22 @@ async fn send_message(
     let user_actor = channel.user_actor();
 
     if let Some(user_actor) = user_actor {
-        let message = ActorEvent::CompleteMessageGenerated(Message {
+        let message = ActorEvent::FullResponseGenerated(vec![Message {
             role: MessageRole::User,
             content: Some(payload.content),
             ..Message::default()
-        });
-        if user_actor.send_message(message).await.is_ok() {
+        }]);
+        if !user_actor.send_message(message).await.is_ok() {
             axum::http::StatusCode::OK
-        } else {
+        }
+        else {
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         }
     } else {
         axum::http::StatusCode::BAD_REQUEST
     }
 }
+
 
 async fn join_channel(
     State(state): State<Arc<AppState>>,

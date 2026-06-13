@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send } from 'lucide-react';
-import type { Message, ActorEvent, Envelope } from '../types';
+import type { Message, Envelope } from '../types';
 import { api } from '../api';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -32,7 +32,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         if (actorEvent.PartialMessageGenerated) {
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
         } else if (actorEvent.CompleteMessageGenerated) {
-          setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
+          //setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
+          setStreamingMessage(null);
+        } else if (actorEvent.FullResponseGenerated) {
+          setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
         }
       } catch (e) {

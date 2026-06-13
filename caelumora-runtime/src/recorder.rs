@@ -46,8 +46,8 @@ impl Recorder for ChannelHistoryRecorder {
     async fn record_receive(&mut self, envelope: &Envelope) {
         let mut state = self.state.lock().await;
         match &envelope.event {
-            ActorEvent::CompleteMessageGenerated(msg) => {
-                state.history.push(msg.clone(), "".to_string());
+            ActorEvent::FullResponseGenerated(msgs) => {
+                state.history.extend(msgs.clone());
             }
             // Handle other event types as needed
             _ => {}
