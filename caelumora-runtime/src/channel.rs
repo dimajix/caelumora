@@ -85,6 +85,13 @@ impl ChannelLoop {
     pub fn id(&self) -> ChannelId { self.id }
     pub fn name(&self) -> String { self.name.clone() }
 
+    pub fn actor_names(&self) -> Vec<String> {
+        self.actors.values().map(|a| a.name()).collect()
+    }
+    pub fn actor_ids(&self) -> Vec<ActorId> {
+        self.actors.values().map(|a| a.id()).collect()
+    }
+
     pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         self.actors.values().find(|c| c.id() == actor_id).map(|c| c.clone())
     }

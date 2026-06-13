@@ -14,6 +14,7 @@ export interface SessionResponse {
 export interface ChannelResponse {
   id: string;
   name: string;
+  participants: string[];
 }
 
 export interface Message {

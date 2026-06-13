@@ -35,6 +35,12 @@ export const api = {
     return res.json();
   },
 
+  async getChannel(sessionId: string, channelId: string): Promise<ChannelResponse> {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/channels/${channelId}`);
+    if (!res.ok) throw new Error('Failed to fetch channel');
+    return res.json();
+  },
+
   async getMessages(sessionId: string, channelId: string): Promise<Message[]> {
     const res = await fetch(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/messages`);
     if (!res.ok) throw new Error('Failed to fetch messages');

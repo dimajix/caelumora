@@ -23,7 +23,7 @@ use caelumora_runtime::component::{
     STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
 };
 use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::session::{SessionLoop, SessionManager};
+use caelumora_runtime::session::{SessionManager};
 use dashmap::DashMap;
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -274,6 +274,7 @@ async fn terminate_session(
 struct ChannelResponse {
     id: ChannelId,
     name: String,
+    participants: Vec<String>,
 }
 
 async fn list_channels(
@@ -289,6 +290,7 @@ async fn list_channels(
         .map(|c| ChannelResponse {
             id: c.id(),
             name: c.name(),
+            participants: c.actor_names(),
         })
         .collect();
 
@@ -310,6 +312,7 @@ async fn get_channel(
     Ok(Json(ChannelResponse {
         id: channel.id(),
         name: channel.name(),
+        participants: channel.actor_names(),
     }))
 }
 
