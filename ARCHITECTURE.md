@@ -1,14 +1,78 @@
-# Entities
+# Caelumora Architecture
 
-## Templates
-* SessionTemplate
-* AgentTemplate
+Caelumora is a multi-agent system designed for flexible, extensible, and scalable agentic workflows. It provides a robust framework for managing sessions, channels, and various types of actors (including humans and AI agents) that communicate through structured events.
 
-## Identities
-* Agent
+## Top-Level Modules
+
+The project is organized into several key modules:
+
+*   **`caelumora-model`**: Contains the core data structures and domain entities (e.g., `Agent`, `Session`, `Message`, `ComponentConfig`). It is shared across both client and server.
+*   **`caelumora-runtime`**: The heart of the system. Implements the execution logic for agents, sessions, and channels. It handles event routing, component management, and the `AgentLoop`.
+*   **`caelumora-rest-server`**: Provides a REST API for interacting with Caelumora, managing sessions, and participating in conversations.
+*   **`caelumora-client-api`**: Defines the traits and interfaces for client-side interactions.
+*   **`caelumora-local-client`**: Implementation of a client that runs in the same process as the runtime (useful for testing and TUI).
+*   **`caelumora-tui`**: A terminal user interface for Caelumora.
+
+## Component Architecture
+
+Caelumora uses a pluggable component-based architecture for defining agent behavior.
+
+*   **`ComponentConfig`**: A declarative definition of components and their dependencies.
+*   **`ComponentNodeConfig`**: Configuration for an individual component, including its kind, parameters, and dependencies.
+*   **`ComponentRegistry`**: A central registry where component factories are registered by their kind.
+*   **`ComponentContainer`**: Responsible for instantiating and managing the lifecycle of components based on the `ComponentConfig`.
+*   **Traits**: Components implement specific traits like `MessageProcessor`, `PerceiveInProcessor`, `PlanPreProcessor`, or `ContextProvider` to participate in different stages of the agent loop.
+
+## AgentLoop Design
+
+The `AgentLoop` (implemented via `AgentLoopState`) defines the cognitive cycle of an agent. It typically follows these stages:
+
+1.  **Perceive**: Incoming messages are processed by "perceive" components (e.g., adding to history, updating context).
+2.  **Plan**: The agent decides what to do next. This may involve interacting with an LLM, planning tool calls, or generating internal thoughts.
+3.  **Execute**: If the plan involves tool calls, they are executed, and the results are fed back into the loop.
+4.  **Emit**: The final response messages are generated and emitted to the channel.
+
+The loop is stateful, maintaining an `AgentState` which includes `MessageHistory` and `MessageContext`.
+
+## Session, Channel, and Actor Design
+
+Caelumora uses an actor-based model for communication within sessions.
+
+### Session and SessionLoop
+A **Session** represents a high-level container for a specific interaction context. The `SessionLoop` manages multiple channels within that session.
+
+### Channel and ChannelLoop
+A **Channel** is a specific communication medium within a session (e.g., a chat room). The `ChannelLoop` is responsible for:
+*   Managing the lifecycle of **Actors** participating in the channel.
+*   Routing **Envelopes** (events) between actors.
+*   Applying a **Moderator** to control message flow and determine which actor speaks next.
+
+### Actor and ActorId
+An **Actor** is any entity that can send and receive events in a channel.
+*   **`Actor` trait**: Defines the interface for all actors, including an `async fn run` method.
+*   **`ActorId`**: Uniquely identifies an actor, which can be a `User` or an `Agent`.
+*   **`Envelope`**: The unit of communication, containing a timestamp, security context, event context, and the actual `ActorEvent`.
+
+### Moderators
+Moderators control how messages are routed and who is allowed to respond. Implementations include:
+*   **Broadcast**: Forwards messages to all participants.
+*   **Round Robin**: Cycles through participants in a fixed order.
+*   **Random**: Picks a random participant to respond.
+
+## Storage and Persistence
+
+Caelumora uses a tiered storage approach:
+*   **`TemplateStore`**: Stores static definitions like `Personality` and `SessionTemplate`.
+*   **`StateStore`**: Stores dynamic state, including `Agent` identities, `Session` data, and their respective histories and states.
+*   **`EntityResolver`**: A service that reconciles templates and states to instantiate live objects.
+
+## Templates and Identities
+
+*   **Templates (`SessionTemplate`, `AgentTemplate`)**: Declarative definitions used to instantiate sessions and agents. They specify the initial configuration, participants, and personalities.
+*   **Identities (`Agent`, `User`)**: Represent the persistent entities within the system.
 
 ## Relations
-* Each session can refer to one or more agents
-* A single agent can be used in multiple sessions
-* Within each session, each agent contains its own agent session state and agent loop
-* 
+*   Each **Session** can contain one or more **Channels**.
+*   Each **Channel** has multiple **Participants** (Actors).
+*   A single **Agent** can be a participant in multiple sessions/channels.
+*   Within each session, each agent maintains its own `AgentState` and `AgentLoop`.
