@@ -81,9 +81,6 @@ impl ChannelLoop {
         self.state.lock().await.history.messages()
     }
 
-    pub fn history_blocking(&self) -> Vec<Message> {
-        self.state.blocking_lock().history.messages()
-    }
 
     pub fn id(&self) -> ChannelId { self.id }
     pub fn name(&self) -> String { self.name.clone() }

@@ -53,8 +53,12 @@ impl SessionLoop {
         self.channels.values().find(|c| c.name() == name).map(|c| c.clone())
     }
 
-    pub fn get_channel_history(&self, channel_id: ChannelId) -> Option<Vec<Message>> {
-        self.channel_by_id(channel_id).map(|c| c.history_blocking())
+    pub async fn get_channel_history(&self, channel_id: ChannelId) -> Option<Vec<Message>> {
+        if let Some(c) = self.channel_by_id(channel_id) {
+            Some(c.history().await)
+        } else {
+            None
+        }
     }
 
     pub fn subscribe_to_channel(&self, channel_id: ChannelId) -> Option<broadcast::Receiver<Envelope>> {

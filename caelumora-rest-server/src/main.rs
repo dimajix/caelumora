@@ -311,7 +311,7 @@ async fn get_channel_messages(
     let session_loop = state.session_manager.get_session(session_id)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
-    let history = session_loop.get_channel_history(channel_id)
+    let history = session_loop.get_channel_history(channel_id).await
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
     Ok(Json(history))
