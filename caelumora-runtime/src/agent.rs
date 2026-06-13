@@ -9,7 +9,7 @@ use crate::component::{
 use anyhow::Result;
 use async_stream::stream;
 use caelumora_model::agent::{Agent, AgentId, AgentState};
-use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentBindingConfig, ComponentConfig, ComponentType};
+use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentBindingConfig, ComponentConfig};
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
@@ -25,7 +25,7 @@ struct AgentLoopState {
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
     perceive_in_processors: Vec<StageProcessor<dyn PerceiveInProcessor>>,
-    emit_out_processors: Option<Vec<StageProcessor<dyn EmitOutProcessor>>>,
+    emit_out_processors: Vec<StageProcessor<dyn EmitOutProcessor>>,
     plan_pre_processors: Vec<StageProcessor<dyn PlanPreProcessor>>,
 }
 impl AgentLoopState {
@@ -52,19 +52,14 @@ impl AgentLoopState {
             Some(state.clone()),
         )?;
         let context_provider = components
-            .get_all::<dyn ContextProvider>()
+            .get_all::<dyn ContextProvider>(None)
             .ok()
             .and_then(|providers| providers.into_iter().next())
+            .map(|p| p.processor)
             .ok_or_else(|| anyhow::anyhow!("No context provider configured in pipeline"))?;
-        let perceive_in_processors = components.stage_processors::<dyn PerceiveInProcessor>(ComponentType::PerceiveIn).unwrap_or_else(|e| {
-            warn!("Failed to resolve PerceiveIn processors: {}", e);
-            Vec::new()
-        });
-        let emit_out_processors = components.stage_processors::<dyn EmitOutProcessor>(ComponentType::EmitOut).ok();
-        let plan_pre_processors = components.stage_processors::<dyn PlanPreProcessor>(ComponentType::PlanPre).unwrap_or_else(|e| {
-            warn!("Failed to resolve PlanPre processors: {}", e);
-            Vec::new()
-        });
+        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
+        let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
+        let plan_pre_processors = components.get_all::<dyn PlanPreProcessor>(None)?;
 
         Ok(Self {
             agent,
@@ -79,7 +74,7 @@ impl AgentLoopState {
 
     async fn perceive(&mut self, messages: Vec<Message>, turn_context: &mut TurnContext) -> () {
         let original_messages = messages.clone();
-        let perceived = Self::apply_stage_processors(ComponentType::PerceiveIn, &self.perceive_in_processors, messages, turn_context)
+        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
@@ -90,8 +85,7 @@ impl AgentLoopState {
     }
 
     async fn respond_complete(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let emit_out_processors = self.emit_out_processors.as_ref()?;
-        let mut output = Self::apply_stage_processors(ComponentType::EmitOut, emit_out_processors, vec![message], turn_context)
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -105,8 +99,7 @@ impl AgentLoopState {
     }
 
     async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let emit_out_processors = self.emit_out_processors.as_ref()?;
-        let mut output = Self::apply_stage_processors(ComponentType::EmitOut, emit_out_processors, vec![message], turn_context)
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -124,7 +117,7 @@ impl AgentLoopState {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let context = Self::apply_stage_processors(ComponentType::PlanPre, &self.plan_pre_processors, context.clone(), turn_context)
+        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
@@ -158,7 +151,6 @@ impl AgentLoopState {
     }
 
     async fn apply_stage_processors<T>(
-        stage: ComponentType,
         processors: &[StageProcessor<T>],
         mut input: Vec<Message>,
         context: &mut TurnContext,
@@ -175,9 +167,8 @@ impl AgentLoopState {
                 Err(e) => match stage_processor.fail_policy {
                     ComponentFailPolicy::FailOpen => {
                         warn!(
-                            "Component '{}' failed in stage {:?} with fail-open policy: {}",
+                            "Component '{}' failed with fail-open policy: {}",
                             stage_processor.id,
-                            stage,
                             e
                         );
                     }
@@ -321,7 +312,7 @@ fn default_agent_pipeline_config() -> ComponentConfig {
             },
         ],
         component_bindings: vec![ComponentBindingConfig {
-            stage: ComponentType::PerceiveIn,
+            stage: "perceive".to_string(),
             components: vec![
                 STATE_HISTORY_WRITER_KIND.to_string(),
                 STATE_CONTEXT_APPENDER_KIND.to_string(),

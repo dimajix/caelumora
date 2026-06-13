@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, ComponentType};
+use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentConfig};
 use caelumora_model::agent::{AgentState};
 use caelumora_model::message::Message;
 use serde_json::Value;
@@ -124,7 +124,7 @@ where
 #[derive(Debug, Default)]
 pub struct ComponentContainer {
     nodes: HashMap<String, ComponentNode>,
-    stages: HashMap<ComponentType, Vec<String>>,
+    stages: HashMap<String, Vec<String>>,
     node_order: Vec<String>,
 }
 
@@ -197,7 +197,7 @@ impl ComponentContainer {
             );
         }
 
-        let mut stages: HashMap<ComponentType, Vec<String>> = HashMap::new();
+        let mut stages: HashMap<String, Vec<String>> = HashMap::new();
         for binding in &config.component_bindings {
             for component_id in &binding.components {
                 if !nodes.contains_key(component_id) {
@@ -208,7 +208,7 @@ impl ComponentContainer {
                 }
             }
             stages
-                .entry(binding.stage)
+                .entry(binding.stage.clone())
                 .or_default()
                 .extend(binding.components.clone());
         }
@@ -224,11 +224,11 @@ impl ComponentContainer {
         Self::default()
     }
 
-    fn stage_nodes(
+    fn nodes(
         &self,
-        stage: ComponentType,
+        stage: &str,
     ) -> Result<Vec<&ComponentNode>> {
-        let Some(component_ids) = self.stages.get(&stage) else {
+        let Some(component_ids) = self.stages.get(stage) else {
             return Ok(Vec::new());
         };
 
@@ -243,41 +243,33 @@ impl ComponentContainer {
         Ok(nodes)
     }
 
-    pub fn stage_processors<T>(&self, stage: ComponentType) -> Result<Vec<StageProcessor<T>>>
-    where
-        T: MessageProcessor + ?Sized + Send + Sync + 'static,
-    {
-        self.stage_nodes(stage).map(|nodes| {
-            nodes
-                .into_iter()
-                .filter_map(|n| {
-                    n.capabilities.get::<T>().map(|processor| StageProcessor {
-                        id: n.id.clone(),
-                        fail_policy: n.fail_policy,
-                        processor,
-                    })
-                })
-                .collect()
-        })
-    }
 
-    pub fn get_all<T>(&self) -> Result<Vec<Arc<T>>>
+    pub fn get_all<T>(&self, stage: Option<&str>) -> Result<Vec<StageProcessor<T>>>
     where
         T: ?Sized + Send + Sync + 'static,
     {
-        self.node_order
-            .iter()
-            .map(|id| {
-                self.nodes
-                    .get(id)
-                    .ok_or_else(|| anyhow!("Unknown component node '{}'", id))
+        let nodes = match stage {
+            Some(s) => self.nodes(s)?,
+            None => self
+                .node_order
+                .iter()
+                .map(|id| {
+                    self.nodes
+                        .get(id)
+                        .ok_or_else(|| anyhow!("Unknown component node '{}'", id))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        };
+
+        Ok(nodes
+            .into_iter()
+            .filter_map(|n| {
+                n.capabilities.get::<T>().map(|processor| StageProcessor {
+                    id: n.id.clone(),
+                    fail_policy: n.fail_policy,
+                    processor,
+                })
             })
-            .collect::<Result<Vec<_>>>()
-            .map(|nodes| {
-                nodes
-                    .into_iter()
-                    .filter_map(|n| n.capabilities.get::<T>())
-                    .collect()
-            })
+            .collect())
     }
 }

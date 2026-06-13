@@ -1,12 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum ComponentType {
-    PerceiveIn,
-    PlanPre,
-    EmitOut,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentConfig {
@@ -46,7 +40,7 @@ pub enum ComponentFailPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentBindingConfig {
-    pub stage: ComponentType,
+    pub stage: String,
     #[serde(default)]
     pub components: Vec<String>,
 }
