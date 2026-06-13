@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send } from 'lucide-react';
-import type { Message, ActorEvent } from '../types';
+import type { Message, ActorEvent, Envelope } from '../types';
 import { api } from '../api';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -27,9 +27,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
 
     eventSource.onmessage = (event) => {
       try {
-        const actorEvent: ActorEvent = JSON.parse(event.data);
+        const envelope: Envelope = JSON.parse(event.data);
+        const actorEvent = envelope.event;
         if (actorEvent.PartialMessageGenerated) {
-          setStreamingMessage(prev => (prev || '') + actorEvent.PartialMessageGenerated!.content);
+          setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
         } else if (actorEvent.CompleteMessageGenerated) {
           setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
           setStreamingMessage(null);
@@ -72,8 +73,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     setIsSending(true);
 
     // Optimistic update
-    const userMsg: Message = { role: 'User', content: text };
-    setMessages(prev => [...prev, userMsg]);
+    //const userMsg: Message = { role: 'User', content: text };
+    //setMessages(prev => [...prev, userMsg]);
 
     try {
       await api.sendMessage(sessionId, channelId, text);

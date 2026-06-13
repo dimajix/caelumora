@@ -17,17 +17,29 @@ export interface ChannelResponse {
 }
 
 export interface Message {
+  id?: string;
   role: 'User' | 'Assistant' | 'System';
   content: string | null;
+  sender_name?: string;
+  timestamp?: string;
   [key: string]: any;
 }
 
 export interface ActorEvent {
-  PartialMessageGenerated?: {
-    role: string;
-    content: string;
-  };
+  PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
+  ToolExecutionRequested?: any;
+  ToolExecutionGranted?: any;
+  ToolExecutionDenied?: any;
+  ResponseRequested?: any;
+  FullResponseGenerated?: Message[];
+}
+
+export interface Envelope {
+  timestamp: string;
+  event: ActorEvent;
+  context: any;
+  security: any;
 }
 
 export interface SessionTemplate {

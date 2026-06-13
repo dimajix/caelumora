@@ -65,6 +65,6 @@ impl RuntimeManager {
     }
 
     pub fn new_recorder(&self, state: Arc<Mutex<caelumora_model::session::ChannelState>>) -> Result<Box<dyn Recorder>> {
-        Ok(Box::new(crate::recorder::StatefulRecorder::new(state)))
+        Ok(Box::new(crate::recorder::ChannelHistoryRecorder::new(state)))
     }
 }

@@ -8,7 +8,8 @@ use crate::actor::{ActorEvent, Envelope};
 
 #[async_trait]
 pub trait Recorder: Send + Sync + Debug {
-    async fn record(&mut self, event: &Envelope) -> ();
+    async fn record_send(&mut self, event: &Envelope) -> ();
+    async fn record_receive(&mut self, event: &Envelope) -> ();
 }
 
 #[derive(Debug)]
@@ -23,23 +24,26 @@ impl BlackholeRecorder {
 
 #[async_trait]
 impl Recorder for BlackholeRecorder {
-    async fn record(&mut self, _event: &Envelope) -> () {}
+    async fn record_send(&mut self, _event: &Envelope) -> () {}
+    async fn record_receive(&mut self, _event: &Envelope) -> () {}
 }
 
 #[derive(Debug)]
-pub struct StatefulRecorder {
+pub struct ChannelHistoryRecorder {
     state: Arc<Mutex<ChannelState>>,
 }
 
-impl StatefulRecorder {
+impl ChannelHistoryRecorder {
     pub fn new(state: Arc<Mutex<ChannelState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl Recorder for StatefulRecorder {
-    async fn record(&mut self, envelope: &Envelope) {
+impl Recorder for ChannelHistoryRecorder {
+    async fn record_send(&mut self, envelope: &Envelope) {
+    }
+    async fn record_receive(&mut self, envelope: &Envelope) {
         let mut state = self.state.lock().await;
         match &envelope.event {
             ActorEvent::CompleteMessageGenerated(msg) => {
