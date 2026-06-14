@@ -89,7 +89,7 @@ impl ChannelLoop {
     pub fn id(&self) -> ChannelId { self.id }
     pub fn name(&self) -> String { self.name.clone() }
 
-    pub async fn cancel_all_agents(&self) -> Result<()> {
+    pub async fn cancel_all_actors(&self) -> Result<()> {
         self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.cancel().await?;
@@ -192,7 +192,14 @@ impl ChannelLoop {
         }
 
         let is_cancelling = ProcessingState::from(self.processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling;
+        if (!is_cancelling) {
+            self.route_event_impl(actors, event.clone()).await;
+        }
 
+        let _ = self.event_tx.send(event);
+    }
+
+    async fn route_event_impl(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
             return
@@ -213,8 +220,7 @@ impl ChannelLoop {
         for route in routes {
             let target_id = route.0;
 
-            // Enforce cancellation: Only route back to source if cancelling
-            if is_cancelling && target_id != event.context.sender_id {
+            if target_id == event.context.sender_id {
                 continue;
             }
 
@@ -253,8 +259,6 @@ impl ChannelLoop {
                 }
             }
         }
-
-        let _ = self.event_tx.send(event);
     }
 
     async fn record_send_event(&self, event: &Envelope) {
