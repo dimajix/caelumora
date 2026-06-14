@@ -17,14 +17,14 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
-use crate::actor::{Actor, ActorEvent, Envelope};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
 
 struct ActorHandle {
     id: ActorId,
     abort_handle: AbortHandle,
-    request_tx: Sender<Envelope>,
+    request_tx: Box<dyn ActorSender>,
 }
 
 
@@ -169,7 +169,7 @@ impl ChannelLoop {
 
     fn spawn_actor(&self, actor: Arc<dyn Actor>, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
-        let (msg_tx, msg_rx) = mpsc::channel(10);
+        let (request_tx, msg_rx) = actor.create_channel();
         let event_tx = event_tx.clone();
         let abort_handle = join_set.spawn(async move {
             let result = actor.run(msg_rx, event_tx).await;
@@ -182,7 +182,7 @@ impl ChannelLoop {
         ActorHandle {
             id,
             abort_handle,
-            request_tx: msg_tx,
+            request_tx,
         }
     }
 
@@ -255,7 +255,11 @@ impl ChannelLoop {
                 debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
                 self.record_send_event(&target_event).await;
                 if let Err(e) = actor.request_tx.try_send(target_event) {
-                    warn!("Could not forward event {} from={} to={}: {}", event_desc, sender_id, target_id, e)
+                    match e {
+                        SendError::Full => warn!("Queue full for actor {}", target_id),
+                        SendError::Filtered => {}, // Normal behavior
+                        _ => warn!("Could not forward event {} from={} to={}: {:?}", event_desc, sender_id, target_id, e)
+                    }
                 }
             }
         }

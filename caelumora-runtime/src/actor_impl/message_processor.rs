@@ -2,11 +2,11 @@ use std::mem;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use log::{debug, info, warn};
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use caelumora_model::message::{ActorId, Message};
-use crate::actor::{Actor, ActorEvent, Envelope, EventContext};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::message::MessageProcessor;
 use crate::security::SecurityContext;
 
@@ -66,6 +66,19 @@ impl Actor for MessageProcessorActor {
     }
     fn name(&self) -> String {
         self.name.clone()
+    }
+
+    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
+        let (tx, rx) = mpsc::channel(10);
+        (
+            Box::new(StandardActorSender {
+                tx,
+                filter: Box::new(|event| {
+                    !matches!(event.event, ActorEvent::PartialMessageGenerated(_))
+                }),
+            }),
+            rx
+        )
     }
 
     async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {

@@ -154,10 +154,54 @@ pub trait Actor : Any + Debug + Send + Sync {
     fn kind(&self) -> String;
     fn name(&self) -> String;
 
+    /// Returns an ActorSender and a Receiver, which handles filtering and queue management
+    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>);
+
     async fn run(&self, rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()>;
 
     async fn cancel(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+
+#[derive(Debug)]
+pub enum SendError {
+    Full,
+    Closed,
+    Filtered,
+    Other(String),
+}
+
+impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for SendError {
+    fn from(e: tokio::sync::mpsc::error::TrySendError<Envelope>) -> Self {
+        match e {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => SendError::Full,
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => SendError::Closed,
+        }
+    }
+}
+
+pub trait ActorSender: Send + Sync {
+    /// Tries to send an event to the actor.
+    /// This method implements filtering and potentially queue compression/eviction.
+    fn try_send(&self, event: Envelope) -> Result<(), SendError>;
+}
+
+pub struct StandardActorSender {
+    pub tx: Sender<Envelope>,
+    pub filter: Box<dyn Fn(&Envelope) -> bool + Send + Sync>,
+}
+
+impl ActorSender for StandardActorSender {
+    fn try_send(&self, event: Envelope) -> Result<(), SendError> {
+        // 1. Filtering logic
+        if !(self.filter)(&event) {
+            return Err(SendError::Filtered);
+        }
+
+        // 2. Queue management logic
+        self.tx.try_send(event).map_err(SendError::from)
     }
 }
 

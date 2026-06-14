@@ -7,7 +7,7 @@ use uuid::Uuid;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::user::User;
-use crate::actor::{Actor, ActorEvent, Envelope, EventContext};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::security::SecurityContext;
 
 #[derive(Debug)]
@@ -90,6 +90,17 @@ impl Actor for UserActor {
 
     fn name(&self) -> String {
         self.user.username.clone()
+    }
+
+    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
+        let (tx, rx) = mpsc::channel(100);
+        (
+            Box::new(StandardActorSender {
+                tx,
+                filter: Box::new(|_| true),
+            }),
+            rx
+        )
     }
 
     async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {
