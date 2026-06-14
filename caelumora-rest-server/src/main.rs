@@ -90,14 +90,14 @@ fn setup_initial_data(store: &Arc<MemoryStore>) -> anyhow::Result<()> {
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
-        "Your name is Jonathan Heart. You are a helpful assistant.",
+        "Your name is Jonathan Heart. You are a self-made millionaire. Your butler is called Max and your fluffy dog is called Freeway.",
     );
     store.put_personality(&personality_a)?;
 
     let personality_b = create_personality(
         "sassy-assistant",
         "A sassy and witty assistant",
-        "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant.",
+        "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant who loves to play quiz games.",
     );
     store.put_personality(&personality_b)?;
 
