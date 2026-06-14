@@ -3,6 +3,8 @@ use crate::moderator::Moderator;
 use crate::recorder::{Recorder};
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
+use std::sync::atomic::{AtomicU8, Ordering};
+use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::{Channel, ChannelId, ChannelState, Participant, Session, SessionId};
 use caelumora_model::user::{User, UserId};
@@ -38,6 +40,7 @@ pub struct ChannelLoop {
     moderator: Mutex<Box<dyn Moderator>>,
     recorder: Mutex<Box<dyn Recorder>>,
     state: Arc<Mutex<ChannelState>>,
+    processing_state: Arc<AtomicU8>,
     event_tx: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
     run_lock: Mutex<()>
@@ -67,6 +70,7 @@ impl ChannelLoop {
             moderator: Mutex::new(moderator),
             recorder: Mutex::new(recorder),
             state,
+            processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
             event_tx,
             max_route_decisions: 100,
             run_lock: Mutex::new(())
@@ -86,6 +90,7 @@ impl ChannelLoop {
     pub fn name(&self) -> String { self.name.clone() }
 
     pub async fn cancel_all_agents(&self) -> Result<()> {
+        self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.cancel().await?;
         }
@@ -182,6 +187,12 @@ impl ChannelLoop {
     }
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
+        if matches!(event.event, ActorEvent::Wakeup) {
+            self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        }
+
+        let is_cancelling = ProcessingState::from(self.processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling;
+
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
             return
@@ -200,8 +211,14 @@ impl ChannelLoop {
 
         // First, route all messages to all agents...
         for route in routes {
-            // Do not propagate message to sender again
             let target_id = route.0;
+
+            // Enforce cancellation: Only route back to source if cancelling
+            if is_cancelling && target_id != event.context.sender_id {
+                continue;
+            }
+
+            // Do not propagate message to sender again
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
             let ctx = &target_event.context;

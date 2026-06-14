@@ -357,16 +357,16 @@ async fn send_message(
     let user_actor = channel.user_actor();
 
     if let Some(user_actor) = user_actor {
+        let wakeup = ActorEvent::Wakeup;
         let message = ActorEvent::FullResponseGenerated(vec![Message {
             role: MessageRole::User,
             content: Some(payload.content),
             ..Message::default()
         }]);
-        if !user_actor.send_message(message).await.is_ok() {
-            axum::http::StatusCode::OK
-        }
-        else {
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        let _ = user_actor.send_message(wakeup).await;
+        match user_actor.send_message(message).await {
+            Ok(_) => axum::http::StatusCode::OK,
+            Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR
         }
     } else {
         axum::http::StatusCode::BAD_REQUEST

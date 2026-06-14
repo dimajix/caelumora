@@ -65,6 +65,7 @@ pub enum ActorEvent {
     PartialMessageGenerated(Message),
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
+    Wakeup,
 }
 
 impl ActorEvent {

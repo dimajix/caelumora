@@ -230,9 +230,10 @@ async fn run_repl_select_loop(
                         };
 
                         info!("dispatch: input msg={:?}", user_message);
-                        user_actor
-                            .send_message(ActorEvent::FullResponseGenerated(vec![user_message]))
-                            .await?;
+                        let wakeup = ActorEvent::Wakeup;
+                        let message = ActorEvent::FullResponseGenerated(vec![user_message]);
+                        let _ = user_actor.send_message(wakeup).await;
+                        user_actor.send_message(message).await?;
                     }
                     Some(Err(ReadlineError::Interrupted)) => {
                         println!("CTRL-C");
