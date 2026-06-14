@@ -103,7 +103,12 @@ impl Actor for AgentActor {
             }
         }
 
-        info!("AgentActor {} has finished finished", self.id());
+        info!("AgentActor {} has finished", self.id());
+        Ok(())
+    }
+
+    async fn cancel(&self) -> anyhow::Result<()> {
+        self.agent.cancel();
         Ok(())
     }
 }

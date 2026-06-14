@@ -17,6 +17,40 @@ pub struct Personality {
     pub components: ComponentConfig,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProcessingState {
+    Idle,
+    Active,
+    Cancelling,
+}
+
+impl Default for ProcessingState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+impl From<u8> for ProcessingState {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => ProcessingState::Idle,
+            1 => ProcessingState::Active,
+            2 => ProcessingState::Cancelling,
+            _ => ProcessingState::Idle,
+        }
+    }
+}
+
+impl From<ProcessingState> for u8 {
+    fn from(s: ProcessingState) -> Self {
+        match s {
+            ProcessingState::Idle => 0,
+            ProcessingState::Active => 1,
+            ProcessingState::Cancelling => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AgentId(pub Uuid);

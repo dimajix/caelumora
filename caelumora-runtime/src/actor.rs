@@ -154,5 +154,9 @@ pub trait Actor : Any + Debug + Send + Sync {
     fn name(&self) -> String;
 
     async fn run(&self, rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()>;
+
+    async fn cancel(&self) -> Result<()> {
+        Ok(())
+    }
 }
 

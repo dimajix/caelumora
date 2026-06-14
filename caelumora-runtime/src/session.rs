@@ -65,6 +65,15 @@ impl SessionLoop {
         self.channel_by_id(channel_id).map(|c| c.subscribe())
     }
 
+    pub async fn cancel_channel(&self, channel_id: ChannelId) -> Result<()> {
+        if let Some(c) = self.channel_by_id(channel_id) {
+            c.cancel_all_agents().await?;
+            Ok(())
+        } else {
+            Err(anyhow!("Channel not found"))
+        }
+    }
+
     pub async fn run(&self) -> Result<()> {
         let _guard = self.run_lock.try_lock()
             .map_err(|_| anyhow!("Already running"))?;

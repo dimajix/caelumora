@@ -85,6 +85,13 @@ impl ChannelLoop {
     pub fn id(&self) -> ChannelId { self.id }
     pub fn name(&self) -> String { self.name.clone() }
 
+    pub async fn cancel_all_agents(&self) -> Result<()> {
+        for actor in self.actors.values() {
+            actor.cancel().await?;
+        }
+        Ok(())
+    }
+
     pub fn actor_names(&self) -> Vec<String> {
         self.actors.values().map(|a| a.name()).collect()
     }

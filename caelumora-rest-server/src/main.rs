@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     response::sse::{Event, Sse},
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use caelumora_model::driver::memory::MemoryStore;
@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/sessions/{id}/channels", get(list_channels))
         .route("/sessions/{id}/channels/{cid}", get(get_channel))
         .route("/sessions/{id}/channels/{cid}/messages", get(get_channel_messages).post(send_message))
+        .route("/sessions/{id}/channels/{cid}/cancel", post(cancel_channel))
         .route("/sessions/{id}/channels/{cid}/events", get(join_channel))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -369,6 +370,24 @@ async fn send_message(
         }
     } else {
         axum::http::StatusCode::BAD_REQUEST
+    }
+}
+
+async fn cancel_channel(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+) -> axum::http::StatusCode {
+    let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
+
+    let session_loop = match state.session_manager.get_session(session_id) {
+        Some(s) => s,
+        None => return axum::http::StatusCode::NOT_FOUND,
+    };
+
+    match session_loop.cancel_channel(channel_id).await {
+        Ok(_) => axum::http::StatusCode::OK,
+        Err(_) => axum::http::StatusCode::NOT_FOUND,
     }
 }
 

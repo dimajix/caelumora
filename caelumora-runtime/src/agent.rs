@@ -8,7 +8,8 @@ use crate::component::{
 };
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentId, AgentState};
+use std::sync::atomic::{AtomicU8, Ordering};
+use caelumora_model::agent::{Agent, AgentId, AgentState, ProcessingState};
 use caelumora_model::component::{
     ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE
 };
@@ -188,7 +189,8 @@ pub struct AgentLoop {
     state: Arc<Mutex<AgentLoopState>>,
     id: AgentId,
     name: String,
-    max_iterations: i32
+    max_iterations: i32,
+    processing_state: Arc<AtomicU8>,
 }
 
 impl AgentLoop {
@@ -204,7 +206,8 @@ impl AgentLoop {
             state: Arc::new(Mutex::new(state)),
             id,
             name,
-            max_iterations: 10
+            max_iterations: 10,
+            processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
         })
     }
 
@@ -214,6 +217,10 @@ impl AgentLoop {
 
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+
+    pub fn cancel(&self) {
+        self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
     }
 
     pub async fn send_messages(&self, messages: Vec<Message>, _security_context: &SecurityContext) {
@@ -228,8 +235,10 @@ impl AgentLoop {
         let agent_name = self.name.clone();
         let max_iterations = self.max_iterations;
         let security_context = security_context.next(self.id());
+        let processing_state = self.processing_state.clone();
 
         let stream = stream! {
+            processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
             let mut state = state_arc.lock().await;
             let mut loop_count = 0;
             let mut turn_context = TurnContext::default();
@@ -241,6 +250,12 @@ impl AgentLoop {
                 // The LLM returns a stream of tokens or structured parts
                 let mut response = state.plan(&mut turn_context).await;
                 while let Some(event) = response.try_next().await? {
+                    // Check for cancellation
+                    if ProcessingState::from(processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling {
+                        yield Ok(MessageEvent::EndOfTurn(Vec::new()));
+                        break;
+                    }
+
                     match event {
                         MessageEvent::Partial(mut message) => {
                             message.sender_name = agent_name.clone();
@@ -273,6 +288,12 @@ impl AgentLoop {
                     }
                 };
 
+                // Check for cancellation after the inner loop
+                if ProcessingState::from(processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling {
+                    yield Ok(MessageEvent::EndOfTurn(Vec::new()));
+                    break;
+                }
+
                 // Check if the LLM finished with a "Final Answer" or "Reflect" signal
                 // TODO with "break"
                 break;
@@ -282,6 +303,7 @@ impl AgentLoop {
             // After the loop or if we have enough context, perform a final reflection
             state.reflect().await?;
 
+            processing_state.store(ProcessingState::Idle.into(), Ordering::SeqCst);
             //yield Ok(MessageEvent::EndOfTurn(Vec::new()));
         };
         Box::pin(stream)

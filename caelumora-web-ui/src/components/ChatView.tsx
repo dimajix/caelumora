@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Users } from 'lucide-react';
+import { Send, Users, Square } from 'lucide-react';
 import type { Message, Envelope, ChannelResponse } from '../types';
 import { api } from '../api';
 import { clsx, type ClassValue } from 'clsx';
@@ -19,6 +19,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +33,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         const envelope: Envelope = JSON.parse(event.data);
         const actorEvent = envelope.event;
         if (actorEvent.PartialMessageGenerated) {
+          setIsGenerating(true);
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
         } else if (actorEvent.CompleteMessageGenerated) {
           //setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
@@ -39,6 +41,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         } else if (actorEvent.FullResponseGenerated) {
           setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
+          setIsGenerating(false);
         }
       } catch (e) {
         console.error('Failed to parse SSE event', e);
@@ -64,6 +67,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       const data = await api.getMessages(sessionId, channelId);
       setMessages(data);
       setStreamingMessage(null);
+      setIsGenerating(false);
     } catch (error) {
       console.error('Failed to load messages', error);
     }
@@ -100,6 +104,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     }
   };
 
+  const handleStopGeneration = async () => {
+    try {
+      await api.cancelChannel(sessionId, channelId);
+    } catch (error) {
+      console.error('Failed to cancel generation', error);
+    }
+  };
+
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
@@ -123,7 +135,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           {streamingMessage && (
             <div className="max-w-[80%] p-3 rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
               <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider">
-                Streaming...
+                {isGenerating ? "Generating..." : "Stopped"}
               </div>
               <div className="whitespace-pre-wrap">{streamingMessage}</div>
             </div>
@@ -143,11 +155,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             />
             <button
               type="submit"
-              disabled={isSending || !inputText.trim()}
+              disabled={isSending || isGenerating || !inputText.trim()}
               className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md transition-colors"
             >
               <Send size={20} />
             </button>
+            {isGenerating && (
+              <button
+                type="button"
+                onClick={handleStopGeneration}
+                className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+                title="Stop generation"
+              >
+                <Square size={20} fill="currentColor" />
+              </button>
+            )}
           </form>
         </div>
       </div>

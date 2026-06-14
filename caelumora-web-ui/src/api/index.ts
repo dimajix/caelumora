@@ -56,6 +56,13 @@ export const api = {
     if (!res.ok) throw new Error('Failed to send message');
   },
 
+  async cancelChannel(sessionId: string, channelId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/cancel`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to cancel channel');
+  },
+
   getEventSource(sessionId: string, channelId: string): EventSource {
     return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
   }

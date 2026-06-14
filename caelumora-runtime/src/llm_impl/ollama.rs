@@ -3,8 +3,8 @@ use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use chrono::Utc;
-use futures::stream::BoxStream;
-use log::{debug};
+use futures::stream::{BoxStream, StreamExt};
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -29,6 +29,7 @@ struct OllamaChatMessage {
 #[derive(Debug, Deserialize)]
 struct OllamaChatResponse {
     message: Option<OllamaChatMessage>,
+    done: bool,
 }
 
 impl From<&Message> for OllamaChatMessage {
@@ -84,7 +85,7 @@ impl LLMClient for OllamaClient {
         let request = OllamaChatRequest {
             model: self.model.clone(),
             messages: context.iter().map(OllamaChatMessage::from).collect(),
-            stream: false,
+            stream: true,
         };
 
         let sender_id = ActorId::None;
@@ -101,33 +102,64 @@ impl LLMClient for OllamaClient {
                 url
             );
             let response = http.post(url).json(&request).send().await?;
-            let body: OllamaChatResponse = response.error_for_status()?.json().await?;
-            let content = body
-                .message
-                .and_then(|msg| if msg.content.is_empty() { None } else { Some(msg.content) });
+            let mut stream = response.error_for_status()?.bytes_stream();
 
-            debug!(
-                "ollama: received chat response model={}, context={:?}, content={:?}",
-                model,
-                request.messages,
-                content
-            );
+            let mut full_content = String::new();
 
-            let message = Message {
-                id: MessageId(Uuid::new_v4()),
-                prev_id,
-                sender_id,
-                sender_name,
-                role: MessageRole::Assistant,
-                content,
-                reasoning: None,
-                tool_calls: vec![],
-                timestamp: Utc::now(),
-                metadata: HashMap::new(),
-            };
+            while let Some(chunk_result) = stream.next().await {
+                let chunk = chunk_result?;
+                // Ollama sends multiple JSON objects, potentially split across chunks or multiple in one chunk
+                // We'll use a simple approach: split by newline (Ollama usually sends one JSON per line)
+                let text = String::from_utf8_lossy(&chunk);
+                for line in text.lines() {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    match serde_json::from_str::<OllamaChatResponse>(line) {
+                        Ok(body) => {
+                            if let Some(msg) = body.message {
+                                if !msg.content.is_empty() {
+                                    full_content.push_str(&msg.content);
+                                    let partial_message = Message {
+                                        id: MessageId(Uuid::new_v4()),
+                                        prev_id,
+                                        sender_id,
+                                        sender_name: sender_name.clone(),
+                                        role: MessageRole::Assistant,
+                                        content: Some(msg.content),
+                                        reasoning: None,
+                                        tool_calls: vec![],
+                                        timestamp: Utc::now(),
+                                        metadata: HashMap::new(),
+                                    };
+                                    yield Ok(MessageEvent::Partial(partial_message));
+                                }
+                            }
+                            if body.done {
+                                let message = Message {
+                                    id: MessageId(Uuid::new_v4()),
+                                    prev_id,
+                                    sender_id,
+                                    sender_name: sender_name.clone(),
+                                    role: MessageRole::Assistant,
+                                    content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
+                                    reasoning: None,
+                                    tool_calls: vec![],
+                                    timestamp: Utc::now(),
+                                    metadata: HashMap::new(),
+                                };
 
-            yield Ok(MessageEvent::Complete(message.clone()));
-            yield Ok(MessageEvent::EndOfTurn(vec![message]));
+                                yield Ok(MessageEvent::Complete(message.clone()));
+                                yield Ok(MessageEvent::EndOfTurn(vec![message]));
+                                return;
+                            }
+                        },
+                        Err(e) => {
+                            warn!("ollama: failed to parse JSON chunk: {} (chunk: {})", e, line);
+                        }
+                    }
+                }
+            }
         };
 
         Box::pin(output)
