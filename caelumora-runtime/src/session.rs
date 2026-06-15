@@ -9,7 +9,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use crate::actor::{Envelope, ActorEvent, SettingsUpdate};
+use crate::actor::Envelope;
 
 struct ChannelHandle {
     id: ChannelId,
@@ -50,28 +50,17 @@ impl SessionLoop {
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        let update = {
+        {
             let mut session = (**self.session.load()).clone();
             session.metadata.name = new_name.clone();
             self.session.store(Arc::new(session));
-            SettingsUpdate::SessionNameChanged(new_name.clone())
-        };
+        }
 
         // Notify globally
         self.runtime_manager.notify_global(GlobalEvent::SessionUpdated(
             self.id(),
-            SessionUpdate::NameChanged(new_name.clone()),
+            SessionUpdate::NameChanged(new_name),
         ));
-
-        // Notify locally in all channels
-        for channel in self.channels.values() {
-            let envelope = Envelope::new(
-                self.runtime_manager.system_security_context(self.id(), channel.id()),
-                self.runtime_manager.system_event_context(self.id(), channel.id(), channel.name()),
-                ActorEvent::SettingsUpdated(update.clone()),
-            );
-            channel.send_event(envelope);
-        }
 
         Ok(())
     }

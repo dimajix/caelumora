@@ -57,13 +57,6 @@ impl EventContext {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SettingsUpdate {
-    SessionNameChanged(String),
-    ChannelNameChanged(ChannelId, String),
-    AgentNameChanged(AgentId, String),
-    UserNameChanged(String),
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
@@ -75,7 +68,6 @@ pub enum ActorEvent {
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
     Wakeup,
-    SettingsUpdated(SettingsUpdate),
 }
 
 impl ActorEvent {

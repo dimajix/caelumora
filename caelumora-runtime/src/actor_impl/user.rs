@@ -8,8 +8,9 @@ use uuid::Uuid;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::user::User;
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender, SettingsUpdate};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::security::SecurityContext;
+use crate::runtime::GlobalEvent;
 use async_trait::async_trait;
 
 #[derive(Debug)]
@@ -20,6 +21,7 @@ pub struct UserActor {
     pub channel_name: ArcSwap<String>,
     pub security_context: SecurityContext,
     pub user: Arc<ArcSwap<User>>,
+    pub runtime_manager: Arc<crate::runtime::RuntimeManager>,
     pub user_rx: Mutex<Receiver<ActorEvent>>,
     user_tx: Sender<ActorEvent>,
     actor_rx: Mutex<Receiver<ActorEvent>>,
@@ -27,7 +29,7 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub fn new(session: &Session, channel: &Channel, user:User) -> Self {
+    pub fn new(session: &Session, channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Self {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
         Self {
@@ -42,6 +44,7 @@ impl UserActor {
                 channel_id: channel.id
             },
             user: Arc::new(ArcSwap::from_pointee(user)),
+            runtime_manager,
             user_rx: Mutex::new(urx),
             user_tx: utx,
             actor_rx: Mutex::new(arx),
@@ -110,33 +113,23 @@ impl Actor for UserActor {
     async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
+        let mut global_rx = self.runtime_manager.subscribe_global();
         let mut rx_closed = false;
         let mut user_rx_closed = false;
+        let mut global_rx_closed = false;
 
         info!("UserActor {} is starting", self.id());
-        while !rx_closed || !user_rx_closed {
+        while !rx_closed || !user_rx_closed || !global_rx_closed {
             tokio::select! {
                 maybe_event = rx.recv(), if !rx_closed => {
                     match maybe_event {
                         Some(event) => {
                             debug!("UserActor {} received actor event: {:?}", self.id(), event);
-                            match &event.event {
-                                ActorEvent::SettingsUpdated(SettingsUpdate::ChannelNameChanged(cid, new_name)) => {
-                                    if *cid == self.channel_id {
-                                        self.channel_name.store(Arc::new(new_name.clone()));
-                                    }
-                                }
-                                ActorEvent::SettingsUpdated(SettingsUpdate::UserNameChanged(new_name)) => {
-                                    let mut u = (**self.user.load()).clone();
-                                    u.username = new_name.clone();
-                                    self.user.store(Arc::new(u));
-                                }
-                                _ => {}
-                            }
                             if let Err(e) = self.actor_tx.send(event.event).await {
                                 warn!("UserActor {} cannot forward event because of an error: {}", self.id(), e);
                                 rx_closed = true;
                                 user_rx_closed = true;
+                                global_rx_closed = true;
                                 continue;
                             }
                         }
@@ -156,11 +149,39 @@ impl Actor for UserActor {
                                 warn!("UserActor {} cannot forward user message because of an error: {}", self.id(), e);
                                 rx_closed = true;
                                 user_rx_closed = true;
+                                global_rx_closed = true;
                                 continue;
                             }
                         }
                         None => {
                             user_rx_closed = true;
+                        }
+                    }
+                }
+                maybe_global = global_rx.recv(), if !global_rx_closed => {
+                    match maybe_global {
+                        Ok(event) => {
+                            match event {
+                                GlobalEvent::ChannelUpdated(_, cid, crate::runtime::ChannelUpdate::NameChanged(new_name)) => {
+                                    if cid == self.channel_id {
+                                        self.channel_name.store(Arc::new(new_name));
+                                    }
+                                }
+                                GlobalEvent::UserUpdated(id, crate::runtime::UserUpdate::NameChanged(new_name)) => {
+                                    if ActorId::User(id) == self.id {
+                                        let mut u = (**self.user.load()).clone();
+                                        u.username = new_name;
+                                        self.user.store(Arc::new(u));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            global_rx_closed = true;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Lagged, just continue
                         }
                     }
                 }

@@ -17,7 +17,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError, SettingsUpdate, EventContext};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError, EventContext};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
 use crate::runtime::{GlobalEvent, RuntimeManager, ChannelUpdate};
@@ -96,27 +96,18 @@ impl ChannelLoop {
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        let update = {
+        {
             let mut channel = (**self.channel.load()).clone();
             channel.name = new_name.clone();
             self.channel.store(Arc::new(channel));
-            SettingsUpdate::ChannelNameChanged(self.id, new_name.clone())
-        };
+        }
 
         // Notify globally
         self.runtime_manager.notify_global(GlobalEvent::ChannelUpdated(
             self.session_id,
             self.id,
-            ChannelUpdate::NameChanged(new_name.clone()),
+            ChannelUpdate::NameChanged(new_name),
         ));
-
-        // Notify locally
-        let envelope = Envelope::new(
-            self.runtime_manager.system_security_context(self.session_id, self.id),
-            self.runtime_manager.system_event_context(self.session_id, self.id, new_name),
-            ActorEvent::SettingsUpdated(update),
-        );
-        self.event_tx.send(envelope).ok();
 
         Ok(())
     }
@@ -159,7 +150,7 @@ impl ChannelLoop {
                     email: String::new(),
                     roles: vec!["user".to_string()],
                 };
-                let actor = UserActor::new(session, channel, user.clone());
+                let actor = UserActor::new(session, channel, user.clone(), runtime_manager.clone());
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {

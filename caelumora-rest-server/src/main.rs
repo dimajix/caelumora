@@ -22,7 +22,7 @@ use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
     STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
 };
-use caelumora_runtime::runtime::{GlobalEvent, RuntimeManager};
+use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use dashmap::DashMap;
 use futures::stream::Stream;
@@ -253,7 +253,7 @@ async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<SessionRe
         let session_loop = r.value();
         SessionResponse {
             id: session_loop.id(),
-            name: session_loop.session.metadata.name.clone(),
+            name: session_loop.name(),
         }
     }).collect();
     Json(sessions)

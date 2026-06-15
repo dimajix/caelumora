@@ -192,6 +192,7 @@ pub struct AgentLoop {
     id: ActorId,
     state: Arc<Mutex<AgentLoopState>>,
     agent: Arc<ArcSwap<Agent>>,
+    runtime_manager: Arc<RuntimeManager>,
     max_iterations: i32,
     processing_state: Arc<AtomicU8>,
 }
@@ -204,11 +205,12 @@ impl AgentLoop {
         let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
         let agent_id = agent.id;
         let agent = Arc::new(ArcSwap::from_pointee(agent));
-        let state = AgentLoopState::new(agent.clone(), runtime_manager, personality.components)?;
+        let state = AgentLoopState::new(agent.clone(), runtime_manager.clone(), personality.components)?;
         Ok(Self {
             id: ActorId::Agent(agent_id),
             state: Arc::new(Mutex::new(state)),
             agent,
+            runtime_manager,
             max_iterations: 10,
             processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
         })
@@ -224,9 +226,17 @@ impl AgentLoop {
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
         let mut agent = (**self.agent.load()).clone();
-        agent.metadata.name = new_name;
+        agent.metadata.name = new_name.clone();
         self.agent.store(Arc::new(agent));
+        self.runtime_manager.notify_global(crate::runtime::GlobalEvent::AgentUpdated(
+            self.id.as_agent_id().unwrap(),
+            crate::runtime::AgentUpdate::NameChanged(new_name),
+        ));
         Ok(())
+    }
+
+    pub fn runtime_manager(&self) -> Arc<RuntimeManager> {
+        self.runtime_manager.clone()
     }
 
     pub fn cancel(&self) {

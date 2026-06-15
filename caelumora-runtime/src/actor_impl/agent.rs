@@ -6,9 +6,10 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use caelumora_model::message::{ActorId, Message};
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender, SettingsUpdate};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::agent::AgentLoop;
 use crate::security::SecurityContext;
+use crate::runtime::GlobalEvent;
 
 #[derive(Debug)]
 pub struct AgentActor {
@@ -88,34 +89,49 @@ impl Actor for AgentActor {
 
         info!("AgentActor {} is starting", self.id());
 
+        let mut global_rx = self.agent.runtime_manager().subscribe_global();
         let mut buffer = Vec::new();
         let mut response_requested = false;
 
-        while rx.recv_many(&mut buffer, 100).await > 0 {
-            debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
-            let last_security = buffer.last().unwrap().security.clone();
-            let last_context = buffer.last().unwrap().context.clone();
-            for event in &mut buffer {
-                match &mut event.event {
-                    ActorEvent::FullResponseGenerated(m) => {
-                        self.send_messages(m, &last_context, &last_security).await;
+        loop {
+            tokio::select! {
+                res = rx.recv_many(&mut buffer, 100) => {
+                    if res == 0 {
+                        break;
                     }
-                    ActorEvent::ResponseRequested => {
-                        response_requested = true;
-                    }
-                    ActorEvent::SettingsUpdated(SettingsUpdate::AgentNameChanged(id, new_name)) => {
-                        if ActorId::Agent(*id) == self.id {
-                            let _ = self.agent.update_name(new_name.clone()).await;
+                    debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
+                    let last_security = buffer.last().unwrap().security.clone();
+                    let last_context = buffer.last().unwrap().context.clone();
+                    for event in &mut buffer {
+                        match &mut event.event {
+                            ActorEvent::FullResponseGenerated(m) => {
+                                self.send_messages(m, &last_context, &last_security).await;
+                            }
+                            ActorEvent::ResponseRequested => {
+                                response_requested = true;
+                            }
+                            _ => {}
                         }
                     }
-                    _ => {}
-                }
-            }
-            buffer.clear();
+                    buffer.clear();
 
-            if response_requested {
-                self.request_response(&last_context, &last_security, &tx).await;
-                response_requested = false;
+                    if response_requested {
+                        self.request_response(&last_context, &last_security, &tx).await;
+                        response_requested = false;
+                    }
+                }
+                maybe_global = global_rx.recv() => {
+                    if let Ok(global_event) = maybe_global {
+                        match global_event {
+                            GlobalEvent::AgentUpdated(id, crate::runtime::AgentUpdate::NameChanged(new_name)) => {
+                                if ActorId::Agent(id) == self.id {
+                                    let _ = self.agent.update_name(new_name).await;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
 

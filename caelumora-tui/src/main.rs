@@ -296,6 +296,7 @@ async fn main() -> anyhow::Result<()> {
 
     let user_actor = session_loop
         .channel_by_name("main")
+        .await
         .and_then(|channel| channel.user_actor())
         .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
 

@@ -21,6 +21,7 @@ pub enum GlobalEvent {
     SessionUpdated(SessionId, SessionUpdate),
     ChannelUpdated(SessionId, ChannelId, ChannelUpdate),
     AgentUpdated(AgentId, AgentUpdate),
+    UserUpdated(caelumora_model::user::UserId, UserUpdate),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +37,11 @@ pub enum ChannelUpdate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdate {
+    NameChanged(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UserUpdate {
     NameChanged(String),
 }
 

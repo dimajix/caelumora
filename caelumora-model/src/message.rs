@@ -27,6 +27,20 @@ impl ActorId {
             ActorId::Agent(id) => {id.0}
         }
     }
+
+    pub fn as_agent_id(&self) -> Option<AgentId> {
+        match self {
+            ActorId::Agent(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    pub fn as_user_id(&self) -> Option<UserId> {
+        match self {
+            ActorId::User(id) => Some(*id),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
