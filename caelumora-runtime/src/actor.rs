@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::agent::AgentId;
 use chrono::{DateTime, Utc};
 use std::any::Any;
 use std::fmt::Debug;
@@ -57,6 +58,14 @@ impl EventContext {
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SettingsUpdate {
+    SessionNameChanged(String),
+    ChannelNameChanged(ChannelId, String),
+    AgentNameChanged(AgentId, String),
+    UserNameChanged(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
     ToolExecutionRequested,
     ToolExecutionGranted,
@@ -66,6 +75,7 @@ pub enum ActorEvent {
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
     Wakeup,
+    SettingsUpdated(SettingsUpdate),
 }
 
 impl ActorEvent {

@@ -22,8 +22,8 @@ use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
     STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
 };
-use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::session::{SessionManager};
+use caelumora_runtime::runtime::{GlobalEvent, RuntimeManager};
+use caelumora_runtime::session::SessionManager;
 use dashmap::DashMap;
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -77,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/sessions/{id}/channels/{cid}/messages", get(get_channel_messages).post(send_message))
         .route("/sessions/{id}/channels/{cid}/cancel", post(cancel_channel))
         .route("/sessions/{id}/channels/{cid}/events", get(join_channel))
+        .route("/events", get(global_events))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -423,4 +424,26 @@ async fn join_channel(
     });
 
     Ok(Sse::new(sse_stream))
+}
+
+async fn global_events(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let receiver = state.runtime_manager.subscribe_global();
+    let stream = BroadcastStream::new(receiver);
+
+    let sse_stream = stream.map(|res| {
+        match res {
+            Ok(event) => {
+                let event_json = serde_json::to_string(&event).unwrap_or_default();
+                Ok(Event::default().data(event_json))
+            }
+            Err(e) => {
+                tracing::error!("Global SSE stream error: {}", e);
+                Ok(Event::default().comment("stream error"))
+            }
+        }
+    });
+
+    Sse::new(sse_stream)
 }

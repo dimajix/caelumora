@@ -18,12 +18,13 @@ use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
+use arc_swap::ArcSwap;
 use log::{debug, warn};
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
 struct AgentLoopState {
-    agent: Arc<Agent>,
+    agent: Arc<ArcSwap<Agent>>,
     runtime_manager: Arc<RuntimeManager>,
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
@@ -32,16 +33,17 @@ struct AgentLoopState {
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
 }
 impl AgentLoopState {
-    fn new(agent: Arc<Agent>,
+    fn new(agent: Arc<ArcSwap<Agent>>,
            runtime_manager: Arc<RuntimeManager>,
            pipeline_config: ComponentConfig,
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
-        let state = match store.get_agent_state(agent.id) {
+        let agent_id = agent.load().id;
+        let state = match store.get_agent_state(agent_id) {
             Ok(s) => s,
             Err(StoreError::NotFound{entity: _, id:_}) => {
                 let state = AgentState::default();
-                store.put_agent_state(agent.id, &state)?;
+                store.put_agent_state(agent_id, &state)?;
                 state
             }
             Err(e) => {
@@ -138,10 +140,11 @@ impl AgentLoopState {
             }
         }
 
+        let agent_name = self.agent.load().metadata.name.clone();
         debug!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
-            self.agent.metadata.name,
+            agent_name,
             format_conversation(context.as_slice()),
-            self.agent.metadata.name);
+            agent_name);
         llm_client.chat_completion(context.as_slice()).await
     }
 
@@ -188,7 +191,7 @@ impl AgentLoopState {
 pub struct AgentLoop {
     id: ActorId,
     state: Arc<Mutex<AgentLoopState>>,
-    agent: Arc<Agent>,
+    agent: Arc<ArcSwap<Agent>>,
     max_iterations: i32,
     processing_state: Arc<AtomicU8>,
 }
@@ -199,10 +202,11 @@ impl AgentLoop {
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
         let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
-        let agent = Arc::new(agent);
+        let agent_id = agent.id;
+        let agent = Arc::new(ArcSwap::from_pointee(agent));
         let state = AgentLoopState::new(agent.clone(), runtime_manager, personality.components)?;
         Ok(Self {
-            id: ActorId::Agent(agent.id),
+            id: ActorId::Agent(agent_id),
             state: Arc::new(Mutex::new(state)),
             agent,
             max_iterations: 10,
@@ -215,7 +219,14 @@ impl AgentLoop {
     }
 
     pub fn name(&self) -> String {
-        self.agent.metadata.name.clone()
+        self.agent.load().metadata.name.clone()
+    }
+
+    pub async fn update_name(&self, new_name: String) -> Result<()> {
+        let mut agent = (**self.agent.load()).clone();
+        agent.metadata.name = new_name;
+        self.agent.store(Arc::new(agent));
+        Ok(())
     }
 
     pub fn cancel(&self) {
@@ -230,8 +241,8 @@ impl AgentLoop {
 
     pub async fn request_response(&self, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
         let state_arc = self.state.clone();
-        let agent_id = ActorId::Agent(self.agent.id);
-        let agent_name = self.agent.metadata.name.clone();
+        let agent_id = self.id;
+        let agent_name = self.name();
         let max_iterations = self.max_iterations;
         let security_context = security_context.next(self.id());
         let processing_state = self.processing_state.clone();

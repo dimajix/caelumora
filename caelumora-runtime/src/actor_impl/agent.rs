@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use caelumora_model::message::{ActorId, Message};
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender, SettingsUpdate};
 use crate::agent::AgentLoop;
 use crate::security::SecurityContext;
 
@@ -102,6 +102,11 @@ impl Actor for AgentActor {
                     }
                     ActorEvent::ResponseRequested => {
                         response_requested = true;
+                    }
+                    ActorEvent::SettingsUpdated(SettingsUpdate::AgentNameChanged(id, new_name)) => {
+                        if ActorId::Agent(*id) == self.id {
+                            let _ = self.agent.update_name(new_name.clone()).await;
+                        }
                     }
                     _ => {}
                 }

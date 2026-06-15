@@ -1,24 +1,26 @@
 use anyhow::anyhow;
-use async_trait::async_trait;
 use log::{debug, info, warn};
+use std::sync::Arc;
+use arc_swap::ArcSwap;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
 use uuid::Uuid;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::user::User;
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender, SettingsUpdate};
 use crate::security::SecurityContext;
+use async_trait::async_trait;
 
 #[derive(Debug)]
 pub struct UserActor {
-    id: ActorId,
-    session_id: SessionId,
-    channel_id: ChannelId,
-    channel_name: String,
-    security_context: SecurityContext,
-    user: User,
-    user_rx: Mutex<Receiver<ActorEvent>>,
+    pub id: ActorId,
+    pub session_id: SessionId,
+    pub channel_id: ChannelId,
+    pub channel_name: ArcSwap<String>,
+    pub security_context: SecurityContext,
+    pub user: Arc<ArcSwap<User>>,
+    pub user_rx: Mutex<Receiver<ActorEvent>>,
     user_tx: Sender<ActorEvent>,
     actor_rx: Mutex<Receiver<ActorEvent>>,
     actor_tx: Sender<ActorEvent>,
@@ -32,14 +34,14 @@ impl UserActor {
             id: ActorId::User(user.id),
             session_id: session.id,
             channel_id: channel.id,
-            channel_name: channel.name.clone(),
+            channel_name: ArcSwap::from_pointee(channel.name.clone()),
             security_context: SecurityContext {
                 initiator_id: ActorId::User(user.id),
                 sender_id: ActorId::User(user.id),
                 session_id: session.id,
                 channel_id: channel.id
             },
-            user,
+            user: Arc::new(ArcSwap::from_pointee(user)),
             user_rx: Mutex::new(urx),
             user_tx: utx,
             actor_rx: Mutex::new(arx),
@@ -91,7 +93,7 @@ impl Actor for UserActor {
     }
 
     fn name(&self) -> String {
-        self.user.username.clone()
+        self.user.load().username.clone()
     }
 
     fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
@@ -118,6 +120,19 @@ impl Actor for UserActor {
                     match maybe_event {
                         Some(event) => {
                             debug!("UserActor {} received actor event: {:?}", self.id(), event);
+                            match &event.event {
+                                ActorEvent::SettingsUpdated(SettingsUpdate::ChannelNameChanged(cid, new_name)) => {
+                                    if *cid == self.channel_id {
+                                        self.channel_name.store(Arc::new(new_name.clone()));
+                                    }
+                                }
+                                ActorEvent::SettingsUpdated(SettingsUpdate::UserNameChanged(new_name)) => {
+                                    let mut u = (**self.user.load()).clone();
+                                    u.username = new_name.clone();
+                                    self.user.store(Arc::new(u));
+                                }
+                                _ => {}
+                            }
                             if let Err(e) = self.actor_tx.send(event.event).await {
                                 warn!("UserActor {} cannot forward event because of an error: {}", self.id(), e);
                                 rx_closed = true;
@@ -134,7 +149,8 @@ impl Actor for UserActor {
                     match maybe_message {
                         Some(message) => {
                             debug!("Received user message: {:?}", message);
-                            let context = EventContext::new(self.session_id, self.channel_id, self.channel_name.clone(), self.id(), self.name());
+                            let channel_name = self.channel_name.load().as_ref().clone();
+                            let context = EventContext::new(self.session_id, self.channel_id, channel_name, self.id(), self.name());
                             let event = Envelope::new(self.security_context.clone(), context, message);
                             if let Err(e) = tx.send(event).await {
                                 warn!("UserActor {} cannot forward user message because of an error: {}", self.id(), e);
@@ -151,7 +167,7 @@ impl Actor for UserActor {
                 else => break,
             }
         }
-        info!("UserActor {} has finished finished", self.id());
+        info!("UserActor {} has finished", self.id());
         Ok(())
     }
 }

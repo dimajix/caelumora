@@ -6,10 +6,38 @@ use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
-use crate::security::{DummySecurityManager, SecurityManager};
+use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
+use serde::{Deserialize, Serialize};
+use caelumora_model::session::{SessionId, ChannelId};
+use caelumora_model::agent::AgentId;
+use caelumora_model::meta::Metadata;
+use caelumora_model::message::ActorId;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GlobalEvent {
+    SessionUpdated(SessionId, SessionUpdate),
+    ChannelUpdated(SessionId, ChannelId, ChannelUpdate),
+    AgentUpdated(AgentId, AgentUpdate),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SessionUpdate {
+    NameChanged(String),
+    MetadataUpdated(Metadata),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChannelUpdate {
+    NameChanged(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgentUpdate {
+    NameChanged(String),
+}
 
 #[derive(Debug)]
 pub struct RuntimeManager {
@@ -19,6 +47,7 @@ pub struct RuntimeManager {
     tool_executor: Arc<dyn ToolExecutor>,
     llm_client: Arc<dyn LLMClient>,
     component_registry: Arc<ComponentRegistry>,
+    global_event_tx: broadcast::Sender<GlobalEvent>,
 }
 
 impl RuntimeManager {
@@ -27,6 +56,8 @@ impl RuntimeManager {
         history::register(&mut component_registry);
         context::register(&mut component_registry);
 
+        let (global_event_tx, _) = broadcast::channel(100);
+
         Self {
             security_manager: Arc::new(DummySecurityManager::new()),
             state_store,
@@ -34,10 +65,38 @@ impl RuntimeManager {
             tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
             component_registry: Arc::new(component_registry),
+            global_event_tx,
         }
     }
 
+    pub fn notify_global(&self, event: GlobalEvent) {
+        let _ = self.global_event_tx.send(event);
+    }
+
+    pub fn subscribe_global(&self) -> broadcast::Receiver<GlobalEvent> {
+        self.global_event_tx.subscribe()
+    }
+
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
+
+    pub fn system_security_context(&self, session_id: SessionId, channel_id: ChannelId) -> SecurityContext {
+        SecurityContext {
+            initiator_id: ActorId::None,
+            sender_id: ActorId::None,
+            session_id,
+            channel_id,
+        }
+    }
+
+    pub fn system_event_context(&self, session_id: SessionId, channel_id: ChannelId, channel_name: String) -> crate::actor::EventContext {
+        crate::actor::EventContext::new(
+            session_id,
+            channel_id,
+            channel_name,
+            ActorId::None,
+            "System".to_string(),
+        )
+    }
     
     pub fn tool_executor(&self) -> Arc<dyn ToolExecutor> {
         self.tool_executor.clone()

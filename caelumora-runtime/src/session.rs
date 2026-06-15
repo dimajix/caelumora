@@ -1,14 +1,15 @@
 use crate::channel::ChannelLoop;
-use crate::runtime::RuntimeManager;
+use crate::runtime::{GlobalEvent, RuntimeManager, SessionUpdate};
 use anyhow::{anyhow, Result};
 use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
+use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use crate::actor::Envelope;
+use crate::actor::{Envelope, ActorEvent, SettingsUpdate};
 
 struct ChannelHandle {
     id: ChannelId,
@@ -17,7 +18,7 @@ struct ChannelHandle {
 
 #[derive(Debug)]
 pub struct SessionLoop {
-    pub session: Arc<Session>,
+    pub session: Arc<ArcSwap<Session>>,
     runtime_manager: Arc<RuntimeManager>,
     channels: HashMap<ChannelId,Arc<ChannelLoop>>,
     run_lock: Mutex<()>
@@ -30,7 +31,7 @@ impl SessionLoop {
             let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone())?;
             channels.insert(cl.id(), Arc::new(cl));
         }
-        let session_ref = Arc::new(session);
+        let session_ref = Arc::new(ArcSwap::from_pointee(session));
 
         Ok(Self {
             session: session_ref,
@@ -40,7 +41,40 @@ impl SessionLoop {
         })
     }
 
-    pub fn id(&self) -> SessionId { self.session.id }
+    pub fn id(&self) -> SessionId {
+        self.session.load().id
+    }
+
+    pub fn name(&self) -> String {
+        self.session.load().metadata.name.clone()
+    }
+
+    pub async fn update_name(&self, new_name: String) -> Result<()> {
+        let update = {
+            let mut session = (**self.session.load()).clone();
+            session.metadata.name = new_name.clone();
+            self.session.store(Arc::new(session));
+            SettingsUpdate::SessionNameChanged(new_name.clone())
+        };
+
+        // Notify globally
+        self.runtime_manager.notify_global(GlobalEvent::SessionUpdated(
+            self.id(),
+            SessionUpdate::NameChanged(new_name.clone()),
+        ));
+
+        // Notify locally in all channels
+        for channel in self.channels.values() {
+            let envelope = Envelope::new(
+                self.runtime_manager.system_security_context(self.id(), channel.id()),
+                self.runtime_manager.system_event_context(self.id(), channel.id(), channel.name()),
+                ActorEvent::SettingsUpdated(update.clone()),
+            );
+            channel.send_event(envelope);
+        }
+
+        Ok(())
+    }
 
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
         self.channels.values().cloned().collect()
@@ -49,8 +83,13 @@ impl SessionLoop {
     pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
         self.channels.values().find(|c| c.id() == channel_id).map(|c| c.clone())
     }
-    pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
-        self.channels.values().find(|c| c.name() == name).map(|c| c.clone())
+    pub async fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
+        for channel in self.channels.values() {
+            if channel.name() == name {
+                return Some(channel.clone());
+            }
+        }
+        None
     }
 
     pub async fn get_channel_history(&self, channel_id: ChannelId) -> Option<Vec<Message>> {
