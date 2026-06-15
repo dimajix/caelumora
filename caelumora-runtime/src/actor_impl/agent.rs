@@ -34,6 +34,54 @@ impl AgentActor {
     async fn send_messages(&self, messages:&mut Vec<Message>, _event_context: &EventContext, event_security: &SecurityContext) {
         self.agent.send_messages(mem::take(messages), event_security).await;
     }
+
+    async fn handle_actor_envelopes(
+        &self,
+        res: usize,
+        buffer: &mut Vec<Envelope>,
+        tx: &Sender<Envelope>
+    ) -> bool {
+        if res == 0 {
+            return true;
+        }
+
+        debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
+        let last_security = buffer.last().unwrap().security.clone();
+        let last_context = buffer.last().unwrap().context.clone();
+        let mut response_requested = false;
+
+        for event in buffer.iter_mut() {
+            match &mut event.event {
+                ActorEvent::FullResponseGenerated(m) => {
+                    self.send_messages(m, &last_context, &last_security).await;
+                }
+                ActorEvent::ResponseRequested => {
+                    response_requested = true;
+                }
+                _ => {}
+            }
+        }
+        buffer.clear();
+
+        if response_requested {
+            self.request_response(&last_context, &last_security, tx).await;
+        }
+        false
+    }
+
+    async fn handle_global_event(&self, maybe_global: Result<GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
+        if let Ok(global_event) = maybe_global {
+            match global_event {
+                GlobalEvent::AgentUpdated(id, crate::runtime::AgentUpdate::NameChanged(new_name)) => {
+                    if ActorId::Agent(id) == self.id {
+                        let _ = self.agent.update_name(new_name).await;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     async fn request_response(&self, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {
         let mut response = self.agent.request_response(event_security).await;
         while let Some(event_result) = response.next().await {
@@ -91,46 +139,16 @@ impl Actor for AgentActor {
 
         let mut global_rx = self.agent.runtime_manager().subscribe_global();
         let mut buffer = Vec::new();
-        let mut response_requested = false;
 
         loop {
             tokio::select! {
                 res = rx.recv_many(&mut buffer, 100) => {
-                    if res == 0 {
+                    if self.handle_actor_envelopes(res, &mut buffer, &tx).await {
                         break;
-                    }
-                    debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
-                    let last_security = buffer.last().unwrap().security.clone();
-                    let last_context = buffer.last().unwrap().context.clone();
-                    for event in &mut buffer {
-                        match &mut event.event {
-                            ActorEvent::FullResponseGenerated(m) => {
-                                self.send_messages(m, &last_context, &last_security).await;
-                            }
-                            ActorEvent::ResponseRequested => {
-                                response_requested = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                    buffer.clear();
-
-                    if response_requested {
-                        self.request_response(&last_context, &last_security, &tx).await;
-                        response_requested = false;
                     }
                 }
                 maybe_global = global_rx.recv() => {
-                    if let Ok(global_event) = maybe_global {
-                        match global_event {
-                            GlobalEvent::AgentUpdated(id, crate::runtime::AgentUpdate::NameChanged(new_name)) => {
-                                if ActorId::Agent(id) == self.id {
-                                    let _ = self.agent.update_name(new_name).await;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    self.handle_global_event(maybe_global).await;
                 }
             }
         }
