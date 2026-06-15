@@ -12,6 +12,7 @@ use crate::security::SecurityContext;
 
 #[derive(Debug)]
 pub struct UserActor {
+    id: ActorId,
     session_id: SessionId,
     channel_id: ChannelId,
     channel_name: String,
@@ -28,6 +29,7 @@ impl UserActor {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
         Self {
+            id: ActorId::User(user.id),
             session_id: session.id,
             channel_id: channel.id,
             channel_name: channel.name.clone(),
@@ -81,7 +83,7 @@ impl UserActor {
 #[async_trait]
 impl Actor for UserActor {
     fn id(&self) -> ActorId {
-        ActorId::User(self.user.id)
+        self.id
     }
 
     fn kind(&self) -> String{

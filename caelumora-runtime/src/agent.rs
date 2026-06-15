@@ -9,7 +9,7 @@ use crate::component::{
 use anyhow::Result;
 use async_stream::stream;
 use std::sync::atomic::{AtomicU8, Ordering};
-use caelumora_model::agent::{Agent, AgentId, AgentState, ProcessingState};
+use caelumora_model::agent::{Agent, AgentState, ProcessingState};
 use caelumora_model::component::{
     ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE
 };
@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 
 #[derive(Debug)]
 struct AgentLoopState {
-    agent: Agent,
+    agent: Arc<Agent>,
     runtime_manager: Arc<RuntimeManager>,
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
@@ -32,7 +32,7 @@ struct AgentLoopState {
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
 }
 impl AgentLoopState {
-    fn new(agent: Agent,
+    fn new(agent: Arc<Agent>,
            runtime_manager: Arc<RuntimeManager>,
            pipeline_config: ComponentConfig,
     ) -> Result<Self> {
@@ -186,9 +186,9 @@ impl AgentLoopState {
 
 #[derive(Debug)]
 pub struct AgentLoop {
+    id: ActorId,
     state: Arc<Mutex<AgentLoopState>>,
-    id: AgentId,
-    name: String,
+    agent: Arc<Agent>,
     max_iterations: i32,
     processing_state: Arc<AtomicU8>,
 }
@@ -199,24 +199,23 @@ impl AgentLoop {
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
         let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
-        let id = agent.id;
-        let name = agent.metadata.name.clone();
-        let state = AgentLoopState::new(agent, runtime_manager, personality.components)?;
+        let agent = Arc::new(agent);
+        let state = AgentLoopState::new(agent.clone(), runtime_manager, personality.components)?;
         Ok(Self {
+            id: ActorId::Agent(agent.id),
             state: Arc::new(Mutex::new(state)),
-            id,
-            name,
+            agent,
             max_iterations: 10,
             processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
         })
     }
 
     pub fn id(&self) -> ActorId {
-        ActorId::Agent(self.id)
+        self.id
     }
 
     pub fn name(&self) -> String {
-        self.name.clone()
+        self.agent.metadata.name.clone()
     }
 
     pub fn cancel(&self) {
@@ -231,8 +230,8 @@ impl AgentLoop {
 
     pub async fn request_response(&self, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
         let state_arc = self.state.clone();
-        let agent_id = ActorId::Agent(self.id);
-        let agent_name = self.name.clone();
+        let agent_id = ActorId::Agent(self.agent.id);
+        let agent_name = self.agent.metadata.name.clone();
         let max_iterations = self.max_iterations;
         let security_context = security_context.next(self.id());
         let processing_state = self.processing_state.clone();

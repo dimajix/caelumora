@@ -14,7 +14,6 @@ use crate::security::SecurityContext;
 pub struct AgentActor {
     id: ActorId,
     kind: String,
-    name: String,
     agent: AgentLoop,
     run_lock: Mutex<()>
 }
@@ -24,7 +23,6 @@ impl AgentActor {
         AgentActor {
             id: agent.id(),
             kind: "agent".to_string(),
-            name: agent.name(),
             agent,
             run_lock: Mutex::new(())
         }
@@ -42,7 +40,7 @@ impl AgentActor {
                 Ok(ev) => {
                     let ev2 = Envelope::new(
                         event_security.next(self.id),
-                        event_context.next(self.id, self.name.clone()),
+                        event_context.next(self.id, self.agent.name()),
                         ActorEvent::from_message_event(ev)
                     );
                     if let Err(e) = tx.send(ev2).await {
@@ -68,7 +66,7 @@ impl Actor for AgentActor {
         self.kind.clone()
     }
     fn name(&self) -> String {
-        self.name.clone()
+        self.agent.name()
     }
 
     fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {

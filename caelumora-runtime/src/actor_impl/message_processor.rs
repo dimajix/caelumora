@@ -14,7 +14,6 @@ use crate::security::SecurityContext;
 pub struct MessageProcessorActor {
     id: ActorId,
     kind: String,
-    name: String,
     processor: Box<dyn MessageProcessor>,
     run_lock: Mutex<()>
 }
@@ -24,7 +23,6 @@ impl MessageProcessorActor {
         MessageProcessorActor {
             id: processor.id(),
             kind: processor.kind(),
-            name: processor.name(),
             processor,
             run_lock: Mutex::new(())
         }
@@ -39,7 +37,7 @@ impl MessageProcessorActor {
                 Ok(ev) => {
                     let ev2 = Envelope::new(
                         event_security.next(self.id),
-                        event_context.next(self.id, self.name.clone()),
+                        event_context.next(self.id, self.name()),
                         ActorEvent::from_message_event(ev)
                     );
                     if let Err(e) = tx.send(ev2).await {
@@ -65,7 +63,7 @@ impl Actor for MessageProcessorActor {
         self.kind.clone()
     }
     fn name(&self) -> String {
-        self.name.clone()
+        self.processor.name()
     }
 
     fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {

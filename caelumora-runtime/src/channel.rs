@@ -32,7 +32,6 @@ struct ActorHandle {
 #[derive(Debug)]
 pub struct ChannelLoop {
     id: ChannelId,
-    name: String,
     session_id: SessionId,
     channel: Arc<Channel>,
     runtime_manager: Arc<RuntimeManager>,
@@ -62,7 +61,6 @@ impl ChannelLoop {
 
         Ok(Self {
             id: channel.id,
-            name: channel.name.clone(),
             session_id: session.id,
             channel: Arc::new(channel),
             runtime_manager,
@@ -87,7 +85,7 @@ impl ChannelLoop {
 
 
     pub fn id(&self) -> ChannelId { self.id }
-    pub fn name(&self) -> String { self.name.clone() }
+    pub fn name(&self) -> String { self.channel.name.clone() }
 
     pub async fn cancel_all_actors(&self) -> Result<()> {
         self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
