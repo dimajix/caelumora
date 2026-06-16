@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MessageId(pub Uuid);
+define_id!(MessageId);
 
 
 #[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]

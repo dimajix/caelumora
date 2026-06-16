@@ -1,7 +1,6 @@
 use crate::agent::Agent;
 use crate::message::MessageHistory;
 use arc_swap::ArcSwap;
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -58,9 +57,7 @@ impl ChannelController {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ChannelId(pub Uuid);
+define_id!(ChannelId);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {

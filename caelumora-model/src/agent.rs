@@ -1,4 +1,3 @@
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::sync::Arc;
@@ -72,9 +71,7 @@ impl AgentController {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PersonalityId(pub Uuid);
+define_id!(PersonalityId);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Personality {
@@ -118,9 +115,7 @@ impl From<ProcessingState> for u8 {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AgentId(pub Uuid);
+define_id!(AgentId);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {

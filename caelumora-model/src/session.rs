@@ -1,9 +1,7 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use crate::store::{EntityResolver, StateStore};
 use crate::user::UserId;
 use std::sync::Arc;
@@ -71,9 +69,7 @@ impl SessionController {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SessionId(pub Uuid);
+define_id!(SessionId);
 
 pub struct SessionContext {
     pub id: SessionId,

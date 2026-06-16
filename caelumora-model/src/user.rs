@@ -1,13 +1,9 @@
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
 use crate::event::EventSender;
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct UserId(pub Uuid);
+define_id!(UserId);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
