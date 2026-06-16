@@ -205,7 +205,7 @@ impl AgentLoop {
         let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
         let agent_id = agent.id;
         let event_sender = runtime_manager.agent_event_sender(session_id, channel_id, agent_id);
-        let agent_controller = Arc::new(AgentController::new(agent, event_sender));
+        let agent_controller = Arc::new(AgentController::new(agent, event_sender, runtime_manager.state_store()));
         let state = AgentLoopState::new(agent_controller.clone(), runtime_manager.clone(), personality.components)?;
         Ok(Self {
             id: ActorId::Agent(agent_id),

@@ -59,6 +59,13 @@ Moderators control how messages are routed and who is allowed to respond. Implem
 *   **Round Robin**: Cycles through participants in a fixed order.
 *   **Random**: Picks a random participant to respond.
 
+## Controllers and State Management
+
+Caelumora uses `Controller` types (e.g., `SessionController`, `AgentController`) for managing the live state of entities. 
+*   **Live State**: Controllers use `ArcSwap` to provide atomic, lock-free access to the current state of an entity.
+*   **Persistence**: Controllers are linked to the `StateStore`. Any state modifications made through a controller (e.g., updating a name) are automatically propagated to the persistent store, ensuring data consistency across restarts.
+*   **Eventing**: Controllers are responsible for publishing update events via the `EventBus` when state changes occur.
+
 ## Storage and Persistence
 
 Caelumora uses a tiered storage approach:

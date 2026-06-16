@@ -33,7 +33,7 @@ impl SessionLoop {
         }
 
         let event_sender = runtime_manager.session_event_sender(session_id);
-        let session_controller = Arc::new(SessionController::new(session, event_sender));
+        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.state_store()));
 
         Ok(Self {
             session_controller,

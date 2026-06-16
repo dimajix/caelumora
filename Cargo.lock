@@ -257,6 +257,7 @@ dependencies = [
  "arc-swap",
  "chrono",
  "derive_more",
+ "log",
  "serde",
  "serde_json",
  "serde_yaml",

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::store::EntityResolver;
+use crate::store::{EntityResolver, StateStore};
 use crate::user::UserId;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
@@ -19,13 +19,19 @@ pub enum SessionUpdateEvent {
 pub struct SessionController {
     session: ArcSwap<Session>,
     event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
+    state_store: Arc<dyn StateStore>,
 }
 
 impl SessionController {
-    pub fn new(session: Session, event_sender: Arc<dyn EventSender<SessionUpdateEvent>>) -> Self {
+    pub fn new(
+        session: Session,
+        event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
+        state_store: Arc<dyn StateStore>
+    ) -> Self {
         Self {
             session: ArcSwap::from_pointee(session),
             event_sender,
+            state_store,
         }
     }
 
@@ -55,7 +61,11 @@ impl SessionController {
             SessionUpdateEvent::NameChanged(name) => {
                 let mut session = (**self.session.load()).clone();
                 session.metadata.name = name.clone();
-                self.session.store(Arc::new(session));
+                let session = Arc::new(session);
+                self.session.store(session.clone());
+                if let Err(e) = self.state_store.update_session(&session) {
+                    log::error!("Failed to persist session update: {}", e);
+                }
             }
         }
     }

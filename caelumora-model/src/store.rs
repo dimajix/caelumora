@@ -164,9 +164,10 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct MockStateStore {
         agents: RwLock<Vec<Agent>>,
+        sessions: RwLock<Vec<Session>>,
     }
 
     impl MockStateStore {
@@ -181,6 +182,21 @@ mod tests {
             F: FnOnce(&mut Vec<Agent>) -> R,
         {
             match self.agents.write() {
+                Ok(mut guard) => f(&mut guard),
+                Err(mut poisoned) => f(poisoned.get_mut()),
+            }
+        }
+        fn read_sessions(&self) -> Vec<Session> {
+            match self.sessions.read() {
+                Ok(guard) => guard.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            }
+        }
+        fn write_sessions<F, R>(&self, f: F) -> R
+        where
+            F: FnOnce(&mut Vec<Session>) -> R,
+        {
+            match self.sessions.write() {
                 Ok(mut guard) => f(&mut guard),
                 Err(mut poisoned) => f(poisoned.get_mut()),
             }
@@ -205,20 +221,31 @@ mod tests {
                 .cloned())
         }
 
-        fn update_agent(&self, _value: &Agent) -> StoreResult<()> {
-            unimplemented!()
+        fn update_agent(&self, value: &Agent) -> StoreResult<()> {
+            self.write_agents(|v| {
+                if let Some(existing) = v.iter_mut().find(|a| a.id == value.id) {
+                    *existing = value.clone();
+                }
+            });
+            Ok(())
         }
 
-        fn create_session(&self, _value: &Session) -> StoreResult<()> {
-            unimplemented!()
+        fn create_session(&self, value: &Session) -> StoreResult<()> {
+            self.write_sessions(|v| v.push(value.clone()));
+            Ok(())
         }
 
         fn get_session(&self, _id: SessionId) -> StoreResult<Session> {
             unimplemented!()
         }
 
-        fn update_session(&self, _value: &Session) -> StoreResult<()> {
-            unimplemented!()
+        fn update_session(&self, value: &Session) -> StoreResult<()> {
+            self.write_sessions(|v| {
+                if let Some(existing) = v.iter_mut().find(|s| s.id == value.id) {
+                    *existing = value.clone();
+                }
+            });
+            Ok(())
         }
 
         fn get_agent_state(&self, _agent_id: AgentId) -> StoreResult<AgentState> {
@@ -262,6 +289,7 @@ mod tests {
             }),
             Arc::new(MockStateStore {
                 agents: RwLock::new(vec![existing.clone()]),
+                ..MockStateStore::default()
             }),
         );
 
@@ -277,6 +305,7 @@ mod tests {
         let personality = personality_template();
         let state_store = Arc::new(MockStateStore {
             agents: RwLock::new(Vec::new()),
+            ..MockStateStore::default()
         });
 
         let resolver = StoreBackedEntityResolver::new(
@@ -295,5 +324,48 @@ mod tests {
 
         assert_eq!(created.id, fetched.id);
         assert_eq!(created.personality_id, personality.id);
+    }
+
+    #[test]
+    fn agent_controller_persists_changes() {
+        let personality = personality_template();
+        let agent = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality);
+        let state_store = Arc::new(MockStateStore::default());
+        state_store.create_agent(&agent).unwrap();
+
+        let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
+        let controller = crate::agent::AgentController::new(agent.clone(), event_sender, state_store.clone());
+
+        controller.update_name("new_name".to_string());
+
+        let persisted = state_store.find_agent_by_name("new_name", &Scope::GlobalScope).unwrap().unwrap();
+        assert_eq!(persisted.id, agent.id);
+        assert_eq!(persisted.metadata.name, "new_name");
+    }
+
+    #[test]
+    fn session_controller_persists_changes() {
+        let session = Session {
+            id: SessionId(Uuid::new_v4()),
+            metadata: Metadata {
+                name: "session".to_string(),
+                scope: Scope::GlobalScope,
+                ..Metadata::default()
+            },
+            channels: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let state_store = Arc::new(MockStateStore::default());
+        state_store.create_session(&session).unwrap();
+
+        let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
+        let controller = crate::session::SessionController::new(session.clone(), event_sender, state_store.clone());
+
+        controller.update_name("new_session_name".to_string());
+
+        let persisted = state_store.write_sessions(|v| v.iter().find(|s| s.metadata.name == "new_session_name").cloned().unwrap());
+        assert_eq!(persisted.id, session.id);
+        assert_eq!(persisted.metadata.name, "new_session_name");
     }
 }

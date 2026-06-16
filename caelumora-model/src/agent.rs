@@ -7,6 +7,7 @@ use crate::message::{MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::component::ComponentConfig;
 use crate::event::EventSender;
+use crate::store::StateStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
@@ -18,14 +19,20 @@ pub struct AgentController {
     id: AgentId,
     agent: ArcSwap<Agent>,
     event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
+    state_store: Arc<dyn StateStore>,
 }
 
 impl AgentController {
-    pub fn new(agent: Agent, event_sender: Arc<dyn EventSender<AgentUpdateEvent>>) -> Self {
+    pub fn new(
+        agent: Agent,
+        event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
+        state_store: Arc<dyn StateStore>
+    ) -> Self {
         Self {
             id: agent.id,
             agent: ArcSwap::from_pointee(agent),
             event_sender,
+            state_store,
         }
     }
 
@@ -55,7 +62,11 @@ impl AgentController {
             AgentUpdateEvent::NameChanged(name) => {
                 let mut agent = (**self.agent.load()).clone();
                 agent.metadata.name = name.clone();
-                self.agent.store(Arc::new(agent));
+                let agent = Arc::new(agent);
+                self.agent.store(agent.clone());
+                if let Err(e) = self.state_store.update_agent(&agent) {
+                    log::error!("Failed to persist agent update: {}", e);
+                }
             }
         }
     }
