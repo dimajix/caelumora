@@ -121,10 +121,10 @@ impl UserActor {
         user_rx_closed
     }
 
-    async fn handle_global_event(&self, maybe_global: Result<GlobalEvent, tokio::sync::broadcast::error::RecvError>) -> bool {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) -> bool {
         let mut global_rx_closed = false;
         match maybe_global {
-            Ok(event) => {
+            Some(event) => {
                 match event {
                     GlobalEvent::ChannelUpdated(_, cid, event) => {
                         if cid == self.channel_id {
@@ -139,11 +139,8 @@ impl UserActor {
                     _ => {}
                 }
             }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            None => {
                 global_rx_closed = true;
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                // Lagged, just continue
             }
         }
         global_rx_closed
@@ -178,7 +175,11 @@ impl Actor for UserActor {
     async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
-        let mut global_rx = self.runtime_manager.subscribe_global();
+        let user_id = self.id.as_user_id().unwrap();
+        let mut global_rx = self.runtime_manager.subscribe_multi(vec![
+            crate::event::SubscriptionTopic::User(user_id),
+            crate::event::SubscriptionTopic::Channel(self.channel_id),
+        ]);
         let mut rx_closed = false;
         let mut user_rx_closed = false;
         let mut global_rx_closed = false;

@@ -1,84 +1,78 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
-use uuid::Uuid;
-
-
-#[derive(Debug, Clone)]
-pub struct AgentContextChangePayload {}
-#[derive(Debug, Clone)]
-pub struct AgentMemoryChangePayload {}
-
-
-#[derive(Debug, Clone)]
-pub enum Event {
-    AgentContextChanged(AgentContextChangePayload),
-    AgentMemoryChanged(AgentMemoryChangePayload),
-}
-
-#[derive(Debug, Clone)]
-pub struct EventEnvelope {
-    pub origin_session_id: Option<Uuid>,
-    pub origin_agent_id: Option<Uuid>,
-    pub timestamp: DateTime<Utc>,
-    pub event: Event
-}
-
+use caelumora_model::session::SessionId;
+use caelumora_model::channel::ChannelId;
+use caelumora_model::agent::AgentId;
+use caelumora_model::user::UserId;
+use crate::runtime::GlobalEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
-    All,               // Global broadcast
-    SpecificAgent(Uuid), // Only events from this agent
+    All,
+    Session(SessionId),
+    Channel(ChannelId),
+    Agent(AgentId),
+    User(UserId),
 }
 
-
+#[derive(Debug)]
 pub struct EventBus {
-    subscribers: Mutex<HashMap<SubscriptionTopic, Vec<mpsc::Sender<EventEnvelope>>>>,
+    subscribers: Mutex<HashMap<SubscriptionTopic, Vec<mpsc::Sender<GlobalEvent>>>>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
-        Self { subscribers: Mutex::new(HashMap::new()) }
+        Self {
+            subscribers: Mutex::new(HashMap::new()),
+        }
     }
 
-    pub fn subscribe(&self, topic: SubscriptionTopic) -> mpsc::Receiver<EventEnvelope> {
-        let (tx, rx) = mpsc::channel(20);
+    pub fn subscribe(&self, topics: Vec<SubscriptionTopic>) -> mpsc::Receiver<GlobalEvent> {
+        let (tx, rx) = mpsc::channel(100);
         let mut subs = self.subscribers.lock().unwrap();
 
-        subs.entry(topic).or_insert_with(Vec::new).push(tx);
+        for topic in topics {
+            subs.entry(topic).or_insert_with(Vec::new).push(tx.clone());
+        }
         rx
     }
 
-    pub fn publish(&self, origin_agent: Uuid, event: Event) {
-        let envelope = EventEnvelope {
-            timestamp: Utc::now(),
-            origin_agent_id: Some(origin_agent),
-            origin_session_id: None,
-            event
-        };
+    pub fn publish(&self, event: GlobalEvent) {
         let mut subs = self.subscribers.lock().unwrap();
 
-        // 1. Identify all relevant topics:
-        //    - The "All" topic always gets the message.
-        //    - The "SpecificAgent(origin_agent)" topic gets the message.
-        let topics_to_notify = vec![
-            SubscriptionTopic::All,
-            SubscriptionTopic::SpecificAgent(origin_agent)
-        ];
+        let mut topics_to_notify = vec![SubscriptionTopic::All];
+
+        match &event {
+            GlobalEvent::SessionCreated(sid) | GlobalEvent::SessionUpdated(sid, _) | GlobalEvent::SessionDeleted(sid) => {
+                topics_to_notify.push(SubscriptionTopic::Session(*sid));
+            }
+            GlobalEvent::ChannelCreated(sid, cid) | GlobalEvent::ChannelUpdated(sid, cid, _) | GlobalEvent::ChannelDeleted(sid, cid) => {
+                topics_to_notify.push(SubscriptionTopic::Session(*sid));
+                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
+            }
+            GlobalEvent::AgentCreated(sid, cid, aid) | GlobalEvent::AgentUpdated(sid, cid, aid, _) | GlobalEvent::AgentDeleted(sid, cid, aid) => {
+                topics_to_notify.push(SubscriptionTopic::Session(*sid));
+                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
+                topics_to_notify.push(SubscriptionTopic::Agent(*aid));
+            }
+            GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) => {
+                topics_to_notify.push(SubscriptionTopic::User(*uid));
+            }
+        }
 
         let mut require_cleanup = false;
         for topic in topics_to_notify {
             if let Some(senders) = subs.get_mut(&topic) {
-                // Clean up dead subscribers while notifying
-                senders.retain(|tx|
-                    match tx.try_send(envelope.clone()) {
-                        Ok(_) => true, // Success, keep the subscriber
+                senders.retain(|tx: &mpsc::Sender<GlobalEvent>| {
+                    match tx.try_send(event.clone()) {
+                        Ok(_) => true,
                         Err(e) => {
                             match e {
                                 mpsc::error::TrySendError::Full(_) => {
                                     // The channel is full. We keep the subscriber,
                                     // but we accept that this specific message was dropped.
+                                    // In a production system, we might want more robust handling.
                                     true
                                 }
                                 mpsc::error::TrySendError::Closed(_) => {
@@ -88,7 +82,7 @@ impl EventBus {
                             }
                         }
                     }
-                );
+                });
                 if senders.is_empty() {
                     require_cleanup = true;
                 }
@@ -96,9 +90,7 @@ impl EventBus {
         }
 
         if require_cleanup {
-            // We use HashMap::retain which allows us to remove the entire
-            // Topic entry if the Vec of senders has become empty.
-            subs.retain(|_topic, senders| !senders.is_empty());
+            subs.retain(|_, senders: &mut Vec<mpsc::Sender<GlobalEvent>>| !senders.is_empty());
         }
     }
 }

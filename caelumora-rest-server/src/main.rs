@@ -30,7 +30,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
@@ -429,20 +429,12 @@ async fn join_channel(
 async fn global_events(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let receiver = state.runtime_manager.subscribe_global();
-    let stream = BroadcastStream::new(receiver);
+    let receiver = state.runtime_manager.subscribe_all();
+    let stream = ReceiverStream::new(receiver);
 
-    let sse_stream = stream.map(|res| {
-        match res {
-            Ok(event) => {
-                let event_json = serde_json::to_string(&event).unwrap_or_default();
-                Ok(Event::default().data(event_json))
-            }
-            Err(e) => {
-                tracing::error!("Global SSE stream error: {}", e);
-                Ok(Event::default().comment("stream error"))
-            }
-        }
+    let sse_stream = stream.map(|event| {
+        let event_json = serde_json::to_string(&event).unwrap_or_default();
+        Ok(Event::default().data(event_json))
     });
 
     Sse::new(sse_stream)

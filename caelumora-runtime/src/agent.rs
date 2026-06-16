@@ -9,6 +9,7 @@ use crate::component::{
 use anyhow::Result;
 use async_stream::stream;
 use std::sync::atomic::{AtomicU8, Ordering};
+use caelumora_model::session::{SessionId, ChannelId};
 use caelumora_model::agent::{Agent, AgentState, ProcessingState, AgentController};
 use caelumora_model::component::{
     ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE
@@ -196,12 +197,14 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub fn new(
+        session_id: SessionId,
+        channel_id: ChannelId,
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
         let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
         let agent_id = agent.id;
-        let event_sender = runtime_manager.agent_event_sender(agent_id);
+        let event_sender = runtime_manager.agent_event_sender(session_id, channel_id, agent_id);
         let agent_controller = Arc::new(AgentController::new(agent, event_sender));
         let state = AgentLoopState::new(agent_controller.clone(), runtime_manager.clone(), personality.components)?;
         Ok(Self {

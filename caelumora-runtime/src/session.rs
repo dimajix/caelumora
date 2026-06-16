@@ -99,7 +99,7 @@ impl SessionLoop {
 
         let mut join_set = JoinSet::new();
         let _channels = self.spawn_channels(&mut join_set);
-        let mut global_rx = self.runtime_manager.subscribe_global();
+        let mut global_rx = self.runtime_manager.subscribe_session(self.id());
 
         loop {
             tokio::select! {
@@ -119,8 +119,8 @@ impl SessionLoop {
         Ok(())
     }
 
-    async fn handle_global_event(&self, maybe_global: Result<crate::runtime::GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
-        if let Ok(global_event) = maybe_global {
+    async fn handle_global_event(&self, maybe_global: Option<crate::runtime::GlobalEvent>) {
+        if let Some(global_event) = maybe_global {
             match global_event {
                 crate::runtime::GlobalEvent::SessionUpdated(sid, event) => {
                     if sid == self.id() {

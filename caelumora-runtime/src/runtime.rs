@@ -6,7 +6,7 @@ use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{mpsc, Mutex};
 use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
 use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
@@ -16,13 +16,22 @@ use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
 use caelumora_model::agent::{AgentId, AgentUpdateEvent};
 use caelumora_model::message::ActorId;
 use caelumora_model::user::{UserId, UserUpdateEvent};
+use crate::event::{EventBus, SubscriptionTopic};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GlobalEvent {
+    SessionCreated(SessionId),
     SessionUpdated(SessionId, SessionUpdateEvent),
+    SessionDeleted(SessionId),
+    ChannelCreated(SessionId, ChannelId),
     ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
-    AgentUpdated(AgentId, AgentUpdateEvent),
+    ChannelDeleted(SessionId, ChannelId),
+    AgentCreated(SessionId, ChannelId, AgentId),
+    AgentUpdated(SessionId, ChannelId, AgentId, AgentUpdateEvent),
+    AgentDeleted(SessionId, ChannelId, AgentId),
+    UserCreated(UserId),
     UserUpdated(UserId, UserUpdateEvent),
+    UserDeleted(UserId),
 }
 
 #[derive(Debug)]
@@ -33,7 +42,7 @@ pub struct RuntimeManager {
     tool_executor: Arc<dyn ToolExecutor>,
     llm_client: Arc<dyn LLMClient>,
     component_registry: Arc<ComponentRegistry>,
-    global_event_tx: broadcast::Sender<GlobalEvent>,
+    event_bus: Arc<EventBus>,
 }
 
 impl RuntimeManager {
@@ -42,8 +51,6 @@ impl RuntimeManager {
         history::register(&mut component_registry);
         context::register(&mut component_registry);
 
-        let (global_event_tx, _) = broadcast::channel(100);
-
         Self {
             security_manager: Arc::new(DummySecurityManager::new()),
             state_store,
@@ -51,16 +58,33 @@ impl RuntimeManager {
             tool_executor: Arc::new(DummyToolExecutor::new()),
             llm_client: Arc::new(OllamaClient::default()),
             component_registry: Arc::new(component_registry),
-            global_event_tx,
+            event_bus: Arc::new(EventBus::new()),
         }
     }
 
-    pub fn notify_global(&self, event: GlobalEvent) {
-        let _ = self.global_event_tx.send(event);
+
+    pub fn subscribe_all(&self) -> mpsc::Receiver<GlobalEvent> {
+        self.event_bus.subscribe(vec![SubscriptionTopic::All])
     }
 
-    pub fn subscribe_global(&self) -> broadcast::Receiver<GlobalEvent> {
-        self.global_event_tx.subscribe()
+    pub fn subscribe_session(&self, id: SessionId) -> mpsc::Receiver<GlobalEvent> {
+        self.event_bus.subscribe(vec![SubscriptionTopic::Session(id)])
+    }
+
+    pub fn subscribe_channel(&self, id: ChannelId) -> mpsc::Receiver<GlobalEvent> {
+        self.event_bus.subscribe(vec![SubscriptionTopic::Channel(id)])
+    }
+
+    pub fn subscribe_agent(&self, id: AgentId) -> mpsc::Receiver<GlobalEvent> {
+        self.event_bus.subscribe(vec![SubscriptionTopic::Agent(id)])
+    }
+
+    pub fn subscribe_user(&self, id: UserId) -> mpsc::Receiver<GlobalEvent> {
+        self.event_bus.subscribe(vec![SubscriptionTopic::User(id)])
+    }
+
+    pub fn subscribe_multi(&self, topics: Vec<SubscriptionTopic>) -> mpsc::Receiver<GlobalEvent> {
+        self.event_bus.subscribe(topics)
     }
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
@@ -97,30 +121,30 @@ impl RuntimeManager {
     pub fn template_store(&self) -> Arc<dyn TemplateStore> { self.template_store.clone() }
 
     pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::SessionUpdateEvent>> {
-        let rm = self.clone();
+        let bus = self.event_bus.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            rm.notify_global(GlobalEvent::SessionUpdated(session_id, event));
+            bus.publish(GlobalEvent::SessionUpdated(session_id, event));
         }))
     }
 
     pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<ChannelUpdateEvent>> {
-        let rm = self.clone();
+        let bus = self.event_bus.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            rm.notify_global(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
+            bus.publish(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
         }))
     }
 
-    pub fn agent_event_sender(self: &Arc<Self>, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::agent::AgentUpdateEvent>> {
-        let rm = self.clone();
+    pub fn agent_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::agent::AgentUpdateEvent>> {
+        let bus = self.event_bus.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            rm.notify_global(GlobalEvent::AgentUpdated(agent_id, event));
+            bus.publish(GlobalEvent::AgentUpdated(session_id, channel_id, agent_id, event));
         }))
     }
 
     pub fn user_event_sender(self: &Arc<Self>, user_id: caelumora_model::user::UserId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::user::UserUpdateEvent>> {
-        let rm = self.clone();
+        let bus = self.event_bus.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            rm.notify_global(GlobalEvent::UserUpdated(user_id, event));
+            bus.publish(GlobalEvent::UserUpdated(user_id, event));
         }))
     }
 

@@ -145,7 +145,7 @@ impl ChannelLoop {
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let l = AgentLoop::new(agent.clone(), runtime_manager.clone())?;
+                let l = AgentLoop::new(session.id, channel.id, agent.clone(), runtime_manager.clone())?;
                 let actor = AgentActor::new(l);
                 Ok(Box::new(actor))
             }
@@ -157,7 +157,7 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
-        let mut global_rx = self.runtime_manager.subscribe_global();
+        let mut global_rx = self.runtime_manager.subscribe_channel(self.id);
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
@@ -190,8 +190,8 @@ impl ChannelLoop {
         }
     }
 
-    async fn handle_global_event(&self, maybe_global: Result<crate::runtime::GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
-        if let Ok(global_event) = maybe_global {
+    async fn handle_global_event(&self, maybe_global: Option<crate::runtime::GlobalEvent>) {
+        if let Some(global_event) = maybe_global {
             match global_event {
                 crate::runtime::GlobalEvent::ChannelUpdated(_, cid, event) => {
                     if cid == self.id {

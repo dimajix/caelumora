@@ -69,11 +69,11 @@ impl AgentActor {
         false
     }
 
-    async fn handle_global_event(&self, maybe_global: Result<GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
-        if let Ok(global_event) = maybe_global {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
+        if let Some(global_event) = maybe_global {
             match global_event {
-                GlobalEvent::AgentUpdated(id, event) => {
-                    if ActorId::Agent(id) == self.id {
+                GlobalEvent::AgentUpdated(_, _, id, event) => {
+                    if id == self.id.as_agent_id().unwrap() {
                         let _ = self.agent.process_update(event).await;
                     }
                 }
@@ -137,7 +137,8 @@ impl Actor for AgentActor {
 
         info!("AgentActor {} is starting", self.id());
 
-        let mut global_rx = self.agent.runtime_manager().subscribe_global();
+        let agent_id = self.id.as_agent_id().unwrap();
+        let mut global_rx = self.agent.runtime_manager().subscribe_agent(agent_id);
         let mut buffer = Vec::new();
 
         loop {
