@@ -324,37 +324,6 @@ impl AgentLoop {
     }
 }
 
-fn default_agent_pipeline_config() -> ComponentConfig {
-    ComponentConfig {
-        component_nodes: vec![
-            ComponentNodeConfig {
-                id: STATE_HISTORY_WRITER_KIND.to_string(),
-                kind: STATE_HISTORY_WRITER_KIND.to_string(),
-                params: serde_json::Value::Null,
-                deps: Vec::new(),
-                tags: vec![STAGE_PERCEIVE.to_string()],
-                fail_policy: ComponentFailPolicy::FailClosed,
-            },
-            ComponentNodeConfig {
-                id: STATE_CONTEXT_APPENDER_KIND.to_string(),
-                kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
-                params: serde_json::Value::Null,
-                deps: vec![STATE_HISTORY_WRITER_KIND.to_string()],
-                tags: vec![STAGE_PERCEIVE.to_string()],
-                fail_policy: ComponentFailPolicy::FailClosed,
-            },
-            ComponentNodeConfig {
-                id: STATE_CONTEXT_PROVIDER_KIND.to_string(),
-                kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
-                params: serde_json::Value::Null,
-                deps: vec![STATE_CONTEXT_APPENDER_KIND.to_string()],
-                tags: Vec::new(),
-                fail_policy: ComponentFailPolicy::FailClosed,
-            },
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -238,7 +238,7 @@ impl ChannelLoop {
         }
 
         let is_cancelling = ProcessingState::from(self.processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling;
-        if (!is_cancelling) {
+        if !is_cancelling {
             self.route_event_impl(actors, event.clone()).await;
         }
 

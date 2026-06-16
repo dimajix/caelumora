@@ -41,7 +41,7 @@ impl ChannelHistoryRecorder {
 
 #[async_trait]
 impl Recorder for ChannelHistoryRecorder {
-    async fn record_send(&mut self, envelope: &Envelope) {
+    async fn record_send(&mut self, _envelope: &Envelope) {
     }
     async fn record_receive(&mut self, envelope: &Envelope) {
         let mut state = self.state.lock().await;
