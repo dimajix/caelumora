@@ -5,7 +5,8 @@ use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicU8, Ordering};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
-use caelumora_model::session::{Channel, ChannelId, ChannelState, Participant, Session, SessionId, ChannelController};
+use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant, ChannelController};
+use caelumora_model::session::{Session, SessionId};
 use caelumora_model::user::{User, UserId};
 use log::{debug, info, warn};
 use std::any::Any;
@@ -140,7 +141,7 @@ impl ChannelLoop {
                     email: String::new(),
                     roles: vec!["user".to_string()],
                 };
-                let actor = UserActor::new(session, channel, user.clone(), runtime_manager.clone());
+                let actor = UserActor::new(session, channel, user, runtime_manager.clone());
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
@@ -156,18 +157,50 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel_controller.name(), self.id);
+        let mut global_rx = self.runtime_manager.subscribe_global();
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
 
-        while let Some(event) = event_rx.recv().await {
-            debug!("Received actor event {:?}", event);
-            self.record_receive_event(&event).await;
-            self.route_event(&actors, event).await
+        loop {
+            tokio::select! {
+                maybe_event = event_rx.recv() => {
+                    if self.handle_actor_event(maybe_event, &actors).await {
+                        break;
+                    }
+                }
+                maybe_global = global_rx.recv() => {
+                    self.handle_global_event(maybe_global).await;
+                }
+            }
         }
 
         info!("Channel {}/{} stopped", self.channel_controller.name(), self.id);
         Ok(())
+    }
+
+    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, actors: &Arc<HashMap<ActorId,ActorHandle>>) -> bool {
+        if let Some(event) = maybe_event {
+            debug!("Received actor event {:?}", event);
+            self.record_receive_event(&event).await;
+            self.route_event(actors, event).await;
+            false
+        } else {
+            true
+        }
+    }
+
+    async fn handle_global_event(&self, maybe_global: Result<crate::runtime::GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
+        if let Ok(global_event) = maybe_global {
+            match global_event {
+                crate::runtime::GlobalEvent::ChannelUpdated(_, cid, event) => {
+                    if cid == self.id {
+                        self.channel_controller.process_update(&event);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn spawn_actors(&self, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {

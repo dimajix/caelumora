@@ -99,12 +99,37 @@ impl SessionLoop {
 
         let mut join_set = JoinSet::new();
         let _channels = self.spawn_channels(&mut join_set);
+        let mut global_rx = self.runtime_manager.subscribe_global();
 
-        while let Some(res) = join_set.join_next().await {
-            let _idx = res?;
+        loop {
+            tokio::select! {
+                res = join_set.join_next() => {
+                    if let Some(res) = res {
+                        let _idx = res?;
+                    } else {
+                        break;
+                    }
+                }
+                maybe_global = global_rx.recv() => {
+                    self.handle_global_event(maybe_global).await;
+                }
+            }
         }
 
         Ok(())
+    }
+
+    async fn handle_global_event(&self, maybe_global: Result<crate::runtime::GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
+        if let Ok(global_event) = maybe_global {
+            match global_event {
+                crate::runtime::GlobalEvent::SessionUpdated(sid, event) => {
+                    if sid == self.id() {
+                        self.session_controller.process_update(&event);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn spawn_channels(&self, join_set: &mut JoinSet<ChannelId>) -> Result<HashMap<ChannelId, ChannelHandle>> {

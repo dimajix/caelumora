@@ -224,8 +224,8 @@ impl AgentLoop {
         self.agent_controller.name()
     }
 
-    pub async fn update_name(&self, new_name: String) -> Result<()> {
-        self.agent_controller.update_name(new_name);
+    pub async fn process_update(&self, event: caelumora_model::agent::AgentUpdateEvent) -> Result<()> {
+        self.agent_controller.process_update(&event);
         Ok(())
     }
 

@@ -11,16 +11,18 @@ use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
 use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
 use serde::{Deserialize, Serialize};
-use caelumora_model::session::{SessionId, ChannelId};
+use caelumora_model::session::{SessionId};
+use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
 use caelumora_model::agent::AgentId;
 use caelumora_model::message::ActorId;
+use caelumora_model::user::UserId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GlobalEvent {
     SessionUpdated(SessionId, caelumora_model::session::SessionUpdateEvent),
-    ChannelUpdated(SessionId, ChannelId, caelumora_model::session::ChannelUpdateEvent),
+    ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
     AgentUpdated(AgentId, caelumora_model::agent::AgentUpdateEvent),
-    UserUpdated(caelumora_model::user::UserId, caelumora_model::user::UserUpdateEvent),
+    UserUpdated(UserId, caelumora_model::user::UserUpdateEvent),
 }
 
 #[derive(Debug)]
@@ -101,7 +103,7 @@ impl RuntimeManager {
         }))
     }
 
-    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::ChannelUpdateEvent>> {
+    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<ChannelUpdateEvent>> {
         let rm = self.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
             rm.notify_global(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
@@ -135,7 +137,7 @@ impl RuntimeManager {
         }
     }
 
-    pub fn new_recorder(&self, state: Arc<Mutex<caelumora_model::session::ChannelState>>) -> Result<Box<dyn Recorder>> {
+    pub fn new_recorder(&self, state: Arc<Mutex<caelumora_model::channel::ChannelState>>) -> Result<Box<dyn Recorder>> {
         Ok(Box::new(crate::recorder::ChannelHistoryRecorder::new(state)))
     }
 }

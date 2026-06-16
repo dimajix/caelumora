@@ -1,13 +1,13 @@
 use anyhow::anyhow;
 use log::{debug, info, warn};
 use std::sync::Arc;
-use arc_swap::ArcSwap;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
 use uuid::Uuid;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
-use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
-use caelumora_model::user::User;
+use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::session::{Session, SessionId};
+use caelumora_model::user::{User, UserController};
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::security::SecurityContext;
 use crate::runtime::GlobalEvent;
@@ -18,9 +18,8 @@ pub struct UserActor {
     pub id: ActorId,
     pub session_id: SessionId,
     pub channel_id: ChannelId,
-    pub channel_name: ArcSwap<String>,
     pub security_context: SecurityContext,
-    pub user: Arc<ArcSwap<User>>,
+    pub user: Arc<UserController>,
     pub runtime_manager: Arc<crate::runtime::RuntimeManager>,
     pub user_rx: Mutex<Receiver<ActorEvent>>,
     user_tx: Sender<ActorEvent>,
@@ -32,18 +31,19 @@ impl UserActor {
     pub fn new(session: &Session, channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Self {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
+        let event_sender = runtime_manager.user_event_sender(user.id);
+        let user_controller = Arc::new(UserController::new(user, channel.name.clone(), event_sender));
         Self {
-            id: ActorId::User(user.id),
+            id: ActorId::User(user_controller.id()),
             session_id: session.id,
             channel_id: channel.id,
-            channel_name: ArcSwap::from_pointee(channel.name.clone()),
             security_context: SecurityContext {
-                initiator_id: ActorId::User(user.id),
-                sender_id: ActorId::User(user.id),
+                initiator_id: ActorId::User(user_controller.id()),
+                sender_id: ActorId::User(user_controller.id()),
                 session_id: session.id,
                 channel_id: channel.id
             },
-            user: Arc::new(ArcSwap::from_pointee(user)),
+            user: user_controller,
             runtime_manager,
             user_rx: Mutex::new(urx),
             user_tx: utx,
@@ -106,7 +106,7 @@ impl UserActor {
         match maybe_message {
             Some(message) => {
                 debug!("Received user message: {:?}", message);
-                let channel_name = self.channel_name.load().as_ref().clone();
+                let channel_name = self.user.channel_name();
                 let context = EventContext::new(self.session_id, self.channel_id, channel_name, self.id(), self.name());
                 let event = Envelope::new(self.security_context.clone(), context, message);
                 if let Err(e) = tx.send(event).await {
@@ -121,21 +121,19 @@ impl UserActor {
         user_rx_closed
     }
 
-    fn handle_global_event(&self, maybe_global: Result<GlobalEvent, tokio::sync::broadcast::error::RecvError>) -> bool {
+    async fn handle_global_event(&self, maybe_global: Result<GlobalEvent, tokio::sync::broadcast::error::RecvError>) -> bool {
         let mut global_rx_closed = false;
         match maybe_global {
             Ok(event) => {
                 match event {
-                    GlobalEvent::ChannelUpdated(_, cid, caelumora_model::session::ChannelUpdateEvent::NameChanged(new_name)) => {
+                    GlobalEvent::ChannelUpdated(_, cid, event) => {
                         if cid == self.channel_id {
-                            self.channel_name.store(Arc::new(new_name));
+                            self.user.process_channel_update(&event);
                         }
                     }
-                    GlobalEvent::UserUpdated(id, caelumora_model::user::UserUpdateEvent::NameChanged(new_name)) => {
+                    GlobalEvent::UserUpdated(id, event) => {
                         if ActorId::User(id) == self.id {
-                            let mut u = (**self.user.load()).clone();
-                            u.username = new_name;
-                            self.user.store(Arc::new(u));
+                            self.user.process_update(&event);
                         }
                     }
                     _ => {}
@@ -163,7 +161,7 @@ impl Actor for UserActor {
     }
 
     fn name(&self) -> String {
-        self.user.load().username.clone()
+        self.user.username()
     }
 
     fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
@@ -195,7 +193,7 @@ impl Actor for UserActor {
                     user_rx_closed = self.handle_user_event(maybe_message, &tx).await;
                 }
                 maybe_global = global_rx.recv(), if !global_rx_closed => {
-                    global_rx_closed = self.handle_global_event(maybe_global);
+                    global_rx_closed = self.handle_global_event(maybe_global).await;
                 }
                 else => break,
             }

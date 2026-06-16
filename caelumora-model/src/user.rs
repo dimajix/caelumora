@@ -25,13 +25,15 @@ pub enum UserUpdateEvent {
 #[derive(Debug)]
 pub struct UserController {
     user: ArcSwap<User>,
+    channel_name: ArcSwap<String>,
     event_sender: Arc<dyn EventSender<UserUpdateEvent>>,
 }
 
 impl UserController {
-    pub fn new(user: User, event_sender: Arc<dyn EventSender<UserUpdateEvent>>) -> Self {
+    pub fn new(user: User, channel_name: String, event_sender: Arc<dyn EventSender<UserUpdateEvent>>) -> Self {
         Self {
             user: ArcSwap::from_pointee(user),
+            channel_name: ArcSwap::from_pointee(channel_name),
             event_sender,
         }
     }
@@ -46,6 +48,10 @@ impl UserController {
 
     pub fn username(&self) -> String {
         self.user.load().username.clone()
+    }
+
+    pub fn channel_name(&self) -> String {
+        (**self.channel_name.load()).clone()
     }
 
     pub fn update_username(&self, new_name: String) {
@@ -63,6 +69,14 @@ impl UserController {
                 let mut user = (**self.user.load()).clone();
                 user.username = name.clone();
                 self.user.store(Arc::new(user));
+            }
+        }
+    }
+
+    pub fn process_channel_update(&self, event: &crate::channel::ChannelUpdateEvent) {
+        match event {
+            crate::channel::ChannelUpdateEvent::NameChanged(name) => {
+                self.channel_name.store(Arc::new(name.clone()));
             }
         }
     }

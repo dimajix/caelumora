@@ -1,6 +1,7 @@
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
-use crate::session::{Channel, Participant, Session, SessionContext};
+use crate::channel::{Channel, Participant};
+use crate::session::{Session, SessionContext};
 use chrono::Utc;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
