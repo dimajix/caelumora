@@ -13,36 +13,14 @@ use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
 use serde::{Deserialize, Serialize};
 use caelumora_model::session::{SessionId, ChannelId};
 use caelumora_model::agent::AgentId;
-use caelumora_model::meta::Metadata;
 use caelumora_model::message::ActorId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GlobalEvent {
-    SessionUpdated(SessionId, SessionUpdate),
-    ChannelUpdated(SessionId, ChannelId, ChannelUpdate),
-    AgentUpdated(AgentId, AgentUpdate),
-    UserUpdated(caelumora_model::user::UserId, UserUpdate),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SessionUpdate {
-    NameChanged(String),
-    MetadataUpdated(Metadata),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ChannelUpdate {
-    NameChanged(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentUpdate {
-    NameChanged(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum UserUpdate {
-    NameChanged(String),
+    SessionUpdated(SessionId, caelumora_model::session::SessionUpdateEvent),
+    ChannelUpdated(SessionId, ChannelId, caelumora_model::session::ChannelUpdateEvent),
+    AgentUpdated(AgentId, caelumora_model::agent::AgentUpdateEvent),
+    UserUpdated(caelumora_model::user::UserId, caelumora_model::user::UserUpdateEvent),
 }
 
 #[derive(Debug)]
@@ -115,6 +93,34 @@ impl RuntimeManager {
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
     pub fn template_store(&self) -> Arc<dyn TemplateStore> { self.template_store.clone() }
+
+    pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::SessionUpdateEvent>> {
+        let rm = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            rm.notify_global(GlobalEvent::SessionUpdated(session_id, event));
+        }))
+    }
+
+    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::ChannelUpdateEvent>> {
+        let rm = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            rm.notify_global(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
+        }))
+    }
+
+    pub fn agent_event_sender(self: &Arc<Self>, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::agent::AgentUpdateEvent>> {
+        let rm = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            rm.notify_global(GlobalEvent::AgentUpdated(agent_id, event));
+        }))
+    }
+
+    pub fn user_event_sender(self: &Arc<Self>, user_id: caelumora_model::user::UserId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::user::UserUpdateEvent>> {
+        let rm = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            rm.notify_global(GlobalEvent::UserUpdated(user_id, event));
+        }))
+    }
 
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
         self.component_registry.clone()

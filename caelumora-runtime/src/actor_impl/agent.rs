@@ -72,7 +72,7 @@ impl AgentActor {
     async fn handle_global_event(&self, maybe_global: Result<GlobalEvent, tokio::sync::broadcast::error::RecvError>) {
         if let Ok(global_event) = maybe_global {
             match global_event {
-                GlobalEvent::AgentUpdated(id, crate::runtime::AgentUpdate::NameChanged(new_name)) => {
+                GlobalEvent::AgentUpdated(id, caelumora_model::agent::AgentUpdateEvent::NameChanged(new_name)) => {
                     if ActorId::Agent(id) == self.id {
                         let _ = self.agent.update_name(new_name).await;
                     }

@@ -1,12 +1,11 @@
 use crate::channel::ChannelLoop;
-use crate::runtime::{GlobalEvent, RuntimeManager, SessionUpdate};
+use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::message::Message;
-use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionId, SessionController};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use crate::actor::Envelope;
@@ -18,7 +17,7 @@ struct ChannelHandle {
 
 #[derive(Debug)]
 pub struct SessionLoop {
-    pub session: Arc<ArcSwap<Session>>,
+    session_controller: Arc<SessionController>,
     runtime_manager: Arc<RuntimeManager>,
     channels: HashMap<ChannelId,Arc<ChannelLoop>>,
     run_lock: Mutex<()>
@@ -26,15 +25,18 @@ pub struct SessionLoop {
 
 impl SessionLoop {
     pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+        let session_id = session.id;
         let mut channels = HashMap::new();
         for channel in &session.channels {
             let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone())?;
             channels.insert(cl.id(), Arc::new(cl));
         }
-        let session_ref = Arc::new(ArcSwap::from_pointee(session));
+
+        let event_sender = runtime_manager.session_event_sender(session_id);
+        let session_controller = Arc::new(SessionController::new(session, event_sender));
 
         Ok(Self {
-            session: session_ref,
+            session_controller,
             runtime_manager,
             channels,
             run_lock: Mutex::new(())
@@ -42,26 +44,15 @@ impl SessionLoop {
     }
 
     pub fn id(&self) -> SessionId {
-        self.session.load().id
+        self.session_controller.id()
     }
 
     pub fn name(&self) -> String {
-        self.session.load().metadata.name.clone()
+        self.session_controller.name()
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        {
-            let mut session = (**self.session.load()).clone();
-            session.metadata.name = new_name.clone();
-            self.session.store(Arc::new(session));
-        }
-
-        // Notify globally
-        self.runtime_manager.notify_global(GlobalEvent::SessionUpdated(
-            self.id(),
-            SessionUpdate::NameChanged(new_name),
-        ));
-
+        self.session_controller.update_name(new_name);
         Ok(())
     }
 

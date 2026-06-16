@@ -5,22 +5,21 @@ use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicU8, Ordering};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
-use caelumora_model::session::{Channel, ChannelId, ChannelState, Participant, Session, SessionId};
+use caelumora_model::session::{Channel, ChannelId, ChannelState, Participant, Session, SessionId, ChannelController};
 use caelumora_model::user::{User, UserId};
 use log::{debug, info, warn};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
-use arc_swap::ArcSwap;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError, EventContext};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
-use crate::runtime::{GlobalEvent, RuntimeManager, ChannelUpdate};
+use crate::runtime::RuntimeManager;
 
 struct ActorHandle {
     id: ActorId,
@@ -34,7 +33,7 @@ struct ActorHandle {
 pub struct ChannelLoop {
     id: ChannelId,
     session_id: SessionId,
-    channel: Arc<ArcSwap<Channel>>,
+    channel_controller: Arc<ChannelController>,
     runtime_manager: Arc<RuntimeManager>,
     actors: HashMap<ActorId,Arc<dyn Actor>>,
     moderator: Mutex<Box<dyn Moderator>>,
@@ -48,6 +47,9 @@ pub struct ChannelLoop {
 
 impl ChannelLoop {
     pub fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+        let channel_id = channel.id;
+        let event_sender = runtime_manager.channel_event_sender(session.id, channel_id);
+        let channel_controller = Arc::new(ChannelController::new(channel.clone(), event_sender));
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
         let state = Arc::new(Mutex::new(ChannelState::new(channel.id)));
         let recorder = runtime_manager.new_recorder(state.clone())?;
@@ -61,9 +63,9 @@ impl ChannelLoop {
         }
 
         Ok(Self {
-            id: channel.id,
+            id: channel_id,
             session_id: session.id,
-            channel: Arc::new(ArcSwap::from_pointee(channel)),
+            channel_controller,
             runtime_manager,
             actors,
             moderator: Mutex::new(moderator),
@@ -92,23 +94,11 @@ impl ChannelLoop {
     pub fn id(&self) -> ChannelId { self.id }
     
     pub fn name(&self) -> String {
-        self.channel.load().name.clone()
+        self.channel_controller.name()
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        {
-            let mut channel = (**self.channel.load()).clone();
-            channel.name = new_name.clone();
-            self.channel.store(Arc::new(channel));
-        }
-
-        // Notify globally
-        self.runtime_manager.notify_global(GlobalEvent::ChannelUpdated(
-            self.session_id,
-            self.id,
-            ChannelUpdate::NameChanged(new_name),
-        ));
-
+        self.channel_controller.update_name(new_name);
         Ok(())
     }
 
@@ -165,7 +155,7 @@ impl ChannelLoop {
         let _guard = self.run_lock.try_lock()
             .map_err(|_| anyhow!("Already running"))?;
 
-        info!("Channel {}/{} is starting", self.channel.load().name, self.id);
+        info!("Channel {}/{} is starting", self.channel_controller.name(), self.id);
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
@@ -176,7 +166,7 @@ impl ChannelLoop {
             self.route_event(&actors, event).await
         }
 
-        info!("Channel {}/{} stopped", self.channel.load().name, self.id);
+        info!("Channel {}/{} stopped", self.channel_controller.name(), self.id);
         Ok(())
     }
 

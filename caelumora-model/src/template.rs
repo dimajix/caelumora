@@ -37,8 +37,13 @@ impl ScopeTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelTemplate {
     pub name: String,
+    #[serde(default = "default_moderator")]
     pub moderator: String,
     pub participants: Vec<ParticipantTemplate>,
+}
+
+fn default_moderator() -> String {
+    "round_robin".to_string()
 }
 
 impl ChannelTemplate {

@@ -1,9 +1,63 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::sync::Arc;
+use arc_swap::ArcSwap;
 use crate::message::{MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::component::ComponentConfig;
+use crate::event::EventSender;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgentUpdateEvent {
+    NameChanged(String),
+}
+
+#[derive(Debug)]
+pub struct AgentController {
+    agent: ArcSwap<Agent>,
+    event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
+}
+
+impl AgentController {
+    pub fn new(agent: Agent, event_sender: Arc<dyn EventSender<AgentUpdateEvent>>) -> Self {
+        Self {
+            agent: ArcSwap::from_pointee(agent),
+            event_sender,
+        }
+    }
+
+    pub fn load(&self) -> arc_swap::Guard<Arc<Agent>> {
+        self.agent.load()
+    }
+
+    pub fn id(&self) -> AgentId {
+        self.agent.load().id
+    }
+
+    pub fn name(&self) -> String {
+        self.agent.load().metadata.name.clone()
+    }
+
+    pub fn update_name(&self, new_name: String) {
+        self.apply_update(AgentUpdateEvent::NameChanged(new_name));
+    }
+
+    fn apply_update(&self, event: AgentUpdateEvent) {
+        self.process_update(&event);
+        self.event_sender.send(event);
+    }
+
+    pub fn process_update(&self, event: &AgentUpdateEvent) {
+        match event {
+            AgentUpdateEvent::NameChanged(name) => {
+                let mut agent = (**self.agent.load()).clone();
+                agent.metadata.name = name.clone();
+                self.agent.store(Arc::new(agent));
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

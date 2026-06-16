@@ -126,12 +126,12 @@ impl UserActor {
         match maybe_global {
             Ok(event) => {
                 match event {
-                    GlobalEvent::ChannelUpdated(_, cid, crate::runtime::ChannelUpdate::NameChanged(new_name)) => {
+                    GlobalEvent::ChannelUpdated(_, cid, caelumora_model::session::ChannelUpdateEvent::NameChanged(new_name)) => {
                         if cid == self.channel_id {
                             self.channel_name.store(Arc::new(new_name));
                         }
                     }
-                    GlobalEvent::UserUpdated(id, crate::runtime::UserUpdate::NameChanged(new_name)) => {
+                    GlobalEvent::UserUpdated(id, caelumora_model::user::UserUpdateEvent::NameChanged(new_name)) => {
                         if ActorId::User(id) == self.id {
                             let mut u = (**self.user.load()).clone();
                             u.username = new_name;

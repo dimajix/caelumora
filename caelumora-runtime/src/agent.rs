@@ -9,7 +9,7 @@ use crate::component::{
 use anyhow::Result;
 use async_stream::stream;
 use std::sync::atomic::{AtomicU8, Ordering};
-use caelumora_model::agent::{Agent, AgentState, ProcessingState};
+use caelumora_model::agent::{Agent, AgentState, ProcessingState, AgentController};
 use caelumora_model::component::{
     ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE
 };
@@ -18,13 +18,12 @@ use caelumora_model::store::StoreError;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
-use arc_swap::ArcSwap;
 use log::{debug, warn};
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
 struct AgentLoopState {
-    agent: Arc<ArcSwap<Agent>>,
+    agent_controller: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
     components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
@@ -33,12 +32,12 @@ struct AgentLoopState {
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
 }
 impl AgentLoopState {
-    fn new(agent: Arc<ArcSwap<Agent>>,
+    fn new(agent_controller: Arc<AgentController>,
            runtime_manager: Arc<RuntimeManager>,
            pipeline_config: ComponentConfig,
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
-        let agent_id = agent.load().id;
+        let agent_id = agent_controller.id();
         let state = match store.get_agent_state(agent_id) {
             Ok(s) => s,
             Err(StoreError::NotFound{entity: _, id:_}) => {
@@ -66,7 +65,7 @@ impl AgentLoopState {
         let plan_pre_processors = components.get_all::<dyn PlanPreProcessor>(None)?;
 
         Ok(Self {
-            agent,
+            agent_controller,
             runtime_manager: runtime_manager.clone(),
             components,
             context_provider,
@@ -140,7 +139,7 @@ impl AgentLoopState {
             }
         }
 
-        let agent_name = self.agent.load().metadata.name.clone();
+        let agent_name = self.agent_controller.name();
         debug!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
             agent_name,
             format_conversation(context.as_slice()),
@@ -191,7 +190,7 @@ impl AgentLoopState {
 pub struct AgentLoop {
     id: ActorId,
     state: Arc<Mutex<AgentLoopState>>,
-    agent: Arc<ArcSwap<Agent>>,
+    agent_controller: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
     max_iterations: i32,
     processing_state: Arc<AtomicU8>,
@@ -204,12 +203,13 @@ impl AgentLoop {
     ) -> Result<Self> {
         let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
         let agent_id = agent.id;
-        let agent = Arc::new(ArcSwap::from_pointee(agent));
-        let state = AgentLoopState::new(agent.clone(), runtime_manager.clone(), personality.components)?;
+        let event_sender = runtime_manager.agent_event_sender(agent_id);
+        let agent_controller = Arc::new(AgentController::new(agent, event_sender));
+        let state = AgentLoopState::new(agent_controller.clone(), runtime_manager.clone(), personality.components)?;
         Ok(Self {
             id: ActorId::Agent(agent_id),
             state: Arc::new(Mutex::new(state)),
-            agent,
+            agent_controller,
             runtime_manager,
             max_iterations: 10,
             processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
@@ -221,17 +221,11 @@ impl AgentLoop {
     }
 
     pub fn name(&self) -> String {
-        self.agent.load().metadata.name.clone()
+        self.agent_controller.name()
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        let mut agent = (**self.agent.load()).clone();
-        agent.metadata.name = new_name.clone();
-        self.agent.store(Arc::new(agent));
-        self.runtime_manager.notify_global(crate::runtime::GlobalEvent::AgentUpdated(
-            self.id.as_agent_id().unwrap(),
-            crate::runtime::AgentUpdate::NameChanged(new_name),
-        ));
+        self.agent_controller.update_name(new_name);
         Ok(())
     }
 

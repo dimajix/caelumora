@@ -4,7 +4,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::agent::AgentId;
 use chrono::{DateTime, Utc};
 use std::any::Any;
 use std::fmt::Debug;

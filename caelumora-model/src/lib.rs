@@ -9,3 +9,4 @@ pub mod template;
 pub mod driver;
 pub mod meta;
 pub mod component;
+pub mod event;
