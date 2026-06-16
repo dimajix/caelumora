@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use log::warn;
 use caelumora_model::session::SessionId;
@@ -60,6 +60,34 @@ impl EventBus {
 
     pub fn subscribe_user(&self, id: UserId) -> mpsc::Receiver<GlobalEvent> {
         self.subscribe(vec![SubscriptionTopic::User(id)])
+    }
+
+    pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::SessionUpdateEvent>> {
+        let bus = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            bus.publish(GlobalEvent::SessionUpdated(session_id, event));
+        }))
+    }
+
+    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::channel::ChannelUpdateEvent>> {
+        let bus = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            bus.publish(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
+        }))
+    }
+
+    pub fn agent_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::agent::AgentUpdateEvent>> {
+        let bus = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            bus.publish(GlobalEvent::AgentUpdated(session_id, channel_id, agent_id, event));
+        }))
+    }
+
+    pub fn user_event_sender(self: &Arc<Self>, user_id: UserId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::user::UserUpdateEvent>> {
+        let bus = self.clone();
+        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
+            bus.publish(GlobalEvent::UserUpdated(user_id, event));
+        }))
     }
 
     pub fn publish(&self, event: GlobalEvent) {

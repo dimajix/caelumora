@@ -49,7 +49,7 @@ pub struct ChannelLoop {
 impl ChannelLoop {
     pub fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let channel_id = channel.id;
-        let event_sender = runtime_manager.channel_event_sender(session.id, channel_id);
+        let event_sender = runtime_manager.event_bus().channel_event_sender(session.id, channel_id);
         let channel_controller = Arc::new(ChannelController::new(channel.clone(), event_sender));
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
         let state = Arc::new(Mutex::new(ChannelState::new(channel.id)));

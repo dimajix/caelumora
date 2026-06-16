@@ -100,34 +100,6 @@ impl RuntimeManager {
 
     pub fn template_store(&self) -> Arc<dyn TemplateStore> { self.template_store.clone() }
 
-    pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::SessionUpdateEvent>> {
-        let bus = self.event_bus.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::SessionUpdated(session_id, event));
-        }))
-    }
-
-    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<ChannelUpdateEvent>> {
-        let bus = self.event_bus.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
-        }))
-    }
-
-    pub fn agent_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::agent::AgentUpdateEvent>> {
-        let bus = self.event_bus.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::AgentUpdated(session_id, channel_id, agent_id, event));
-        }))
-    }
-
-    pub fn user_event_sender(self: &Arc<Self>, user_id: caelumora_model::user::UserId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::user::UserUpdateEvent>> {
-        let bus = self.event_bus.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::UserUpdated(user_id, event));
-        }))
-    }
-
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
         self.component_registry.clone()
     }
