@@ -34,7 +34,7 @@ struct ActorHandle {
 pub struct ChannelLoop {
     id: ChannelId,
     session_id: SessionId,
-    channel_controller: Arc<ChannelController>,
+    channel: Arc<ChannelController>,
     runtime_manager: Arc<RuntimeManager>,
     actors: HashMap<ActorId,Arc<dyn Actor>>,
     moderator: Mutex<Box<dyn Moderator>>,
@@ -66,7 +66,7 @@ impl ChannelLoop {
         Ok(Self {
             id: channel_id,
             session_id: session.id,
-            channel_controller,
+            channel: channel_controller,
             runtime_manager,
             actors,
             moderator: Mutex::new(moderator),
@@ -95,11 +95,11 @@ impl ChannelLoop {
     pub fn id(&self) -> ChannelId { self.id }
     
     pub fn name(&self) -> String {
-        self.channel_controller.name()
+        self.channel.name()
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        self.channel_controller.update_name(new_name);
+        self.channel.update_name(new_name);
         Ok(())
     }
 
@@ -156,7 +156,7 @@ impl ChannelLoop {
         let _guard = self.run_lock.try_lock()
             .map_err(|_| anyhow!("Already running"))?;
 
-        info!("Channel {}/{} is starting", self.channel_controller.name(), self.id);
+        info!("Channel {}/{} is starting", self.channel.name(), self.id);
         let mut global_rx = self.runtime_manager.subscribe_global();
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
@@ -175,7 +175,7 @@ impl ChannelLoop {
             }
         }
 
-        info!("Channel {}/{} stopped", self.channel_controller.name(), self.id);
+        info!("Channel {}/{} stopped", self.channel.name(), self.id);
         Ok(())
     }
 
@@ -195,7 +195,7 @@ impl ChannelLoop {
             match global_event {
                 crate::runtime::GlobalEvent::ChannelUpdated(_, cid, event) => {
                     if cid == self.id {
-                        self.channel_controller.process_update(&event);
+                        self.channel.process_update(&event);
                     }
                 }
                 _ => {}

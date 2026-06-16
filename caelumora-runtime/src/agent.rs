@@ -23,9 +23,8 @@ use tokio::sync::Mutex;
 
 #[derive(Debug)]
 struct AgentLoopState {
-    agent_controller: Arc<AgentController>,
+    agent: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
-    components: ComponentContainer,
     context_provider: Arc<dyn ContextProvider>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
@@ -65,9 +64,8 @@ impl AgentLoopState {
         let plan_pre_processors = components.get_all::<dyn PlanPreProcessor>(None)?;
 
         Ok(Self {
-            agent_controller,
+            agent: agent_controller,
             runtime_manager: runtime_manager.clone(),
-            components,
             context_provider,
             perceive_in_processors,
             emit_out_processors,
@@ -139,7 +137,7 @@ impl AgentLoopState {
             }
         }
 
-        let agent_name = self.agent_controller.name();
+        let agent_name = self.agent.name();
         debug!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
             agent_name,
             format_conversation(context.as_slice()),

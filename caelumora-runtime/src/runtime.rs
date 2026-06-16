@@ -11,18 +11,18 @@ use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
 use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
 use serde::{Deserialize, Serialize};
-use caelumora_model::session::{SessionId};
+use caelumora_model::session::{SessionId, SessionUpdateEvent};
 use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
-use caelumora_model::agent::AgentId;
+use caelumora_model::agent::{AgentId, AgentUpdateEvent};
 use caelumora_model::message::ActorId;
-use caelumora_model::user::UserId;
+use caelumora_model::user::{UserId, UserUpdateEvent};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GlobalEvent {
-    SessionUpdated(SessionId, caelumora_model::session::SessionUpdateEvent),
+    SessionUpdated(SessionId, SessionUpdateEvent),
     ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
-    AgentUpdated(AgentId, caelumora_model::agent::AgentUpdateEvent),
-    UserUpdated(UserId, caelumora_model::user::UserUpdateEvent),
+    AgentUpdated(AgentId, AgentUpdateEvent),
+    UserUpdated(UserId, UserUpdateEvent),
 }
 
 #[derive(Debug)]

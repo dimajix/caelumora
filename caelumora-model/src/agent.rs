@@ -15,6 +15,7 @@ pub enum AgentUpdateEvent {
 
 #[derive(Debug)]
 pub struct AgentController {
+    id: AgentId,
     agent: ArcSwap<Agent>,
     event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
 }
@@ -22,6 +23,7 @@ pub struct AgentController {
 impl AgentController {
     pub fn new(agent: Agent, event_sender: Arc<dyn EventSender<AgentUpdateEvent>>) -> Self {
         Self {
+            id: agent.id,
             agent: ArcSwap::from_pointee(agent),
             event_sender,
         }
@@ -32,7 +34,7 @@ impl AgentController {
     }
 
     pub fn id(&self) -> AgentId {
-        self.agent.load().id
+        self.id
     }
 
     pub fn name(&self) -> String {
