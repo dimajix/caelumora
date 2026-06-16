@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
+use log::warn;
 use caelumora_model::session::SessionId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::agent::AgentId;
@@ -30,7 +31,10 @@ impl EventBus {
 
     pub fn subscribe(&self, topics: Vec<SubscriptionTopic>) -> mpsc::Receiver<GlobalEvent> {
         let (tx, rx) = mpsc::channel(100);
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut subs = match self.subscribers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
         for topic in topics {
             subs.entry(topic).or_insert_with(Vec::new).push(tx.clone());
@@ -59,7 +63,10 @@ impl EventBus {
     }
 
     pub fn publish(&self, event: GlobalEvent) {
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut subs = match self.subscribers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
         let mut topics_to_notify = vec![SubscriptionTopic::All];
 
@@ -92,7 +99,7 @@ impl EventBus {
                                 mpsc::error::TrySendError::Full(_) => {
                                     // The channel is full. We keep the subscriber,
                                     // but we accept that this specific message was dropped.
-                                    // In a production system, we might want more robust handling.
+                                    warn!("Event dropped due to full buffer for topic {:?}", topic);
                                     true
                                 }
                                 mpsc::error::TrySendError::Closed(_) => {

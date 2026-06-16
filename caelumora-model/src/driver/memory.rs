@@ -21,6 +21,26 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    fn read_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> StoreResult<R>
+    where
+        F: FnOnce(&T) -> R,
+    {
+        match lock.read() {
+            Ok(guard) => Ok(f(&guard)),
+            Err(poisoned) => Ok(f(poisoned.get_ref())),
+        }
+    }
+
+    fn write_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> StoreResult<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        match lock.write() {
+            Ok(mut guard) => Ok(f(&mut guard)),
+            Err(mut poisoned) => Ok(f(poisoned.get_mut())),
+        }
+    }
 }
 
 fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> StoreResult<T> {
@@ -29,18 +49,12 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
 
 impl TemplateStore for MemoryStore {
     fn get_personality(&self, id: PersonalityId) -> StoreResult<Personality> {
-        let values = self
-            .personalities
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.personalities, |v| v.clone())?;
         require_entity(values.get(&id).cloned(), "agent_template", id.to_string())
     }
 
     fn find_personality_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        let values = self
-            .personalities
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.personalities, |v| v.clone())?;
         require_entity(
             values
                 .values()
@@ -52,35 +66,21 @@ impl TemplateStore for MemoryStore {
     }
 
     fn list_personalities(&self) -> StoreResult<Vec<Personality>> {
-        let values = self
-            .personalities
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        Ok(values.values().cloned().collect())
+        self.read_lock(&self.personalities, |v| v.values().cloned().collect())
     }
 
     fn put_personality(&self, value: &Personality) -> StoreResult<()> {
-        let mut values = self
-            .personalities
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(value.id, value.clone());
-        Ok(())
+        self.write_lock(&self.personalities, |v| {
+            v.insert(value.id, value.clone());
+        })
     }
 
     fn delete_personality(&self, id: PersonalityId) -> StoreResult<bool> {
-        let mut values = self
-            .personalities
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        Ok(values.remove(&id).is_some())
+        self.write_lock(&self.personalities, |v| v.remove(&id).is_some())
     }
 
     fn find_session_template_by_name(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        let values = self
-            .session_templates
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.session_templates, |v| v.clone())?;
         require_entity(
             values
                 .values()
@@ -92,142 +92,107 @@ impl TemplateStore for MemoryStore {
     }
 
     fn list_session_templates(&self) -> StoreResult<Vec<SessionTemplate>> {
-        let values = self
-            .session_templates
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        Ok(values.values().cloned().collect())
+        self.read_lock(&self.session_templates, |v| v.values().cloned().collect())
     }
 
     fn put_session_template(&self, value: &SessionTemplate) -> StoreResult<()> {
-        let mut values = self
-            .session_templates
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(value.metadata.name.clone(), value.clone());
-        Ok(())
+        self.write_lock(&self.session_templates, |v| {
+            v.insert(value.metadata.name.clone(), value.clone());
+        })
     }
 
     fn delete_session_template(&self, id: SessionTemplateId) -> StoreResult<bool> {
-        let mut values = self
-            .session_templates
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        let key = values
-            .values()
-            .find(|t| t.id == id)
-            .map(|t| t.metadata.name.clone());
-        match key {
-            Some(name) => Ok(values.remove(&name).is_some()),
-            None => Ok(false),
-        }
+        self.write_lock(&self.session_templates, |v| {
+            let key = v
+                .values()
+                .find(|t| t.id == id)
+                .map(|t| t.metadata.name.clone());
+            match key {
+                Some(name) => v.remove(&name).is_some(),
+                None => false,
+            }
+        })
     }
 }
 
 impl StateStore for MemoryStore {
     fn create_agent(&self, value: &Agent) -> StoreResult<()> {
-        let mut values = self
-            .agents
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        if values.contains_key(&value.id) {
-            return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
-        }
-        values.insert(value.id, value.clone());
-        Ok(())
+        self.write_lock(&self.agents, |v| {
+            if v.contains_key(&value.id) {
+                return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
     }
 
     fn get_agent(&self, id: AgentId) -> StoreResult<Agent> {
-        let values = self
-            .agents
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.agents, |v| v.clone())?;
         require_entity(values.get(&id).cloned(), "agent", id.to_string())
     }
 
     fn find_agent_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
-        let values = self
-            .agents
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        Ok(values
-            .values()
-            .find(|a| a.metadata.name == name && a.metadata.scope == *scope)
-            .cloned())
+        self.read_lock(&self.agents, |v| {
+            v.values()
+                .find(|a| a.metadata.name == name && a.metadata.scope == *scope)
+                .cloned()
+        })
     }
 
     fn update_agent(&self, value: &Agent) -> StoreResult<()> {
-        let mut values = self
-            .agents
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        if !values.contains_key(&value.id) {
-            return Err(StoreError::NotFound {
-                entity: "agent",
-                id: value.id.to_string(),
-            });
-        }
-        values.insert(value.id, value.clone());
-        Ok(())
+        self.write_lock(&self.agents, |v| {
+            if !v.contains_key(&value.id) {
+                return Err(StoreError::NotFound {
+                    entity: "agent",
+                    id: value.id.to_string(),
+                });
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
     }
 
     fn create_session(&self, value: &Session) -> StoreResult<()> {
-        let mut values = self
-            .sessions
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        if values.contains_key(&value.id) {
-            return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
-        }
-        values.insert(value.id, value.clone());
-        Ok(())
+        self.write_lock(&self.sessions, |v| {
+            if v.contains_key(&value.id) {
+                return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
     }
 
     fn get_session(&self, id: SessionId) -> StoreResult<Session> {
-        let values = self
-            .sessions
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.sessions, |v| v.clone())?;
         require_entity(values.get(&id).cloned(), "session", id.to_string())
     }
 
     fn update_session(&self, value: &Session) -> StoreResult<()> {
-        let mut values = self
-            .sessions
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        if !values.contains_key(&value.id) {
-            return Err(StoreError::NotFound {
-                entity: "session",
-                id: value.id.to_string(),
-            });
-        }
-        values.insert(value.id, value.clone());
-        Ok(())
+        self.write_lock(&self.sessions, |v| {
+            if !v.contains_key(&value.id) {
+                return Err(StoreError::NotFound {
+                    entity: "session",
+                    id: value.id.to_string(),
+                });
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
     }
 
     fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
-        let values = self
-            .agent_states
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.agent_states, |v| v.clone())?;
         require_entity(values.get(&agent_id).cloned(), "agent_state", agent_id.to_string())
     }
 
     fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
-        let mut values = self
-            .agent_states
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(agent_id, state.clone());
-        Ok(())
+        self.write_lock(&self.agent_states, |v| {
+            v.insert(agent_id, state.clone());
+        })
     }
 
     fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
-        let values = self
-            .session_states
-            .read()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
+        let values = self.read_lock(&self.session_states, |v| v.clone())?;
         require_entity(
             values.get(&session_id).cloned(),
             "session_state",
@@ -236,12 +201,9 @@ impl StateStore for MemoryStore {
     }
 
     fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
-        let mut values = self
-            .session_states
-            .write()
-            .map_err(|err| StoreError::Backend(err.to_string()))?;
-        values.insert(session_id, state.clone());
-        Ok(())
+        self.write_lock(&self.session_states, |v| {
+            v.insert(session_id, state.clone());
+        })
     }
 }
 

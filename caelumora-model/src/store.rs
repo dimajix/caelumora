@@ -169,9 +169,27 @@ mod tests {
         agents: RwLock<Vec<Agent>>,
     }
 
+    impl MockStateStore {
+        fn read_agents(&self) -> Vec<Agent> {
+            match self.agents.read() {
+                Ok(guard) => guard.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            }
+        }
+        fn write_agents<F, R>(&self, f: F) -> R
+        where
+            F: FnOnce(&mut Vec<Agent>) -> R,
+        {
+            match self.agents.write() {
+                Ok(mut guard) => f(&mut guard),
+                Err(mut poisoned) => f(poisoned.get_mut()),
+            }
+        }
+    }
+
     impl StateStore for MockStateStore {
         fn create_agent(&self, value: &Agent) -> StoreResult<()> {
-            self.agents.write().unwrap().push(value.clone());
+            self.write_agents(|v| v.push(value.clone()));
             Ok(())
         }
 
@@ -181,9 +199,7 @@ mod tests {
 
         fn find_agent_by_name(&self, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
             Ok(self
-                .agents
-                .read()
-                .unwrap()
+                .read_agents()
                 .iter()
                 .find(|a| a.metadata.name == name && a.metadata.scope == *scope)
                 .cloned())
