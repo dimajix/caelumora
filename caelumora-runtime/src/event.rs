@@ -38,6 +38,26 @@ impl EventBus {
         rx
     }
 
+    pub fn subscribe_all(&self) -> mpsc::Receiver<GlobalEvent> {
+        self.subscribe(vec![SubscriptionTopic::All])
+    }
+
+    pub fn subscribe_session(&self, id: SessionId) -> mpsc::Receiver<GlobalEvent> {
+        self.subscribe(vec![SubscriptionTopic::Session(id)])
+    }
+
+    pub fn subscribe_channel(&self, id: ChannelId) -> mpsc::Receiver<GlobalEvent> {
+        self.subscribe(vec![SubscriptionTopic::Channel(id)])
+    }
+
+    pub fn subscribe_agent(&self, id: AgentId) -> mpsc::Receiver<GlobalEvent> {
+        self.subscribe(vec![SubscriptionTopic::Agent(id)])
+    }
+
+    pub fn subscribe_user(&self, id: UserId) -> mpsc::Receiver<GlobalEvent> {
+        self.subscribe(vec![SubscriptionTopic::User(id)])
+    }
+
     pub fn publish(&self, event: GlobalEvent) {
         let mut subs = self.subscribers.lock().unwrap();
 

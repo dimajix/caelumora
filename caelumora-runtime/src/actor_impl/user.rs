@@ -176,7 +176,7 @@ impl Actor for UserActor {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
         let user_id = self.id.as_user_id().unwrap();
-        let mut global_rx = self.runtime_manager.subscribe_multi(vec![
+        let mut global_rx = self.runtime_manager.event_bus().subscribe(vec![
             crate::event::SubscriptionTopic::User(user_id),
             crate::event::SubscriptionTopic::Channel(self.channel_id),
         ]);

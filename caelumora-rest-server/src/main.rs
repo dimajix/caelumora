@@ -429,7 +429,7 @@ async fn join_channel(
 async fn global_events(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let receiver = state.runtime_manager.subscribe_all();
+    let receiver = state.runtime_manager.event_bus().subscribe_all();
     let stream = ReceiverStream::new(receiver);
 
     let sse_stream = stream.map(|event| {

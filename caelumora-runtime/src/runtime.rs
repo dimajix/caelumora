@@ -6,7 +6,7 @@ use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
 use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
@@ -16,7 +16,7 @@ use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
 use caelumora_model::agent::{AgentId, AgentUpdateEvent};
 use caelumora_model::message::ActorId;
 use caelumora_model::user::{UserId, UserUpdateEvent};
-use crate::event::{EventBus, SubscriptionTopic};
+use crate::event::EventBus;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GlobalEvent {
@@ -63,28 +63,8 @@ impl RuntimeManager {
     }
 
 
-    pub fn subscribe_all(&self) -> mpsc::Receiver<GlobalEvent> {
-        self.event_bus.subscribe(vec![SubscriptionTopic::All])
-    }
-
-    pub fn subscribe_session(&self, id: SessionId) -> mpsc::Receiver<GlobalEvent> {
-        self.event_bus.subscribe(vec![SubscriptionTopic::Session(id)])
-    }
-
-    pub fn subscribe_channel(&self, id: ChannelId) -> mpsc::Receiver<GlobalEvent> {
-        self.event_bus.subscribe(vec![SubscriptionTopic::Channel(id)])
-    }
-
-    pub fn subscribe_agent(&self, id: AgentId) -> mpsc::Receiver<GlobalEvent> {
-        self.event_bus.subscribe(vec![SubscriptionTopic::Agent(id)])
-    }
-
-    pub fn subscribe_user(&self, id: UserId) -> mpsc::Receiver<GlobalEvent> {
-        self.event_bus.subscribe(vec![SubscriptionTopic::User(id)])
-    }
-
-    pub fn subscribe_multi(&self, topics: Vec<SubscriptionTopic>) -> mpsc::Receiver<GlobalEvent> {
-        self.event_bus.subscribe(topics)
+    pub fn event_bus(&self) -> Arc<EventBus> {
+        self.event_bus.clone()
     }
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }

@@ -157,7 +157,7 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
-        let mut global_rx = self.runtime_manager.subscribe_channel(self.id);
+        let mut global_rx = self.runtime_manager.event_bus().subscribe_channel(self.id);
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);

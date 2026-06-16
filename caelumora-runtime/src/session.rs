@@ -99,7 +99,7 @@ impl SessionLoop {
 
         let mut join_set = JoinSet::new();
         let _channels = self.spawn_channels(&mut join_set);
-        let mut global_rx = self.runtime_manager.subscribe_session(self.id());
+        let mut global_rx = self.runtime_manager.event_bus().subscribe_session(self.id());
 
         loop {
             tokio::select! {

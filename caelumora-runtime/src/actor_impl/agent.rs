@@ -138,7 +138,7 @@ impl Actor for AgentActor {
         info!("AgentActor {} is starting", self.id());
 
         let agent_id = self.id.as_agent_id().unwrap();
-        let mut global_rx = self.agent.runtime_manager().subscribe_agent(agent_id);
+        let mut global_rx = self.agent.runtime_manager().event_bus().subscribe_agent(agent_id);
         let mut buffer = Vec::new();
 
         loop {
