@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::any::Any;
 use std::collections::{HashSet};
 use std::fmt::Debug;
@@ -9,8 +10,9 @@ use rand::rngs::StdRng;
 use crate::actor::{Actor, ActorEvent, Envelope};
 use crate::actor_impl::user::UserActor;
 
+#[async_trait]
 pub trait Moderator : Send + Sync + Debug {
-    fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)>;
+    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)>;
     fn add_actor(&mut self, actor: &dyn Actor) -> ();
     fn remove_actor(&mut self, actor: &dyn Actor) -> ();
 }
@@ -79,7 +81,7 @@ impl BroadcastModerator {
         }
     }
 
-    fn handle_full_response(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn handle_full_response(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
@@ -97,11 +99,12 @@ impl BroadcastModerator {
         }
     }
 }
+#[async_trait]
 impl Moderator for BroadcastModerator {
-    fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
-                self.handle_full_response(event)
+                self.handle_full_response(event).await
             }
             _ => {
                 Vec::new()
@@ -134,7 +137,7 @@ impl RandomModerator {
         }
     }
 
-    fn handle_full_response(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn handle_full_response(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
@@ -152,11 +155,12 @@ impl RandomModerator {
         }
     }
 }
+#[async_trait]
 impl Moderator for RandomModerator {
-    fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
-                self.handle_full_response(event)
+                self.handle_full_response(event).await
             }
             _ => {
                 Vec::new()
@@ -188,7 +192,7 @@ impl RoundRobinModerator {
         }
     }
 
-    fn handle_full_response(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn handle_full_response(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
@@ -216,11 +220,12 @@ impl RoundRobinModerator {
     }
 }
 
+#[async_trait]
 impl Moderator for RoundRobinModerator {
-    fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
-                self.handle_full_response(event)
+                self.handle_full_response(event).await
             }
             _ => {
                 Vec::new()

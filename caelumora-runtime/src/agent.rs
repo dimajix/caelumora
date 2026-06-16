@@ -4,7 +4,6 @@ use crate::security::SecurityContext;
 use crate::component::{
     ComponentContainer, ContextProvider, EmitOutProcessor, MessageProcessor, PerceiveInProcessor,
     PlanPreProcessor, ComponentImpl, TurnContext,
-    STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
 };
 use anyhow::Result;
 use async_stream::stream;
@@ -12,7 +11,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use caelumora_model::session::{SessionId, ChannelId};
 use caelumora_model::agent::{Agent, AgentState, ProcessingState, AgentController};
 use caelumora_model::component::{
-    ComponentFailPolicy, ComponentNodeConfig, ComponentConfig, STAGE_PERCEIVE
+    ComponentFailPolicy, ComponentConfig
 };
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
 use caelumora_model::store::StoreError;
@@ -258,6 +257,7 @@ impl AgentLoop {
             let mut loop_count = 0;
             let mut turn_context = TurnContext::default();
             while loop_count < max_iterations {
+                let _ = loop_count;
                 loop_count += 1;
 
                 // --- PHASE 2: PLAN ---

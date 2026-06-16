@@ -255,7 +255,7 @@ impl ChannelLoop {
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
         let mut moderator = self.moderator.lock().await;
-        let mut routes = moderator.route(&event);
+        let mut routes = moderator.route(&event).await;
         drop(moderator);
 
         // Always route back event to source, this helps the Actor to rebuild the full
