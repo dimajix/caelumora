@@ -1,5 +1,5 @@
 use caelumora_model::agent::{Personality};
-use caelumora_model::store_impl::Store;
+use caelumora_model::store::Store;
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_model::store_impl::json::JsonFileStore;
 use caelumora_model::config::{AppConfig, PersistenceBackend};
@@ -12,7 +12,6 @@ use caelumora_model::agent::PersonalityId;
 use caelumora_runtime::actor::ActorEvent;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
-use chrono::Utc;
 use clap::Parser;
 use env_logger::WriteStyle;
 use log::{error, info, LevelFilter};
@@ -23,9 +22,7 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use caelumora_model::channel::Channel;
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, ComponentFailPolicy, STAGE_PERCEIVE};
-use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,

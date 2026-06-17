@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use caelumora_model::store_impl::Store;
+use caelumora_model::store::Store;
 use caelumora_model::session::SessionId;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;

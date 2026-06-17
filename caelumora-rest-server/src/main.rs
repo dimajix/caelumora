@@ -6,7 +6,7 @@ use clap::Parser;
 
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_model::store_impl::json::JsonFileStore;
-use caelumora_model::store_impl::Store;
+use caelumora_model::store::Store;
 use caelumora_model::config::{AppConfig, PersistenceBackend};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;

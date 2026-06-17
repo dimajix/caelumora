@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use caelumora_model::store_impl::Store;
+use caelumora_model::store::Store;
 use caelumora_model::agent::{Personality, PersonalityId};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::template::{

@@ -99,6 +99,9 @@ pub trait StateStore : Debug + Sync + Send {
     fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()>;
 }
 
+pub trait Store: TemplateStore + StateStore {}
+impl<T: TemplateStore + StateStore> Store for T {}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
