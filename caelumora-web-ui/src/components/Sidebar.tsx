@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, MessageSquare, ChevronDown, ChevronRight, MoreVertical, Edit2 } from 'lucide-react';
 import type { SessionResponse, ChannelResponse, SessionTemplate } from '../types';
 import { api } from '../api';
 import { clsx, type ClassValue } from 'clsx';
@@ -24,10 +24,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   const [channels, setChannels] = useState<Record<string, ChannelResponse[]>>({});
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string>('');
 
   useEffect(() => {
     loadSessions();
     loadTemplates();
+    const handleClickOutside = () => setOpenMenuId(null);
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
   }, []);
 
   const loadTemplates = async () => {
@@ -78,6 +84,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleRenameSession = (e: React.MouseEvent, sessionId: string, currentName: string) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+    setEditingSessionId(sessionId);
+    setEditingName(currentName);
+  };
+
+  const handleNameSave = async (sessionId: string) => {
+    if (editingName.trim() && editingName !== sessions.find(s => s.id === sessionId)?.name) {
+      try {
+        const updatedSession = await api.renameSession(sessionId, editingName.trim());
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name: updatedSession.name } : s));
+      } catch (error) {
+        console.error('Failed to rename session', error);
+      }
+    }
+    setEditingSessionId(null);
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent, sessionId: string) => {
+    if (e.key === 'Enter') {
+      handleNameSave(sessionId);
+    } else if (e.key === 'Escape') {
+      setEditingSessionId(null);
+    }
+  };
+
+  const toggleMenu = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setOpenMenuId(openMenuId === sessionId ? null : sessionId);
+  };
+
   return (
     <div className="w-64 bg-gray-900 text-gray-100 flex flex-col border-r border-gray-800">
       <div className="p-4 border-b border-gray-800 flex justify-between items-center">
@@ -94,21 +132,55 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 overflow-y-auto p-2">
         <div className="space-y-1">
           {sessions.map(session => (
-            <div key={session.id} className="space-y-1">
-              <button
-                onClick={() => toggleSession(session.id)}
-                className={cn(
-                  "w-full flex items-center p-2 rounded-md hover:bg-gray-800 transition-colors text-sm",
-                  selectedSessionId === session.id && "bg-gray-800 font-medium"
+            <div key={session.id} className="space-y-1 relative group">
+              <div className={cn(
+                "flex items-center rounded-md hover:bg-gray-800 transition-colors text-sm",
+                selectedSessionId === session.id && "bg-gray-800 font-medium"
+              )}>
+                <button
+                  onClick={() => toggleSession(session.id)}
+                  className="flex-1 flex items-center p-2 truncate"
+                >
+                  {expandedSessions[session.id] ? (
+                    <ChevronDown size={16} className="mr-2 flex-shrink-0" />
+                  ) : (
+                    <ChevronRight size={16} className="mr-2 flex-shrink-0" />
+                  )}
+                  {editingSessionId === session.id ? (
+                    <input
+                      autoFocus
+                      className="flex-1 bg-gray-700 text-white px-1 rounded outline-none border border-blue-500 min-w-0"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onBlur={() => handleNameSave(session.id)}
+                      onKeyDown={(e) => handleNameKeyDown(e, session.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className="truncate">{session.name || `Session ${session.id?.slice?.(0, 8) || session.id}`}</span>
+                  )}
+                </button>
+                
+                <button
+                  onClick={(e) => toggleMenu(e, session.id)}
+                  className="p-2 opacity-0 group-hover:opacity-100 hover:text-white transition-opacity"
+                  title="Session options"
+                >
+                  <MoreVertical size={16} />
+                </button>
+
+                {openMenuId === session.id && (
+                  <div className="absolute right-0 top-10 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-lg z-50 py-1">
+                    <button
+                      onClick={(e) => handleRenameSession(e, session.id, session.name)}
+                      className="w-full flex items-center px-3 py-2 text-xs hover:bg-gray-700 transition-colors"
+                    >
+                      <Edit2 size={12} className="mr-2" />
+                      Rename
+                    </button>
+                  </div>
                 )}
-              >
-                {expandedSessions[session.id] ? (
-                  <ChevronDown size={16} className="mr-2" />
-                ) : (
-                  <ChevronRight size={16} className="mr-2" />
-                )}
-                <span className="truncate">{session.name || `Session ${session.id?.slice?.(0, 8) || session.id}`}</span>
-              </button>
+              </div>
               
               {expandedSessions[session.id] && (
                 <div className="ml-4 space-y-1">

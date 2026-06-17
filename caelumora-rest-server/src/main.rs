@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/templates", get(list_templates))
         .route("/sessions", get(list_sessions).post(create_session))
-        .route("/sessions/{id}", delete(terminate_session))
+        .route("/sessions/{id}", delete(terminate_session).patch(rename_session))
         .route("/sessions/{id}/channels", get(list_channels))
         .route("/sessions/{id}/channels/{cid}", get(get_channel))
         .route("/sessions/{id}/channels/{cid}/messages", get(get_channel_messages).post(send_message))
@@ -270,6 +270,29 @@ async fn terminate_session(
     } else {
         axum::http::StatusCode::NOT_FOUND
     }
+}
+
+#[derive(Deserialize)]
+struct RenameSessionRequest {
+    name: String,
+}
+
+async fn rename_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<RenameSessionRequest>,
+) -> Result<Json<SessionResponse>, axum::http::StatusCode> {
+    let session_id = SessionId(id);
+    let session_loop = state.session_manager.get_session(session_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    session_loop.update_name(payload.name.clone()).await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(SessionResponse {
+        id: session_id,
+        name: payload.name,
+    }))
 }
 
 #[derive(Serialize)]

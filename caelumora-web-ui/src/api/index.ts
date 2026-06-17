@@ -63,6 +63,16 @@ export const api = {
     if (!res.ok) throw new Error('Failed to cancel channel');
   },
 
+  async renameSession(sessionId: string, name: string): Promise<SessionResponse> {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error('Failed to rename session');
+    return res.json();
+  },
+
   getEventSource(sessionId: string, channelId: string): EventSource {
     return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
   }
