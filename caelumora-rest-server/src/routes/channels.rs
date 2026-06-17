@@ -76,16 +76,10 @@ pub async fn send_message(
     if let Some(session) = session {
         if let Some(channel) = session.channel_by_id(channel_id) {
             if let Some(user_actor) = channel.user_actor() {
-                let wakeup = ActorEvent::Wakeup;
-                let message = ActorEvent::FullResponseGenerated(vec![Message {
-                    role: MessageRole::User,
-                    content: Some(payload.content),
-                    ..Message::default()
-                }]);
-                if !user_actor.send_message(wakeup).await.is_ok() {
+                if !channel.wakeup().await.is_ok() {
                     return StatusCode::INTERNAL_SERVER_ERROR;
                 }
-                if !user_actor.send_message(message).await.is_ok() {
+                if !user_actor.send_message(payload.content).await.is_ok() {
                     return StatusCode::INTERNAL_SERVER_ERROR;
                 }
             }

@@ -20,11 +20,14 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::channel;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use caelumora_model::channel::Channel;
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_runtime::actor_impl::user::UserActor;
+use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
     STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
@@ -142,48 +145,14 @@ fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> 
     Ok(template)
 }
 
-async fn run_repl(user_actor: Arc<UserActor>) -> anyhow::Result<()> {
+async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
+    let user_actor = channel.user_actor()
+        .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
+
     let mut receiver = user_actor.lock_receiver().await;
     let mut input_rx = spawn_rustyline_input();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
-    run_repl_select_loop(user_actor.clone(), &mut receiver, &mut input_rx).await
-}
-
-fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
-    let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
-    thread::spawn(move || {
-        let mut rl = match Editor::<(), rustyline::history::DefaultHistory>::new() {
-            Ok(rl) => rl,
-            Err(err) => {
-                let _ = input_tx.send(Err(ReadlineError::Io(std::io::Error::other(err.to_string()))));
-                return;
-            }
-        };
-
-        loop {
-            match rl.readline(">> ") {
-                Ok(line) => {
-                    if input_tx.send(Ok(line)).is_err() {
-                        break;
-                    }
-                }
-                Err(err) => {
-                    let _ = input_tx.send(Err(err));
-                    break;
-                }
-            }
-        }
-    });
-
-    input_rx
-}
-
-async fn run_repl_select_loop(
-    user_actor: Arc<UserActor>,
-    receiver: &mut mpsc::Receiver<ActorEvent>,
-    input_rx: &mut mpsc::UnboundedReceiver<Result<String, ReadlineError>>,
-) -> anyhow::Result<()> {
     loop {
         tokio::select! {
             maybe_event = receiver.recv() => {
@@ -215,25 +184,10 @@ async fn run_repl_select_loop(
                         if input == "exit" || input == "quit" {
                             break;
                         }
-
-                        let user_message = Message {
-                            id: MessageId(Uuid::new_v4()),
-                            prev_id: MessageId::default(),
-                            sender_id: user_actor.id(),
-                            sender_name: "user".to_string(),
-                            role: MessageRole::User,
-                            content: Some(input.to_string()),
-                            reasoning: None,
-                            tool_calls: vec![],
-                            timestamp: Utc::now(),
-                            metadata: Default::default(),
-                        };
-
-                        info!("dispatch: input msg={:?}", user_message);
+                        info!("dispatch: input msg={:?}", input.to_string());
                         let wakeup = ActorEvent::Wakeup;
-                        let message = ActorEvent::FullResponseGenerated(vec![user_message]);
-                        let _ = user_actor.send_message(wakeup).await;
-                        user_actor.send_message(message).await?;
+                        let _ = channel.wakeup().await;
+                        user_actor.send_message(input.to_string()).await?;
                     }
                     Some(Err(ReadlineError::Interrupted)) => {
                         println!("CTRL-C");
@@ -251,6 +205,36 @@ async fn run_repl_select_loop(
 
     Ok(())
 }
+
+fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
+    thread::spawn(move || {
+        let mut rl = match Editor::<(), rustyline::history::DefaultHistory>::new() {
+            Ok(rl) => rl,
+            Err(err) => {
+                let _ = input_tx.send(Err(ReadlineError::Io(std::io::Error::other(err.to_string()))));
+                return;
+            }
+        };
+
+        loop {
+            match rl.readline(">> ") {
+                Ok(line) => {
+                    if input_tx.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    let _ = input_tx.send(Err(err));
+                    break;
+                }
+            }
+        }
+    });
+
+    input_rx
+}
+
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "An accessible Chat CLI")]
@@ -294,14 +278,13 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let user_actor = session_loop
+    let channel = session_loop
         .channel_by_name("main")
         .await
-        .and_then(|channel| channel.user_actor())
-        .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
+        .ok_or_else(|| anyhow::anyhow!("Cannot find main channel in session"))?;
 
     // Start the interactive loop
-    run_repl(user_actor).await?;
+    run_repl(channel).await?;
     runner.abort();
 
     Ok(())

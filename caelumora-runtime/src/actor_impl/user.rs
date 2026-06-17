@@ -12,6 +12,7 @@ use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, Stand
 use crate::security::SecurityContext;
 use crate::runtime::GlobalEvent;
 use async_trait::async_trait;
+use chrono::Utc;
 
 #[derive(Debug)]
 pub struct UserActor {
@@ -52,36 +53,22 @@ impl UserActor {
         }
     }
 
-    pub async fn send_message(&self, mut message: ActorEvent) -> anyhow::Result<()> {
-        match &mut message {
-            ActorEvent::PartialMessageGenerated(msg) => {
-                self.fixup_message(msg);
-            }
-            ActorEvent::CompleteMessageGenerated(msg) => {
-                self.fixup_message(msg);
-            }
-            ActorEvent::FullResponseGenerated(msgs) => {
-                for m in msgs {
-                    self.fixup_message(m);
-                }
-            }
-            _ => {}
-        }
-        self.user_tx.send(message).await?;
+    pub async fn send_message(&self, message: String) -> anyhow::Result<()> {
+        let event = ActorEvent::FullResponseGenerated(vec![Message {
+            role: MessageRole::User,
+            content: Some(message),
+            id: MessageId(Uuid::new_v4()),
+            sender_id: self.id(),
+            sender_name: self.name(),
+            timestamp: Utc::now(),
+            ..Message::default()
+        }]);
+        self.user_tx.send(event).await?;
         Ok(())
     }
 
     pub async fn lock_receiver(&self) -> MutexGuard<'_, Receiver<ActorEvent>> {
         self.actor_rx.lock().await
-    }
-
-    fn fixup_message(&self, msg:& mut Message) {
-        if msg.id == MessageId::default() {
-            msg.id = MessageId(Uuid::new_v4());
-        }
-        msg.sender_id = self.id();
-        msg.sender_name = self.name();
-        msg.role = MessageRole::User;
     }
 
     async fn handle_actor_envelope(&self, maybe_event: Option<Envelope>) -> bool {

@@ -110,6 +110,10 @@ impl ChannelLoop {
         }
         Ok(())
     }
+    pub async fn wakeup(&self) -> Result<()> {
+        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        Ok(())
+    }
 
     pub fn actor_names(&self) -> Vec<String> {
         self.actors.values().map(|a| a.name()).collect()
