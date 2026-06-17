@@ -1,19 +1,18 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use caelumora_model::driver::memory::MemoryStore;
+use caelumora_model::store_impl::Store;
 use caelumora_model::agent::{Personality, PersonalityId};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::template::{
     ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId,
 };
-use caelumora_model::store::TemplateStore;
 use caelumora_model::user::UserId;
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, STAGE_PERCEIVE, ComponentFailPolicy};
 use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
 };
 
-pub fn setup_initial_data(store: &Arc<MemoryStore>) -> anyhow::Result<()> {
+pub fn setup_initial_data(store: &Arc<dyn Store>) -> anyhow::Result<()> {
     let jonathan = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",

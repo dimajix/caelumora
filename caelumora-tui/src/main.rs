@@ -1,15 +1,15 @@
 use caelumora_model::agent::{Personality};
-use caelumora_model::driver::memory::MemoryStore;
-use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::store_impl::Store;
+use caelumora_model::store_impl::memory::MemoryStore;
+use caelumora_model::store_impl::json::JsonFileStore;
+use caelumora_model::config::{AppConfig, PersistenceBackend};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::session::{SessionContext, SessionId};
-use caelumora_model::store::{
-    StoreBackedEntityResolver, TemplateStore,
-};
+use caelumora_model::store::StoreBackedEntityResolver;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserId;
 use caelumora_model::agent::PersonalityId;
-use caelumora_runtime::actor::{Actor, ActorEvent};
+use caelumora_runtime::actor::ActorEvent;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 use chrono::Utc;
@@ -20,7 +20,6 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::channel;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -96,7 +95,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     }
 }
 
-fn setup_templates(store: &Arc<MemoryStore>) -> anyhow::Result<SessionTemplate> {
+fn setup_templates(store: &Arc<dyn Store>) -> anyhow::Result<SessionTemplate> {
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
@@ -185,7 +184,6 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             break;
                         }
                         info!("dispatch: input msg={:?}", input.to_string());
-                        let wakeup = ActorEvent::Wakeup;
                         let _ = channel.wakeup().await;
                         user_actor.send_message(input.to_string()).await?;
                     }
@@ -246,18 +244,20 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _args = Args::parse();
+    let args = Args::parse();
 
-    // Load Config
-    //let config = load_config(args.config).context("Failed to load configuration")?;
-
-    // Override config with CLI args
-    //let final_name = args.name.unwrap_or(config.agent_name.clone());
     init_logging();
 
-    // Initialize Agent (Integration Point)
-    // In a real app, you would inject your OpenAI/Anthropic client here.
-    let store = Arc::new(MemoryStore::new());
+    let store: Arc<dyn Store> = if let Some(config_path) = args.config {
+        let config = AppConfig::load(config_path)?;
+        match config.persistence.backend {
+            PersistenceBackend::Memory => Arc::new(MemoryStore::new()),
+            PersistenceBackend::Json { path } => Arc::new(JsonFileStore::new(path)?),
+        }
+    } else {
+        Arc::new(MemoryStore::new())
+    };
+
     let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
     let template = setup_templates(&store)?;
 

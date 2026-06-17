@@ -28,12 +28,12 @@ pub trait EntityResolver : Debug {
 }
 
 #[derive(Debug)]
-pub struct StoreBackedEntityResolver<TS, SS> {
+pub struct StoreBackedEntityResolver<TS: ?Sized, SS: ?Sized> {
     template_store: Arc<TS>,
     state_store: Arc<SS>,
 }
 
-impl<TS, SS> StoreBackedEntityResolver<TS, SS> {
+impl<TS: ?Sized, SS: ?Sized> StoreBackedEntityResolver<TS, SS> {
     pub fn new(template_store: Arc<TS>, state_store: Arc<SS>) -> Self {
         Self {
             template_store,
@@ -44,8 +44,8 @@ impl<TS, SS> StoreBackedEntityResolver<TS, SS> {
 
 impl<TS, SS> EntityResolver for StoreBackedEntityResolver<TS, SS>
 where
-    TS: TemplateStore,
-    SS: StateStore,
+    TS: TemplateStore + ?Sized,
+    SS: StateStore + ?Sized,
 {
     fn get_session_template(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
         self.template_store.find_session_template_by_name(name, scope)

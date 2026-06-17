@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use uuid::Uuid;
-use caelumora_model::session::{SessionId, SessionContext};
+use caelumora_model::session::{SessionContext, SessionId};
+use caelumora_model::store::StoreBackedEntityResolver;
 use caelumora_model::template::SessionTemplateId;
-use caelumora_model::store::{TemplateStore, StoreBackedEntityResolver};
 use caelumora_model::user::UserId;
 use crate::state::AppState;
 use crate::models::{CreateSessionRequest, SessionResponse, RenameSessionRequest};
@@ -13,7 +13,7 @@ pub async fn create_session(
     Json(payload): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let template_id = SessionTemplateId(payload.template_id);
-    let template = state.memory_store.list_session_templates()
+    let template = state.store.list_session_templates()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .find(|t| t.id == template_id)
@@ -21,7 +21,7 @@ pub async fn create_session(
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
-    let resolver = Box::new(StoreBackedEntityResolver::new(state.memory_store.clone(), state.memory_store.clone()));
+    let resolver = Box::new(StoreBackedEntityResolver::new(state.store.clone(), state.store.clone()));
     let context = SessionContext {
         id: session_id,
         owner,

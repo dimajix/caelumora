@@ -1,9 +1,8 @@
 use std::sync::Arc;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use uuid::Uuid;
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_runtime::actor::ActorEvent;
 use crate::state::AppState;
 use crate::models::{ChannelResponse, SendMessageRequest};
 

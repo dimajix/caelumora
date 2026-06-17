@@ -9,7 +9,7 @@ pub mod session;
 pub mod store;
 pub mod user;
 pub mod template;
-pub mod driver;
+pub mod store_impl;
 pub mod meta;
 pub mod component;
 pub mod event;
