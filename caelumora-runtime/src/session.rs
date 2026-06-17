@@ -47,6 +47,10 @@ impl SessionLoop {
         self.session_controller.id()
     }
 
+    pub fn load(&self) -> arc_swap::Guard<Arc<Session>> {
+        self.session_controller.load()
+    }
+
     pub fn name(&self) -> String {
         self.session_controller.name()
     }
@@ -70,18 +74,6 @@ impl SessionLoop {
             }
         }
         None
-    }
-
-    pub async fn get_channel_history(&self, channel_id: ChannelId) -> Option<Vec<Message>> {
-        if let Some(c) = self.channel_by_id(channel_id) {
-            Some(c.history().await)
-        } else {
-            None
-        }
-    }
-
-    pub fn subscribe_to_channel(&self, channel_id: ChannelId) -> Option<broadcast::Receiver<Envelope>> {
-        self.channel_by_id(channel_id).map(|c| c.subscribe())
     }
 
     pub async fn cancel_channel(&self, channel_id: ChannelId) -> Result<()> {
