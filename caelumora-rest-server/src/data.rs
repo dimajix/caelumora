@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use serde_json::json;
+use serde_json::ser::Compound::Map;
 use uuid::Uuid;
 use caelumora_model::store::{EntityStore};
 use caelumora_model::agent::{Personality, PersonalityId};
@@ -8,9 +11,7 @@ use caelumora_model::template::{
 };
 use caelumora_model::user::{User, UserId};
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, STAGE_PERCEIVE, ComponentFailPolicy};
-use caelumora_runtime::component::{
-    STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
-};
+use caelumora_runtime::component::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 
 use caelumora_model::security::SecurityContext;
 
@@ -114,7 +115,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     Ok(())
 }
 
-fn create_personality(name: &str, description: &str, _system_prompt: &str) -> Personality {
+fn create_personality(name: &str, description: &str, system_prompt: &str) -> Personality {
     let mut components = ComponentConfig::default();
     components.component_nodes.push(ComponentNodeConfig {
         id: "history".to_string(),
@@ -128,8 +129,8 @@ fn create_personality(name: &str, description: &str, _system_prompt: &str) -> Pe
         id: "context".to_string(),
         kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,
-        deps: vec![],
-        tags: vec![STAGE_PERCEIVE.to_string()],
+        deps: vec!["system-prompt".to_string()],
+        tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
     components.component_nodes.push(ComponentNodeConfig {
@@ -138,6 +139,14 @@ fn create_personality(name: &str, description: &str, _system_prompt: &str) -> Pe
         params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![STAGE_PERCEIVE.to_string()],
+        fail_policy: ComponentFailPolicy::FailClosed,
+    });
+    components.component_nodes.push(ComponentNodeConfig {
+        id: "system-prompt".to_string(),
+        kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
+        params: json!({ "prompt": system_prompt }),
+        deps: vec![],
+        tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
 

@@ -2,6 +2,6 @@ persistence:
   state_store:
     json:
       path: "local/state_store"
-  template_store:
+  entity_store:
     json:
-      path: "local/template_store"
+      path: "local/entity_store"

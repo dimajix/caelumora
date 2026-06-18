@@ -59,8 +59,17 @@ async fn main() -> anyhow::Result<()> {
 
     setup_initial_data(&entity_store, &args.user).await?;
 
+    let security_ctx = caelumora_model::security::SecurityContext {
+        initiator_id: caelumora_model::message::ActorId::None,
+        sender_id: caelumora_model::message::ActorId::None,
+        session_id: caelumora_model::session::SessionId::default(),
+        channel_id: caelumora_model::channel::ChannelId::default(),
+    };
+    let user = entity_store.find_user_by_name(&security_ctx, &args.user).await?
+        .ok_or_else(|| anyhow::anyhow!("User {} not found after initialization", args.user))?;
+
     let state = Arc::new(AppState {
-        user_id: caelumora_model::user::UserId::default(),
+        user_id: user.id,
         runtime_manager,
         session_manager,
         entity_store,
