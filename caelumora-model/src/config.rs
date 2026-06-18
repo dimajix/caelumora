@@ -7,29 +7,25 @@ use crate::store::{StateStore, TemplateStore};
 use crate::store_impl::json::JsonFileStore;
 use crate::store_impl::memory::MemoryStore;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Default, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum PersistenceBackend {
+    #[default]
     Memory,
     Json { path: PathBuf },
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct PersistenceConfig {
     pub backend: Option<PersistenceBackend>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
 }
 
 impl AppConfig {
-    pub fn default() -> Self {
-        AppConfig {
-            persistence: None
-        }
-    }
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         let config: AppConfig = serde_yaml::from_str(&content)?;
