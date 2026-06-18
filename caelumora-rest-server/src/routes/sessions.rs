@@ -4,6 +4,7 @@ use uuid::Uuid;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::SessionTemplateId;
+use caelumora_model::user::User;
 use crate::state::AppState;
 use crate::models::{CreateSessionRequest, SessionResponse, RenameSessionRequest};
 

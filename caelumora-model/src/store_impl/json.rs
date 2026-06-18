@@ -5,6 +5,7 @@ use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::session::{Session, SessionId, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
 use crate::template::{SessionTemplate, SessionTemplateId};
+use crate::user::{User, UserId};
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,7 @@ impl JsonFileStore {
             self.session_templates_dir(),
             self.agents_dir(),
             self.sessions_dir(),
+            self.users_dir(),
             self.agent_states_dir(),
             self.session_states_dir(),
         ];
@@ -59,6 +61,10 @@ impl JsonFileStore {
 
     fn agents_dir(&self) -> PathBuf {
         self.root.join("runtime").join("agents")
+    }
+
+    fn users_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("users")
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -88,6 +94,10 @@ impl JsonFileStore {
 
     fn session_path(&self, id: SessionId) -> PathBuf {
         self.sessions_dir().join(format!("{id}.json"))
+    }
+
+    fn user_path(&self, id: UserId) -> PathBuf {
+        self.users_dir().join(format!("{id}.json"))
     }
 
     fn agent_state_path(&self, id: AgentId) -> PathBuf {
@@ -390,6 +400,46 @@ impl EntityStore for JsonFileStore {
             });
         }
         info!("Updating session at {}", path.display());
+        write_json_atomic(
+            &path,
+            &Persisted {
+                schema_version: 1,
+                updated_at: Utc::now(),
+                value,
+            },
+        )
+    }
+
+    // Users (durable definitions)
+    async fn create_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        let path = self.user_path(value.id);
+        if path.exists() {
+            return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
+        }
+        info!("Creating user at {}", path.display());
+        write_json_atomic(
+            &path,
+            &Persisted {
+                schema_version: 1,
+                updated_at: Utc::now(),
+                value,
+            },
+        )
+    }
+
+    async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        let path = self.user_path(id);
+        info!("Reading user from {}", path.display());
+        let loaded = read_json_opt::<Persisted<User>>(&path)?.map(|p| p.value);
+        require_entity(loaded, "user", id.to_string())
+    }
+
+    async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        let path = self.user_path(value.id);
+        if !path.exists() {
+            return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
+        }
+        info!("Updating user at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {

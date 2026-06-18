@@ -4,7 +4,7 @@ use caelumora_model::config::{AppConfig};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
-use caelumora_model::user::UserId;
+use caelumora_model::user::{User, UserId};
 use caelumora_model::agent::PersonalityId;
 use caelumora_runtime::actor::ActorEvent;
 use caelumora_runtime::runtime::RuntimeManager;

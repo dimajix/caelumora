@@ -116,7 +116,8 @@ impl ParticipantTemplate {
     pub async fn instantiate(&self, context:&SessionContext) -> anyhow::Result<Participant> {
         let participant = match self {
             ParticipantTemplate::User => {
-                Participant::User(context.owner)
+                let user = context.entity_store.get_user(&context.security, context.owner).await?;
+                Participant::User(user)
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
                 let sc = scope.instantiate(&context);

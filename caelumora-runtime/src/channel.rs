@@ -137,14 +137,8 @@ impl ChannelLoop {
 
     async fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
-            Participant::User(user_id) => {
-                let user = User {
-                    id: *user_id,
-                    username: "user".to_string(),
-                    email: String::new(),
-                    roles: vec!["user".to_string()],
-                };
-                let actor = UserActor::new(session, channel, user, runtime_manager.clone());
+            Participant::User(user) => {
+                let actor = UserActor::new(session, channel, user.clone(), runtime_manager.clone());
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {

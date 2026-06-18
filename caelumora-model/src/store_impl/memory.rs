@@ -14,6 +14,7 @@ pub struct MemoryStore {
     session_templates: RwLock<HashMap<String, SessionTemplate>>,
     agents: RwLock<HashMap<AgentId, Agent>>,
     sessions: RwLock<HashMap<SessionId, Session>>,
+    users: RwLock<HashMap<crate::user::UserId, crate::user::User>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     session_states: RwLock<HashMap<SessionId, SessionState>>,
 }
@@ -50,6 +51,7 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
 }
 
 use crate::security::SecurityContext;
+use crate::user::{User, UserId};
 
 #[async_trait]
 impl EntityStore for MemoryStore {
@@ -195,6 +197,35 @@ impl EntityStore for MemoryStore {
                     entity: "session",
                     id: value.id.to_string(),
                 });
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
+    }
+
+    // Users
+    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        let _ = ctx; // Placeholder for security check
+        self.write_lock(&self.users, |v| {
+            if v.contains_key(&value.id) {
+                return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
+    }
+
+    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        let _ = ctx; // Placeholder for security check
+        let values = self.read_lock(&self.users, |v| v.clone())?;
+        require_entity(values.get(&id).cloned(), "user", id.to_string())
+    }
+
+    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        let _ = ctx; // Placeholder for security check
+        self.write_lock(&self.users, |v| {
+            if !v.contains_key(&value.id) {
+                return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
             }
             v.insert(value.id, value.clone());
             Ok(())

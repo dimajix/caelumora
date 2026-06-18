@@ -6,6 +6,7 @@ use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::security::SecurityContext;
+use crate::user::{User, UserId};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -50,6 +51,11 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
+
+    // Users
+    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
+    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
+    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
 }
 
 #[async_trait]

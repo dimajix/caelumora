@@ -2,7 +2,7 @@ pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::{StateStore, EntityStore};
+use crate::store::EntityStore;
 use crate::user::UserId;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
