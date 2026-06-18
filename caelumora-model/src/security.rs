@@ -9,25 +9,21 @@ use crate::agent::{Agent, AgentId, Personality, PersonalityId};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::session::Session;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub enum ActionType<'a> {
     GetPersonality(PersonalityId),
     FindPersonality,
     ListPersonalities,
-    #[serde(skip)]
     PutPersonality(&'a Personality),
     DeletePersonality(PersonalityId),
     FindSessionTemplate,
     ListSessionTemplates,
-    #[serde(skip)]
     PutSessionTemplate(&'a SessionTemplate),
     DeleteSessionTemplate(SessionTemplateId),
-    #[serde(skip)]
     CreateAgent(&'a Agent),
     GetAgent(AgentId),
     FindAgent,
     UpdateAgent(AgentId),
-    #[serde(skip)]
     CreateSession(&'a Session),
     GetSession(SessionId),
     UpdateSession(SessionId),

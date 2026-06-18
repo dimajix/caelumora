@@ -27,8 +27,6 @@ impl SessionController {
         event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
         state_store: Arc<dyn StateStore>
     ) -> anyhow::Result<Self> {
-        let ctx = SecurityContext::default();
-        state_store.create_session(&ctx, &session).await.expect("failed to create session");
         Ok(Self {
             session: ArcSwap::from_pointee(session),
             event_sender,

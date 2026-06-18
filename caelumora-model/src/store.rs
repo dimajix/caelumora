@@ -3,7 +3,7 @@ use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
-use crate::session::{Participant, Session, SessionId, SessionState};
+use crate::session::{Session, SessionId, SessionState};
 use crate::template::{SessionTemplate, SessionTemplateId};
 
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +67,7 @@ pub mod tests {
     use super::*;
     use crate::meta::Metadata;
     use crate::security::SecurityContext;
+    use crate::session::Participant;
     use crate::template::{ScopeTemplate, SessionTemplateId};
     use crate::user::UserId;
 

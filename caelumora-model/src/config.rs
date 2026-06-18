@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use anyhow::{Result};
-use crate::security::{DummySecurityManager, SecurityManager};
+use crate::security::{SecurityManager};
 use serde::Deserialize;
 use crate::store::{StateStore, TemplateStore};
 use crate::store_impl::json::JsonFileStore;

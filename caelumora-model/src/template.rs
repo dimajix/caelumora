@@ -97,7 +97,7 @@ impl SessionTemplate {
             created_at: now,
             updated_at: now,
         };
-        context.state_store.create_session(&context.security, &session).await.expect("failed to create session");
+        context.state_store.create_session(&context.security, &session).await?;
         Ok(session)
     }
 }
