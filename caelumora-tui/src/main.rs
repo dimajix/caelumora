@@ -1,5 +1,5 @@
 use caelumora_model::agent::{Personality};
-use caelumora_model::store::{TemplateStore};
+use caelumora_model::store::{EntityStore};
 use caelumora_model::config::{AppConfig};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::session::{SessionContext, SessionId};
@@ -90,7 +90,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     }
 }
 
-async fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemplate> {
+async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<SessionTemplate> {
     let ctx = SecurityContext::default();
     let personality_a = create_personality(
         "jonathan-assistant",
@@ -253,10 +253,10 @@ async fn main() -> anyhow::Result<()> {
 
     let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let state_store = config.create_state_store(security_manager.clone())?;
-    let template_store = config.create_template_store(security_manager.clone())?;
+    let entity_store = config.create_entity_store(security_manager.clone())?;
 
-    let runtime = Arc::new(RuntimeManager::new(state_store.clone(), template_store.clone()));
-    let template = setup_templates(&template_store).await?;
+    let runtime = Arc::new(RuntimeManager::new(state_store.clone(), entity_store.clone()));
+    let template = setup_templates(&entity_store).await?;
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
@@ -265,11 +265,10 @@ async fn main() -> anyhow::Result<()> {
         id: session_id,
         owner,
         security,
-        state_store: state_store.clone(),
-        template_store: template_store.clone(),
+        entity_store: entity_store.clone(),
     };
     let session = template.instantiate("default-session".to_string(), &context).await?;
-    let session_loop = Arc::new(SessionLoop::new(session, runtime).await?);
+    let session_loop = Arc::new(SessionLoop::new(session, runtime.clone()).await?);
     let runner = tokio::spawn({
         let session_loop = session_loop.clone();
         async move {

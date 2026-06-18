@@ -7,7 +7,7 @@ use crate::message::{MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::component::ComponentConfig;
 use crate::event::EventSender;
-use crate::store::StateStore;
+use crate::store::EntityStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
@@ -19,20 +19,20 @@ pub struct AgentController {
     id: AgentId,
     agent: ArcSwap<Agent>,
     event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
-    state_store: Arc<dyn StateStore>,
+    entity_store: Arc<dyn EntityStore>,
 }
 
 impl AgentController {
     pub fn new(
         agent: Agent,
         event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
-        state_store: Arc<dyn StateStore>
+        entity_store: Arc<dyn EntityStore>
     ) -> Self {
         Self {
             id: agent.id,
             agent: ArcSwap::from_pointee(agent),
             event_sender,
-            state_store,
+            entity_store,
         }
     }
 
@@ -65,7 +65,7 @@ impl AgentController {
                 let agent = Arc::new(agent);
                 self.agent.store(agent.clone());
                 let ctx = SecurityContext::default();
-                self.state_store.update_agent(&ctx, &agent).await.expect("failed to update agent");
+                self.entity_store.update_agent(&ctx, &agent).await.expect("failed to update agent");
             }
         }
     }

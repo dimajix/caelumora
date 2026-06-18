@@ -14,7 +14,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let ctx = SecurityContext::default();
     let template_id = SessionTemplateId(payload.template_id);
-    let template = state.template_store.list_session_templates(&ctx).await
+    let template = state.entity_store.list_session_templates(&ctx).await
         .expect("failed to list templates")
         .into_iter()
         .find(|t| t.id == template_id)
@@ -27,8 +27,7 @@ pub async fn create_session(
         id: session_id,
         owner,
         security,
-        state_store: state.state_store.clone(),
-        template_store: state.template_store.clone(),
+        entity_store: state.entity_store.clone(),
     };
 
     let name = payload.name.unwrap_or_else(|| template.metadata.name.clone());

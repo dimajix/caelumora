@@ -5,7 +5,7 @@ use log::info;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
-use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
+use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
 use crate::template::{SessionTemplate, SessionTemplateId};
 
 #[derive(Debug, Default)]
@@ -52,7 +52,7 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
 use crate::security::SecurityContext;
 
 #[async_trait]
-impl TemplateStore for MemoryStore {
+impl EntityStore for MemoryStore {
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.personalities, |v| v.clone())?;
@@ -127,10 +127,8 @@ impl TemplateStore for MemoryStore {
             }
         })
     }
-}
 
-#[async_trait]
-impl StateStore for MemoryStore {
+    // Agents (durable definitions)
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.agents, |v| {
@@ -171,6 +169,7 @@ impl StateStore for MemoryStore {
         })?
     }
 
+    // Sessions (durable definitions)
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.sessions, |v| {
@@ -201,7 +200,10 @@ impl StateStore for MemoryStore {
             Ok(())
         })?
     }
+}
 
+#[async_trait]
+impl StateStore for MemoryStore {
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let values = self.read_lock(&self.agent_states, |v| v.clone())?;
         require_entity(values.get(&agent_id).cloned(), "agent_state", agent_id.to_string())

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::security::SecurityManager;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::session::{Session, SessionId, SessionState};
-use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
+use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
@@ -172,7 +172,7 @@ fn sanitize_file_component(value: &str) -> String {
 use crate::security::{ActionType, SecurityContext};
 
 #[async_trait]
-impl TemplateStore for JsonFileStore {
+impl EntityStore for JsonFileStore {
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         if !self.security_manager.check(ctx, ActionType::GetPersonality(id)).await {
             return Err(StoreError::PermissionDenied);
@@ -284,12 +284,8 @@ impl TemplateStore for JsonFileStore {
             None => Ok(false),
         }
     }
-}
 
-
-
-#[async_trait]
-impl StateStore for JsonFileStore {
+    // Agents (durable definitions)
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         if !self.security_manager.check(ctx, ActionType::CreateAgent(value)).await {
             return Err(StoreError::PermissionDenied);
@@ -352,6 +348,7 @@ impl StateStore for JsonFileStore {
         )
     }
 
+    // Sessions (durable definitions)
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         if !self.security_manager.check(ctx, ActionType::CreateSession(value)).await {
             return Err(StoreError::PermissionDenied);
@@ -402,7 +399,11 @@ impl StateStore for JsonFileStore {
             },
         )
     }
+}
 
+
+#[async_trait]
+impl StateStore for JsonFileStore {
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         info!("Reading agent state from {}", path.display());

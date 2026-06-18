@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Result};
 use crate::security::{SecurityManager};
 use serde::Deserialize;
-use crate::store::{StateStore, TemplateStore};
+use crate::store::{StateStore, EntityStore};
 use crate::store_impl::json::JsonFileStore;
 use crate::store_impl::memory::MemoryStore;
 
@@ -24,7 +24,7 @@ pub enum PersistenceBackend {
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct PersistenceConfig {
-    pub template_store: Option<PersistenceBackend>,
+    pub entity_store: Option<PersistenceBackend>,
     pub state_store: Option<PersistenceBackend>,
 }
 
@@ -40,11 +40,11 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn create_template_store(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<dyn TemplateStore>> {
-        let store : Arc<dyn TemplateStore> = match &self.persistence {
+    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<dyn EntityStore>> {
+        let store : Arc<dyn EntityStore> = match &self.persistence {
             None => Arc::new(MemoryStore::new()),
             Some(persistence) => {
-                match &persistence.template_store {
+                match &persistence.entity_store {
                     Some(PersistenceBackend::Default) => Arc::new(MemoryStore::new()),
                     Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::new()),
                     Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use caelumora_model::store::{TemplateStore};
+use caelumora_model::store::{EntityStore};
 use caelumora_model::agent::{Personality, PersonalityId};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::template::{
@@ -14,7 +14,7 @@ use caelumora_runtime::component::{
 
 use caelumora_model::security::SecurityContext;
 
-pub async fn setup_initial_data(store: &Arc<dyn TemplateStore>) -> anyhow::Result<()> {
+pub async fn setup_initial_data(store: &Arc<dyn EntityStore>) -> anyhow::Result<()> {
     let ctx = SecurityContext::default();
     let jonathan = create_personality(
         "jonathan-assistant",

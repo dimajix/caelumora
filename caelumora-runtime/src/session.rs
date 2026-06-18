@@ -32,7 +32,7 @@ impl SessionLoop {
         }
 
         let event_sender = runtime_manager.event_bus().session_event_sender(session_id);
-        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.state_store()).await?);
+        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.entity_store()).await?);
 
         Ok(Self {
             session_controller,
@@ -171,7 +171,7 @@ impl SessionManager {
     }
 
     pub async fn load_session(&self, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let session = self.runtime_manager.state_store().get_session(&SecurityContext::default(), id).await.expect("failed to load session");
+        let session = self.runtime_manager.entity_store().get_session(&SecurityContext::default(), id).await.expect("failed to load session");
         let session_loop = SessionLoop::new(session, self.runtime_manager.clone()).await?;
         let session_ref = Arc::new(session_loop);
         self.sessions.insert(id, session_ref.clone());

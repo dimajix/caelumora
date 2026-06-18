@@ -2,7 +2,7 @@ pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::{StateStore, TemplateStore};
+use crate::store::{StateStore, EntityStore};
 use crate::user::UserId;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
@@ -18,19 +18,19 @@ pub enum SessionUpdateEvent {
 pub struct SessionController {
     session: ArcSwap<Session>,
     event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
-    state_store: Arc<dyn StateStore>,
+    entity_store: Arc<dyn EntityStore>,
 }
 
 impl SessionController {
     pub async fn new(
         session: Session,
         event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
-        state_store: Arc<dyn StateStore>
+        entity_store: Arc<dyn EntityStore>
     ) -> anyhow::Result<Self> {
         Ok(Self {
             session: ArcSwap::from_pointee(session),
             event_sender,
-            state_store,
+            entity_store,
         })
     }
 
@@ -63,7 +63,7 @@ impl SessionController {
                 let session = Arc::new(session);
                 self.session.store(session.clone());
                 let ctx = SecurityContext::default();
-                self.state_store.update_session(&ctx, &session).await.expect("failed to update session");
+                self.entity_store.update_session(&ctx, &session).await.expect("failed to update session");
             }
         }
     }
@@ -75,8 +75,7 @@ pub struct SessionContext {
     pub id: SessionId,
     pub owner: UserId,
     pub security: SecurityContext,
-    pub state_store: Arc<dyn StateStore>,
-    pub template_store: Arc<dyn TemplateStore>,
+    pub entity_store: Arc<dyn EntityStore>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

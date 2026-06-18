@@ -45,20 +45,20 @@ async fn main() -> anyhow::Result<()> {
 
     let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let state_store = config.create_state_store(security_manager.clone())?;
-    let template_store = config.create_template_store(security_manager.clone())?;
+    let entity_store = config.create_entity_store(security_manager.clone())?;
 
     let runtime_manager = Arc::new(RuntimeManager::new(
         state_store.clone(),
-        template_store.clone(),
+        entity_store.clone(),
     ));
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
-    setup_initial_data(&template_store).await?;
+    setup_initial_data(&entity_store).await?;
 
     let state = Arc::new(AppState {
         runtime_manager,
         session_manager,
-        template_store,
+        entity_store,
         state_store,
         running_sessions: DashMap::new(),
     });
