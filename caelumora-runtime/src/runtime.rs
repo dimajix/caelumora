@@ -9,12 +9,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use caelumora_model::store::{StateStore, TemplateStore};
 use crate::component_impl::{context, history};
-use crate::security::{DummySecurityManager, SecurityManager, SecurityContext};
+use crate::security::{DummySecurityManager, SecurityManager};
 use serde::{Deserialize, Serialize};
 use caelumora_model::session::{SessionId, SessionUpdateEvent};
 use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
 use caelumora_model::agent::{AgentId, AgentUpdateEvent};
 use caelumora_model::message::ActorId;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::user::{UserId, UserUpdateEvent};
 use crate::event::EventBus;
 

@@ -20,6 +20,7 @@ use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, ComponentFailPolicy, STAGE_PERCEIVE};
+use caelumora_model::security::SecurityContext;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
@@ -255,9 +256,13 @@ async fn main() -> anyhow::Result<()> {
     let runtime = Arc::new(RuntimeManager::new(state_store.clone(), template_store.clone()));
     let template = setup_templates(&template_store)?;
 
+    let session_id = SessionId(Uuid::new_v4());
+    let owner = UserId::default();
+    let security = SecurityContext::default();
     let context = SessionContext {
-        id: SessionId(Uuid::new_v4()),
-        owner: UserId(Uuid::nil()),
+        id: session_id,
+        owner,
+        security,
         state_store: state_store.clone(),
         template_store: template_store.clone(),
     };

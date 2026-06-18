@@ -1,8 +1,8 @@
-use crate::security::SecurityContext;
 use async_trait::async_trait;
 use caelumora_model::message::{ActorId, Message};
 use futures::stream::BoxStream;
 use std::fmt::Debug;
+use caelumora_model::security::SecurityContext;
 
 #[async_trait]
 pub trait MessageFilter: Send + Sync {

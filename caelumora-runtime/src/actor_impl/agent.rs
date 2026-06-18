@@ -6,9 +6,9 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use caelumora_model::message::{ActorId, Message};
+use caelumora_model::security::SecurityContext;
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::agent::AgentLoop;
-use crate::security::SecurityContext;
 use crate::runtime::GlobalEvent;
 
 #[derive(Debug)]

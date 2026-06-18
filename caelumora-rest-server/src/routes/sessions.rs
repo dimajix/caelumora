@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use uuid::Uuid;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::user::UserId;
@@ -20,9 +21,11 @@ pub async fn create_session(
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
+    let security = SecurityContext::default();
     let context = SessionContext {
         id: session_id,
         owner,
+        security,
         state_store: state.state_store.clone(),
         template_store: state.template_store.clone(),
     };

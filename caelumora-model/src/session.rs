@@ -7,6 +7,7 @@ use crate::user::UserId;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
 use crate::event::EventSender;
+use crate::security::SecurityContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -74,6 +75,7 @@ define_id!(SessionId);
 pub struct SessionContext {
     pub id: SessionId,
     pub owner: UserId,
+    pub security: SecurityContext,
     pub state_store: Arc<dyn StateStore>,
     pub template_store: Arc<dyn TemplateStore>,
 }

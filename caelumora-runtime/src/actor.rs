@@ -1,5 +1,4 @@
 use crate::message::MessageEvent;
-use crate::security::SecurityContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{ActorId, Message};
@@ -11,6 +10,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
+use caelumora_model::security::SecurityContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventContext {

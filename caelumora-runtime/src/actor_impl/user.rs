@@ -9,10 +9,10 @@ use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::user::{User, UserController};
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
-use crate::security::SecurityContext;
 use crate::runtime::GlobalEvent;
 use async_trait::async_trait;
 use chrono::Utc;
+use caelumora_model::security::SecurityContext;
 
 #[derive(Debug)]
 pub struct UserActor {

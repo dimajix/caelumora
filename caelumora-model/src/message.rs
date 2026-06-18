@@ -11,8 +11,9 @@ use uuid::Uuid;
 define_id!(MessageId);
 
 
-#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActorId {
+    #[default]
     None,
     User(UserId),
     Agent(AgentId)

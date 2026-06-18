@@ -1,6 +1,5 @@
 use crate::message::{MessageEvent};
 use crate::runtime::RuntimeManager;
-use crate::security::SecurityContext;
 use crate::component::{
     ComponentContainer, ContextProvider, EmitOutProcessor, MessageProcessor, PerceiveInProcessor,
     PlanPreProcessor, ComponentImpl, TurnContext,
@@ -20,6 +19,7 @@ use futures::TryStreamExt;
 use std::sync::Arc;
 use log::{debug, warn};
 use tokio::sync::Mutex;
+use caelumora_model::security::SecurityContext;
 
 #[derive(Debug)]
 struct AgentLoopState {

@@ -1,9 +1,8 @@
 use std::fmt::Debug;
-use std::sync::Arc;
 
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
-use crate::session::{Participant, Session, SessionId, SessionState};
+use crate::session::{Session, SessionId, SessionState};
 use crate::template::{SessionTemplate, SessionTemplateId};
 
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +59,7 @@ pub mod tests {
     use uuid::Uuid;
     use super::*;
     use crate::meta::Metadata;
+    use crate::security::SecurityContext;
     use crate::template::{ScopeTemplate, SessionTemplateId};
     use crate::user::UserId;
 
@@ -254,6 +254,7 @@ pub mod tests {
         let context = crate::session::SessionContext {
             id: SessionId(Uuid::new_v4()),
             owner: UserId::default(),
+            security: SecurityContext::default(),
             template_store: template_store.clone(),
             state_store: state_store.clone(),
         };
@@ -287,6 +288,7 @@ pub mod tests {
         let context = crate::session::SessionContext {
             id: SessionId(Uuid::new_v4()),
             owner: UserId::default(),
+            security: SecurityContext::default(),
             template_store: template_store.clone(),
             state_store: state_store.clone(),
         };
