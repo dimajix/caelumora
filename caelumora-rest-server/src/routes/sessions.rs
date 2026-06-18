@@ -4,7 +4,6 @@ use uuid::Uuid;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::SessionTemplateId;
-use caelumora_model::user::UserId;
 use crate::state::AppState;
 use crate::models::{CreateSessionRequest, SessionResponse, RenameSessionRequest};
 
@@ -21,7 +20,7 @@ pub async fn create_session(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let session_id = SessionId(Uuid::new_v4());
-    let owner = UserId::default();
+    let owner = state.user_id;
     let security = SecurityContext::default();
     let context = SessionContext {
         id: session_id,

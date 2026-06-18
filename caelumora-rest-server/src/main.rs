@@ -56,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     setup_initial_data(&entity_store).await?;
 
     let state = Arc::new(AppState {
+        user_id: caelumora_model::user::UserId::default(),
         runtime_manager,
         session_manager,
         entity_store,

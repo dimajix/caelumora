@@ -3,9 +3,11 @@ use caelumora_model::store::{StateStore, EntityStore};
 use caelumora_model::session::SessionId;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
+use caelumora_model::user::UserId;
 use dashmap::DashMap;
 
 pub struct AppState {
+    pub user_id: UserId,
     #[allow(dead_code)]
     pub runtime_manager: Arc<RuntimeManager>,
     pub session_manager: Arc<SessionManager>,

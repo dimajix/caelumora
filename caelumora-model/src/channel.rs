@@ -1,3 +1,4 @@
+use crate::user::{UserId};
 use crate::agent::Agent;
 use crate::message::MessageHistory;
 use arc_swap::ArcSwap;
@@ -96,6 +97,6 @@ impl ChannelState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Participant {
-    User,
+    User(UserId),
     Agent(Agent),
 }

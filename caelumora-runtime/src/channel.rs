@@ -7,7 +7,7 @@ use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant, ChannelController};
 use caelumora_model::session::{Session, SessionId};
-use caelumora_model::user::{User, UserId};
+use caelumora_model::user::User;
 use log::{debug, info, warn};
 use std::any::Any;
 use std::collections::HashMap;
@@ -16,7 +16,6 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use uuid::Uuid;
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
@@ -138,9 +137,9 @@ impl ChannelLoop {
 
     async fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
-            Participant::User => {
+            Participant::User(user_id) => {
                 let user = User {
-                    id: UserId(Uuid::new_v4()),
+                    id: *user_id,
                     username: "user".to_string(),
                     email: String::new(),
                     roles: vec!["user".to_string()],
