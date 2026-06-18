@@ -434,6 +434,13 @@ impl EntityStore for JsonFileStore {
         require_entity(loaded, "user", id.to_string())
     }
 
+    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<Option<User>> {
+        let _ = _ctx;
+        let dir = self.users_dir();
+        let users: Vec<Persisted<User>> = read_all_from_dir(&dir)?;
+        Ok(users.into_iter().find(|u| u.value.username == name).map(|u| u.value))
+    }
+
     async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
         let path = self.user_path(value.id);
         if !path.exists() {

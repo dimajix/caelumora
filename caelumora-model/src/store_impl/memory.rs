@@ -221,6 +221,13 @@ impl EntityStore for MemoryStore {
         require_entity(values.get(&id).cloned(), "user", id.to_string())
     }
 
+    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<Option<User>> {
+        let _ = _ctx;
+        self.read_lock(&self.users, |users| {
+            users.values().find(|u| u.username == name).cloned()
+        })
+    }
+
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.users, |v| {

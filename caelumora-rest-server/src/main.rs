@@ -22,6 +22,10 @@ struct Args {
     /// Path to a specific config file
     #[arg(short, long)]
     config: Option<std::path::PathBuf>,
+
+    /// Username to use
+    #[arg(short, long, default_value = "user")]
+    user: String,
 }
 
 #[tokio::main]
@@ -53,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     ));
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
-    setup_initial_data(&entity_store).await?;
+    setup_initial_data(&entity_store, &args.user).await?;
 
     let state = Arc::new(AppState {
         user_id: caelumora_model::user::UserId::default(),

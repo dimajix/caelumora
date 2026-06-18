@@ -55,6 +55,7 @@ pub trait EntityStore : Debug + Sync + Send {
     // Users
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
+    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<Option<User>>;
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
 }
 
