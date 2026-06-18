@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
-use caelumora_model::store::Store;
+use caelumora_model::store::{TemplateStore};
 use caelumora_model::agent::{Personality, PersonalityId};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::template::{
@@ -12,7 +12,7 @@ use caelumora_runtime::component::{
     STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
 };
 
-pub fn setup_initial_data(store: &Arc<dyn Store>) -> anyhow::Result<()> {
+pub fn setup_initial_data(store: &Arc<dyn TemplateStore>) -> anyhow::Result<()> {
     let jonathan = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",

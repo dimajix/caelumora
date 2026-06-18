@@ -4,10 +4,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use clap::Parser;
 
-use caelumora_model::store_impl::memory::MemoryStore;
-use caelumora_model::store_impl::json::JsonFileStore;
-use caelumora_model::store::Store;
-use caelumora_model::config::{AppConfig, PersistenceBackend};
+use caelumora_model::config::{AppConfig};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 
@@ -39,28 +36,29 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let store: Arc<dyn Store> = if let Some(config_path) = args.config {
-        let config = AppConfig::load(config_path)?;
-        match config.persistence.backend {
-            PersistenceBackend::Memory => Arc::new(MemoryStore::new()),
-            PersistenceBackend::Json { path } => Arc::new(JsonFileStore::new(path)?),
-        }
-    } else {
-        Arc::new(MemoryStore::new())
+    let config = if let Some(config_path) = args.config {
+        AppConfig::load(config_path)?
+    }
+    else {
+        AppConfig::default()
     };
 
+    let state_store = config.create_state_store()?;
+    let template_store = config.create_template_store()?;
+
     let runtime_manager = Arc::new(RuntimeManager::new(
-        store.clone(),
-        store.clone(),
+        state_store.clone(),
+        template_store.clone(),
     ));
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
-    setup_initial_data(&store)?;
+    setup_initial_data(&template_store)?;
 
     let state = Arc::new(AppState {
         runtime_manager,
         session_manager,
-        store,
+        template_store,
+        state_store,
         running_sessions: DashMap::new(),
     });
 

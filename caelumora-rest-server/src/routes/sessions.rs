@@ -13,7 +13,7 @@ pub async fn create_session(
     Json(payload): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let template_id = SessionTemplateId(payload.template_id);
-    let template = state.store.list_session_templates()
+    let template = state.template_store.list_session_templates()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .find(|t| t.id == template_id)
@@ -21,7 +21,7 @@ pub async fn create_session(
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
-    let resolver = Box::new(StoreBackedEntityResolver::new(state.store.clone(), state.store.clone()));
+    let resolver = Box::new(StoreBackedEntityResolver::new(state.template_store.clone(), state.state_store.clone()));
     let context = SessionContext {
         id: session_id,
         owner,

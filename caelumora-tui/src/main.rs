@@ -1,8 +1,6 @@
 use caelumora_model::agent::{Personality};
-use caelumora_model::store::Store;
-use caelumora_model::store_impl::memory::MemoryStore;
-use caelumora_model::store_impl::json::JsonFileStore;
-use caelumora_model::config::{AppConfig, PersistenceBackend};
+use caelumora_model::store::{TemplateStore};
+use caelumora_model::config::{AppConfig};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::StoreBackedEntityResolver;
@@ -92,7 +90,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     }
 }
 
-fn setup_templates(store: &Arc<dyn Store>) -> anyhow::Result<SessionTemplate> {
+fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemplate> {
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
@@ -245,23 +243,23 @@ async fn main() -> anyhow::Result<()> {
 
     init_logging();
 
-    let store: Arc<dyn Store> = if let Some(config_path) = args.config {
-        let config = AppConfig::load(config_path)?;
-        match config.persistence.backend {
-            PersistenceBackend::Memory => Arc::new(MemoryStore::new()),
-            PersistenceBackend::Json { path } => Arc::new(JsonFileStore::new(path)?),
-        }
-    } else {
-        Arc::new(MemoryStore::new())
+    let config = if let Some(config_path) = args.config {
+        AppConfig::load(config_path)?
+    }
+    else {
+        AppConfig::default()
     };
 
-    let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
-    let template = setup_templates(&store)?;
+    let state_store = config.create_state_store()?;
+    let template_store = config.create_template_store()?;
+
+    let runtime = Arc::new(RuntimeManager::new(state_store.clone(), template_store.clone()));
+    let template = setup_templates(&template_store)?;
 
     let context = SessionContext {
         id: SessionId(Uuid::new_v4()),
         owner: UserId(Uuid::nil()),
-        resolver: Box::new(StoreBackedEntityResolver::new(store.clone(), store.clone())),
+        resolver: Box::new(StoreBackedEntityResolver::new(template_store.clone(), state_store.clone())),
     };
     let session = template.instantiate("default-session".to_string(), &context)?;
     let session_loop = Arc::new(SessionLoop::new(session, runtime)?);

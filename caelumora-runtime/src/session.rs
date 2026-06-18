@@ -1,14 +1,12 @@
 use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionController};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use crate::actor::Envelope;
 
 struct ChannelHandle {
     id: ChannelId,
