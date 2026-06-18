@@ -1,6 +1,7 @@
 use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionController};
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -170,7 +171,7 @@ impl SessionManager {
     }
 
     pub fn load_session(&self, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let session = self.runtime_manager.state_store().get_session(id)?;
+        let session = self.runtime_manager.state_store().get_session(&SecurityContext::default(), id).expect("failed to load session");
         let session_loop = SessionLoop::new(session, self.runtime_manager.clone())?;
         let session_ref = Arc::new(session_loop);
         self.sessions.insert(id, session_ref.clone());

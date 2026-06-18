@@ -1,3 +1,4 @@
+use crate::security::SecurityContext;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::sync::Arc;
@@ -63,9 +64,8 @@ impl AgentController {
                 agent.metadata.name = name.clone();
                 let agent = Arc::new(agent);
                 self.agent.store(agent.clone());
-                if let Err(e) = self.state_store.update_agent(&agent) {
-                    log::error!("Failed to persist agent update: {}", e);
-                }
+                let ctx = SecurityContext::default();
+                self.state_store.update_agent(&ctx, &agent).expect("failed to update agent");
             }
         }
     }

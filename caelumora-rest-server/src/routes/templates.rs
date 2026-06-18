@@ -3,6 +3,9 @@ use axum::{extract::State, Json};
 use caelumora_model::template::SessionTemplate;
 use crate::state::AppState;
 
+use caelumora_model::security::SecurityContext;
+
 pub async fn list_templates(State(state): State<Arc<AppState>>) -> Json<Vec<SessionTemplate>> {
-    Json(state.template_store.list_session_templates().unwrap_or_default())
+    let ctx = SecurityContext::default();
+    Json(state.template_store.list_session_templates(&ctx).expect("failed to list templates"))
 }

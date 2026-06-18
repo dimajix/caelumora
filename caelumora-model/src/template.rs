@@ -97,7 +97,7 @@ impl SessionTemplate {
             created_at: now,
             updated_at: now,
         };
-        context.state_store.create_session(&session)?;
+        context.state_store.create_session(&context.security, &session).expect("failed to create session");
         Ok(session)
     }
 }
@@ -120,12 +120,12 @@ impl ParticipantTemplate {
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
                 let sc = scope.instantiate(&context);
-                let agent = if let Some(agent) = context.state_store.find_agent_by_name(name, &sc)? {
+                let agent = if let Some(agent) = context.state_store.find_agent_by_name(&context.security, name, &sc).expect("failed to find agent") {
                     agent
                 } else {
-                    let personality = context.template_store.get_personality(personality_id.clone())?;
+                    let personality = context.template_store.get_personality(&context.security, personality_id.clone()).expect("failed to get personality");
                     let agent = crate::agent::Agent::new(name.clone(), sc, &personality);
-                    context.state_store.create_agent(&agent)?;
+                    context.state_store.create_agent(&context.security, &agent).expect("failed to create agent");
                     agent
                 };
                 Participant::Agent(agent)

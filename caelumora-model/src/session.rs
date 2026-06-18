@@ -27,6 +27,8 @@ impl SessionController {
         event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
         state_store: Arc<dyn StateStore>
     ) -> anyhow::Result<Self> {
+        let ctx = SecurityContext::default();
+        state_store.create_session(&ctx, &session).expect("failed to create session");
         Ok(Self {
             session: ArcSwap::from_pointee(session),
             event_sender,
@@ -62,9 +64,8 @@ impl SessionController {
                 session.metadata.name = name.clone();
                 let session = Arc::new(session);
                 self.session.store(session.clone());
-                if let Err(e) = self.state_store.update_session(&session) {
-                    log::error!("Failed to persist session update: {}", e);
-                }
+                let ctx = SecurityContext::default();
+                self.state_store.update_session(&ctx, &session).expect("failed to update session");
             }
         }
     }

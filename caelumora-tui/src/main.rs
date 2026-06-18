@@ -91,19 +91,20 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
 }
 
 fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemplate> {
+    let ctx = SecurityContext::default();
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
         "Your name is Jonathan Heart. You are a helpful assistant."
     );
-    store.put_personality(&personality_a)?;
+    store.put_personality(&ctx, &personality_a)?;
 
     let personality_b = create_personality(
         "sassy-assistant",
         "A sassy and witty assistant",
         "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant."
     );
-    store.put_personality(&personality_b)?;
+    store.put_personality(&ctx, &personality_b)?;
 
     let template = SessionTemplate {
         id: SessionTemplateId(Uuid::new_v4()),
@@ -134,7 +135,7 @@ fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemp
             }
         ],
     };
-    store.put_session_template(&template)?;
+    store.put_session_template(&ctx, &template)?;
 
     Ok(template)
 }

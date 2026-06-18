@@ -12,9 +12,10 @@ pub async fn create_session(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
+    let ctx = SecurityContext::default();
     let template_id = SessionTemplateId(payload.template_id);
-    let template = state.template_store.list_session_templates()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    let template = state.template_store.list_session_templates(&ctx)
+        .expect("failed to list templates")
         .into_iter()
         .find(|t| t.id == template_id)
         .ok_or(StatusCode::NOT_FOUND)?;

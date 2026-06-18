@@ -41,7 +41,7 @@ impl AgentLoopState {
             Ok(s) => s,
             Err(StoreError::NotFound{entity: _, id:_}) => {
                 let state = AgentState::default();
-                store.put_agent_state(agent_id, &state)?;
+                store.put_agent_state(agent_id, &state).expect("failed to put agent state");
                 state
             }
             Err(e) => {
@@ -201,7 +201,8 @@ impl AgentLoop {
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let personality = runtime_manager.template_store().get_personality(agent.personality_id)?;
+        let security_context = runtime_manager.system_security_context(session_id, channel_id);
+        let personality = runtime_manager.template_store().get_personality(&security_context, agent.personality_id)?;
         let agent_id = agent.id;
         let event_sender = runtime_manager.event_bus().agent_event_sender(session_id, channel_id, agent_id);
         let agent_controller = Arc::new(AgentController::new(agent, event_sender, runtime_manager.state_store()));
