@@ -2,7 +2,7 @@ pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::meta::Metadata;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::{EntityResolver, StateStore};
+use crate::store::{StateStore, TemplateStore};
 use crate::user::UserId;
 use std::sync::Arc;
 use arc_swap::ArcSwap;
@@ -25,12 +25,12 @@ impl SessionController {
         session: Session,
         event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
         state_store: Arc<dyn StateStore>
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
             session: ArcSwap::from_pointee(session),
             event_sender,
             state_store,
-        }
+        })
     }
 
     pub fn load(&self) -> arc_swap::Guard<Arc<Session>> {
@@ -74,7 +74,8 @@ define_id!(SessionId);
 pub struct SessionContext {
     pub id: SessionId,
     pub owner: UserId,
-    pub resolver: Box<dyn EntityResolver>
+    pub state_store: Arc<dyn StateStore>,
+    pub template_store: Arc<dyn TemplateStore>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,4 +91,3 @@ pub struct Session {
 pub struct SessionState {
     pub channels: std::collections::HashMap<ChannelId, ChannelState>,
 }
-

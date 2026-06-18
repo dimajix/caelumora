@@ -85,7 +85,7 @@ impl SessionTemplate {
             channels.push(channel.instantiate(context)?)
         }
 
-        Ok(Session {
+        let session = Session {
             id: context.id,
             metadata: Metadata {
                 name,
@@ -96,7 +96,9 @@ impl SessionTemplate {
             channels,
             created_at: now,
             updated_at: now,
-        })
+        };
+        context.state_store.create_session(&session)?;
+        Ok(session)
     }
 }
 
@@ -112,14 +114,20 @@ pub enum ParticipantTemplate {
 
 impl ParticipantTemplate {
     pub fn instantiate(&self, context:&SessionContext) -> anyhow::Result<Participant> {
-        let resolver = &context.resolver;
         let participant = match self {
             ParticipantTemplate::User => {
                 Participant::User {}
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
                 let sc = scope.instantiate(&context);
-                let agent = resolver.get_or_create_agent(name, &sc, personality_id.clone())?;
+                let agent = if let Some(agent) = context.state_store.find_agent_by_name(name, &sc)? {
+                    agent
+                } else {
+                    let personality = context.template_store.get_personality(personality_id.clone())?;
+                    let agent = crate::agent::Agent::new(name.clone(), sc, &personality);
+                    context.state_store.create_agent(&agent)?;
+                    agent
+                };
                 Participant::Agent(agent)
             },
         };

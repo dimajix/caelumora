@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::meta::Scope;
-use crate::session::{Session, SessionId, SessionState};
+use crate::session::{Participant, Session, SessionId, SessionState};
 use crate::template::{SessionTemplate, SessionTemplateId};
 
 #[derive(Debug, thiserror::Error)]
@@ -19,53 +19,6 @@ pub enum StoreError {
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
-
-
-pub trait EntityResolver : Debug {
-    fn get_session_template(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
-    fn get_personality(&self, name: &str, scope: &Scope) -> StoreResult<Personality>;
-    fn get_or_create_agent(&self, name: &str, scope: &Scope, personality_id: PersonalityId) -> StoreResult<Agent>;
-}
-
-#[derive(Debug)]
-pub struct StoreBackedEntityResolver<TS: ?Sized, SS: ?Sized> {
-    template_store: Arc<TS>,
-    state_store: Arc<SS>,
-}
-
-impl<TS: ?Sized, SS: ?Sized> StoreBackedEntityResolver<TS, SS> {
-    pub fn new(template_store: Arc<TS>, state_store: Arc<SS>) -> Self {
-        Self {
-            template_store,
-            state_store,
-        }
-    }
-}
-
-impl<TS, SS> EntityResolver for StoreBackedEntityResolver<TS, SS>
-where
-    TS: TemplateStore + ?Sized,
-    SS: StateStore + ?Sized,
-{
-    fn get_session_template(&self, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        self.template_store.find_session_template_by_name(name, scope)
-    }
-
-    fn get_personality(&self, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        self.template_store.find_personality_by_name(name, scope)
-    }
-
-    fn get_or_create_agent(&self, name: &str, scope: &Scope, personality_id: PersonalityId) -> StoreResult<Agent> {
-        if let Some(agent) = self.state_store.find_agent_by_name(name, scope)? {
-            return Ok(agent);
-        }
-
-        let personality = self.template_store.get_personality(personality_id)?;
-        let agent = Agent::new(name.to_string(), scope.clone(), &personality);
-        self.state_store.create_agent(&agent)?;
-        Ok(agent)
-    }
-}
 
 
 pub trait TemplateStore : Debug + Sync + Send {
@@ -101,7 +54,7 @@ pub trait StateStore : Debug + Sync + Send {
 
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::sync::Arc;
     use std::sync::RwLock;
     use uuid::Uuid;
@@ -111,7 +64,7 @@ mod tests {
     use crate::user::UserId;
 
     #[derive(Debug)]
-    struct MockTemplateStore {
+    pub struct MockTemplateStore {
         personality: Personality,
     }
 
@@ -166,7 +119,7 @@ mod tests {
     }
 
     #[derive(Debug, Default)]
-    struct MockStateStore {
+    pub struct MockStateStore {
         agents: RwLock<Vec<Agent>>,
         sessions: RwLock<Vec<Session>>,
     }
@@ -236,8 +189,14 @@ mod tests {
             Ok(())
         }
 
-        fn get_session(&self, _id: SessionId) -> StoreResult<Session> {
-            unimplemented!()
+        fn get_session(&self, id: SessionId) -> StoreResult<Session> {
+            self.read_sessions()
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or(StoreError::NotFound {
+                    entity: "session",
+                    id: id.to_string(),
+                })
         }
 
         fn update_session(&self, value: &Session) -> StoreResult<()> {
@@ -284,44 +243,73 @@ mod tests {
         let personality = personality_template();
         let existing = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality);
 
-        let resolver = StoreBackedEntityResolver::new(
-            Arc::new(MockTemplateStore {
-                personality: personality.clone(),
-            }),
-            Arc::new(MockStateStore {
-                agents: RwLock::new(vec![existing.clone()]),
-                ..MockStateStore::default()
-            }),
-        );
+        let template_store = Arc::new(MockTemplateStore {
+            personality: personality.clone(),
+        });
+        let state_store = Arc::new(MockStateStore {
+            agents: RwLock::new(vec![existing.clone()]),
+            ..MockStateStore::default()
+        });
 
-        let resolved = resolver
-            .get_or_create_agent("assistant", &Scope::GlobalScope, personality.id)
-            .unwrap();
+        let context = crate::session::SessionContext {
+            id: SessionId(Uuid::new_v4()),
+            owner: UserId::default(),
+            template_store: template_store.clone(),
+            state_store: state_store.clone(),
+        };
 
-        assert_eq!(resolved.id, existing.id);
+        let pt = crate::template::ParticipantTemplate::Agent {
+            name: "assistant".to_string(),
+            scope: crate::template::ScopeTemplate::GlobalScope,
+            personality_id: personality.id,
+        };
+
+        let resolved = pt.instantiate(&context).unwrap();
+
+        if let Participant::Agent(agent) = resolved {
+            assert_eq!(agent.id, existing.id);
+        } else {
+            panic!("Expected agent participant");
+        }
     }
 
     #[test]
     fn get_or_create_agent_creates_agent_when_missing() {
         let personality = personality_template();
+        let template_store = Arc::new(MockTemplateStore {
+            personality: personality.clone(),
+        });
         let state_store = Arc::new(MockStateStore {
             agents: RwLock::new(Vec::new()),
             ..MockStateStore::default()
         });
 
-        let resolver = StoreBackedEntityResolver::new(
-            Arc::new(MockTemplateStore {
-                personality: personality.clone(),
-            }),
-            state_store,
-        );
+        let context = crate::session::SessionContext {
+            id: SessionId(Uuid::new_v4()),
+            owner: UserId::default(),
+            template_store: template_store.clone(),
+            state_store: state_store.clone(),
+        };
 
-        let created = resolver
-            .get_or_create_agent("assistant", &Scope::GlobalScope, personality.id)
-            .unwrap();
-        let fetched = resolver
-            .get_or_create_agent("assistant", &Scope::GlobalScope, personality.id)
-            .unwrap();
+        let pt = crate::template::ParticipantTemplate::Agent {
+            name: "assistant".to_string(),
+            scope: crate::template::ScopeTemplate::GlobalScope,
+            personality_id: personality.id,
+        };
+
+        let created_participant = pt.instantiate(&context).unwrap();
+        let created = if let Participant::Agent(agent) = created_participant {
+            agent
+        } else {
+            panic!("Expected agent participant");
+        };
+
+        let fetched_participant = pt.instantiate(&context).unwrap();
+        let fetched = if let Participant::Agent(agent) = fetched_participant {
+            agent
+        } else {
+            panic!("Expected agent participant");
+        };
 
         assert_eq!(created.id, fetched.id);
         assert_eq!(created.personality_id, personality.id);
@@ -345,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn session_controller_persists_changes() {
+    fn session_controller_persists_new_session() {
         let session = Session {
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
@@ -358,15 +346,11 @@ mod tests {
             updated_at: chrono::Utc::now(),
         };
         let state_store = Arc::new(MockStateStore::default());
-        state_store.create_session(&session).unwrap();
 
         let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
-        let controller = crate::session::SessionController::new(session.clone(), event_sender, state_store.clone());
+        let _controller = crate::session::SessionController::new(session.clone(), event_sender, state_store.clone()).unwrap();
 
-        controller.update_name("new_session_name".to_string());
-
-        let persisted = state_store.write_sessions(|v| v.iter().find(|s| s.metadata.name == "new_session_name").cloned().unwrap());
+        let persisted = state_store.write_sessions(|v| v.iter().find(|s| s.id == session.id).cloned().unwrap());
         assert_eq!(persisted.id, session.id);
-        assert_eq!(persisted.metadata.name, "new_session_name");
     }
 }

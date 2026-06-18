@@ -2,7 +2,6 @@ use std::sync::Arc;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use uuid::Uuid;
 use caelumora_model::session::{SessionContext, SessionId};
-use caelumora_model::store::StoreBackedEntityResolver;
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::user::UserId;
 use crate::state::AppState;
@@ -21,11 +20,11 @@ pub async fn create_session(
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
-    let resolver = Box::new(StoreBackedEntityResolver::new(state.template_store.clone(), state.state_store.clone()));
     let context = SessionContext {
         id: session_id,
         owner,
-        resolver,
+        state_store: state.state_store.clone(),
+        template_store: state.template_store.clone(),
     };
 
     let name = payload.name.unwrap_or_else(|| template.metadata.name.clone());
@@ -44,7 +43,7 @@ pub async fn create_session(
 
     state.running_sessions.insert(session_id, handle);
 
-    let meta =  session_loop.load().metadata.clone();
+    let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {
         id: session_id,
         name: meta.name.clone(),
@@ -57,7 +56,7 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<Sessi
         state.session_manager.sessions
             .iter()
             .map(|s| {
-                let meta = s.load().metadata.clone();
+                let meta = s.get_session().metadata.clone();
                 SessionResponse {
                     id: s.id(),
                     name: meta.name.clone(),
@@ -93,7 +92,7 @@ pub async fn rename_session(
     session_loop.update_name(payload.name).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let meta =  session_loop.load().metadata.clone();
+    let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {
         id: session_id,
         name: meta.name.clone(),

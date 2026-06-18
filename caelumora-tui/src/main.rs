@@ -3,7 +3,6 @@ use caelumora_model::store::{TemplateStore};
 use caelumora_model::config::{AppConfig};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::session::{SessionContext, SessionId};
-use caelumora_model::store::StoreBackedEntityResolver;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserId;
 use caelumora_model::agent::PersonalityId;
@@ -259,7 +258,8 @@ async fn main() -> anyhow::Result<()> {
     let context = SessionContext {
         id: SessionId(Uuid::new_v4()),
         owner: UserId(Uuid::nil()),
-        resolver: Box::new(StoreBackedEntityResolver::new(template_store.clone(), state_store.clone())),
+        state_store: state_store.clone(),
+        template_store: template_store.clone(),
     };
     let session = template.instantiate("default-session".to_string(), &context)?;
     let session_loop = Arc::new(SessionLoop::new(session, runtime)?);

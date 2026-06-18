@@ -31,7 +31,7 @@ impl SessionLoop {
         }
 
         let event_sender = runtime_manager.event_bus().session_event_sender(session_id);
-        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.state_store()));
+        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.state_store())?);
 
         Ok(Self {
             session_controller,
@@ -45,7 +45,7 @@ impl SessionLoop {
         self.session_controller.id()
     }
 
-    pub fn load(&self) -> arc_swap::Guard<Arc<Session>> {
+    pub fn get_session(&self) -> arc_swap::Guard<Arc<Session>> {
         self.session_controller.load()
     }
 
@@ -163,6 +163,14 @@ impl SessionManager {
 
     pub fn create_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
         let id = session.id;
+        let session_loop = SessionLoop::new(session, self.runtime_manager.clone())?;
+        let session_ref = Arc::new(session_loop);
+        self.sessions.insert(id, session_ref.clone());
+        Ok(session_ref)
+    }
+
+    pub fn load_session(&self, id: SessionId) -> Result<Arc<SessionLoop>> {
+        let session = self.runtime_manager.state_store().get_session(id)?;
         let session_loop = SessionLoop::new(session, self.runtime_manager.clone())?;
         let session_ref = Arc::new(session_loop);
         self.sessions.insert(id, session_ref.clone());

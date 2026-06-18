@@ -71,7 +71,7 @@ Caelumora uses `Controller` types (e.g., `SessionController`, `AgentController`)
 Caelumora uses a tiered storage approach:
 *   **`TemplateStore`**: Stores static definitions like `Personality` and `SessionTemplate`.
 *   **`StateStore`**: Stores dynamic state, including `Agent` identities, `Session` data, and their respective histories and states.
-*   **`EntityResolver`**: A service that reconciles templates and states to instantiate live objects.
+*   **`SessionContext`**: Provides necessary dependencies (stores, session ID, owner) for instantiating live objects from templates.
 
 ## Templates and Identities
 
