@@ -48,16 +48,16 @@ impl AgentController {
         self.agent.load().metadata.name.clone()
     }
 
-    pub fn update_name(&self, new_name: String) {
-        self.apply_update(AgentUpdateEvent::NameChanged(new_name));
+    pub async fn update_name(&self, new_name: String) {
+        self.apply_update(AgentUpdateEvent::NameChanged(new_name)).await;
     }
 
-    fn apply_update(&self, event: AgentUpdateEvent) {
-        self.process_update(&event);
+    async fn apply_update(&self, event: AgentUpdateEvent) {
+        self.process_update(&event).await;
         self.event_sender.send(event);
     }
 
-    pub fn process_update(&self, event: &AgentUpdateEvent) {
+    pub async fn process_update(&self, event: &AgentUpdateEvent) {
         match event {
             AgentUpdateEvent::NameChanged(name) => {
                 let mut agent = (**self.agent.load()).clone();
@@ -65,7 +65,7 @@ impl AgentController {
                 let agent = Arc::new(agent);
                 self.agent.store(agent.clone());
                 let ctx = SecurityContext::default();
-                self.state_store.update_agent(&ctx, &agent).expect("failed to update agent");
+                self.state_store.update_agent(&ctx, &agent).await.expect("failed to update agent");
             }
         }
     }

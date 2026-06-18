@@ -43,8 +43,9 @@ async fn main() -> anyhow::Result<()> {
         AppConfig::default()
     };
 
-    let state_store = config.create_state_store()?;
-    let template_store = config.create_template_store()?;
+    let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
+    let state_store = config.create_state_store(security_manager.clone())?;
+    let template_store = config.create_template_store(security_manager.clone())?;
 
     let runtime_manager = Arc::new(RuntimeManager::new(
         state_store.clone(),
@@ -52,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     ));
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
-    setup_initial_data(&template_store)?;
+    setup_initial_data(&template_store).await?;
 
     let state = Arc::new(AppState {
         runtime_manager,

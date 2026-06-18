@@ -90,21 +90,21 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     }
 }
 
-fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemplate> {
+async fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemplate> {
     let ctx = SecurityContext::default();
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
         "Your name is Jonathan Heart. You are a helpful assistant."
     );
-    store.put_personality(&ctx, &personality_a)?;
+    store.put_personality(&ctx, &personality_a).await?;
 
     let personality_b = create_personality(
         "sassy-assistant",
         "A sassy and witty assistant",
         "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant."
     );
-    store.put_personality(&ctx, &personality_b)?;
+    store.put_personality(&ctx, &personality_b).await?;
 
     let template = SessionTemplate {
         id: SessionTemplateId(Uuid::new_v4()),
@@ -135,7 +135,7 @@ fn setup_templates(store: &Arc<dyn TemplateStore>) -> anyhow::Result<SessionTemp
             }
         ],
     };
-    store.put_session_template(&ctx, &template)?;
+    store.put_session_template(&ctx, &template).await?;
 
     Ok(template)
 }
@@ -251,11 +251,12 @@ async fn main() -> anyhow::Result<()> {
         AppConfig::default()
     };
 
-    let state_store = config.create_state_store()?;
-    let template_store = config.create_template_store()?;
+    let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
+    let state_store = config.create_state_store(security_manager.clone())?;
+    let template_store = config.create_template_store(security_manager.clone())?;
 
     let runtime = Arc::new(RuntimeManager::new(state_store.clone(), template_store.clone()));
-    let template = setup_templates(&template_store)?;
+    let template = setup_templates(&template_store).await?;
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
@@ -267,8 +268,8 @@ async fn main() -> anyhow::Result<()> {
         state_store: state_store.clone(),
         template_store: template_store.clone(),
     };
-    let session = template.instantiate("default-session".to_string(), &context)?;
-    let session_loop = Arc::new(SessionLoop::new(session, runtime)?);
+    let session = template.instantiate("default-session".to_string(), &context).await?;
+    let session_loop = Arc::new(SessionLoop::new(session, runtime).await?);
     let runner = tokio::spawn({
         let session_loop = session_loop.clone();
         async move {

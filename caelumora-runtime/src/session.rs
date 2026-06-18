@@ -23,16 +23,16 @@ pub struct SessionLoop {
 }
 
 impl SessionLoop {
-    pub fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+    pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let session_id = session.id;
         let mut channels = HashMap::new();
         for channel in &session.channels {
-            let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone())?;
+            let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone()).await?;
             channels.insert(cl.id(), Arc::new(cl));
         }
 
         let event_sender = runtime_manager.event_bus().session_event_sender(session_id);
-        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.state_store())?);
+        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.state_store()).await?);
 
         Ok(Self {
             session_controller,
@@ -55,7 +55,7 @@ impl SessionLoop {
     }
 
     pub async fn update_name(&self, new_name: String) -> Result<()> {
-        self.session_controller.update_name(new_name);
+        self.session_controller.update_name(new_name).await;
         Ok(())
     }
 
@@ -115,7 +115,7 @@ impl SessionLoop {
             match global_event {
                 crate::runtime::GlobalEvent::SessionUpdated(sid, event) => {
                     if sid == self.id() {
-                        self.session_controller.process_update(&event);
+                        self.session_controller.process_update(&event).await;
                     }
                 }
                 _ => {}
@@ -162,17 +162,17 @@ impl SessionManager {
         }
     }
 
-    pub fn create_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
+    pub async fn create_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
         let id = session.id;
-        let session_loop = SessionLoop::new(session, self.runtime_manager.clone())?;
+        let session_loop = SessionLoop::new(session, self.runtime_manager.clone()).await?;
         let session_ref = Arc::new(session_loop);
         self.sessions.insert(id, session_ref.clone());
         Ok(session_ref)
     }
 
-    pub fn load_session(&self, id: SessionId) -> Result<Arc<SessionLoop>> {
-        let session = self.runtime_manager.state_store().get_session(&SecurityContext::default(), id).expect("failed to load session");
-        let session_loop = SessionLoop::new(session, self.runtime_manager.clone())?;
+    pub async fn load_session(&self, id: SessionId) -> Result<Arc<SessionLoop>> {
+        let session = self.runtime_manager.state_store().get_session(&SecurityContext::default(), id).await.expect("failed to load session");
+        let session_loop = SessionLoop::new(session, self.runtime_manager.clone()).await?;
         let session_ref = Arc::new(session_loop);
         self.sessions.insert(id, session_ref.clone());
         Ok(session_ref)

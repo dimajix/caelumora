@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use log::info;
@@ -50,14 +51,15 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
 
 use crate::security::SecurityContext;
 
+#[async_trait]
 impl TemplateStore for MemoryStore {
-    fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.personalities, |v| v.clone())?;
         require_entity(values.get(&id).cloned(), "agent_template", id.to_string())
     }
 
-    fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.personalities, |v| v.clone())?;
         require_entity(
@@ -70,24 +72,24 @@ impl TemplateStore for MemoryStore {
         )
     }
 
-    fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         let _ = ctx; // Placeholder for security check
         self.read_lock(&self.personalities, |v| v.values().cloned().collect())
     }
 
-    fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
+    async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.personalities, |v| {
             v.insert(value.id, value.clone());
         })
     }
 
-    fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
+    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.personalities, |v| v.remove(&id).is_some())
     }
 
-    fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.session_templates, |v| v.clone())?;
         require_entity(
@@ -100,19 +102,19 @@ impl TemplateStore for MemoryStore {
         )
     }
 
-    fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         let _ = ctx; // Placeholder for security check
         self.read_lock(&self.session_templates, |v| v.values().cloned().collect())
     }
 
-    fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
+    async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.session_templates, |v| {
             v.insert(value.metadata.name.clone(), value.clone());
         })
     }
 
-    fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.session_templates, |v| {
             let key = v
@@ -127,8 +129,9 @@ impl TemplateStore for MemoryStore {
     }
 }
 
+#[async_trait]
 impl StateStore for MemoryStore {
-    fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.agents, |v| {
             if v.contains_key(&value.id) {
@@ -139,13 +142,13 @@ impl StateStore for MemoryStore {
         })?
     }
 
-    fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
+    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.agents, |v| v.clone())?;
         require_entity(values.get(&id).cloned(), "agent", id.to_string())
     }
 
-    fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
         let _ = ctx; // Placeholder for security check
         self.read_lock(&self.agents, |v| {
             v.values()
@@ -154,7 +157,7 @@ impl StateStore for MemoryStore {
         })
     }
 
-    fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.agents, |v| {
             if !v.contains_key(&value.id) {
@@ -168,7 +171,7 @@ impl StateStore for MemoryStore {
         })?
     }
 
-    fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.sessions, |v| {
             if v.contains_key(&value.id) {
@@ -179,13 +182,13 @@ impl StateStore for MemoryStore {
         })?
     }
 
-    fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.sessions, |v| v.clone())?;
         require_entity(values.get(&id).cloned(), "session", id.to_string())
     }
 
-    fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
         self.write_lock(&self.sessions, |v| {
             if !v.contains_key(&value.id) {
@@ -199,18 +202,18 @@ impl StateStore for MemoryStore {
         })?
     }
 
-    fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
+    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let values = self.read_lock(&self.agent_states, |v| v.clone())?;
         require_entity(values.get(&agent_id).cloned(), "agent_state", agent_id.to_string())
     }
 
-    fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
+    async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
         self.write_lock(&self.agent_states, |v| {
             v.insert(agent_id, state.clone());
         })
     }
 
-    fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
+    async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
         let values = self.read_lock(&self.session_states, |v| v.clone())?;
         require_entity(
             values.get(&session_id).cloned(),
@@ -219,7 +222,7 @@ impl StateStore for MemoryStore {
         )
     }
 
-    fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
+    async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         self.write_lock(&self.session_states, |v| {
             v.insert(session_id, state.clone());
         })
@@ -263,12 +266,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn personality_lookup_honors_scope() {
+    #[tokio::test]
+    async fn personality_lookup_honors_scope() {
         let store = MemoryStore::new();
         let ctx = SecurityContext::default();
         store
             .put_personality(&ctx, &make_personality("assistant", Scope::GlobalScope))
+            .await
             .unwrap();
         store
             .put_personality(
@@ -280,16 +284,18 @@ mod tests {
                     },
                 ),
             )
+            .await
             .unwrap();
 
         let global = store
             .find_personality_by_name(&ctx, "assistant", &Scope::GlobalScope)
+            .await
             .unwrap();
         assert_eq!(global.metadata.scope, Scope::GlobalScope);
     }
 
-    #[test]
-    fn session_template_lookup_honors_scope() {
+    #[tokio::test]
+    async fn session_template_lookup_honors_scope() {
         let store = MemoryStore::new();
         let ctx = SecurityContext::default();
         let user_scope = Scope::UserScope {
@@ -298,26 +304,29 @@ mod tests {
 
         store
             .put_session_template(&ctx, &make_session_template("pairing", Scope::GlobalScope))
+            .await
             .unwrap();
         store
             .put_session_template(&ctx, &make_session_template("pairing", user_scope.clone()))
+            .await
             .unwrap();
 
         let loaded = store
             .find_session_template_by_name(&ctx, "pairing", &user_scope)
+            .await
             .unwrap();
         assert_eq!(loaded.metadata.scope, user_scope);
     }
 
-    #[test]
-    fn create_agent_conflict_is_reported() {
+    #[tokio::test]
+    async fn create_agent_conflict_is_reported() {
         let store = MemoryStore::new();
         let ctx = SecurityContext::default();
         let personality = make_personality("assistant", Scope::GlobalScope);
         let agent = Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality);
 
-        store.create_agent(&ctx, &agent).unwrap();
-        let conflict = store.create_agent(&ctx, &agent).unwrap_err();
+        store.create_agent(&ctx, &agent).await.unwrap();
+        let conflict = store.create_agent(&ctx, &agent).await.unwrap_err();
         assert!(matches!(conflict, StoreError::Conflict(_)));
     }
 }

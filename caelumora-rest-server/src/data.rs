@@ -14,21 +14,21 @@ use caelumora_runtime::component::{
 
 use caelumora_model::security::SecurityContext;
 
-pub fn setup_initial_data(store: &Arc<dyn TemplateStore>) -> anyhow::Result<()> {
+pub async fn setup_initial_data(store: &Arc<dyn TemplateStore>) -> anyhow::Result<()> {
     let ctx = SecurityContext::default();
     let jonathan = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
         "Your name is Jonathan Heart. You are a self-made millionaire. You always wanted to be a quiz-master.",
     );
-    store.put_personality(&ctx, &jonathan)?;
+    store.put_personality(&ctx, &jonathan).await?;
 
     let sassy = create_personality(
         "sassy-assistant",
         "A sassy and witty assistant",
         "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant who loves to play quiz games.",
     );
-    store.put_personality(&ctx, &sassy)?;
+    store.put_personality(&ctx, &sassy).await?;
 
     let template_a = SessionTemplate {
         id: SessionTemplateId(Uuid::new_v4()),
@@ -52,7 +52,7 @@ pub fn setup_initial_data(store: &Arc<dyn TemplateStore>) -> anyhow::Result<()> 
             ],
         }],
     };
-    store.put_session_template(&ctx, &template_a)?;
+    store.put_session_template(&ctx, &template_a).await?;
 
     let template_b = SessionTemplate {
         id: SessionTemplateId(Uuid::new_v4()),
@@ -81,7 +81,7 @@ pub fn setup_initial_data(store: &Arc<dyn TemplateStore>) -> anyhow::Result<()> 
             ],
         }],
     };
-    store.put_session_template(&ctx, &template_b)?;
+    store.put_session_template(&ctx, &template_b).await?;
 
     Ok(())
 }

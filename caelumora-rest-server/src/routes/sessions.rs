@@ -14,7 +14,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let ctx = SecurityContext::default();
     let template_id = SessionTemplateId(payload.template_id);
-    let template = state.template_store.list_session_templates(&ctx)
+    let template = state.template_store.list_session_templates(&ctx).await
         .expect("failed to list templates")
         .into_iter()
         .find(|t| t.id == template_id)
@@ -32,10 +32,10 @@ pub async fn create_session(
     };
 
     let name = payload.name.unwrap_or_else(|| template.metadata.name.clone());
-    let session = template.instantiate(name, &context)
+    let session = template.instantiate(name, &context).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let session_loop = state.session_manager.create_session(session)
+    let session_loop = state.session_manager.create_session(session).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let session_loop_clone = session_loop.clone();

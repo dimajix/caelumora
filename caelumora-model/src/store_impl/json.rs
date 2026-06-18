@@ -1,3 +1,6 @@
+use async_trait::async_trait;
+use std::sync::Arc;
+use crate::security::SecurityManager;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::session::{Session, SessionId, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, TemplateStore};
@@ -15,13 +18,17 @@ use log::info;
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
+    security_manager: Arc<dyn SecurityManager>,
 }
 
 impl JsonFileStore {
-    pub fn new(root: impl Into<PathBuf>) -> StoreResult<Self> {
+    pub fn new(root: impl Into<PathBuf>, security_manager: Arc<dyn SecurityManager>) -> StoreResult<Self> {
         let root = root.into();
         info!("Creating JSON file store at {:?}", root);
-        let store = Self { root };
+        let store = Self {
+            root,
+            security_manager,
+        };
         store.ensure_layout()?;
         Ok(store)
     }
@@ -162,19 +169,25 @@ fn sanitize_file_component(value: &str) -> String {
         .collect()
 }
 
-use crate::security::SecurityContext;
+use crate::security::{ActionType, SecurityContext};
 
+#[async_trait]
 impl TemplateStore for JsonFileStore {
-    fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        let _ = ctx;
+    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        if !self.security_manager.check(ctx, ActionType::GetPersonality(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.personality_path(id);
         info!("Reading personality template from {}", path.display());
         let loaded = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_template", id.to_string())
     }
 
-    fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        let templates = self.list_personalities(ctx)?;
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
+        if !self.security_manager.check(ctx, ActionType::FindPersonality).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        let templates = self.list_personalities(ctx).await?;
         require_entity(
             templates
                 .into_iter()
@@ -184,16 +197,21 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        let _ = ctx;
+    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+        if !self.security_manager.check(ctx, ActionType::ListPersonalities).await {
+            return Err(StoreError::PermissionDenied);
+        }
         Ok(read_all_from_dir::<Persisted<Personality>>(&self.personality_dir())?
             .into_iter()
             .map(|p| p.value)
             .collect())
     }
 
-    fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        let templates = self.list_session_templates(ctx)?;
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
+        if !self.security_manager.check(ctx, ActionType::FindSessionTemplate).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        let templates = self.list_session_templates(ctx).await?;
         require_entity(
             templates
                 .into_iter()
@@ -203,16 +221,20 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        let _ = ctx;
+    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+        if !self.security_manager.check(ctx, ActionType::ListSessionTemplates).await {
+            return Err(StoreError::PermissionDenied);
+        }
         Ok(read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir())?
             .into_iter()
             .map(|p| p.value)
             .collect())
     }
 
-    fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        let _ = ctx;
+    async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::PutPersonality(value)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.personality_path(value.id);
         info!("Writing personality template to {}", path.display());
         write_json_atomic(
@@ -225,13 +247,17 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        let _ = ctx;
+    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
+        if !self.security_manager.check(ctx, ActionType::DeletePersonality(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         delete_if_exists(&self.personality_path(id))
     }
 
-    fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        let _ = ctx;
+    async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::PutSessionTemplate(value)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.session_template_path(&value.metadata.name);
         info!("Writing session template to {}", path.display());
         write_json_atomic(
@@ -244,9 +270,12 @@ impl TemplateStore for JsonFileStore {
         )
     }
 
-    fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+        if !self.security_manager.check(ctx, ActionType::DeleteSessionTemplate(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let template = self
-            .list_session_templates(ctx)?
+            .list_session_templates(ctx).await?
             .into_iter()
             .find(|t| t.id == id);
 
@@ -259,9 +288,12 @@ impl TemplateStore for JsonFileStore {
 
 
 
+#[async_trait]
 impl StateStore for JsonFileStore {
-    fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        let _ = ctx;
+    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::CreateAgent(value)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.agent_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
@@ -277,16 +309,20 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        let _ = ctx;
+    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
+        if !self.security_manager.check(ctx, ActionType::GetAgent(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.agent_path(id);
         info!("Reading agent from {}", path.display());
         let loaded = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent", id.to_string())
     }
 
-    fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
-        let _ = ctx;
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
+        if !self.security_manager.check(ctx, ActionType::FindAgent).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let agents = read_all_from_dir::<Persisted<Agent>>(&self.agents_dir())?;
         Ok(agents
             .into_iter()
@@ -294,8 +330,10 @@ impl StateStore for JsonFileStore {
             .find(|a| a.metadata.name == name && a.metadata.scope == *scope))
     }
 
-    fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        let _ = ctx;
+    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::UpdateAgent(value.id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.agent_path(value.id);
         if !path.exists() {
             return Err(StoreError::NotFound {
@@ -314,8 +352,10 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        let _ = ctx;
+    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::CreateSession(value)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.session_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
@@ -331,16 +371,20 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        let _ = ctx;
+    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+        if !self.security_manager.check(ctx, ActionType::GetSession(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.session_path(id);
         info!("Reading session from {}", path.display());
         let loaded = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session", id.to_string())
     }
 
-    fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        let _ = ctx;
+    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::UpdateSession(value.id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
         let path = self.session_path(value.id);
         if !path.exists() {
             return Err(StoreError::NotFound {
@@ -359,14 +403,14 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
+    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         info!("Reading agent state from {}", path.display());
         let loaded = read_json_opt::<Persisted<AgentState>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "agent_state", agent_id.to_string())
+        Ok(loaded.unwrap_or_default())
     }
 
-    fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
+    async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
         info!("Writing agent state to {}", path.display());
         write_json_atomic(
@@ -379,14 +423,14 @@ impl StateStore for JsonFileStore {
         )
     }
 
-    fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
+    async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
         let path = self.session_state_path(session_id);
         info!("Reading session state from {}", path.display());
         let loaded = read_json_opt::<Persisted<SessionState>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "session_state", session_id.to_string())
+        Ok(loaded.unwrap_or_default())
     }
 
-    fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
+    async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
         info!("Writing session state to {}", path.display());
         write_json_atomic(
@@ -439,23 +483,25 @@ mod tests {
     #[tokio::test]
     async fn template_roundtrip_works() {
         let dir = tempdir().unwrap();
-        let store = JsonFileStore::new(dir.path()).unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
         let ctx = SecurityContext::default();
 
         let personality = make_personality();
-        store.put_personality(&ctx, &personality).unwrap();
+        store.put_personality(&ctx, &personality).await.unwrap();
 
-        let found = store.get_personality(&ctx, personality.id).unwrap();
+        let found = store.get_personality(&ctx, personality.id).await.unwrap();
         assert_eq!(found.metadata.name, personality.metadata.name);
 
         let session_template = make_session_template();
-        store.put_session_template(&ctx, &session_template).unwrap();
+        store.put_session_template(&ctx, &session_template).await.unwrap();
         let found_session = store
             .find_session_template_by_name(
                 &ctx,
                 &session_template.metadata.name,
                 &session_template.metadata.scope,
             )
+            .await
             .unwrap();
         assert_eq!(
             found_session.metadata.name,
@@ -466,7 +512,8 @@ mod tests {
     #[tokio::test]
     async fn template_list_and_delete_work() {
         let dir = tempdir().unwrap();
-        let store = JsonFileStore::new(dir.path()).unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
         let ctx = SecurityContext::default();
 
         let mut t1 = make_personality();
@@ -474,22 +521,23 @@ mod tests {
         let mut t2 = make_personality();
         t2.metadata.name = "assistant-b".to_string();
 
-        store.put_personality(&ctx, &t1).unwrap();
-        store.put_personality(&ctx, &t2).unwrap();
+        store.put_personality(&ctx, &t1).await.unwrap();
+        store.put_personality(&ctx, &t2).await.unwrap();
 
-        let templates = store.list_personalities(&ctx).unwrap();
+        let templates = store.list_personalities(&ctx).await.unwrap();
         assert_eq!(templates.len(), 2);
 
-        assert!(store.delete_personality(&ctx, t1.id).unwrap());
-        assert!(!store.delete_personality(&ctx, t1.id).unwrap());
-        let err = store.get_personality(&ctx, t1.id).unwrap_err();
+        assert!(store.delete_personality(&ctx, t1.id).await.unwrap());
+        assert!(!store.delete_personality(&ctx, t1.id).await.unwrap());
+        let err = store.get_personality(&ctx, t1.id).await.unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "agent_template", .. }));
     }
 
     #[tokio::test]
     async fn state_roundtrip_works() {
         let dir = tempdir().unwrap();
-        let store = JsonFileStore::new(dir.path()).unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
         let ctx = SecurityContext::default();
 
         let template = make_personality();
@@ -498,20 +546,21 @@ mod tests {
             Scope::GlobalScope,
             &template,
         );
-        store.create_agent(&ctx, &agent).unwrap();
+        store.create_agent(&ctx, &agent).await.unwrap();
 
-        let loaded = store.get_agent(&ctx, agent.id).unwrap();
+        let loaded = store.get_agent(&ctx, agent.id).await.unwrap();
         assert_eq!(loaded.metadata.name, agent.metadata.name);
 
         let state = AgentState::default();
-        store.put_agent_state(agent.id, &state).unwrap();
-        store.get_agent_state(agent.id).unwrap();
+        store.put_agent_state(agent.id, &state).await.unwrap();
+        store.get_agent_state(agent.id).await.unwrap();
     }
 
     #[tokio::test]
     async fn create_conflict_and_update_not_found_are_reported() {
         let dir = tempdir().unwrap();
-        let store = JsonFileStore::new(dir.path()).unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
         let ctx = SecurityContext::default();
 
         let template = make_personality();
@@ -521,15 +570,15 @@ mod tests {
             &template,
         );
 
-        store.create_agent(&ctx, &agent).unwrap();
-        let conflict = store.create_agent(&ctx, &agent).unwrap_err();
+        store.create_agent(&ctx, &agent).await.unwrap();
+        let conflict = store.create_agent(&ctx, &agent).await.unwrap_err();
         assert!(matches!(conflict, StoreError::Conflict(_)));
 
         let missing_agent = Agent {
             id: AgentId(Uuid::new_v4()),
             ..agent
         };
-        let not_found = store.update_agent(&ctx, &missing_agent).unwrap_err();
+        let not_found = store.update_agent(&ctx, &missing_agent).await.unwrap_err();
         assert!(matches!(not_found, StoreError::NotFound { entity: "agent", .. }));
     }
 }

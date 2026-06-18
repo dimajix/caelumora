@@ -52,8 +52,10 @@ impl RuntimeManager {
         history::register(&mut component_registry);
         context::register(&mut component_registry);
 
+        let security_manager = Arc::new(DummySecurityManager::new());
+
         Self {
-            security_manager: Arc::new(DummySecurityManager::new()),
+            security_manager,
             state_store,
             template_store,
             tool_executor: Arc::new(DummyToolExecutor::new()),

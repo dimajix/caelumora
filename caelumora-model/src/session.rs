@@ -22,13 +22,13 @@ pub struct SessionController {
 }
 
 impl SessionController {
-    pub fn new(
+    pub async fn new(
         session: Session,
         event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
         state_store: Arc<dyn StateStore>
     ) -> anyhow::Result<Self> {
         let ctx = SecurityContext::default();
-        state_store.create_session(&ctx, &session).expect("failed to create session");
+        state_store.create_session(&ctx, &session).await.expect("failed to create session");
         Ok(Self {
             session: ArcSwap::from_pointee(session),
             event_sender,
@@ -48,16 +48,16 @@ impl SessionController {
         self.session.load().metadata.name.clone()
     }
 
-    pub fn update_name(&self, new_name: String) {
-        self.apply_update(SessionUpdateEvent::NameChanged(new_name));
+    pub async fn update_name(&self, new_name: String) {
+        self.apply_update(SessionUpdateEvent::NameChanged(new_name)).await;
     }
 
-    fn apply_update(&self, event: SessionUpdateEvent) {
-        self.process_update(&event);
+    async fn apply_update(&self, event: SessionUpdateEvent) {
+        self.process_update(&event).await;
         self.event_sender.send(event);
     }
 
-    pub fn process_update(&self, event: &SessionUpdateEvent) {
+    pub async fn process_update(&self, event: &SessionUpdateEvent) {
         match event {
             SessionUpdateEvent::NameChanged(name) => {
                 let mut session = (**self.session.load()).clone();
@@ -65,7 +65,7 @@ impl SessionController {
                 let session = Arc::new(session);
                 self.session.store(session.clone());
                 let ctx = SecurityContext::default();
-                self.state_store.update_session(&ctx, &session).expect("failed to update session");
+                self.state_store.update_session(&ctx, &session).await.expect("failed to update session");
             }
         }
     }

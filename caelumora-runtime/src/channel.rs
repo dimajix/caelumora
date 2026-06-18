@@ -47,7 +47,7 @@ pub struct ChannelLoop {
 }
 
 impl ChannelLoop {
-    pub fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+    pub async fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let channel_id = channel.id;
         let event_sender = runtime_manager.event_bus().channel_event_sender(session.id, channel_id);
         let channel_controller = Arc::new(ChannelController::new(channel.clone(), event_sender));
@@ -58,7 +58,7 @@ impl ChannelLoop {
 
         let mut actors = HashMap::new();
         for participant in &channel.participants {
-            let actor = Self::create_actor(session, &channel, participant, runtime_manager.clone())?;
+            let actor = Self::create_actor(session, &channel, participant, runtime_manager.clone()).await?;
             moderator.add_actor(actor.as_ref());
             actors.insert(actor.id(), Arc::from(actor));
         }
@@ -136,7 +136,7 @@ impl ChannelLoop {
         })
     }
 
-    fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
+    async fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
             Participant::User => {
                 let user = User {
@@ -149,7 +149,7 @@ impl ChannelLoop {
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let l = AgentLoop::new(session.id, channel.id, agent.clone(), runtime_manager.clone())?;
+                let l = AgentLoop::new(session.id, channel.id, agent.clone(), runtime_manager.clone()).await?;
                 let actor = AgentActor::new(l);
                 Ok(Box::new(actor))
             }

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use anyhow::{Result};
+use crate::security::{DummySecurityManager, SecurityManager};
 use serde::Deserialize;
 use crate::store::{StateStore, TemplateStore};
 use crate::store_impl::json::JsonFileStore;
@@ -39,14 +40,14 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn create_template_store(&self) -> Result<Arc<dyn TemplateStore>> {
+    pub fn create_template_store(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<dyn TemplateStore>> {
         let store : Arc<dyn TemplateStore> = match &self.persistence {
             None => Arc::new(MemoryStore::new()),
             Some(persistence) => {
                 match &persistence.template_store {
                     Some(PersistenceBackend::Default) => Arc::new(MemoryStore::new()),
                     Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::new()),
-                    Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path)?),
+                    Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),
                     None => Arc::new(MemoryStore::new()),
                 }
             }
@@ -54,14 +55,14 @@ impl AppConfig {
         Ok(store)
     }
 
-    pub fn create_state_store(&self) -> Result<Arc<dyn StateStore>> {
+    pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<dyn StateStore>> {
         let store : Arc<dyn StateStore> = match &self.persistence {
             None => Arc::new(MemoryStore::new()),
             Some(persistence) => {
                 match &persistence.state_store {
                     Some(PersistenceBackend::Default) => Arc::new(MemoryStore::new()),
                     Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::new()),
-                    Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path)?),
+                    Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),
                     None => Arc::new(MemoryStore::new()),
                 }
             }

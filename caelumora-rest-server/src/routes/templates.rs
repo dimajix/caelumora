@@ -7,5 +7,5 @@ use caelumora_model::security::SecurityContext;
 
 pub async fn list_templates(State(state): State<Arc<AppState>>) -> Json<Vec<SessionTemplate>> {
     let ctx = SecurityContext::default();
-    Json(state.template_store.list_session_templates(&ctx).expect("failed to list templates"))
+    Json(state.template_store.list_session_templates(&ctx).await.expect("failed to list templates"))
 }

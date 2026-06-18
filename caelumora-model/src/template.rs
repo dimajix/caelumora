@@ -48,11 +48,11 @@ fn default_moderator() -> String {
 }
 
 impl ChannelTemplate {
-    pub fn instantiate(&self, context: &SessionContext) -> anyhow::Result<Channel> {
+    pub async fn instantiate(&self, context: &SessionContext) -> anyhow::Result<Channel> {
         let mut participants = Vec::new();
 
         for participant in &self.participants {
-            participants.push(participant.instantiate(context)?);
+            participants.push(participant.instantiate(context).await?);
         }
 
         Ok(Channel::new(
@@ -77,12 +77,12 @@ pub struct SessionTemplate {
 }
 
 impl SessionTemplate {
-    pub fn instantiate(&self, name:String, context:&SessionContext) -> anyhow::Result<Session> {
+    pub async fn instantiate(&self, name:String, context:&SessionContext) -> anyhow::Result<Session> {
         let now = Utc::now();
 
         let mut channels = Vec::new();
         for channel in &self.channels {
-            channels.push(channel.instantiate(context)?)
+            channels.push(channel.instantiate(context).await?)
         }
 
         let session = Session {
@@ -97,7 +97,7 @@ impl SessionTemplate {
             created_at: now,
             updated_at: now,
         };
-        context.state_store.create_session(&context.security, &session).expect("failed to create session");
+        context.state_store.create_session(&context.security, &session).await.expect("failed to create session");
         Ok(session)
     }
 }
@@ -113,19 +113,19 @@ pub enum ParticipantTemplate {
 }
 
 impl ParticipantTemplate {
-    pub fn instantiate(&self, context:&SessionContext) -> anyhow::Result<Participant> {
+    pub async fn instantiate(&self, context:&SessionContext) -> anyhow::Result<Participant> {
         let participant = match self {
             ParticipantTemplate::User => {
                 Participant::User {}
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
                 let sc = scope.instantiate(&context);
-                let agent = if let Some(agent) = context.state_store.find_agent_by_name(&context.security, name, &sc).expect("failed to find agent") {
+                let agent = if let Some(agent) = context.state_store.find_agent_by_name(&context.security, name, &sc).await.expect("failed to find agent") {
                     agent
                 } else {
-                    let personality = context.template_store.get_personality(&context.security, personality_id.clone()).expect("failed to get personality");
+                    let personality = context.template_store.get_personality(&context.security, personality_id.clone()).await.expect("failed to get personality");
                     let agent = crate::agent::Agent::new(name.clone(), sc, &personality);
-                    context.state_store.create_agent(&context.security, &agent).expect("failed to create agent");
+                    context.state_store.create_agent(&context.security, &agent).await.expect("failed to create agent");
                     agent
                 };
                 Participant::Agent(agent)

@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
@@ -15,6 +16,8 @@ pub enum StoreError {
     Validation(String),
     #[error("backend: {0}")]
     Backend(String),
+    #[error("permission denied")]
+    PermissionDenied,
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -22,35 +25,37 @@ pub type StoreResult<T> = Result<T, StoreError>;
 
 use crate::security::SecurityContext;
 
+#[async_trait]
 pub trait TemplateStore : Debug + Sync + Send {
-    fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality>;
-    fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
-    fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
-    fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
+    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality>;
+    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
+    async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
+    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
 
-    fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
-    fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
-    fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
-    fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
+    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
+    async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
+    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
 }
 
 
+#[async_trait]
 pub trait StateStore : Debug + Sync + Send {
-    fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
-    fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>>;
-    fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
+    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
+    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>>;
+    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
 
-    fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
-    fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
-    fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
+    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
+    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
+    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
 
-    fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
-    fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()>;
+    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
+    async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()>;
 
-    fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState>;
-    fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()>;
+    async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState>;
+    async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()>;
 }
 
 
@@ -70,8 +75,9 @@ pub mod tests {
         personality: Personality,
     }
 
+    #[async_trait]
     impl TemplateStore for MockTemplateStore {
-        fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
             let _ = ctx;
             if self.personality.id == id {
                 Ok(self.personality.clone())
@@ -83,27 +89,27 @@ pub mod tests {
             }
         }
 
-        fn find_personality_by_name(&self, ctx: &SecurityContext, _name: &str, _scope: &Scope) -> StoreResult<Personality> {
+        async fn find_personality_by_name(&self, ctx: &SecurityContext, _name: &str, _scope: &Scope) -> StoreResult<Personality> {
             let _ = ctx;
             Ok(self.personality.clone())
         }
 
-        fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+        async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
             let _ = ctx;
             unimplemented!()
         }
 
-        fn put_personality(&self, ctx: &SecurityContext, _value: &Personality) -> StoreResult<()> {
+        async fn put_personality(&self, ctx: &SecurityContext, _value: &Personality) -> StoreResult<()> {
             let _ = ctx;
             unimplemented!()
         }
 
-        fn delete_personality(&self, ctx: &SecurityContext, _id: PersonalityId) -> StoreResult<bool> {
+        async fn delete_personality(&self, ctx: &SecurityContext, _id: PersonalityId) -> StoreResult<bool> {
             let _ = ctx;
             unimplemented!()
         }
 
-        fn find_session_template_by_name(&self, ctx: &SecurityContext, _name: &str, _scope: &Scope) -> StoreResult<SessionTemplate> {
+        async fn find_session_template_by_name(&self, ctx: &SecurityContext, _name: &str, _scope: &Scope) -> StoreResult<SessionTemplate> {
             let _ = ctx;
             Ok(SessionTemplate {
                 id: SessionTemplateId(Uuid::new_v4()),
@@ -113,17 +119,17 @@ pub mod tests {
             })
         }
 
-        fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+        async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
             let _ = ctx;
             unimplemented!()
         }
 
-        fn put_session_template(&self, ctx: &SecurityContext, _value: &SessionTemplate) -> StoreResult<()> {
+        async fn put_session_template(&self, ctx: &SecurityContext, _value: &SessionTemplate) -> StoreResult<()>{
             let _ = ctx;
             unimplemented!()
         }
 
-        fn delete_session_template(&self, ctx: &SecurityContext, _id: SessionTemplateId) -> StoreResult<bool> {
+        async fn delete_session_template(&self, ctx: &SecurityContext, _id: SessionTemplateId) -> StoreResult<bool> {
             let _ = ctx;
             unimplemented!()
         }
@@ -168,19 +174,20 @@ pub mod tests {
         }
     }
 
+    #[async_trait]
     impl StateStore for MockStateStore {
-        fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
             let _ = ctx;
             self.write_agents(|v| v.push(value.clone()));
             Ok(())
         }
 
-        fn get_agent(&self, ctx: &SecurityContext, _id: AgentId) -> StoreResult<Agent> {
+        async fn get_agent(&self, ctx: &SecurityContext, _id: AgentId) -> StoreResult<Agent> {
             let _ = ctx;
             unimplemented!()
         }
 
-        fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
+        async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
             let _ = ctx;
             Ok(self
                 .read_agents()
@@ -189,7 +196,7 @@ pub mod tests {
                 .cloned())
         }
 
-        fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
             let _ = ctx;
             self.write_agents(|v| {
                 if let Some(existing) = v.iter_mut().find(|a| a.id == value.id) {
@@ -199,13 +206,13 @@ pub mod tests {
             Ok(())
         }
 
-        fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+        async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
             let _ = ctx;
             self.write_sessions(|v| v.push(value.clone()));
             Ok(())
         }
 
-        fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+        async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
             let _ = ctx;
             self.read_sessions()
                 .into_iter()
@@ -216,7 +223,7 @@ pub mod tests {
                 })
         }
 
-        fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+        async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
             let _ = ctx;
             self.write_sessions(|v| {
                 if let Some(existing) = v.iter_mut().find(|s| s.id == value.id) {
@@ -226,19 +233,19 @@ pub mod tests {
             Ok(())
         }
 
-        fn get_agent_state(&self, _agent_id: AgentId) -> StoreResult<AgentState> {
+        async fn get_agent_state(&self, _agent_id: AgentId) -> StoreResult<AgentState> {
             unimplemented!()
         }
 
-        fn put_agent_state(&self, _agent_id: AgentId, _state: &AgentState) -> StoreResult<()> {
+        async fn put_agent_state(&self, _agent_id: AgentId, _state: &AgentState) -> StoreResult<()> {
             unimplemented!()
         }
 
-        fn get_session_state(&self, _session_id: SessionId) -> StoreResult<SessionState> {
+        async fn get_session_state(&self, _session_id: SessionId) -> StoreResult<SessionState> {
             unimplemented!()
         }
 
-        fn put_session_state(&self, _session_id: SessionId, _state: &SessionState) -> StoreResult<()> {
+        async fn put_session_state(&self, _session_id: SessionId, _state: &SessionState) -> StoreResult<()> {
             unimplemented!()
         }
     }
@@ -256,8 +263,8 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn get_or_create_agent_returns_existing_agent() {
+    #[tokio::test]
+    async fn get_or_create_agent_returns_existing_agent() {
         let personality = personality_template();
         let existing = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality);
 
@@ -283,7 +290,7 @@ pub mod tests {
             personality_id: personality.id,
         };
 
-        let resolved = pt.instantiate(&context).unwrap();
+        let resolved = pt.instantiate(&context).await.unwrap();
 
         if let Participant::Agent(agent) = resolved {
             assert_eq!(agent.id, existing.id);
@@ -292,8 +299,8 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn get_or_create_agent_creates_agent_when_missing() {
+    #[tokio::test]
+    async fn get_or_create_agent_creates_agent_when_missing() {
         let personality = personality_template();
         let template_store = Arc::new(MockTemplateStore {
             personality: personality.clone(),
@@ -317,14 +324,14 @@ pub mod tests {
             personality_id: personality.id,
         };
 
-        let created_participant = pt.instantiate(&context).unwrap();
+        let created_participant = pt.instantiate(&context).await.unwrap();
         let created = if let Participant::Agent(agent) = created_participant {
             agent
         } else {
             panic!("Expected agent participant");
         };
 
-        let fetched_participant = pt.instantiate(&context).unwrap();
+        let fetched_participant = pt.instantiate(&context).await.unwrap();
         let fetched = if let Participant::Agent(agent) = fetched_participant {
             agent
         } else {
@@ -335,26 +342,26 @@ pub mod tests {
         assert_eq!(created.personality_id, personality.id);
     }
 
-    #[test]
-    fn agent_controller_persists_changes() {
+    #[tokio::test]
+    async fn agent_controller_persists_changes() {
         let personality = personality_template();
         let agent = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality);
         let state_store = Arc::new(MockStateStore::default());
         let ctx = SecurityContext::default();
-        state_store.create_agent(&ctx, &agent).unwrap();
+        state_store.create_agent(&ctx, &agent).await.unwrap();
 
         let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
         let controller = crate::agent::AgentController::new(agent.clone(), event_sender, state_store.clone());
 
-        controller.update_name("new_name".to_string());
+        controller.update_name("new_name".to_string()).await;
 
-        let persisted = state_store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).unwrap().unwrap();
+        let persisted = state_store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).await.unwrap().unwrap();
         assert_eq!(persisted.id, agent.id);
         assert_eq!(persisted.metadata.name, "new_name");
     }
 
-    #[test]
-    fn session_controller_persists_new_session() {
+    #[tokio::test]
+    async fn session_controller_persists_new_session() {
         let session = Session {
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
@@ -369,9 +376,9 @@ pub mod tests {
         let state_store = Arc::new(MockStateStore::default());
 
         let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
-        let _controller = crate::session::SessionController::new(session.clone(), event_sender, state_store.clone()).unwrap();
+        let _controller = crate::session::SessionController::new(session.clone(), event_sender, state_store.clone()).await.unwrap();
 
-        let persisted = state_store.write_sessions(|v| v.iter().find(|s| s.id == session.id).cloned().unwrap());
+        let persisted = state_store.get_session(&SecurityContext::default(), session.id).await.unwrap();
         assert_eq!(persisted.id, session.id);
     }
 }
