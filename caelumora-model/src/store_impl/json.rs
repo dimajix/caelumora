@@ -10,6 +10,7 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 use crate::meta::Scope;
+use log::info;
 
 #[derive(Debug)]
 pub struct JsonFileStore {
@@ -162,6 +163,7 @@ fn sanitize_file_component(value: &str) -> String {
 impl TemplateStore for JsonFileStore {
     fn get_personality(&self, id: PersonalityId) -> StoreResult<Personality> {
         let path = self.personality_path(id);
+        info!("Reading personality template from {}", path.display());
         let loaded = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_template", id.to_string())
     }
@@ -204,6 +206,7 @@ impl TemplateStore for JsonFileStore {
 
     fn put_personality(&self, value: &Personality) -> StoreResult<()> {
         let path = self.personality_path(value.id);
+        info!("Writing personality template to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -220,6 +223,7 @@ impl TemplateStore for JsonFileStore {
 
     fn put_session_template(&self, value: &SessionTemplate) -> StoreResult<()> {
         let path = self.session_template_path(&value.metadata.name);
+        info!("Writing session template to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -251,6 +255,7 @@ impl StateStore for JsonFileStore {
         if path.exists() {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
         }
+        info!("Creating agent at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -263,6 +268,7 @@ impl StateStore for JsonFileStore {
 
     fn get_agent(&self, id: AgentId) -> StoreResult<Agent> {
         let path = self.agent_path(id);
+        info!("Reading agent from {}", path.display());
         let loaded = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent", id.to_string())
     }
@@ -283,6 +289,7 @@ impl StateStore for JsonFileStore {
                 id: value.id.to_string(),
             });
         }
+        info!("Updating agent at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -298,6 +305,7 @@ impl StateStore for JsonFileStore {
         if path.exists() {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
         }
+        info!("Creating session at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -310,6 +318,7 @@ impl StateStore for JsonFileStore {
 
     fn get_session(&self, id: SessionId) -> StoreResult<Session> {
         let path = self.session_path(id);
+        info!("Reading session from {}", path.display());
         let loaded = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session", id.to_string())
     }
@@ -322,6 +331,7 @@ impl StateStore for JsonFileStore {
                 id: value.id.to_string(),
             });
         }
+        info!("Updating session at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -334,12 +344,14 @@ impl StateStore for JsonFileStore {
 
     fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
+        info!("Reading agent state from {}", path.display());
         let loaded = read_json_opt::<Persisted<AgentState>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_state", agent_id.to_string())
     }
 
     fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
+        info!("Writing agent state to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -352,12 +364,14 @@ impl StateStore for JsonFileStore {
 
     fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
         let path = self.session_state_path(session_id);
+        info!("Reading session state from {}", path.display());
         let loaded = read_json_opt::<Persisted<SessionState>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session_state", session_id.to_string())
     }
 
     fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
+        info!("Writing session state to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
