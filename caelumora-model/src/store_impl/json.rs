@@ -19,7 +19,9 @@ pub struct JsonFileStore {
 
 impl JsonFileStore {
     pub fn new(root: impl Into<PathBuf>) -> StoreResult<Self> {
-        let store = Self { root: root.into() };
+        let root = root.into();
+        info!("Creating JSON file store at {:?}", root);
+        let store = Self { root };
         store.ensure_layout()?;
         Ok(store)
     }
