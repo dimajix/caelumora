@@ -9,11 +9,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub const STATE_HISTORY_WRITER_KIND: &str = "state_history_writer";
-pub const STATE_CONTEXT_APPENDER_KIND: &str = "state_context_appender";
-pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
-pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
-
 #[derive(Debug, Default, Clone)]
 pub struct TurnContext {
     pub scratch: HashMap<String, Value>,
@@ -28,26 +23,6 @@ pub struct ComponentDescriptor {
     pub deps: HashMap<String, ComponentFacets>,
     pub state: Option<Arc<Mutex<AgentState>>>,
 }
-
-#[async_trait]
-pub trait SystemPromptProvider: Send + Sync + std::fmt::Debug {
-    async fn get_prompt(&self) -> Result<String>;
-}
-
-#[async_trait]
-pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
-    fn name(&self) -> &str;
-    async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>>;
-}
-
-#[async_trait]
-pub trait ContextProvider: Send + Sync + std::fmt::Debug {
-    async fn current_context(&self) -> Result<Vec<Message>>;
-}
-
-pub trait PerceiveInProcessor: MessageProcessor {}
-pub trait PlanPreProcessor: MessageProcessor {}
-pub trait EmitOutProcessor: MessageProcessor {}
 
 #[derive(Default, Debug, Clone)]
 pub struct ComponentFacets {

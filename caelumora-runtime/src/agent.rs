@@ -1,8 +1,7 @@
 use crate::message::{MessageEvent};
 use crate::runtime::RuntimeManager;
 use crate::component::{
-    ComponentContainer, ContextProvider, EmitOutProcessor, MessageProcessor, PerceiveInProcessor,
-    PlanPreProcessor, ComponentImpl, TurnContext,
+    ComponentContainer, ComponentImpl, TurnContext,
 };
 use anyhow::Result;
 use async_stream::stream;
@@ -20,6 +19,8 @@ use std::sync::Arc;
 use log::{debug, warn};
 use tokio::sync::Mutex;
 use caelumora_model::security::SecurityContext;
+use crate::component_impl::context::ContextProvider;
+use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, PlanPreProcessor};
 
 #[derive(Debug)]
 struct AgentLoopState {

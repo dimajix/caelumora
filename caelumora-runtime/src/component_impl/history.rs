@@ -5,9 +5,12 @@ use tokio::sync::Mutex;
 use caelumora_model::agent::AgentState;
 use caelumora_model::message::Message;
 use crate::component::{
-    ComponentFacets, ComponentRegistry, MessageProcessor, PerceiveInProcessor, TurnContext,
-    STATE_HISTORY_WRITER_KIND,
+    ComponentFacets, ComponentRegistry, TurnContext
 };
+use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
+
+
+pub const STATE_HISTORY_WRITER_KIND: &str = "state_history_writer";
 
 #[derive(Debug)]
 pub struct StateHistoryWriter {

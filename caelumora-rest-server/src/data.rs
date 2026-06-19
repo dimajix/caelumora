@@ -11,9 +11,10 @@ use caelumora_model::template::{
 };
 use caelumora_model::user::{User, UserId};
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, STAGE_PERCEIVE, ComponentFailPolicy};
-use caelumora_runtime::component::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 
 use caelumora_model::security::SecurityContext;
+use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
+use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
     let ctx = SecurityContext::default();
@@ -118,7 +119,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
 fn create_personality(name: &str, description: &str, system_prompt: &str) -> Personality {
     let mut components = ComponentConfig::default();
     components.component_nodes.push(ComponentNodeConfig {
-        id: "history".to_string(),
+        id: "history-appender".to_string(),
         kind: STATE_HISTORY_WRITER_KIND.to_string(),
         params: serde_json::Value::Null,
         deps: vec![],
@@ -134,7 +135,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         fail_policy: ComponentFailPolicy::FailClosed,
     });
     components.component_nodes.push(ComponentNodeConfig {
-        id: "appender".to_string(),
+        id: "context-appender".to_string(),
         kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
         params: serde_json::Value::Null,
         deps: vec![],

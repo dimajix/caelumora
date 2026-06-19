@@ -4,12 +4,23 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use caelumora_model::agent::AgentState;
 use caelumora_model::message::Message;
-use crate::component::{
-    ComponentFacets, ComponentRegistry, ContextProvider, MessageProcessor, PerceiveInProcessor,
-    SystemPromptProvider, TurnContext, STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND,
-    STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
-};
+use crate::component::{ComponentFacets, ComponentRegistry, TurnContext};
 use caelumora_model::message::MessageRole;
+use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
+
+pub const STATE_CONTEXT_APPENDER_KIND: &str = "state_context_appender";
+pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
+pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
+
+#[async_trait]
+pub trait SystemPromptProvider: Send + Sync + std::fmt::Debug {
+    async fn get_prompt(&self) -> Result<String>;
+}
+
+#[async_trait]
+pub trait ContextProvider: Send + Sync + std::fmt::Debug {
+    async fn current_context(&self) -> Result<Vec<Message>>;
+}
 
 #[derive(Debug)]
 pub struct StateContextAppender {

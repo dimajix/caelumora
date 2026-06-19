@@ -22,10 +22,8 @@ use uuid::Uuid;
 use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component::{
-    STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATE_HISTORY_WRITER_KIND,
-    STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
-};
+use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
+use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 
 fn init_logging() {
     let mut builder = env_logger::Builder::new();
@@ -50,7 +48,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
                 fail_policy: ComponentFailPolicy::FailOpen,
             },
             ComponentNodeConfig {
-                id: STATE_HISTORY_WRITER_KIND.to_string(),
+                id: "history-appender".to_string(),
                 kind: STATE_HISTORY_WRITER_KIND.to_string(),
                 params: serde_json::Value::Null,
                 deps: Vec::new(),
@@ -58,7 +56,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
             ComponentNodeConfig {
-                id: STATE_CONTEXT_APPENDER_KIND.to_string(),
+                id: "context-appender".to_string(),
                 kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
                 params: serde_json::Value::Null,
                 deps: Vec::new(),
@@ -66,7 +64,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
             ComponentNodeConfig {
-                id: STATE_CONTEXT_PROVIDER_KIND.to_string(),
+                id: "context".to_string(),
                 kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
                 params: serde_json::Value::Null,
                 deps: vec!["system-prompt".to_string()],
