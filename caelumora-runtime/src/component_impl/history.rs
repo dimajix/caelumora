@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::sync::Arc;
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 use caelumora_model::agent::AgentState;
 use caelumora_model::message::Message;
 use crate::component::{
@@ -14,7 +13,6 @@ pub const STATE_HISTORY_WRITER_KIND: &str = "state_history_writer";
 
 #[derive(Debug)]
 pub struct StateHistoryWriter {
-    pub state: Arc<Mutex<AgentState>>,
 }
 
 #[async_trait]
@@ -23,9 +21,8 @@ impl MessageProcessor for StateHistoryWriter {
         STATE_HISTORY_WRITER_KIND
     }
 
-    async fn process_messages(&self, input: Vec<Message>, _context: &mut TurnContext) -> Result<Vec<Message>> {
-        let mut state_guard = self.state.lock().await;
-        state_guard.history.extend(input.clone());
+    async fn process_messages(&self, input: Vec<Message>, state: &mut AgentState, _context: &mut TurnContext) -> Result<Vec<Message>> {
+        state.history.extend(input.clone());
         Ok(input)
     }
 }
@@ -36,11 +33,8 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         STATE_HISTORY_WRITER_KIND,
         Arc::new(|descriptor| {
-            let state = descriptor
-                .state
-                .ok_or_else(|| anyhow::anyhow!("Component '{}' requires agent state", descriptor.id))?;
             let mut capabilities = ComponentFacets::empty();
-            capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryWriter { state }));
+            capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryWriter { }));
             Ok(capabilities)
         }),
     );

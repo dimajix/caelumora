@@ -7,12 +7,12 @@ use anyhow::Result;
 use async_stream::stream;
 use std::sync::atomic::{AtomicU8, Ordering};
 use caelumora_model::session::{SessionId, ChannelId};
-use caelumora_model::agent::{Agent, AgentState, ProcessingState, AgentController};
+use caelumora_model::agent::{Agent, AgentState, ProcessingState, AgentController, AgentId};
 use caelumora_model::component::{
     ComponentFailPolicy, ComponentConfig
 };
 use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{StateStore, StoreError};
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use std::sync::Arc;
@@ -25,7 +25,10 @@ use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, Perceiv
 #[derive(Debug)]
 struct AgentLoopState {
     agent: Arc<AgentController>,
+    agent_id: AgentId,
+    agent_state: AgentState,
     runtime_manager: Arc<RuntimeManager>,
+    state_store: Arc<dyn StateStore>,
     context_provider: Arc<dyn ContextProvider>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
@@ -38,7 +41,7 @@ impl AgentLoopState {
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
         let agent_id = agent_controller.id();
-        let state = match store.get_agent_state(agent_id).await {
+        let agent_state = match store.get_agent_state(agent_id).await {
             Ok(s) => s,
             Err(StoreError::NotFound{entity: _, id:_}) => {
                 let state = AgentState::default();
@@ -51,8 +54,7 @@ impl AgentLoopState {
         };
         let components = ComponentContainer::from_config(
             &pipeline_config,
-            runtime_manager.component_registry().as_ref(),
-            Some(state),
+            runtime_manager.component_registry().as_ref()
         )?;
         let context_provider = components
             .get_all::<dyn ContextProvider>(None)
@@ -66,7 +68,10 @@ impl AgentLoopState {
 
         Ok(Self {
             agent: agent_controller,
+            agent_id,
+            agent_state,
             runtime_manager: runtime_manager.clone(),
+            state_store: runtime_manager.state_store(),
             context_provider,
             perceive_in_processors,
             emit_out_processors,
@@ -76,7 +81,7 @@ impl AgentLoopState {
 
     async fn perceive(&mut self, messages: Vec<Message>, turn_context: &mut TurnContext) -> () {
         let original_messages = messages.clone();
-        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, turn_context)
+        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, &mut self.agent_state, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
@@ -84,14 +89,22 @@ impl AgentLoopState {
             });
 
         let _ = perceived;
+
+        if let Err(e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+            warn!("Cannot store state of agent {} after perceive", self.agent_id)
+        }
     }
 
     async fn respond_complete(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn_context)
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_state, turn_context)
             .await
             .ok()?;
         if output.is_empty() {
             return None;
+        }
+
+        if let Err(e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+            warn!("Cannot store state of agent {} after respond_complete", self.agent_id)
         }
         Some(output.remove(0))
     }
@@ -101,7 +114,7 @@ impl AgentLoopState {
     }
 
     async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn_context)
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_state, turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -113,18 +126,22 @@ impl AgentLoopState {
         let llm_client = self.runtime_manager.llm_client();
         let context = self
             .context_provider
-            .current_context()
+            .current_context(&self.agent_state)
             .await
             .unwrap_or_else(|e| {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), turn_context)
+        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), &mut self.agent_state, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
                 context
             });
+
+        if let Err(e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+            warn!("Cannot store state of agent {} after context preparation", self.agent_id)
+        }
 
         if context.len() > 1 {
             let mut last_role = context.first().map(|m| m.role).unwrap();
@@ -156,6 +173,7 @@ impl AgentLoopState {
     async fn apply_stage_processors<T>(
         processors: &[ComponentImpl<T>],
         mut input: Vec<Message>,
+        state: &mut AgentState,
         context: &mut TurnContext,
     ) -> Result<Vec<Message>>
     where
@@ -163,7 +181,7 @@ impl AgentLoopState {
     {
         for stage_processor in processors {
             let current = std::mem::take(&mut input);
-            match stage_processor.facet.process_messages(current, context).await {
+            match stage_processor.facet.process_messages(current, state, context).await {
                 Ok(output) => {
                     input = output;
                 }
@@ -354,37 +372,34 @@ mod tests {
 
     #[tokio::test]
     async fn state_history_writer_is_passthrough_and_persists_history() {
-        let state = Arc::new(Mutex::new(AgentState::default()));
+        let mut state = AgentState::default();
         let processor = StateHistoryWriter {
-            state: state.clone(),
         };
         let input = vec![make_message("hello")];
 
         let output = processor
-            .process_messages(input.clone(), &mut TurnContext::default())
+            .process_messages(input.clone(), &mut state, &mut TurnContext::default())
             .await
             .expect("history processor should succeed");
 
         assert_eq!(output.len(), input.len());
         assert_eq!(output[0].id, input[0].id);
 
-        let guard = state.lock().await;
-        let history = guard.history.messages();
+        let history = state.history.messages();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, input[0].id);
     }
 
     #[tokio::test]
     async fn state_context_appender_is_passthrough_and_updates_provider_context() {
-        let state = Arc::new(Mutex::new(AgentState::default()));
+        let mut state = AgentState::default();
         let appender = StateContextAppender {
-            state: state.clone(),
         };
-        let provider = StateContextProvider { state, prompt_providers: vec![] };
+        let provider = StateContextProvider { prompt_providers: vec![] };
         let input = vec![make_message("ctx")];
 
         let output = appender
-            .process_messages(input.clone(), &mut TurnContext::default())
+            .process_messages(input.clone(), &mut state, &mut TurnContext::default())
             .await
             .expect("context appender should succeed");
 
@@ -392,7 +407,7 @@ mod tests {
         assert_eq!(output[0].id, input[0].id);
 
         let context = provider
-            .current_context()
+            .current_context(&state)
             .await
             .expect("context provider should succeed");
         assert_eq!(context.len(), 1);

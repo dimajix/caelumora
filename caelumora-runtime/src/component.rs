@@ -21,7 +21,6 @@ pub struct ComponentDescriptor {
     pub kind: String,
     pub params: Value,
     pub deps: HashMap<String, ComponentFacets>,
-    pub state: Option<Arc<Mutex<AgentState>>>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -70,7 +69,7 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentNodeConfig, state: Option<Arc<Mutex<AgentState>>>, dep_facets: HashMap<String, ComponentFacets>) -> Result<ComponentFacets> {
+    fn build(&self, node: &ComponentNodeConfig, dep_facets: HashMap<String, ComponentFacets>) -> Result<ComponentFacets> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(anyhow!("Unsupported component kind: {}", node.kind));
         };
@@ -79,7 +78,6 @@ impl ComponentRegistry {
             kind: node.kind.clone(),
             params: node.params.clone(),
             deps: dep_facets,
-            state,
         })
     }
 }
@@ -113,7 +111,6 @@ impl ComponentContainer {
     pub fn from_config(
         config: &ComponentConfig,
         registry: &ComponentRegistry,
-        state: Option<AgentState>,
     ) -> Result<Self> {
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
@@ -161,7 +158,6 @@ impl ComponentContainer {
         }
 
         let mut nodes: HashMap<String, ComponentNode> = HashMap::new();
-        let state = state.map(|x| Arc::new(Mutex::new(x)));
         for id in ordered.iter().cloned() {
             let node_config = config_by_id.get(&id).unwrap();
 
@@ -171,7 +167,7 @@ impl ComponentContainer {
                 dep_facets.insert(dep_id.clone(), dep_node.facets.clone());
             }
 
-            let facets = registry.build(node_config, state.clone(), dep_facets)?;
+            let facets = registry.build(node_config, dep_facets)?;
             nodes.insert(
                 id.clone(),
                 ComponentNode {
