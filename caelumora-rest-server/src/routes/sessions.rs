@@ -96,8 +96,7 @@ pub async fn rename_session(
     Json(payload): Json<RenameSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let session_id = SessionId(id);
-    let session_loop = state.session_manager.get_session(session_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let session_loop = crate::routes::ensure_session(&state, session_id).await?;
 
     session_loop.update_name(payload.name).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

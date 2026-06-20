@@ -1,14 +1,46 @@
 use std::sync::Arc;
 use axum::{
+    http::StatusCode,
     routing::{delete, get, post},
     Router,
 };
+use caelumora_model::session::SessionId;
 use crate::state::AppState;
 
 mod channels;
 mod events;
 mod sessions;
 mod templates;
+
+pub async fn ensure_session(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<Arc<caelumora_runtime::session::SessionLoop>, StatusCode> {
+    if let Some(session_loop) = state.session_manager.get_session(session_id) {
+        return Ok(session_loop);
+    }
+
+    // Try to load the session
+    let session_loop = state
+        .session_manager
+        .load_session(session_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to load session {}: {}", session_id, e);
+            StatusCode::NOT_FOUND
+        })?;
+
+    let session_loop_clone = session_loop.clone();
+    let handle = tokio::spawn(async move {
+        if let Err(e) = session_loop_clone.run().await {
+            tracing::error!("Session loop for {} failed: {}", session_id, e);
+        }
+    });
+
+    state.running_sessions.insert(session_id, handle);
+
+    Ok(session_loop)
+}
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()

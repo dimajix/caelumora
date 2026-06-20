@@ -19,8 +19,7 @@ pub async fn join_channel(
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
 
-    let session_loop = state.session_manager.get_session(session_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let session_loop = crate::routes::ensure_session(&state, session_id).await?;
     let channel = session_loop.channel_by_id(channel_id)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 

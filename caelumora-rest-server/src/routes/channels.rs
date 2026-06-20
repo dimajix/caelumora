@@ -11,8 +11,7 @@ pub async fn list_channels(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<ChannelResponse>>, StatusCode> {
     let session_id = SessionId(id);
-    let session = state.session_manager.get_session(session_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let session = crate::routes::ensure_session(&state, session_id).await?;
 
     Ok(Json(
         session.channels()
@@ -34,8 +33,7 @@ pub async fn get_channel(
 ) -> Result<Json<ChannelResponse>, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = state.session_manager.get_session(session_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let session = crate::routes::ensure_session(&state, session_id).await?;
     
     let channel = session.channel_by_id(channel_id)
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -53,8 +51,7 @@ pub async fn get_channel_messages(
 ) -> Result<Json<Vec<Message>>, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = state.session_manager.get_session(session_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let session = crate::routes::ensure_session(&state, session_id).await?;
     let channel = session.channel_by_id(channel_id)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
@@ -67,40 +64,37 @@ pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     Json(payload): Json<SendMessageRequest>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = state.session_manager.get_session(session_id);
+    let session = crate::routes::ensure_session(&state, session_id).await?;
     
-    if let Some(session) = session {
-        if let Some(channel) = session.channel_by_id(channel_id) {
-            if let Some(user_actor) = channel.user_actor() {
-                if !channel.wakeup().await.is_ok() {
-                    return StatusCode::INTERNAL_SERVER_ERROR;
-                }
-                if !user_actor.send_message(payload.content).await.is_ok() {
-                    return StatusCode::INTERNAL_SERVER_ERROR;
-                }
+    if let Some(channel) = session.channel_by_id(channel_id) {
+        if let Some(user_actor) = channel.user_actor() {
+            if !channel.wakeup().await.is_ok() {
+                return Ok(StatusCode::INTERNAL_SERVER_ERROR);
             }
+            if !user_actor.send_message(payload.content).await.is_ok() {
+                return Ok(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            return Ok(StatusCode::OK);
         }
     }
 
-    StatusCode::NOT_FOUND
+    Ok(StatusCode::NOT_FOUND)
 }
 
 pub async fn cancel_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = state.session_manager.get_session(session_id);
+    let session = crate::routes::ensure_session(&state, session_id).await?;
 
-    if let Some(session) = session {
-        if session.cancel_channel(channel_id).await.is_ok() {
-            return StatusCode::OK;
-        }
+    if session.cancel_channel(channel_id).await.is_ok() {
+        return Ok(StatusCode::OK);
     }
 
-    StatusCode::NOT_FOUND
+    Ok(StatusCode::NOT_FOUND)
 }
