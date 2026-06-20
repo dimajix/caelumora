@@ -7,7 +7,6 @@ use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant, ChannelController};
 use caelumora_model::session::{Session, SessionId};
-use caelumora_model::user::User;
 use log::{debug, info, warn};
 use std::any::Any;
 use std::collections::HashMap;
@@ -16,6 +15,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+use caelumora_model::store::{StateStore, StoreError};
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
@@ -39,6 +39,7 @@ pub struct ChannelLoop {
     moderator: Mutex<Box<dyn Moderator>>,
     recorder: Mutex<Box<dyn Recorder>>,
     state: Arc<Mutex<ChannelState>>,
+    state_store: Arc<dyn StateStore>,
     processing_state: Arc<AtomicU8>,
     event_tx: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
@@ -47,12 +48,24 @@ pub struct ChannelLoop {
 
 impl ChannelLoop {
     pub async fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+        let state_store = runtime_manager.state_store();
         let channel_id = channel.id;
         let event_sender = runtime_manager.event_bus().channel_event_sender(session.id, channel_id);
         let channel_controller = Arc::new(ChannelController::new(channel.clone(), event_sender));
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
-        let state = Arc::new(Mutex::new(ChannelState::new(channel.id)));
-        let recorder = runtime_manager.new_recorder(state.clone())?;
+        
+        let state = match state_store.get_channel_state(channel_id).await {
+            Ok(s) => s,
+            Err(StoreError::NotFound { entity: _, id: _ }) => {
+                let state = ChannelState::new(channel_id);
+                state_store.put_channel_state(channel_id, &state).await?;
+                state
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let state = Arc::new(Mutex::new(state));
+
+        let recorder = runtime_manager.new_recorder()?;
         let (event_tx, _) = broadcast::channel(100);
 
         let mut actors = HashMap::new();
@@ -71,6 +84,7 @@ impl ChannelLoop {
             moderator: Mutex::new(moderator),
             recorder: Mutex::new(recorder),
             state,
+            state_store,
             processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
             event_tx,
             max_route_decisions: 100,
@@ -180,7 +194,9 @@ impl ChannelLoop {
         if let Some(event) = maybe_event {
             debug!("Received actor event {:?}", event);
             self.record_receive_event(&event).await;
+            self.append_history(&event).await;
             self.route_event(actors, event).await;
+            //self.state_store.
             false
         } else {
             true
@@ -308,6 +324,24 @@ impl ChannelLoop {
         }
     }
 
+    async fn append_history(&self, envelope: &Envelope) {
+        let mut state = self.state.lock().await;
+        let mut changed = false;
+        match &envelope.event {
+            ActorEvent::FullResponseGenerated(msgs) => {
+                state.history.extend(msgs.clone());
+                changed = true;
+            }
+            // Handle other event types as needed
+            _ => {}
+        }
+
+        if changed {
+            if let Err(e) = self.state_store.put_channel_state(self.id, &state).await {
+                warn!("Cannot store state of channel {}: {}", self.id, e);
+            }
+        }
+    }
     async fn record_send_event(&self, event: &Envelope) {
         let mut recorder = self.recorder.lock().await;
         recorder.record_send(&event).await;

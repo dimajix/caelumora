@@ -8,6 +8,4 @@
 
 ## State Persistence
 * Put "context" into message for auditability?
-* How to inject StateStore into Components?
-* Is it correct to put AgentState into ComponentDescriptor?
 * Maybe ComponentDescriptor should be ComponentContext?

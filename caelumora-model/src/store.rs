@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::channel::{ChannelId, ChannelState};
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -67,6 +68,9 @@ pub trait StateStore : Debug + Sync + Send {
 
     async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState>;
     async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()>;
+
+    async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
+    async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()>;
 }
 
 

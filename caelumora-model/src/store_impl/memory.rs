@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use log::info;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::channel::{ChannelId, ChannelState};
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
@@ -17,6 +18,7 @@ pub struct MemoryStore {
     users: RwLock<HashMap<UserId, User>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     session_states: RwLock<HashMap<SessionId, SessionState>>,
+    channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
 }
 
 impl MemoryStore {
@@ -281,6 +283,17 @@ impl StateStore for MemoryStore {
     async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         self.write_lock(&self.session_states, |v| {
             v.insert(session_id, state.clone());
+        })
+    }
+
+    async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
+        let values = self.read_lock(&self.channel_states, |v| v.clone())?;
+        require_entity(values.get(&channel_id).cloned(), "channel_state", channel_id.to_string())
+    }
+
+    async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()> {
+        self.write_lock(&self.channel_states, |v| {
+            v.insert(channel_id, state.clone());
         })
     }
 }

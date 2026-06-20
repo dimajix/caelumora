@@ -6,7 +6,6 @@ use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use caelumora_model::store::{StateStore, EntityStore};
 use crate::component_impl::{context, history};
 use caelumora_model::security::{DummySecurityManager, SecurityManager};
@@ -116,7 +115,7 @@ impl RuntimeManager {
         }
     }
 
-    pub fn new_recorder(&self, state: Arc<Mutex<caelumora_model::channel::ChannelState>>) -> Result<Box<dyn Recorder>> {
-        Ok(Box::new(crate::recorder::ChannelHistoryRecorder::new(state)))
+    pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
+        Ok(Box::new(crate::recorder::BlackholeRecorder::new()))
     }
 }

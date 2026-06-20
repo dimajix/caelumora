@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use crate::security::SecurityManager;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::channel::{ChannelId, ChannelState};
 use crate::session::{Session, SessionId, SessionState};
 use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -43,6 +44,7 @@ impl JsonFileStore {
             self.users_dir(),
             self.agent_states_dir(),
             self.session_states_dir(),
+            self.channel_states_dir(),
         ];
 
         for dir in dirs {
@@ -79,6 +81,10 @@ impl JsonFileStore {
         self.root.join("runtime").join("session_state")
     }
 
+    fn channel_states_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("channel_state")
+    }
+
     fn personality_path(&self, id: PersonalityId) -> PathBuf {
         self.personality_dir().join(format!("{id}.json"))
     }
@@ -106,6 +112,10 @@ impl JsonFileStore {
 
     fn session_state_path(&self, id: SessionId) -> PathBuf {
         self.session_states_dir().join(format!("{id}.json"))
+    }
+
+    fn channel_state_path(&self, id: ChannelId) -> PathBuf {
+        self.channel_states_dir().join(format!("{id}.json"))
     }
 }
 
@@ -511,6 +521,29 @@ impl StateStore for JsonFileStore {
     async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
         info!("Writing session state to {}", path.display());
+        write_json_atomic(
+            &path,
+            &Persisted {
+                schema_version: 1,
+                persisted_at: Utc::now(),
+                value: state,
+            },
+        )
+    }
+
+    async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
+        let path = self.channel_state_path(channel_id);
+        info!("Reading channel state from {}", path.display());
+        let loaded = read_json_opt::<Persisted<ChannelState>>(&path)?.map(|p| p.value);
+        loaded.ok_or(StoreError::NotFound {
+            entity: "channel_state",
+            id: channel_id.to_string(),
+        })
+    }
+
+    async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()> {
+        let path = self.channel_state_path(channel_id);
+        info!("Writing channel state to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
