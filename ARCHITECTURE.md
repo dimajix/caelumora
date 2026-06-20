@@ -63,15 +63,44 @@ Moderators control how messages are routed and who is allowed to respond. Implem
 
 Caelumora uses `Controller` types (e.g., `SessionController`, `AgentController`) for managing the live state of entities. 
 *   **Live State**: Controllers use `ArcSwap` to provide atomic, lock-free access to the current state of an entity.
-*   **Persistence**: Controllers are linked to the `StateStore`. Any state modifications made through a controller (e.g., updating a name) are automatically propagated to the persistent store, ensuring data consistency across restarts.
+*   **Persistence**: Controllers are linked to the `EntityStore`. Any state modifications made through a controller (e.g., updating a name) are automatically propagated to the persistent store, ensuring data consistency across restarts.
 *   **Eventing**: Controllers are responsible for publishing update events via the `EventBus` when state changes occur.
+
+## Eventing and Observation
+
+The `EventBus` (in `caelumora-runtime`) provides a centralized mechanism for observing changes across the system.
+
+*   **`GlobalEvent`**: Represents any significant change in the system, such as creation, update, or deletion of sessions, channels, agents, or users.
+*   **Subscriptions**: Clients can subscribe to specific `SubscriptionTopic`s (e.g., `All`, `Session(id)`, `Agent(id)`) to receive relevant `GlobalEvent`s via asynchronous channels.
+*   **Decoupling**: The `EventBus` allows components like the REST server or TUI to react to state changes without being tightly coupled to the controllers.
+
+## Security Model
+
+Security in Caelumora is handled through a combination of context and explicit checks.
+
+*   **`SecurityContext`**: Carries information about the initiator and sender of an event, along with the session and channel context.
+*   **`SecurityManager`**: A trait responsible for authorizing actions based on the `SecurityContext`.
+*   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`) used by the `SecurityManager` for policy decisions.
 
 ## Storage and Persistence
 
-Caelumora uses a tiered storage approach:
-*   **`TemplateStore`**: Stores static definitions like `Personality` and `SessionTemplate`.
-*   **`StateStore`**: Stores dynamic state, including `Agent` identities, `Session` data, and their respective histories and states.
-*   **`SessionContext`**: Provides necessary dependencies (stores, session ID, owner) for instantiating live objects from templates.
+Caelumora uses a tiered storage approach to separate static definitions, dynamic identities, and runtime state.
+
+### `EntityStore`
+The `EntityStore` trait (in `caelumora-model`) manages the persistence of long-lived domain entities. It handles:
+*   **Personalities**: Static definitions of agent traits.
+*   **Templates**: `SessionTemplate` and `AgentTemplate` used for instantiation.
+*   **Identities**: `Agent`, `Session`, and `User` records.
+
+Implementations include `MemoryStore` (for testing) and `JsonFileStore` (for simple file-based persistence).
+
+### `StateStore`
+The `StateStore` trait (in `caelumora-model`) is dedicated to managing the frequently changing runtime state of agents and sessions.
+*   **Agent State**: Includes the current cognitive state, message history, and context.
+*   **Session State**: Includes metadata and operational state of a live session.
+
+### `SessionContext`
+Provides necessary dependencies (stores, session ID, owner) for instantiating live objects from templates.
 
 ## Templates and Identities
 
