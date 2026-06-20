@@ -5,7 +5,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
 use std::collections::HashMap;
-use std::fmt::{Debug};
+use std::fmt::Debug;
 use uuid::Uuid;
 
 define_id!(MessageId);
@@ -121,15 +121,27 @@ impl MessageContext {
     pub fn messages(&self) -> Vec<Message> {
         self.messages.iter().map(|e| {e.message.clone()}).collect()
     }
+    pub fn last_message_id(&self) -> MessageId {
+        self.messages.last().map(|e| e.message.id).unwrap_or_default()
+    }
     pub fn extend(&mut self, msgs: Vec<Message>) {
         let mut digest = self.digest();
-        for m in msgs.into_iter() {
+        let mut prev_id = self.last_message_id();
+        for mut m in msgs.into_iter() {
+            if prev_id != MessageId::default() {
+                m.prev_id = prev_id;
+            }
+            prev_id = m.id;
             digest = (m.id.to_string() + digest.as_str()).digest();
             self.messages.push(ContextEntry { message: m, digest: digest.clone() })
         }
     }
-    pub fn push(&mut self, msg: Message) {
+    pub fn push(&mut self, mut msg: Message) {
         let mut digest = self.digest();
+        let prev_id = self.last_message_id();
+        if prev_id != MessageId::default() {
+            msg.prev_id = prev_id;
+        }
         digest = (msg.id.to_string() + digest.as_str()).digest();
         self.messages.push(ContextEntry { message: msg, digest: digest })
     }
@@ -158,15 +170,27 @@ impl MessageHistory {
     pub fn messages(&self) -> Vec<Message> {
         self.messages.iter().map(|e| {e.message.clone()}).collect()
     }
+    pub fn last_message_id(&self) -> MessageId {
+        self.messages.last().map(|e| e.message.id).unwrap_or_default()
+    }
     pub fn extend(&mut self, msgs: Vec<Message>) {
         let mut digest = self.digest();
-        for m in msgs.into_iter() {
+        let mut prev_id = self.last_message_id();
+        for mut m in msgs.into_iter() {
+            if prev_id != MessageId::default() {
+                m.prev_id = prev_id;
+            }
+            prev_id = m.id;
             digest = (m.id.to_string() + digest.as_str()).digest();
             self.messages.push(HistoryEntry { message: m, context: String::new(), digest: digest.clone() })
         }
     }
-    pub fn push(&mut self, msg: Message, context:String) {
+    pub fn push(&mut self, mut msg: Message, context:String) {
         let mut digest = self.digest();
+        let prev_id = self.last_message_id();
+        if prev_id != MessageId::default() {
+            msg.prev_id = prev_id;
+        }
         digest = (msg.id.to_string() + digest.as_str()).digest();
         self.messages.push(HistoryEntry { message: msg, context: context, digest: digest })
     }
@@ -256,5 +280,30 @@ mod tests {
 
         assert_eq!(extend_context.digest(), push_context.digest());
         assert_eq!(extend_context.messages().len(), push_context.messages().len());
+    }
+
+    #[test]
+    fn message_prev_id_updates() {
+        let id1 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
+        let id2 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap());
+        let id3 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap());
+        let m1 = make_message(id1);
+        let m2 = make_message(id2);
+        let m3 = make_message(id3);
+
+        let mut context = MessageContext::new();
+        context.push(m1.clone());
+        context.push(m2.clone());
+
+        let messages = context.messages();
+        assert_eq!(messages[0].prev_id, MessageId::default());
+        assert_eq!(messages[1].prev_id, id1);
+
+        let mut history = MessageHistory::new();
+        history.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
+        let messages = history.messages();
+        assert_eq!(messages[0].prev_id, MessageId::default());
+        assert_eq!(messages[1].prev_id, id1);
+        assert_eq!(messages[2].prev_id, id2);
     }
 }
