@@ -27,6 +27,7 @@ pub enum ActionType<'a> {
     CreateSession(&'a Session),
     GetSession(SessionId),
     UpdateSession(SessionId),
+    ListSessions,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

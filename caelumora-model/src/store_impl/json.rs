@@ -112,7 +112,7 @@ impl JsonFileStore {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Persisted<T> {
     schema_version: u32,
-    updated_at: DateTime<Utc>,
+    persisted_at: DateTime<Utc>,
     #[serde(flatten)]
     value: T,
 }
@@ -251,7 +251,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -274,7 +274,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -309,7 +309,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -356,7 +356,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -376,7 +376,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -408,10 +408,19 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
+    }
+
+    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
+        if !self.security_manager.check(ctx, ActionType::ListSessions).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        let dir = self.sessions_dir();
+        let sessions: Vec<Persisted<Session>> = read_all_from_dir(&dir)?;
+        Ok(sessions.into_iter().map(|p| p.value).collect())
     }
 
     // Users (durable definitions)
@@ -425,7 +434,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -462,7 +471,7 @@ impl EntityStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value,
             },
         )
@@ -486,7 +495,7 @@ impl StateStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value: state,
             },
         )
@@ -506,7 +515,7 @@ impl StateStore for JsonFileStore {
             &path,
             &Persisted {
                 schema_version: 1,
-                updated_at: Utc::now(),
+                persisted_at: Utc::now(),
                 value: state,
             },
         )
@@ -674,5 +683,44 @@ mod tests {
         };
         let not_found = store.update_agent(&ctx, &missing_agent).await.unwrap_err();
         assert!(matches!(not_found, StoreError::NotFound { entity: "agent", .. }));
+    }
+
+    #[tokio::test]
+    async fn session_list_works() {
+        let dir = tempdir().unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
+        let ctx = SecurityContext::default();
+
+        let s1 = Session {
+            id: SessionId(Uuid::new_v4()),
+            metadata: crate::meta::Metadata {
+                name: "session-1".to_string(),
+                scope: Scope::GlobalScope,
+                ..crate::meta::Metadata::default()
+            },
+            channels: Vec::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let s2 = Session {
+            id: SessionId(Uuid::new_v4()),
+            metadata: crate::meta::Metadata {
+                name: "session-2".to_string(),
+                scope: Scope::GlobalScope,
+                ..crate::meta::Metadata::default()
+            },
+            channels: Vec::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        store.create_session(&ctx, &s1).await.unwrap();
+        store.create_session(&ctx, &s2).await.unwrap();
+
+        let sessions = store.list_sessions(&ctx).await.unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|s| s.id == s1.id));
+        assert!(sessions.iter().any(|s| s.id == s2.id));
     }
 }

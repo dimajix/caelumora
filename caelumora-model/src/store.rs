@@ -51,6 +51,7 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
+    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
 
     // Users
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
@@ -199,9 +200,46 @@ pub mod tests {
         let store = Arc::new(MemoryStore::new());
 
         let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
+        store.create_session(&SecurityContext::default(), &session).await.unwrap();
         let _controller = crate::session::SessionController::new(session.clone(), event_sender, store.clone()).await.unwrap();
 
         let persisted = store.get_session(&SecurityContext::default(), session.id).await.unwrap();
         assert_eq!(persisted.id, session.id);
+    }
+
+    #[tokio::test]
+    async fn list_sessions_works() {
+        let session1 = Session {
+            id: SessionId(Uuid::new_v4()),
+            metadata: Metadata {
+                name: "session1".to_string(),
+                scope: Scope::GlobalScope,
+                ..Metadata::default()
+            },
+            channels: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let session2 = Session {
+            id: SessionId(Uuid::new_v4()),
+            metadata: Metadata {
+                name: "session2".to_string(),
+                scope: Scope::GlobalScope,
+                ..Metadata::default()
+            },
+            channels: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let store = Arc::new(MemoryStore::new());
+        let ctx = SecurityContext::default();
+
+        store.create_session(&ctx, &session1).await.unwrap();
+        store.create_session(&ctx, &session2).await.unwrap();
+
+        let sessions = store.list_sessions(&ctx).await.unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|s| s.id == session1.id));
+        assert!(sessions.iter().any(|s| s.id == session2.id));
     }
 }

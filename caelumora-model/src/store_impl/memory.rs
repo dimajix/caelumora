@@ -207,6 +207,12 @@ impl EntityStore for MemoryStore {
         })?
     }
 
+    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
+        let _ = ctx; // Placeholder for security check
+        let values = self.read_lock(&self.sessions, |v| v.values().cloned().collect())?;
+        Ok(values)
+    }
+
     // Users
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
         let _ = ctx; // Placeholder for security check
