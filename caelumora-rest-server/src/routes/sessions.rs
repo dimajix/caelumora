@@ -53,20 +53,31 @@ pub async fn create_session(
     }))
 }
 
-pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Vec<SessionResponse>> {
-    Json(
-        state.session_manager.sessions
-            .iter()
-            .map(|s| {
-                let meta = s.get_session().metadata.clone();
-                SessionResponse {
-                    id: s.id(),
-                    name: meta.name.clone(),
-                    metadata: meta,
-                }
-            })
-            .collect(),
-    )
+pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Result<Json<Vec<SessionResponse>>, StatusCode> {
+    let ctx = SecurityContext::default();
+    let sessions = state.entity_store.list_sessions(&ctx).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let response = sessions
+        .into_iter()
+        .map(|s| {
+            // If the session is running, get the latest metadata from the session loop
+            let (id, name, metadata) = if let Some(session_loop) = state.session_manager.get_session(s.id) {
+                let meta = session_loop.get_session().metadata.clone();
+                (session_loop.id(), meta.name.clone(), meta)
+            } else {
+                (s.id, s.metadata.name.clone(), s.metadata)
+            };
+
+            SessionResponse {
+                id,
+                name,
+                metadata,
+            }
+        })
+        .collect();
+
+    Ok(Json(response))
 }
 
 pub async fn terminate_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> StatusCode {
@@ -75,11 +86,8 @@ pub async fn terminate_session(State(state): State<Arc<AppState>>, Path(id): Pat
         handle.abort();
     }
     
-    if state.session_manager.sessions.remove(&session_id).is_some() {
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NOT_FOUND
-    }
+    state.session_manager.sessions.remove(&session_id);
+    StatusCode::NO_CONTENT
 }
 
 pub async fn rename_session(
