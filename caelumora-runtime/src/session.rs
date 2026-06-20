@@ -172,10 +172,7 @@ impl SessionManager {
 
     pub async fn load_session(&self, id: SessionId) -> Result<Arc<SessionLoop>> {
         let session = self.runtime_manager.entity_store().get_session(&SecurityContext::default(), id).await.expect("failed to load session");
-        let session_loop = SessionLoop::new(session, self.runtime_manager.clone()).await?;
-        let session_ref = Arc::new(session_loop);
-        self.sessions.insert(id, session_ref.clone());
-        Ok(session_ref)
+        self.create_session(session).await
     }
 
     pub fn get_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {

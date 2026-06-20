@@ -89,6 +89,7 @@ impl SessionTemplate {
             id: context.id,
             metadata: Metadata {
                 name,
+                owner: context.owner,
                 scope: self.scope.instantiate(context),
                 description: self.metadata.description.clone(),
                 ..Metadata::default()
