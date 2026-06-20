@@ -65,8 +65,7 @@ async fn main() -> anyhow::Result<()> {
         session_id: caelumora_model::session::SessionId::default(),
         channel_id: caelumora_model::channel::ChannelId::default(),
     };
-    let user = entity_store.find_user_by_name(&security_ctx, &args.user).await?
-        .ok_or_else(|| anyhow::anyhow!("User {} not found after initialization", args.user))?;
+    let user = entity_store.find_user_by_name(&security_ctx, &args.user).await?;
 
     let state = Arc::new(AppState {
         user_id: user.id,

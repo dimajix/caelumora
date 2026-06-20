@@ -201,7 +201,7 @@ impl EntityStore for JsonFileStore {
         require_entity(
             templates
                 .into_iter()
-                .find(|t| t.metadata.name == name && t.metadata.scope == *scope),
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
             "agent_template",
             name.to_string(),
         )
@@ -225,7 +225,7 @@ impl EntityStore for JsonFileStore {
         require_entity(
             templates
                 .into_iter()
-                .find(|t| t.metadata.name == name && t.metadata.scope == *scope),
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
             "session_template",
             name.to_string(),
         )
@@ -325,15 +325,19 @@ impl EntityStore for JsonFileStore {
         require_entity(loaded, "agent", id.to_string())
     }
 
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
         if !self.security_manager.check(ctx, ActionType::FindAgent).await {
             return Err(StoreError::PermissionDenied);
         }
         let agents = read_all_from_dir::<Persisted<Agent>>(&self.agents_dir())?;
-        Ok(agents
-            .into_iter()
-            .map(|p| p.value)
-            .find(|a| a.metadata.name == name && a.metadata.scope == *scope))
+        require_entity(
+            agents
+                .into_iter()
+                .map(|p| p.value)
+                .find(|a| a.metadata.name == name && scope.contains(&a.metadata.scope)),
+            "agent",
+            name.to_string(),
+        )
     }
 
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -434,11 +438,18 @@ impl EntityStore for JsonFileStore {
         require_entity(loaded, "user", id.to_string())
     }
 
-    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<Option<User>> {
+    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let _ = _ctx;
         let dir = self.users_dir();
         let users: Vec<Persisted<User>> = read_all_from_dir(&dir)?;
-        Ok(users.into_iter().find(|u| u.value.username == name).map(|u| u.value))
+        require_entity(
+            users
+                .into_iter()
+                .map(|p| p.value)
+                .find(|t| t.username == name),
+            "user",
+            name.to_string(),
+        )
     }
 
     async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
@@ -565,6 +576,31 @@ mod tests {
             found_session.metadata.name,
             session_template.metadata.name
         );
+    }
+
+    #[tokio::test]
+    async fn find_honors_containment() {
+        let dir = tempdir().unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
+        let ctx = SecurityContext::default();
+
+        let mut personality = make_personality();
+        let user_id = UserId(Uuid::new_v4());
+        let user_scope = Scope::UserScope { user_id };
+        personality.metadata.scope = user_scope.clone();
+        
+        store.put_personality(&ctx, &personality).await.unwrap();
+
+        // Search with UserScope should find it
+        store.find_personality_by_name(&ctx, &personality.metadata.name, &user_scope).await.unwrap();
+
+        // Search with GlobalScope should ALSO find it
+        store.find_personality_by_name(&ctx, &personality.metadata.name, &Scope::GlobalScope).await.unwrap();
+
+        // Search with different UserScope should NOT find it
+        let other_user = Scope::UserScope { user_id: UserId(Uuid::new_v4()) };
+        store.find_personality_by_name(&ctx, &personality.metadata.name, &other_user).await.unwrap_err();
     }
 
     #[tokio::test]

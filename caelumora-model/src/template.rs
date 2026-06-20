@@ -121,7 +121,7 @@ impl ParticipantTemplate {
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
                 let sc = scope.instantiate(&context);
-                let agent = if let Some(agent) = context.entity_store.find_agent_by_name(&context.security, name, &sc).await.expect("failed to find agent") {
+                let agent = if let Ok(agent) = context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
                     agent
                 } else {
                     let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await.expect("failed to get personality");

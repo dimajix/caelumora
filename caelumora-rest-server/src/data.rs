@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use serde_json::json;
-use serde_json::ser::Compound::Map;
 use uuid::Uuid;
 use caelumora_model::store::{EntityStore};
 use caelumora_model::agent::{Personality, PersonalityId};
@@ -20,15 +18,18 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     let ctx = SecurityContext::default();
 
     // 1. Ensure user exists
-    if store.find_user_by_name(&ctx, username).await?.is_none() {
+    let user = if let Ok(u) = store.find_user_by_name(&ctx, username).await {
+        u
+    } else {
         let user = User {
-            id: UserId(Uuid::new_v4()),
-            username: username.to_string(),
-            email: format!("{}@example.com", username),
-            roles: vec!["user".to_string()],
-        };
+                id: UserId(Uuid::new_v4()),
+                username: username.to_string(),
+                email: format!("{}@example.com", username),
+                roles: vec!["user".to_string()],
+            };
         store.create_user(&ctx, &user).await?;
-    }
+        user
+    };
 
     // 2. Ensure personalities exist
     let jonathan = if let Ok(p) = store.find_personality_by_name(&ctx, "jonathan-assistant", &Scope::GlobalScope).await {
@@ -62,7 +63,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             metadata: Metadata {
                 name: "simple-session".to_string(),
                 scope: Scope::GlobalScope,
-                owner: UserId::default(),
+                owner: user.id,
                 description: "Simple user+assistant session".to_string(),
             },
             scope: ScopeTemplate::SessionScope,
@@ -88,7 +89,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             metadata: Metadata {
                 name: "sassy-session".to_string(),
                 scope: Scope::GlobalScope,
-                owner: UserId::default(),
+                owner: user.id,
                 description: "Sassy user+assistant session".to_string(),
             },
             scope: ScopeTemplate::SessionScope,

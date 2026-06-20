@@ -44,7 +44,7 @@ pub trait EntityStore : Debug + Sync + Send {
     // Agents (durable definition)
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>>;
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent>;
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
 
     // Sessions (durable definition)
@@ -55,7 +55,7 @@ pub trait EntityStore : Debug + Sync + Send {
     // Users
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<Option<User>>;
+    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
 }
 
@@ -178,7 +178,7 @@ pub mod tests {
 
         controller.update_name("new_name".to_string()).await;
 
-        let persisted = store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).await.unwrap().unwrap();
+        let persisted = store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).await.unwrap();
         assert_eq!(persisted.id, agent.id);
         assert_eq!(persisted.metadata.name, "new_name");
     }

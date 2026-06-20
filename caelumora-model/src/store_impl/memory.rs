@@ -14,7 +14,7 @@ pub struct MemoryStore {
     session_templates: RwLock<HashMap<String, SessionTemplate>>,
     agents: RwLock<HashMap<AgentId, Agent>>,
     sessions: RwLock<HashMap<SessionId, Session>>,
-    users: RwLock<HashMap<crate::user::UserId, crate::user::User>>,
+    users: RwLock<HashMap<UserId, User>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     session_states: RwLock<HashMap<SessionId, SessionState>>,
 }
@@ -67,7 +67,7 @@ impl EntityStore for MemoryStore {
         require_entity(
             values
                 .values()
-                .find(|t| t.metadata.name == name && t.metadata.scope == *scope)
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope))
                 .cloned(),
             "agent_template",
             name.to_string(),
@@ -97,7 +97,7 @@ impl EntityStore for MemoryStore {
         require_entity(
             values
                 .values()
-                .find(|t| t.metadata.name == name && t.metadata.scope == *scope)
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope))
                 .cloned(),
             "session_template",
             name.to_string(),
@@ -148,13 +148,17 @@ impl EntityStore for MemoryStore {
         require_entity(values.get(&id).cloned(), "agent", id.to_string())
     }
 
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Option<Agent>> {
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
         let _ = ctx; // Placeholder for security check
-        self.read_lock(&self.agents, |v| {
-            v.values()
-                .find(|a| a.metadata.name == name && a.metadata.scope == *scope)
-                .cloned()
-        })
+        let values = self.read_lock(&self.agents, |v| v.clone())?;
+        require_entity(
+            values
+                .values()
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope))
+                .cloned(),
+            "agent",
+            name.to_string(),
+        )
     }
 
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -221,11 +225,17 @@ impl EntityStore for MemoryStore {
         require_entity(values.get(&id).cloned(), "user", id.to_string())
     }
 
-    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<Option<User>> {
+    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let _ = _ctx;
-        self.read_lock(&self.users, |users| {
-            users.values().find(|u| u.username == name).cloned()
-        })
+        let values = self.read_lock(&self.users, |v| v.clone())?;
+        require_entity(
+            values
+                .values()
+                .find(|t| t.username == name)
+                .cloned(),
+            "user",
+            name.to_string(),
+        )
     }
 
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
@@ -310,6 +320,9 @@ mod tests {
     async fn personality_lookup_honors_scope() {
         let store = MemoryStore::new();
         let ctx = SecurityContext::default();
+        let user_id = UserId(Uuid::new_v4());
+        let user_scope = Scope::UserScope { user_id };
+
         store
             .put_personality(&ctx, &make_personality("assistant", Scope::GlobalScope))
             .await
@@ -319,19 +332,25 @@ mod tests {
                 &ctx,
                 &make_personality(
                     "assistant",
-                    Scope::UserScope {
-                        user_id: UserId(Uuid::new_v4()),
-                    },
+                    user_scope.clone(),
                 ),
             )
             .await
             .unwrap();
 
-        let global = store
+        // Search with GlobalScope should find an entity (either GlobalScope or UserScope)
+        let found = store
             .find_personality_by_name(&ctx, "assistant", &Scope::GlobalScope)
             .await
             .unwrap();
-        assert_eq!(global.metadata.scope, Scope::GlobalScope);
+        assert!(Scope::GlobalScope.contains(&found.metadata.scope));
+
+        // Search with UserScope should find the UserScope entity (it's contained in UserScope, while GlobalScope is not)
+        let found = store
+            .find_personality_by_name(&ctx, "assistant", &user_scope)
+            .await
+            .unwrap();
+        assert_eq!(found.metadata.scope, user_scope);
     }
 
     #[tokio::test]
@@ -351,11 +370,19 @@ mod tests {
             .await
             .unwrap();
 
+        // UserScope search should find UserScope entity (GlobalScope is not contained in UserScope)
         let loaded = store
             .find_session_template_by_name(&ctx, "pairing", &user_scope)
             .await
             .unwrap();
         assert_eq!(loaded.metadata.scope, user_scope);
+
+        // GlobalScope search should find an entity (GlobalScope or UserScope)
+        let loaded = store
+            .find_session_template_by_name(&ctx, "pairing", &Scope::GlobalScope)
+            .await
+            .unwrap();
+        assert!(Scope::GlobalScope.contains(&loaded.metadata.scope));
     }
 
     #[tokio::test]
