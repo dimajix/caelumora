@@ -184,7 +184,7 @@ impl AgentLoopState {
             if tools.iter().any(|t| t.name == *tool_name) {
                 let mut execution = ToolExecution {
                     id: uuid::Uuid::new_v4(),
-                    session_id: self.session_id, // TODO: Get from context
+                    session_id: self.session_id,
                     agent_id: self.agent_id,
                     input: serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null),
                     output: None,

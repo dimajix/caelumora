@@ -17,13 +17,42 @@ use crate::message::MessageEvent;
 struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaChatMessage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<OllamaTool>,
     stream: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaTool {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OllamaFunction,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaChatMessage {
     role: String,
     content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaToolCall {
+    function: OllamaToolCallFunction,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaToolCallFunction {
+    name: String,
+    arguments: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,9 +71,27 @@ impl From<&Message> for OllamaChatMessage {
         }
         .to_string();
 
+        let tool_calls = if value.tool_calls.is_empty() {
+            None
+        } else {
+            Some(
+                value
+                    .tool_calls
+                    .iter()
+                    .map(|tc| OllamaToolCall {
+                        function: OllamaToolCallFunction {
+                            name: tc.function_name.clone(),
+                            arguments: serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null),
+                        },
+                    })
+                    .collect(),
+            )
+        };
+
         Self {
             role,
             content: value.content.clone().unwrap_or_default(),
+            tool_calls,
         }
     }
 }
@@ -78,14 +125,28 @@ impl LLMClient for OllamaClient {
     async fn chat_completion(
         &self,
         context: &[Message],
-        _tools: &[caelumora_model::tool::Tool],
+        tools: &[caelumora_model::tool::Tool],
     ) -> BoxStream<'static, Result<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
         let message_ids: Vec<_> = context.iter().map(|m| m.id).collect();
         let prev_id = context.iter().map(|m| m.id).last().unwrap_or(MessageId::default());
+
+        let ollama_tools: Vec<_> = tools
+            .iter()
+            .map(|t| OllamaTool {
+                tool_type: "function".to_string(),
+                function: OllamaFunction {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.input_schema.clone(),
+                },
+            })
+            .collect();
+
         let request = OllamaChatRequest {
             model: self.model.clone(),
             messages: context.iter().map(OllamaChatMessage::from).collect(),
+            tools: ollama_tools,
             stream: true,
         };
 
@@ -106,6 +167,7 @@ impl LLMClient for OllamaClient {
             let mut stream = response.error_for_status()?.bytes_stream();
 
             let mut full_content = String::new();
+            let mut all_tool_calls = Vec::new();
 
             while let Some(chunk_result) = stream.next().await {
                 let chunk = chunk_result?;
@@ -119,6 +181,16 @@ impl LLMClient for OllamaClient {
                     match serde_json::from_str::<OllamaChatResponse>(line) {
                         Ok(body) => {
                             if let Some(msg) = body.message {
+                                if let Some(tc) = msg.tool_calls {
+                                    for call in tc {
+                                        all_tool_calls.push(caelumora_model::message::ToolCall {
+                                            id: Uuid::new_v4().to_string(),
+                                            function_name: call.function.name,
+                                            arguments: call.function.arguments.to_string(),
+                                        });
+                                    }
+                                }
+
                                 if !msg.content.is_empty() {
                                     full_content.push_str(&msg.content);
                                     let partial_message = Message {
@@ -145,7 +217,7 @@ impl LLMClient for OllamaClient {
                                     role: MessageRole::Assistant,
                                     content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
                                     reasoning: None,
-                                    tool_calls: vec![],
+                                    tool_calls: all_tool_calls.clone(),
                                     timestamp: Utc::now(),
                                     metadata: HashMap::new(),
                                 };
