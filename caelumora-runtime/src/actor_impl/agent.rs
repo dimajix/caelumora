@@ -1,15 +1,15 @@
-use std::mem;
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::agent::AgentLoop;
+use crate::event::GlobalEvent;
 use anyhow::anyhow;
 use async_trait::async_trait;
+use caelumora_model::message::{ActorId, Message};
+use caelumora_model::security::SecurityContext;
 use log::{debug, info, warn};
+use std::mem;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
-use caelumora_model::message::{ActorId, Message};
-use caelumora_model::security::SecurityContext;
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
-use crate::agent::AgentLoop;
-use crate::runtime::GlobalEvent;
 
 #[derive(Debug)]
 pub struct AgentActor {

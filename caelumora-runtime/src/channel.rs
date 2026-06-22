@@ -1,25 +1,26 @@
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
+use crate::actor_impl::agent::AgentActor;
+use crate::actor_impl::user::UserActor;
 use crate::agent::AgentLoop;
+use crate::event::GlobalEvent;
 use crate::moderator::Moderator;
-use crate::recorder::{Recorder};
+use crate::recorder::Recorder;
+use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use std::sync::atomic::{AtomicU8, Ordering};
 use caelumora_model::agent::ProcessingState;
+use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::message::{ActorId, Message};
-use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant, ChannelController};
 use caelumora_model::session::{Session, SessionId};
+use caelumora_model::store::{StateStore, StoreError};
 use log::{debug, info, warn};
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use caelumora_model::store::{StateStore, StoreError};
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
-use crate::actor_impl::agent::AgentActor;
-use crate::actor_impl::user::UserActor;
-use crate::runtime::RuntimeManager;
 
 struct ActorHandle {
     id: ActorId,
@@ -203,10 +204,10 @@ impl ChannelLoop {
         }
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<crate::runtime::GlobalEvent>) {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             match global_event {
-                crate::runtime::GlobalEvent::ChannelUpdated(_, cid, event) => {
+                GlobalEvent::ChannelUpdated(_, cid, event) => {
                     if cid == self.id {
                         self.channel.process_update(&event);
                     }

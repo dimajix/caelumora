@@ -1,38 +1,19 @@
-use crate::llm_impl::ollama::OllamaClient;
-use crate::llm::LLMClient;
-use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
-use crate::recorder::{Recorder};
-use crate::tool::{DummyToolExecutor, ToolExecutor};
 use crate::component::ComponentRegistry;
-use anyhow::Result;
-use std::sync::Arc;
-use caelumora_model::store::{StateStore, EntityStore};
 use crate::component_impl::{context, history};
-use caelumora_model::security::{DummySecurityManager, SecurityManager};
-use serde::{Deserialize, Serialize};
-use caelumora_model::session::{SessionId, SessionUpdateEvent};
-use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
-use caelumora_model::agent::{AgentId, AgentUpdateEvent};
+use crate::event::EventBus;
+use crate::llm::LLMClient;
+use crate::llm_impl::ollama::OllamaClient;
+use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
+use crate::recorder::Recorder;
+use crate::tool::{DummyToolExecutor, ToolExecutor};
+use anyhow::Result;
+use caelumora_model::channel::ChannelId;
 use caelumora_model::message::ActorId;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::user::{UserId, UserUpdateEvent};
-use crate::event::EventBus;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GlobalEvent {
-    SessionCreated(SessionId),
-    SessionUpdated(SessionId, SessionUpdateEvent),
-    SessionDeleted(SessionId),
-    ChannelCreated(SessionId, ChannelId),
-    ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
-    ChannelDeleted(SessionId, ChannelId),
-    AgentCreated(SessionId, ChannelId, AgentId),
-    AgentUpdated(SessionId, ChannelId, AgentId, AgentUpdateEvent),
-    AgentDeleted(SessionId, ChannelId, AgentId),
-    UserCreated(UserId),
-    UserUpdated(UserId, UserUpdateEvent),
-    UserDeleted(UserId),
-}
+use caelumora_model::security::{DummySecurityManager, SecurityManager};
+use caelumora_model::session::SessionId;
+use caelumora_model::store::{EntityStore, StateStore};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct RuntimeManager {

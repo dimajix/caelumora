@@ -1,12 +1,13 @@
 use crate::channel::ChannelLoop;
+use crate::event::GlobalEvent;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::session::{ChannelId, Session, SessionId, SessionController};
+use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex};
+use tokio::sync::Mutex;
 use tokio::task::{AbortHandle, JoinSet};
 
 struct ChannelHandle {
@@ -110,10 +111,10 @@ impl SessionLoop {
         Ok(())
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<crate::runtime::GlobalEvent>) {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             match global_event {
-                crate::runtime::GlobalEvent::SessionUpdated(sid, event) => {
+                GlobalEvent::SessionUpdated(sid, event) => {
                     if sid == self.id() {
                         self.session_controller.process_update(&event).await;
                     }

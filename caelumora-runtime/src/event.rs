@@ -1,12 +1,28 @@
-use std::sync::Arc;
+use caelumora_model::agent::{AgentId, AgentUpdateEvent};
+use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
+use caelumora_model::session::{SessionId, SessionUpdateEvent};
+use caelumora_model::user::{UserId, UserUpdateEvent};
 use dashmap::DashMap;
-use tokio::sync::mpsc;
 use log::warn;
-use caelumora_model::session::SessionId;
-use caelumora_model::channel::ChannelId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::user::UserId;
-use crate::runtime::GlobalEvent;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GlobalEvent {
+    SessionCreated(SessionId),
+    SessionUpdated(SessionId, SessionUpdateEvent),
+    SessionDeleted(SessionId),
+    ChannelCreated(SessionId, ChannelId),
+    ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
+    ChannelDeleted(SessionId, ChannelId),
+    AgentCreated(SessionId, ChannelId, AgentId),
+    AgentUpdated(SessionId, ChannelId, AgentId, AgentUpdateEvent),
+    AgentDeleted(SessionId, ChannelId, AgentId),
+    UserCreated(UserId),
+    UserUpdated(UserId, UserUpdateEvent),
+    UserDeleted(UserId),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {

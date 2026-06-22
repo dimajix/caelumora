@@ -1,18 +1,18 @@
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::event::GlobalEvent;
 use anyhow::anyhow;
+use async_trait::async_trait;
+use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
+use caelumora_model::security::SecurityContext;
+use caelumora_model::session::{Session, SessionId};
+use caelumora_model::user::{User, UserController};
+use chrono::Utc;
 use log::{debug, info, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
 use uuid::Uuid;
-use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
-use caelumora_model::channel::{Channel, ChannelId};
-use caelumora_model::session::{Session, SessionId};
-use caelumora_model::user::{User, UserController};
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
-use crate::runtime::GlobalEvent;
-use async_trait::async_trait;
-use chrono::Utc;
-use caelumora_model::security::SecurityContext;
 
 #[derive(Debug)]
 pub struct UserActor {
