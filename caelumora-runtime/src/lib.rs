@@ -11,6 +11,5 @@ pub mod actor;
 pub mod actor_impl;
 pub mod channel;
 pub mod message;
-pub mod security;
 pub mod component;
 pub mod component_impl;

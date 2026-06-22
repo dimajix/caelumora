@@ -1,30 +1,34 @@
-use crate::message::{MessageEvent};
-use crate::runtime::RuntimeManager;
 use crate::component::{
     ComponentContainer, ComponentImpl, TurnContext,
 };
-use anyhow::Result;
-use async_stream::stream;
-use std::sync::atomic::{AtomicU8, Ordering};
-use caelumora_model::session::{SessionId, ChannelId};
-use caelumora_model::agent::{Agent, AgentState, ProcessingState, AgentController, AgentId};
-use caelumora_model::component::{
-    ComponentFailPolicy, ComponentConfig
-};
-use caelumora_model::message::{format_conversation, ActorId, Message, MessageRole, ToolCall, ToolResult};
-use caelumora_model::store::{StateStore, StoreError};
-use futures::stream::BoxStream;
-use futures::TryStreamExt;
-use std::sync::Arc;
-use log::{debug, warn};
-use tokio::sync::Mutex;
-use caelumora_model::security::SecurityContext;
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, PlanPreProcessor};
+use crate::message::MessageEvent;
+use crate::runtime::RuntimeManager;
+use crate::tool::ToolProvider;
+use anyhow::Result;
+use async_stream::stream;
+use caelumora_model::agent::{Agent, AgentController, AgentId, AgentState, ProcessingState};
+use caelumora_model::component::{
+    ComponentConfig, ComponentFailPolicy
+};
+use caelumora_model::message::{format_conversation, ActorId, Message, MessageId, MessageRole, ToolCall, ToolResult};
+use caelumora_model::security::SecurityContext;
+use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::tool::ToolExecution;
+use futures::stream::BoxStream;
+use futures::TryStreamExt;
+use log::{debug, warn};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 struct AgentLoopState {
     agent: Arc<AgentController>,
+    session_id: SessionId,
+    channel_id: ChannelId,
     agent_id: AgentId,
     agent_state: AgentState,
     runtime_manager: Arc<RuntimeManager>,
@@ -33,9 +37,12 @@ struct AgentLoopState {
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
+    tool_providers: Vec<ComponentImpl<dyn ToolProvider>>,
 }
 impl AgentLoopState {
-    async fn new(agent_controller: Arc<AgentController>,
+    async fn new(session_id: SessionId,
+                 channel_id: ChannelId,
+            agent_controller: Arc<AgentController>,
            runtime_manager: Arc<RuntimeManager>,
            pipeline_config: ComponentConfig,
     ) -> Result<Self> {
@@ -65,9 +72,12 @@ impl AgentLoopState {
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let plan_pre_processors = components.get_all::<dyn PlanPreProcessor>(None)?;
+        let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
 
         Ok(Self {
             agent: agent_controller,
+            session_id,
+            channel_id,
             agent_id,
             agent_state,
             runtime_manager: runtime_manager.clone(),
@@ -76,6 +86,7 @@ impl AgentLoopState {
             perceive_in_processors,
             emit_out_processors,
             plan_pre_processors,
+            tool_providers,
         })
     }
 
@@ -90,7 +101,7 @@ impl AgentLoopState {
 
         let _ = perceived;
 
-        if let Err(e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
             warn!("Cannot store state of agent {} after perceive", self.agent_id)
         }
     }
@@ -103,7 +114,7 @@ impl AgentLoopState {
             return None;
         }
 
-        if let Err(e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
             warn!("Cannot store state of agent {} after respond_complete", self.agent_id)
         }
         Some(output.remove(0))
@@ -139,7 +150,7 @@ impl AgentLoopState {
                 context
             });
 
-        if let Err(e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
             warn!("Cannot store state of agent {} after context preparation", self.agent_id)
         }
 
@@ -160,14 +171,49 @@ impl AgentLoopState {
             agent_name,
             format_conversation(context.as_slice()),
             agent_name);
-        llm_client.chat_completion(context.as_slice()).await
+
+        let tools = self.tool_providers.iter().flat_map(|p| p.facet.tools()).collect::<Vec<_>>();
+
+        llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute(&self, _call: &ToolCall, _security: &SecurityContext) -> Result<ToolResult> {
-        // 1. Execute tool
-        // 2. Add tool result to history and context
-        // 3. Return some message
-        todo!()
+    async fn execute(&self, call: &ToolCall, _security: &SecurityContext) -> Result<ToolResult> {
+        let tool_name = &call.function_name;
+        for provider in &self.tool_providers {
+            let tools = provider.facet.tools();
+            if tools.iter().any(|t| t.name == *tool_name) {
+                let mut execution = ToolExecution {
+                    id: uuid::Uuid::new_v4(),
+                    session_id: self.session_id, // TODO: Get from context
+                    agent_id: self.agent_id,
+                    input: serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null),
+                    output: None,
+                    status: caelumora_model::tool::ExecutionStatus::Running,
+                    started_at: chrono::Utc::now(),
+                    finished_at: None,
+                };
+
+                let params = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+                match provider.facet.execute(tool_name, params, &mut execution).await {
+                    Ok(value) => {
+                        execution.output = Some(value.clone());
+                        execution.status = caelumora_model::tool::ExecutionStatus::Completed;
+                        execution.finished_at = Some(chrono::Utc::now());
+                        return Ok(ToolResult {
+                            id: call.id.clone(),
+                            content: value.to_string(),
+                        });
+                    }
+                    Err(e) => {
+                        execution.status = caelumora_model::tool::ExecutionStatus::Failed;
+                        execution.finished_at = Some(chrono::Utc::now());
+                        // TODO: Log error in execution
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Err(anyhow::anyhow!("Tool not found: {}", tool_name))
     }
 
     async fn apply_stage_processors<T>(
@@ -225,7 +271,13 @@ impl AgentLoop {
         let agent_id = agent.id;
         let event_sender = runtime_manager.event_bus().agent_event_sender(session_id, channel_id, agent_id);
         let agent_controller = Arc::new(AgentController::new(agent, event_sender, runtime_manager.entity_store()));
-        let state = AgentLoopState::new(agent_controller.clone(), runtime_manager.clone(), personality.components).await?;
+        let state = AgentLoopState::new(
+            session_id,
+            channel_id,
+            agent_controller.clone(),
+            runtime_manager.clone(),
+            personality.components
+        ).await?;
         Ok(Self {
             id: ActorId::Agent(agent_id),
             state: Arc::new(Mutex::new(state)),
@@ -279,6 +331,7 @@ impl AgentLoop {
             while loop_count < max_iterations {
                 let _ = loop_count;
                 loop_count += 1;
+                let _ = loop_count;
 
                 // --- PHASE 2: PLAN ---
                 // Call LLM with the current context
@@ -303,14 +356,47 @@ impl AgentLoop {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
                             let tool_calls = message.tool_calls.clone();
+                            let message_id = message.id;
                             if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
                             // Execute all tools
+                            let mut tool_results = Vec::new();
                             for c in tool_calls {
-                                let _r = state.execute(&c, &security_context);
-                                // Send back to llm!
-                                //yield r;
+                                match state.execute(&c, &security_context).await {
+                                    Ok(r) => {
+                                        tool_results.push(r);
+                                    }
+                                    Err(e) => {
+                                        warn!("Tool execution failed: {}", e);
+                                        tool_results.push(ToolResult {
+                                            id: c.id.clone(),
+                                            content: format!("Error: {}", e),
+                                        });
+                                    }
+                                }
+                            }
+
+                            if !tool_results.is_empty() {
+                                // Add tool results to the context for the next iteration
+                                // Since ToolResult is not directly in Message, we might need to store it in metadata
+                                // or the LLMClient should know how to handle it.
+                                // Actually, let's look at Message again.
+                                // It seems ToolResult is meant to be sent back.
+                                // If we want the LLM to see them, they must be in the context.
+                                let tool_message = Message {
+                                    id: MessageId(uuid::Uuid::new_v4()),
+                                    prev_id: message_id,
+                                    sender_id: agent_id,
+                                    sender_name: agent_name.clone(),
+                                    role: MessageRole::Tool,
+                                    content: Some(serde_json::to_string(&tool_results).unwrap_or_default()),
+                                    timestamp: chrono::Utc::now(),
+                                    ..Message::default()
+                                };
+                                state.perceive(vec![tool_message], &mut turn_context).await;
+                                // After adding tool results, we continue the loop to call LLM again
+                                continue;
                             }
                         },
                         MessageEvent::EndOfTurn(mut messages) => {
@@ -330,7 +416,7 @@ impl AgentLoop {
                 }
 
                 // Check if the LLM finished with a "Final Answer" or "Reflect" signal
-                // TODO with "break"
+                // If there were no tool calls, we are done
                 break;
             }
 
@@ -348,12 +434,12 @@ impl AgentLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_impl::context::{StateContextAppender, StateContextProvider};
+    use crate::component_impl::history::StateHistoryWriter;
     use caelumora_model::message::{ActorId, MessageId};
     use chrono::Utc;
     use std::collections::HashMap;
     use uuid::Uuid;
-    use crate::component_impl::context::{StateContextAppender, StateContextProvider};
-    use crate::component_impl::history::StateHistoryWriter;
 
     fn make_message(content: &str) -> Message {
         Message {

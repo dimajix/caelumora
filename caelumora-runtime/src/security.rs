@@ -1,1 +1,0 @@
-// SecurityManager has been moved to caelumora-model
