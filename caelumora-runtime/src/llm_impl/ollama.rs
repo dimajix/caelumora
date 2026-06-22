@@ -42,6 +42,8 @@ struct OllamaChatMessage {
     content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OllamaToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_name: Option<String>
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,8 +63,9 @@ struct OllamaChatResponse {
     done: bool,
 }
 
-impl From<&Message> for OllamaChatMessage {
-    fn from(value: &Message) -> Self {
+impl OllamaChatMessage {
+    fn from(value: &Message) -> Vec<Self> {
+        let mut messages = Vec::new();
         let role = match value.role {
             MessageRole::User => "user",
             MessageRole::Assistant => "assistant",
@@ -88,11 +91,24 @@ impl From<&Message> for OllamaChatMessage {
             )
         };
 
-        Self {
-            role,
-            content: value.content.clone().unwrap_or_default(),
-            tool_calls,
+        for r in &value.tool_results {
+            messages.push( Self {
+                role: role.clone(),
+                content: serde_json::to_string(&r).unwrap_or_default(),
+                tool_name: Some(r.tool_name.clone()),
+                tool_calls: None,
+            })
         }
+        if tool_calls.is_some() || value.content.is_some() {
+            messages.push( Self {
+                role,
+                content: value.content.clone().unwrap_or_default(),
+                tool_name: None,
+                tool_calls
+            })
+        }
+
+        messages
     }
 }
 
@@ -145,7 +161,7 @@ impl LLMClient for OllamaClient {
 
         let request = OllamaChatRequest {
             model: self.model.clone(),
-            messages: context.iter().map(OllamaChatMessage::from).collect(),
+            messages: context.iter().flat_map(OllamaChatMessage::from).collect(),
             tools: ollama_tools,
             stream: true,
         };
@@ -200,10 +216,8 @@ impl LLMClient for OllamaClient {
                                         sender_name: sender_name.clone(),
                                         role: MessageRole::Assistant,
                                         content: Some(msg.content),
-                                        reasoning: None,
-                                        tool_calls: vec![],
                                         timestamp: Utc::now(),
-                                        metadata: HashMap::new(),
+                                        ..Message::default()
                                     };
                                     yield Ok(MessageEvent::Partial(partial_message));
                                 }
@@ -216,10 +230,9 @@ impl LLMClient for OllamaClient {
                                     sender_name: sender_name.clone(),
                                     role: MessageRole::Assistant,
                                     content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
-                                    reasoning: None,
                                     tool_calls: all_tool_calls.clone(),
                                     timestamp: Utc::now(),
-                                    metadata: HashMap::new(),
+                                    ..Message::default()
                                 };
 
                                 yield Ok(MessageEvent::Complete(message.clone()));

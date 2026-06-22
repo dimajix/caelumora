@@ -274,17 +274,17 @@ impl ChannelLoop {
 
         // Always route back event to source, this helps the Actor to rebuild the full
         // history in correct order
-        routes.push((event.context.sender_id, event.clone()));
+        //routes.push((event.context.sender_id, event.clone()));
 
         // First, route all messages to all agents...
         for route in routes {
             let target_id = route.0;
 
+            // Do not propagate message to sender again
             if target_id == event.context.sender_id {
                 continue;
             }
 
-            // Do not propagate message to sender again
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
             let ctx = &target_event.context;

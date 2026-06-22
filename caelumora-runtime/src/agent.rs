@@ -177,7 +177,7 @@ impl AgentLoopState {
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute(&self, call: &ToolCall, _security: &SecurityContext) -> Result<ToolResult> {
+    async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
         let tool_name = &call.function_name;
         for provider in &self.tool_providers {
             let tools = provider.facet.tools();
@@ -194,21 +194,22 @@ impl AgentLoopState {
                 };
 
                 let params = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                match provider.facet.execute(tool_name, params, &mut execution).await {
+                return match provider.facet.execute(tool_name, params, security).await {
                     Ok(value) => {
                         execution.output = Some(value.clone());
                         execution.status = caelumora_model::tool::ExecutionStatus::Completed;
                         execution.finished_at = Some(chrono::Utc::now());
-                        return Ok(ToolResult {
+                        Ok(ToolResult {
                             id: call.id.clone(),
+                            tool_name: call.function_name.clone(),
                             content: value.to_string(),
-                        });
+                        })
                     }
                     Err(e) => {
                         execution.status = caelumora_model::tool::ExecutionStatus::Failed;
                         execution.finished_at = Some(chrono::Utc::now());
                         // TODO: Log error in execution
-                        return Err(e);
+                        Err(e)
                     }
                 }
             }
@@ -371,6 +372,7 @@ impl AgentLoop {
                                         warn!("Tool execution failed: {}", e);
                                         tool_results.push(ToolResult {
                                             id: c.id.clone(),
+                                            tool_name: c.function_name.clone(),
                                             content: format!("Error: {}", e),
                                         });
                                     }
@@ -379,18 +381,14 @@ impl AgentLoop {
 
                             if !tool_results.is_empty() {
                                 // Add tool results to the context for the next iteration
-                                // Since ToolResult is not directly in Message, we might need to store it in metadata
-                                // or the LLMClient should know how to handle it.
-                                // Actually, let's look at Message again.
-                                // It seems ToolResult is meant to be sent back.
-                                // If we want the LLM to see them, they must be in the context.
                                 let tool_message = Message {
                                     id: MessageId(uuid::Uuid::new_v4()),
                                     prev_id: message_id,
                                     sender_id: agent_id,
                                     sender_name: agent_name.clone(),
                                     role: MessageRole::Tool,
-                                    content: Some(serde_json::to_string(&tool_results).unwrap_or_default()),
+                                    tool_results,
+                                    content: None,
                                     timestamp: chrono::Utc::now(),
                                     ..Message::default()
                                 };
@@ -438,7 +436,6 @@ mod tests {
     use crate::component_impl::history::StateHistoryWriter;
     use caelumora_model::message::{ActorId, MessageId};
     use chrono::Utc;
-    use std::collections::HashMap;
     use uuid::Uuid;
 
     fn make_message(content: &str) -> Message {
@@ -449,10 +446,9 @@ mod tests {
             sender_name: "tester".to_string(),
             role: MessageRole::User,
             content: Some(content.to_string()),
-            reasoning: None,
             tool_calls: Vec::new(),
             timestamp: Utc::now(),
-            metadata: HashMap::new(),
+            ..Message::default()
         }
     }
 

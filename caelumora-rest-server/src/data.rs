@@ -1,18 +1,19 @@
-use std::sync::Arc;
-use serde_json::json;
-use uuid::Uuid;
-use caelumora_model::store::{EntityStore};
 use caelumora_model::agent::{Personality, PersonalityId};
+use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig, STAGE_PERCEIVE};
 use caelumora_model::meta::{Metadata, Scope};
+use caelumora_model::store::EntityStore;
 use caelumora_model::template::{
     ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId,
 };
 use caelumora_model::user::{User, UserId};
-use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, STAGE_PERCEIVE, ComponentFailPolicy};
+use serde_json::json;
+use std::sync::Arc;
+use uuid::Uuid;
 
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
+use caelumora_runtime::component_impl::tool::ECHO_TOOL_PROVIDER_KIND;
 
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
     let ctx = SecurityContext::default();
@@ -147,6 +148,14 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         id: "system-prompt".to_string(),
         kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
         params: json!({ "prompt": system_prompt }),
+        deps: vec![],
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+    });
+    components.component_nodes.push(ComponentNodeConfig {
+        id: "echo-tool".to_string(),
+        kind: ECHO_TOOL_PROVIDER_KIND.to_string(),
+        params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,

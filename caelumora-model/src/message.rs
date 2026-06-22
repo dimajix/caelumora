@@ -60,6 +60,7 @@ pub struct ToolCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub id: String,
+    pub tool_name: String,
     pub content: String,
 }
 
@@ -73,6 +74,7 @@ pub struct Message {
     pub content: Option<String>,
     pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    pub tool_results: Vec<ToolResult>,
     pub timestamp: DateTime<Utc>,
     pub metadata: HashMap<String, String>,
 }
@@ -87,6 +89,7 @@ impl Default for Message {
             content: None,
             reasoning: None,
             tool_calls: Vec::new(),
+            tool_results: Vec::new(),
             timestamp: Utc::now(),
             metadata: HashMap::new()
         }
@@ -211,6 +214,7 @@ mod tests {
             content: Some("hello".to_string()),
             reasoning: None,
             tool_calls: Vec::new(),
+            tool_results: Vec::new(),
             timestamp: Utc::now(),
             metadata: HashMap::new(),
         }
