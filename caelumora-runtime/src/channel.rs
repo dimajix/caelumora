@@ -230,7 +230,6 @@ impl ChannelLoop {
     fn spawn_actor(&self, actor: Arc<dyn Actor>, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
         let (request_tx, msg_rx) = actor.create_channel();
-        let event_tx = event_tx.clone();
         let abort_handle = join_set.spawn(async move {
             let result = actor.run(msg_rx, event_tx).await;
             if let Err(e) = result {
@@ -247,7 +246,7 @@ impl ChannelLoop {
     }
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
-        if matches!(event.event, ActorEvent::Wakeup) {
+        if matches!(event.event, ActorEvent::WakeupRequested) {
             self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
         }
 

@@ -31,10 +31,6 @@ impl AgentActor {
 }
 
 impl AgentActor {
-    async fn send_messages(&self, messages:&mut Vec<Message>, _event_context: &EventContext, event_security: &SecurityContext) {
-        self.agent.send_messages(mem::take(messages), event_security).await;
-    }
-
     async fn handle_actor_envelopes(
         &self,
         res: usize,
@@ -82,7 +78,21 @@ impl AgentActor {
         }
     }
 
+    async fn send_messages(&self, messages:&mut Vec<Message>, _event_context: &EventContext, event_security: &SecurityContext) {
+        self.agent.send_messages(mem::take(messages), event_security).await;
+    }
+
     async fn request_response(&self, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {
+        let ev2 = Envelope::new(
+            event_security.next(self.id),
+            event_context.next(self.id, self.agent.name()),
+            ActorEvent::ResponseStarted
+        );
+        if let Err(e) = tx.send(ev2).await {
+            warn!("Actor {} cannot send response because of an error: {}", self.id, e);
+            return
+        }
+
         let mut response = self.agent.request_response(event_security).await;
         while let Some(event_result) = response.next().await {
             match event_result {

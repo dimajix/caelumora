@@ -27,6 +27,7 @@ export interface Message {
 }
 
 export interface ActorEvent {
+  ResponseStarted?: any;
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ToolExecutionRequested?: any;

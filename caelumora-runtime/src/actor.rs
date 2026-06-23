@@ -9,8 +9,8 @@ use std::fmt::Debug;
 use tokio::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
-use serde::{Deserialize, Serialize};
 use caelumora_model::security::SecurityContext;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventContext {
@@ -63,10 +63,11 @@ pub enum ActorEvent {
     ToolExecutionGranted,
     ToolExecutionDenied,
     ResponseRequested,
+    ResponseStarted,
     PartialMessageGenerated(Message),
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
-    Wakeup,
+    WakeupRequested,
 }
 
 impl ActorEvent {

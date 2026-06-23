@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Users, Square } from 'lucide-react';
-import type { Message, Envelope, ChannelResponse } from '../types';
-import { api } from '../api';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import React, {useEffect, useRef, useState} from 'react';
+import {Send, Square, Users} from 'lucide-react';
+import type {ChannelResponse, Envelope, Message} from '../types';
+import {api} from '../api';
+import {type ClassValue, clsx} from 'clsx';
+import {twMerge} from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -32,14 +32,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       try {
         const envelope: Envelope = JSON.parse(event.data);
         const actorEvent = envelope.event;
-        if (actorEvent.PartialMessageGenerated) {
+        if (actorEvent.ResponseStarted) {
+          setIsGenerating(true);
+          setStreamingMessage('');
+        } else if (actorEvent.PartialMessageGenerated) {
           setIsGenerating(true);
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
         } else if (actorEvent.CompleteMessageGenerated) {
-          //setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
+          setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
           setStreamingMessage(null);
         } else if (actorEvent.FullResponseGenerated) {
-          setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
+          //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
           setIsGenerating(false);
         }

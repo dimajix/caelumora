@@ -74,28 +74,28 @@ impl EventBus {
         self.subscribe(vec![SubscriptionTopic::User(id)])
     }
 
-    pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::session::SessionUpdateEvent>> {
+    pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<SessionUpdateEvent>> {
         let bus = self.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
             bus.publish(GlobalEvent::SessionUpdated(session_id, event));
         }))
     }
 
-    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::channel::ChannelUpdateEvent>> {
+    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<ChannelUpdateEvent>> {
         let bus = self.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
             bus.publish(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
         }))
     }
 
-    pub fn agent_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::agent::AgentUpdateEvent>> {
+    pub fn agent_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<AgentUpdateEvent>> {
         let bus = self.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
             bus.publish(GlobalEvent::AgentUpdated(session_id, channel_id, agent_id, event));
         }))
     }
 
-    pub fn user_event_sender(self: &Arc<Self>, user_id: UserId) -> Arc<dyn caelumora_model::event::EventSender<caelumora_model::user::UserUpdateEvent>> {
+    pub fn user_event_sender(self: &Arc<Self>, user_id: UserId) -> Arc<dyn caelumora_model::event::EventSender<UserUpdateEvent>> {
         let bus = self.clone();
         Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
             bus.publish(GlobalEvent::UserUpdated(user_id, event));
