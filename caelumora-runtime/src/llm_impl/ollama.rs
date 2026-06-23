@@ -84,16 +84,21 @@ struct OllamaChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OllamaToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_name: Option<String>
+    tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaToolCall {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
     function: OllamaToolCallFunction,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaToolCallFunction {
+    index: usize,
     name: String,
     arguments: serde_json::Value,
 }
@@ -122,8 +127,11 @@ impl OllamaChatMessage {
                 value
                     .tool_calls
                     .iter()
-                    .map(|tc| OllamaToolCall {
+                    .enumerate()
+                    .map(|(i, tc)| OllamaToolCall {
+                        id: tc.id.clone(),
                         function: OllamaToolCallFunction {
+                            index: i,
                             name: tc.function_name.clone(),
                             arguments: serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null),
                         },
@@ -137,7 +145,8 @@ impl OllamaChatMessage {
                 role,
                 content: value.content.clone().unwrap_or_default(),
                 tool_name: None,
-                tool_calls
+                tool_calls,
+                tool_call_id: None
             })
         }
         for r in &value.tool_results {
@@ -146,10 +155,54 @@ impl OllamaChatMessage {
                 content: serde_json::to_string(&r).unwrap_or_default(),
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
+                tool_call_id: r.id.clone()
             })
         }
 
         messages
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::message::{Message, MessageRole, ToolCall};
+
+    #[test]
+    fn test_ollama_chat_message_from_with_tool_calls() {
+        let tool_calls = vec![
+            ToolCall {
+                id: Some("1".to_string()),
+                function_name: "test_func_1".to_string(),
+                arguments: "{}".to_string(),
+            },
+            ToolCall {
+                id: Some("2".to_string()),
+                function_name: "test_func_2".to_string(),
+                arguments: "{\"a\": 1}".to_string(),
+            },
+        ];
+
+        let message = Message {
+            role: MessageRole::Assistant,
+            tool_calls,
+            ..Message::default()
+        };
+
+        let ollama_messages = OllamaChatMessage::from(&message);
+        assert_eq!(ollama_messages.len(), 1);
+
+        let ollama_msg = &ollama_messages[0];
+        assert!(ollama_msg.tool_calls.is_some());
+
+        let ollama_tool_calls = ollama_msg.tool_calls.as_ref().unwrap();
+        assert_eq!(ollama_tool_calls.len(), 2);
+
+        assert_eq!(ollama_tool_calls[0].function.name, "test_func_1");
+        assert_eq!(ollama_tool_calls[0].function.index, 0);
+
+        assert_eq!(ollama_tool_calls[1].function.name, "test_func_2");
+        assert_eq!(ollama_tool_calls[1].function.index, 1);
     }
 }
 
@@ -241,7 +294,7 @@ impl LLMClient for OllamaClient {
                                 if let Some(tc) = msg.tool_calls {
                                     for call in tc {
                                         all_tool_calls.push(caelumora_model::message::ToolCall {
-                                            id: Uuid::new_v4().to_string(),
+                                            id: Some(Uuid::new_v4().to_string()),
                                             function_name: call.function.name,
                                             arguments: call.function.arguments.to_string(),
                                         });
