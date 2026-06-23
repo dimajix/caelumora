@@ -27,7 +27,7 @@ impl SessionLoop {
     pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let mut channels = HashMap::new();
         for channel in &session.channels {
-            let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone()).await?;
+            let cl = ChannelLoop::new(channel.clone(), runtime_manager.clone()).await?;
             channels.insert(cl.id(), Arc::new(cl));
         }
 

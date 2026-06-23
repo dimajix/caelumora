@@ -1,12 +1,12 @@
+use crate::agent::PersonalityId;
+use crate::channel::{Channel, Participant};
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
-use crate::channel::{Channel, Participant};
 use crate::session::{Session, SessionContext};
 use chrono::Utc;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::agent::PersonalityId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScopeTemplate {
@@ -56,6 +56,7 @@ impl ChannelTemplate {
         }
 
         Ok(Channel::new(
+            context.id,
             self.name.clone(),
             self.moderator.clone(),
             participants,

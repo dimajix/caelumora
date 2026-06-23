@@ -309,18 +309,17 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub async fn new(
-        session_id: SessionId,
-        channel_id: ChannelId,
+        channel: &caelumora_model::channel::Channel,
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let security_context = runtime_manager.system_security_context(session_id, channel_id);
+        let security_context = runtime_manager.system_security_context(channel);
         let personality = runtime_manager.entity_store().get_personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let agent_controller = runtime_manager.controller_manager().new_agent_controller(session_id, channel_id, agent).await;
+        let agent_controller = runtime_manager.controller_manager().new_agent_controller(channel.session_id, channel.id, agent).await;
         let state = AgentLoopState::new(
-            session_id,
-            channel_id,
+            channel.session_id,
+            channel.id,
             agent_controller.clone(),
             runtime_manager.clone(),
             personality.components

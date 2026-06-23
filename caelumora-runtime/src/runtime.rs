@@ -7,11 +7,8 @@ use crate::llm_impl::ollama::OllamaClient;
 use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
 use crate::recorder::Recorder;
 use anyhow::Result;
-use caelumora_model::channel::ChannelId;
 use caelumora_model::message::ActorId;
-use caelumora_model::security::SecurityContext;
-use caelumora_model::security::{DummySecurityManager, SecurityManager};
-use caelumora_model::session::SessionId;
+use caelumora_model::security::{DummySecurityManager, SecurityContext, SecurityManager};
 use caelumora_model::store::{EntityStore, StateStore};
 use std::sync::Arc;
 
@@ -56,20 +53,20 @@ impl RuntimeManager {
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
 
-    pub fn system_security_context(&self, session_id: SessionId, channel_id: ChannelId) -> SecurityContext {
+    pub fn system_security_context(&self, channel: &caelumora_model::channel::Channel) -> SecurityContext {
         SecurityContext {
             initiator_id: ActorId::None,
             sender_id: ActorId::None,
-            session_id,
-            channel_id,
+            session_id: channel.session_id,
+            channel_id: channel.id,
         }
     }
 
-    pub fn system_event_context(&self, session_id: SessionId, channel_id: ChannelId, channel_name: String) -> crate::actor::EventContext {
+    pub fn system_event_context(&self, channel: &caelumora_model::channel::Channel) -> crate::actor::EventContext {
         crate::actor::EventContext::new(
-            session_id,
-            channel_id,
-            channel_name,
+            channel.session_id,
+            channel.id,
+            channel.name.clone(),
             ActorId::None,
             "System".to_string(),
         )

@@ -43,10 +43,9 @@ impl ControllerManager {
 
     pub fn new_channel_controller(
         &self,
-        session_id: SessionId,
         channel: Channel,
     ) -> Arc<ChannelController> {
-        let event_sender = self.event_bus.channel_event_sender(session_id, channel.id);
+        let event_sender = self.event_bus.channel_event_sender(channel.session_id, channel.id);
         Arc::new(ChannelController::new(channel, event_sender))
     }
 

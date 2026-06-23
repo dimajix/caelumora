@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::session::{Session, SessionId};
+use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserController};
 use chrono::Utc;
 use log::{debug, info, warn};
@@ -29,18 +29,18 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub fn new(session: &Session, channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Self {
+    pub fn new(channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Self {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
         let user_controller = runtime_manager.controller_manager().new_user_controller(user, channel.name.clone());
         Self {
             id: ActorId::User(user_controller.id()),
-            session_id: session.id,
+            session_id: channel.session_id,
             channel_id: channel.id,
             security_context: SecurityContext {
                 initiator_id: ActorId::User(user_controller.id()),
                 sender_id: ActorId::User(user_controller.id()),
-                session_id: session.id,
+                session_id: channel.session_id,
                 channel_id: channel.id
             },
             user: user_controller,

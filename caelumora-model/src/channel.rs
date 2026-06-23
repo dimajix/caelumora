@@ -1,11 +1,12 @@
-use crate::user::User;
 use crate::agent::Agent;
+use crate::event::EventSender;
 use crate::message::MessageHistory;
+use crate::session::SessionId;
+use crate::user::User;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::event::EventSender;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
@@ -63,16 +64,18 @@ define_id!(ChannelId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
     pub id: ChannelId,
+    pub session_id: SessionId,
     pub name: String,
     pub moderator: String,
     pub participants: Vec<Participant>,
 }
 
 impl Channel {
-    pub fn new(name: String, moderator: String, participants: Vec<Participant>) -> Self {
+    pub fn new(session_id: SessionId, name: String, moderator: String, participants: Vec<Participant>) -> Self {
         let id = ChannelId(Uuid::new_v4());
         Self {
             id,
+            session_id,
             name,
             moderator,
             participants,

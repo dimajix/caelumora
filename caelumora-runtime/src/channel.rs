@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::message::{ActorId, Message};
-use caelumora_model::session::{Session, SessionId};
+use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use log::{debug, info, warn};
 use std::any::Any;
@@ -48,10 +48,10 @@ pub struct ChannelLoop {
 }
 
 impl ChannelLoop {
-    pub async fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+    pub async fn new(channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let state_store = runtime_manager.state_store();
         let channel_id = channel.id;
-        let channel_controller = runtime_manager.controller_manager().new_channel_controller(session.id, channel.clone());
+        let session_id = channel.session_id;
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
         
         let state = match state_store.get_channel_state(channel_id).await {
@@ -70,14 +70,16 @@ impl ChannelLoop {
 
         let mut actors = HashMap::new();
         for participant in &channel.participants {
-            let actor = Self::create_actor(session, &channel, participant, runtime_manager.clone()).await?;
+            let actor = Self::create_actor(&channel, participant, runtime_manager.clone()).await?;
             moderator.add_actor(actor.as_ref());
             actors.insert(actor.id(), Arc::from(actor));
         }
 
+        let channel_controller = runtime_manager.controller_manager().new_channel_controller(channel);
+
         Ok(Self {
             id: channel_id,
-            session_id: session.id,
+            session_id,
             channel: channel_controller,
             runtime_manager,
             actors,
@@ -145,14 +147,14 @@ impl ChannelLoop {
         })
     }
 
-    async fn create_actor(session: &Session, channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
+    async fn create_actor(channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
             Participant::User(user) => {
-                let actor = UserActor::new(session, channel, user.clone(), runtime_manager.clone());
+                let actor = UserActor::new(channel, user.clone(), runtime_manager.clone());
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let l = AgentLoop::new(session.id, channel.id, agent.clone(), runtime_manager.clone()).await?;
+                let l = AgentLoop::new(channel, agent.clone(), runtime_manager.clone()).await?;
                 let actor = AgentActor::new(l);
                 Ok(Box::new(actor))
             }
