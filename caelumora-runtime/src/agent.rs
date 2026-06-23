@@ -317,8 +317,7 @@ impl AgentLoop {
         let security_context = runtime_manager.system_security_context(session_id, channel_id);
         let personality = runtime_manager.entity_store().get_personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let event_sender = runtime_manager.event_bus().agent_event_sender(session_id, channel_id, agent_id);
-        let agent_controller = Arc::new(AgentController::new(agent, event_sender, runtime_manager.entity_store()));
+        let agent_controller = runtime_manager.controller_manager().new_agent_controller(session_id, channel_id, agent).await;
         let state = AgentLoopState::new(
             session_id,
             channel_id,

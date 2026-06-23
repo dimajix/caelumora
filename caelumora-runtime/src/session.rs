@@ -25,15 +25,13 @@ pub struct SessionLoop {
 
 impl SessionLoop {
     pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        let session_id = session.id;
         let mut channels = HashMap::new();
         for channel in &session.channels {
             let cl = ChannelLoop::new(&session, channel.clone(), runtime_manager.clone()).await?;
             channels.insert(cl.id(), Arc::new(cl));
         }
 
-        let event_sender = runtime_manager.event_bus().session_event_sender(session_id);
-        let session_controller = Arc::new(SessionController::new(session, event_sender, runtime_manager.entity_store()).await?);
+        let session_controller = runtime_manager.controller_manager().new_session_controller(session).await?;
 
         Ok(Self {
             session_controller,

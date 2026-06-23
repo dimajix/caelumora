@@ -32,8 +32,7 @@ impl UserActor {
     pub fn new(session: &Session, channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Self {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
-        let event_sender = runtime_manager.event_bus().user_event_sender(user.id);
-        let user_controller = Arc::new(UserController::new(user, channel.name.clone(), event_sender));
+        let user_controller = runtime_manager.controller_manager().new_user_controller(user, channel.name.clone());
         Self {
             id: ActorId::User(user_controller.id()),
             session_id: session.id,

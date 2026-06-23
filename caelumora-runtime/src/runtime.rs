@@ -1,5 +1,6 @@
 use crate::component::ComponentRegistry;
 use crate::component_impl::{context, history, tool};
+use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
 use crate::llm_impl::ollama::OllamaClient;
@@ -22,6 +23,7 @@ pub struct RuntimeManager {
     llm_client: Arc<dyn LLMClient>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
+    controller_manager: Arc<ControllerManager>,
 }
 
 impl RuntimeManager {
@@ -33,13 +35,17 @@ impl RuntimeManager {
 
         let security_manager = Arc::new(DummySecurityManager::new());
 
+        let event_bus = Arc::new(EventBus::new());
+        let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
+
         Self {
             security_manager,
             state_store,
             entity_store,
             llm_client: Arc::new(OllamaClient::default()),
             component_registry: Arc::new(component_registry),
-            event_bus: Arc::new(EventBus::new()),
+            event_bus,
+            controller_manager,
         }
     }
 
@@ -79,6 +85,10 @@ impl RuntimeManager {
 
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
         self.component_registry.clone()
+    }
+
+    pub fn controller_manager(&self) -> Arc<ControllerManager> {
+        self.controller_manager.clone()
     }
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {

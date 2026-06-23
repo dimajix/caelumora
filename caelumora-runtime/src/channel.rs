@@ -51,8 +51,7 @@ impl ChannelLoop {
     pub async fn new(session: &Session, channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let state_store = runtime_manager.state_store();
         let channel_id = channel.id;
-        let event_sender = runtime_manager.event_bus().channel_event_sender(session.id, channel_id);
-        let channel_controller = Arc::new(ChannelController::new(channel.clone(), event_sender));
+        let channel_controller = runtime_manager.controller_manager().new_channel_controller(session.id, channel.clone());
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
         
         let state = match state_store.get_channel_state(channel_id).await {
