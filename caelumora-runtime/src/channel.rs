@@ -97,10 +97,6 @@ impl ChannelLoop {
         self.event_tx.subscribe()
     }
 
-    pub fn send_event(&self, envelope: Envelope) {
-        let _ = self.event_tx.send(envelope);
-    }
-
     pub async fn history(&self) -> Vec<Message> {
         self.state.lock().await.history.messages()
     }

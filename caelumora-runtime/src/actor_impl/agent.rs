@@ -83,12 +83,12 @@ impl AgentActor {
     }
 
     async fn request_response(&self, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {
-        let ev2 = Envelope::new(
+        let ev = Envelope::new(
             event_security.next(self.id),
             event_context.next(self.id, self.agent.name()),
             ActorEvent::ResponseStarted
         );
-        if let Err(e) = tx.send(ev2).await {
+        if let Err(e) = tx.send(ev).await {
             warn!("Actor {} cannot send response because of an error: {}", self.id, e);
             return
         }
