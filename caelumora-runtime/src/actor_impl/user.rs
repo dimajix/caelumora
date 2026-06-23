@@ -53,7 +53,7 @@ impl UserActor {
     }
 
     pub async fn send_message(&self, message: String) -> anyhow::Result<()> {
-        let event = ActorEvent::FullResponseGenerated(vec![Message {
+        let msg = Message {
             role: MessageRole::User,
             content: Some(message),
             id: MessageId(Uuid::new_v4()),
@@ -61,8 +61,9 @@ impl UserActor {
             sender_name: self.name(),
             timestamp: Utc::now(),
             ..Message::default()
-        }]);
-        self.user_tx.send(event).await?;
+        };
+        self.user_tx.send(ActorEvent::CompleteMessageGenerated(msg.clone())).await?;
+        self.user_tx.send(ActorEvent::FullResponseGenerated(vec![msg])).await?;
         Ok(())
     }
 
