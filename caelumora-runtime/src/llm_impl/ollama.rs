@@ -91,20 +91,20 @@ impl OllamaChatMessage {
             )
         };
 
-        for r in &value.tool_results {
-            messages.push( Self {
-                role: role.clone(),
-                content: serde_json::to_string(&r).unwrap_or_default(),
-                tool_name: Some(r.tool_name.clone()),
-                tool_calls: None,
-            })
-        }
         if tool_calls.is_some() || value.content.is_some() {
             messages.push( Self {
                 role,
                 content: value.content.clone().unwrap_or_default(),
                 tool_name: None,
                 tool_calls
+            })
+        }
+        for r in &value.tool_results {
+            messages.push( Self {
+                role: "tool".to_string(),
+                content: serde_json::to_string(&r).unwrap_or_default(),
+                tool_name: Some(r.tool_name.clone()),
+                tool_calls: None,
             })
         }
 

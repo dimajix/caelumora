@@ -117,10 +117,14 @@ impl AgentLoopState {
             return None;
         }
 
+        let msg = output.remove(0);
+        turn_context.messages.push(msg.clone());
+        turn_context.cur_context.push(msg.clone());
+
         if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
             warn!("Cannot store state of agent {} after respond_complete", self.agent_id)
         }
-        Some(output.remove(0))
+        Some(msg)
     }
 
     async fn reflect(&mut self, turn_context: &mut TurnContext) -> () {
@@ -397,8 +401,6 @@ impl AgentLoop {
                         MessageEvent::Complete(mut message) => {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
-                            turn_context.messages.push(message.clone());
-                            turn_context.cur_context.push(message.clone());
                             let tool_calls = message.tool_calls.clone();
                             if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
