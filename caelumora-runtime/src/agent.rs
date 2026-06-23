@@ -124,7 +124,7 @@ impl AgentLoopState {
     }
 
     async fn reflect(&mut self, turn_context: &mut TurnContext) -> () {
-        self.agent_state.context.extend(turn_context.context.clone());
+        self.agent_state.context.extend(turn_context.cur_context.clone());
         self.agent_state.history.extend(turn_context.messages.clone());
 
         if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
@@ -163,14 +163,15 @@ impl AgentLoopState {
         //    warn!("Cannot store state of agent {} after context preparation", self.agent_id)
         //}
 
-        turn_context.context = context;
+        turn_context.prev_context = context;
         turn_context
     }
 
     async fn plan_next(&mut self, turn_context: &mut TurnContext) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
 
-        let context = turn_context.context.clone();
+        let mut context = turn_context.prev_context.clone();
+        context.extend_from_slice(turn_context.cur_context.as_slice());
         let tools = self.tool_providers.iter().flat_map(|p| p.facet.tools()).collect::<Vec<_>>();
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
@@ -196,7 +197,7 @@ impl AgentLoopState {
 
         let has_tool_calls = !tool_results.is_empty();
         if has_tool_calls {
-            let message_id = turn_context.context.last()
+            let message_id = turn_context.cur_context.last()
                 .map(|m| m.id)
                 .unwrap_or_default();
 
@@ -213,7 +214,7 @@ impl AgentLoopState {
                 ..Message::default()
             };
             // Put tool message into context
-            turn_context.context.push(tool_message)
+            turn_context.cur_context.push(tool_message)
         }
 
         has_tool_calls
@@ -397,7 +398,7 @@ impl AgentLoop {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
                             turn_context.messages.push(message.clone());
-                            turn_context.context.push(message.clone());
+                            turn_context.cur_context.push(message.clone());
                             let tool_calls = message.tool_calls.clone();
                             if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));

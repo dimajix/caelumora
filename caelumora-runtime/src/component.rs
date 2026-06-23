@@ -9,7 +9,8 @@ use std::sync::Arc;
 #[derive(Debug, Default, Clone)]
 pub struct TurnContext {
     pub scratch: HashMap<String, Value>,
-    pub context: Vec<Message>,
+    pub prev_context: Vec<Message>,
+    pub cur_context: Vec<Message>,
     pub messages: Vec<Message>
 }
 
