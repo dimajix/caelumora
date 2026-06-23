@@ -1,21 +1,21 @@
-use async_trait::async_trait;
-use std::sync::Arc;
-use crate::security::SecurityManager;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
+use crate::meta::Scope;
+use crate::security::SecurityManager;
 use crate::session::{Session, SessionId, SessionState};
-use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
+use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use log::{info, warn};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::meta::Scope;
-use log::info;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct JsonFileStore {
@@ -159,12 +159,24 @@ fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<T>> {
     let mut values = Vec::new();
     let entries = fs::read_dir(dir).map_err(to_backend_error)?;
     for entry in entries {
-        let path = entry.map_err(to_backend_error)?.path();
+        let path = match entry {
+            Ok(e) => e.path(),
+            Err(err) => {
+                warn!("Failed to read directory entry in {:?}: {}", dir, err);
+                continue;
+            }
+        };
+
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        if let Some(value) = read_json_opt(&path)? {
-            values.push(value);
+
+        match read_json_opt(&path) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => {}
+            Err(err) => {
+                warn!("Failed to read JSON file {:?}: {}", path, err);
+            }
         }
     }
     Ok(values)
@@ -557,11 +569,11 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::meta::{Metadata, Scope};
+    use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
     use tempfile::tempdir;
     use uuid::Uuid;
-    use super::*;
-    use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
 
     fn make_personality() -> Personality {
         Personality {
@@ -755,5 +767,35 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == s1.id));
         assert!(sessions.iter().any(|s| s.id == s2.id));
+    }
+
+    #[tokio::test]
+    async fn list_sessions_skips_corrupted_files() {
+        let dir = tempdir().unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
+        let ctx = SecurityContext::default();
+
+        let s1 = Session {
+            id: SessionId(Uuid::new_v4()),
+            metadata: crate::meta::Metadata {
+                name: "session-1".to_string(),
+                scope: Scope::GlobalScope,
+                ..crate::meta::Metadata::default()
+            },
+            channels: Vec::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        store.create_session(&ctx, &s1).await.unwrap();
+
+        // Create a corrupted JSON file
+        let corrupted_path = store.sessions_dir().join("corrupted.json");
+        fs::write(corrupted_path, "invalid json").unwrap();
+
+        // This should NOT fail, it should return s1 and log a warning
+        let sessions = store.list_sessions(&ctx).await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, s1.id);
     }
 }
