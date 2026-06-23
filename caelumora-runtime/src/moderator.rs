@@ -1,14 +1,14 @@
 use async_trait::async_trait;
+use rand::seq::IndexedRandom;
 use std::any::Any;
-use std::collections::{HashSet};
+use std::collections::HashSet;
 use std::fmt::Debug;
-use rand::seq::{IndexedRandom};
 
+use crate::actor::{Actor, ActorEvent, Envelope};
+use crate::actor_impl::user::UserActor;
 use caelumora_model::message::{ActorId, Message, MessageRole};
 use dashmap::DashSet;
 use rand::rngs::StdRng;
-use crate::actor::{Actor, ActorEvent, Envelope};
-use crate::actor_impl::user::UserActor;
 
 #[async_trait]
 pub trait Moderator : Send + Sync + Debug {
@@ -47,11 +47,16 @@ impl ModeratorActors {
         self.user_actors.remove(&actor.id());
     }
 
-    fn forward_routes(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
+    fn forward_routes(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         let user_messages = replace_role(messages, MessageRole::User);
-        let forward_event = event.forward_with_response(user_messages);
+        let user_messages = remove_tools(&user_messages);
 
+        if user_messages.is_empty() {
+            return Vec::new();
+        }
+
+        let forward_event = event.forward_with_response(user_messages);
         self.agent_actors.iter()
             .chain(self.user_actors.iter())
             .filter(|id| !sender_ids.contains(id))
@@ -85,11 +90,13 @@ impl BroadcastModerator {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
-            // Pick random actor for response
-            let possible_actors = self.actors.actor_candidates(messages);
-            for id in possible_actors {
-                let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
-                routes.push((id, request_response_event));
+            if !routes.is_empty() {
+                // Pick random actor for response
+                let possible_actors = self.actors.actor_candidates(messages);
+                for id in possible_actors {
+                    let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
+                    routes.push((id, request_response_event));
+                }
             }
 
             routes
@@ -141,11 +148,13 @@ impl RandomModerator {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
-            // Pick random actor for response
-            let possible_actors = self.actors.actor_candidates(messages);
-            if let Some(id) = possible_actors.choose(&mut self.rng) {
-                let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
-                routes.push((*id, request_response_event));
+            if !routes.is_empty() {
+                // Pick random actor for response
+                let possible_actors = self.actors.actor_candidates(messages);
+                if let Some(id) = possible_actors.choose(&mut self.rng) {
+                    let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
+                    routes.push((*id, request_response_event));
+                }
             }
 
             routes
@@ -196,20 +205,21 @@ impl RoundRobinModerator {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
-            // Pick the next actor for response in round-robin order
-            let mut possible_actors = self.actors.actor_candidates(messages);
-            possible_actors.sort_unstable_by_key(|id| id.id());
+            if !routes.is_empty() {
+                // Pick the next actor for response in round-robin order
+                let mut possible_actors = self.actors.actor_candidates(messages);
+                possible_actors.sort_unstable_by_key(|id| id.id());
 
-            if !possible_actors.is_empty() {
-                let index = self.next_agent_index % possible_actors.len();
-                let id = possible_actors[index];
-                self.next_agent_index = (index + 1) % possible_actors.len();
+                if !possible_actors.is_empty() {
+                    let index = self.next_agent_index % possible_actors.len();
+                    let id = possible_actors[index];
+                    self.next_agent_index = (index + 1) % possible_actors.len();
 
-                let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
-                routes.push((id, request_response_event));
-            }
-            else {
-                self.next_agent_index = 0;
+                    let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
+                    routes.push((id, request_response_event));
+                } else {
+                    self.next_agent_index = 0;
+                }
             }
 
             routes
@@ -249,8 +259,21 @@ impl Moderator for RoundRobinModerator {
 }
 
 
-fn replace_role(messages:&[Message], role:MessageRole) -> Vec<Message> {
-    let mut result = messages.to_vec();
+fn remove_tools(messages:&[Message]) -> Vec<Message> {
+    let mut result = Vec::new();
+    for m in messages {
+        if m.content.is_some() && m.role != MessageRole::Tool {
+            let mut m2 = m.clone();
+            m2.tool_calls = Vec::new();
+            m2.tool_results = Vec::new();
+            result.push(m2);
+        }
+    }
+    result
+}
+
+fn replace_role(messages:&Vec<Message>, role:MessageRole) -> Vec<Message> {
+    let mut result = messages.clone();
     result.iter_mut().for_each(|m| { m.role = role.clone() });
     result
 }
