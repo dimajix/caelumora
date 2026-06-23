@@ -29,6 +29,33 @@ pub enum ToolParameters {
     },
 }
 
+impl ToolParameters {
+    pub fn string(description: impl Into<String>) -> Self {
+        Self::String {
+            description: Some(description.into()),
+        }
+    }
+
+    pub fn number(description: impl Into<String>) -> Self {
+        Self::Number {
+            description: Some(description.into()),
+        }
+    }
+
+    pub fn object(
+        properties: impl IntoIterator<Item = (impl Into<String>, ToolParameters)>,
+        required: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::Object {
+            properties: properties
+                .into_iter()
+                .map(|(k, v)| (k.into(), v))
+                .collect(),
+            required: required.into_iter().map(|s| s.into()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
