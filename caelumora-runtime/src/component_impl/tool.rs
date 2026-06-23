@@ -3,8 +3,9 @@ use crate::tool::ToolProvider;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::Tool;
+use caelumora_model::tool::{Tool, ToolParameters};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -16,16 +17,20 @@ pub struct EchoToolProvider;
 #[async_trait]
 impl ToolProvider for EchoToolProvider {
     fn tools(&self) -> Vec<Tool> {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "message".to_string(),
+            ToolParameters::String {
+                description: Some("Input message to be echoed back".to_string()),
+            },
+        );
         vec![Tool {
             name: "echo".to_string(),
             description: "Echoes the input back".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "required": ["message"],
-                "properties": {
-                    "message": { "type": "string", "description": "Input message to be echoed back" }
-                }
-            }),
+            parameters: ToolParameters::Object {
+                properties,
+                required: vec!["message".to_string()],
+            },
         }]
     }
 

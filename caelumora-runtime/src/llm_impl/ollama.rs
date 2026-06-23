@@ -33,7 +33,48 @@ struct OllamaTool {
 struct OllamaFunction {
     name: String,
     description: String,
-    parameters: serde_json::Value,
+    parameters: OllamaFunctionParameters,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum OllamaFunctionParameters {
+    Object {
+        properties: HashMap<String, OllamaFunctionParameters>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        required: Vec<String>,
+    },
+    String {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    Number {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+}
+
+impl From<caelumora_model::tool::ToolParameters> for OllamaFunctionParameters {
+    fn from(value: caelumora_model::tool::ToolParameters) -> Self {
+        match value {
+            caelumora_model::tool::ToolParameters::Object {
+                properties,
+                required,
+            } => OllamaFunctionParameters::Object {
+                properties: properties
+                    .into_iter()
+                    .map(|(k, v)| (k, OllamaFunctionParameters::from(v)))
+                    .collect(),
+                required,
+            },
+            caelumora_model::tool::ToolParameters::String { description } => {
+                OllamaFunctionParameters::String { description }
+            }
+            caelumora_model::tool::ToolParameters::Number { description } => {
+                OllamaFunctionParameters::Number { description }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -154,7 +195,7 @@ impl LLMClient for OllamaClient {
                 function: OllamaFunction {
                     name: t.name.clone(),
                     description: t.description.clone(),
-                    parameters: t.input_schema.clone(),
+                    parameters: OllamaFunctionParameters::from(t.parameters.clone()),
                 },
             })
             .collect();
