@@ -294,7 +294,7 @@ impl LLMClient for OllamaClient {
                                 if let Some(tc) = msg.tool_calls {
                                     for call in tc {
                                         all_tool_calls.push(caelumora_model::message::ToolCall {
-                                            id: Some(Uuid::new_v4().to_string()),
+                                            id: call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
                                             function_name: call.function.name,
                                             arguments: call.function.arguments.to_string(),
                                         });

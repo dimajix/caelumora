@@ -9,6 +9,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 pub const ECHO_TOOL_PROVIDER_KIND: &str = "echo_tool";
+pub const CALCULATOR_TOOL_PROVIDER_KIND: &str = "calculator_tool";
 
 #[derive(Debug)]
 pub struct EchoToolProvider;
@@ -35,12 +36,91 @@ impl ToolProvider for EchoToolProvider {
     }
 }
 
+#[derive(Debug)]
+pub struct CalculatorToolProvider;
+
+#[async_trait]
+impl ToolProvider for CalculatorToolProvider {
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
+            name: "calculate".to_string(),
+            description: "Evaluates a mathematical expression".to_string(),
+            parameters: ToolParameters::object(
+                vec![("expression", ToolParameters::string("Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')"))],
+                vec!["expression"],
+            ),
+        }]
+    }
+
+    async fn execute(&self, name: &str, params: Value, _security: &SecurityContext) -> Result<Value> {
+        if name == "calculate" {
+            let expression = params["expression"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Missing 'expression' parameter"))?;
+            
+            let result = meval::eval_str(expression)
+                .map_err(|e| anyhow::anyhow!("Failed to evaluate expression: {}", e))?;
+            
+            Ok(serde_json::to_value(result)?)
+        } else {
+            Err(anyhow::anyhow!("Unknown tool: {}", name))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::security::SecurityContext;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_calculator_tool() {
+        let provider = CalculatorToolProvider;
+        let security = SecurityContext::default();
+
+        let cases = vec![
+            ("2 + 2", 4.0),
+            ("2 * (3 + 4)", 14.0),
+            ("sin(0)", 0.0),
+            ("cos(0)", 1.0),
+            ("exp(0)", 1.0),
+            ("10 / 2", 5.0),
+        ];
+
+        for (expr, expected) in cases {
+            let params = json!({ "expression": expr });
+            let result = provider.execute("calculate", params, &security).await.unwrap();
+            let val = result.as_f64().unwrap();
+            assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_calculator_tool_invalid_expression() {
+        let provider = CalculatorToolProvider;
+        let security = SecurityContext::default();
+
+        let params = json!({ "expression": "invalid" });
+        let result = provider.execute("calculate", params, &security).await;
+        assert!(result.is_err());
+    }
+}
+
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ECHO_TOOL_PROVIDER_KIND,
         Arc::new(|_descriptor| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(EchoToolProvider));
+            Ok(facets)
+        }),
+    );
+    registry.register(
+        CALCULATOR_TOOL_PROVIDER_KIND,
+        Arc::new(|_descriptor| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider));
             Ok(facets)
         }),
     );

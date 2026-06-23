@@ -180,7 +180,7 @@ impl AgentLoopState {
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute(&self, tool_calls:Vec<ToolCall>, turn_context: &mut TurnContext, security_context: &SecurityContext) -> bool {
+    async fn execute(&self, tool_calls:Vec<ToolCall>, turn_context: &mut TurnContext, security_context: &SecurityContext) -> Option<Message> {
         // Execute all tools
         let mut tool_results = Vec::new();
         for c in tool_calls {
@@ -199,8 +199,7 @@ impl AgentLoopState {
             }
         }
 
-        let has_tool_calls = !tool_results.is_empty();
-        if has_tool_calls {
+        if !tool_results.is_empty() {
             let message_id = turn_context.cur_context.last()
                 .map(|m| m.id)
                 .unwrap_or_default();
@@ -218,10 +217,13 @@ impl AgentLoopState {
                 ..Message::default()
             };
             // Put tool message into context
-            turn_context.cur_context.push(tool_message)
+            turn_context.cur_context.push(tool_message.clone());
+            turn_context.messages.push(tool_message.clone());
+            Some(tool_message)
         }
-
-        has_tool_calls
+        else {
+            None
+        }
     }
 
     async fn execute_tool(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
@@ -403,8 +405,8 @@ impl AgentLoop {
                             if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
-                            let more = state.execute(tool_calls, &mut turn_context, &security_context).await;
-                            if more {
+                            if let Some(msg) = state.execute(tool_calls, &mut turn_context, &security_context).await {
+                                yield Ok(MessageEvent::Complete(msg));
                                 continue 'steps;
                             }
                         },
