@@ -236,7 +236,6 @@ impl LLMClient for OllamaClient {
                                 };
 
                                 yield Ok(MessageEvent::Complete(message.clone()));
-                                yield Ok(MessageEvent::EndOfTurn(vec![message]));
                                 return;
                             }
                         },

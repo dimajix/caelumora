@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
-use caelumora_model::component::{ComponentFailPolicy, ComponentNodeConfig, ComponentConfig};
+use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig};
+use caelumora_model::message::Message;
 use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
@@ -8,7 +9,8 @@ use std::sync::Arc;
 #[derive(Debug, Default, Clone)]
 pub struct TurnContext {
     pub scratch: HashMap<String, Value>,
-    pub links: Vec<String>,
+    pub context: Vec<Message>,
+    pub messages: Vec<Message>
 }
 
 #[derive(Debug, Clone)]

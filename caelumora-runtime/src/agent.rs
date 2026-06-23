@@ -12,14 +12,14 @@ use caelumora_model::agent::{Agent, AgentController, AgentId, AgentState, Proces
 use caelumora_model::component::{
     ComponentConfig, ComponentFailPolicy
 };
-use caelumora_model::message::{format_conversation, ActorId, Message, MessageId, MessageRole, ToolCall, ToolResult};
+use caelumora_model::message::{ActorId, Message, MessageId, MessageRole, ToolCall, ToolResult};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{StateStore, StoreError};
 use caelumora_model::tool::ToolExecution;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
-use log::{debug, warn};
+use log::warn;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -30,6 +30,7 @@ struct AgentLoopState {
     session_id: SessionId,
     channel_id: ChannelId,
     agent_id: AgentId,
+    agent_name: String,
     agent_state: AgentState,
     runtime_manager: Arc<RuntimeManager>,
     state_store: Arc<dyn StateStore>,
@@ -48,6 +49,7 @@ impl AgentLoopState {
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
         let agent_id = agent_controller.id();
+        let agent_name = agent_controller.name();
         let agent_state = match store.get_agent_state(agent_id).await {
             Ok(s) => s,
             Err(StoreError::NotFound{entity: _, id:_}) => {
@@ -79,6 +81,7 @@ impl AgentLoopState {
             session_id,
             channel_id,
             agent_id,
+            agent_name,
             agent_state,
             runtime_manager: runtime_manager.clone(),
             state_store: runtime_manager.state_store(),
@@ -120,8 +123,13 @@ impl AgentLoopState {
         Some(output.remove(0))
     }
 
-    async fn reflect(&mut self) -> Result<()> {
-        Ok(())
+    async fn reflect(&mut self, turn_context: &mut TurnContext) -> () {
+        self.agent_state.context.extend(turn_context.context.clone());
+        self.agent_state.history.extend(turn_context.messages.clone());
+
+        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+            warn!("Cannot store state of agent {} after perceive", self.agent_id)
+        }
     }
 
     async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
@@ -133,8 +141,9 @@ impl AgentLoopState {
         }
         Some(output.remove(0))
     }
-    async fn plan(&mut self, turn_context: &mut TurnContext) -> BoxStream<'static, Result<MessageEvent>> {
-        let llm_client = self.runtime_manager.llm_client();
+
+    async fn plan_init(&mut self) -> TurnContext {
+        let mut turn_context = TurnContext::default();
         let context = self
             .context_provider
             .current_context(&self.agent_state)
@@ -143,41 +152,74 @@ impl AgentLoopState {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), &mut self.agent_state, turn_context)
+        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), &mut self.agent_state, &mut turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
                 context
             });
 
-        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
-            warn!("Cannot store state of agent {} after context preparation", self.agent_id)
-        }
+        //if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+        //    warn!("Cannot store state of agent {} after context preparation", self.agent_id)
+        //}
 
-        if context.len() > 1 {
-            let mut last_role = context.first().map(|m| m.role).unwrap();
-            for m in &context[1..] {
-                let next_role = m.role;
-                if next_role == last_role && next_role != MessageRole::Tool {
-                    let conversation = format_conversation(context.as_slice());
-                    debug!("Context contains consecutive messages with same role: {}", conversation)
-                }
-                last_role = next_role;
-            }
-        }
+        turn_context.context = context;
+        turn_context
+    }
 
-        let agent_name = self.agent.name();
-        debug!("Sending chat request to LLM client:\n\n--START[{}]---------------------\n{}\n--END[{}]------------------------------",
-            agent_name,
-            format_conversation(context.as_slice()),
-            agent_name);
+    async fn plan_next(&mut self, turn_context: &mut TurnContext) -> BoxStream<'static, Result<MessageEvent>> {
+        let llm_client = self.runtime_manager.llm_client();
 
+        let context = turn_context.context.clone();
         let tools = self.tool_providers.iter().flat_map(|p| p.facet.tools()).collect::<Vec<_>>();
-
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
+    async fn execute(&self, tool_calls:Vec<ToolCall>, turn_context: &mut TurnContext, security_context: &SecurityContext) -> bool {
+        // Execute all tools
+        let mut tool_results = Vec::new();
+        for c in tool_calls {
+            match self.execute_tool(&c, &security_context).await {
+                Ok(r) => {
+                    tool_results.push(r);
+                }
+                Err(e) => {
+                    warn!("Tool execution failed: {}", e);
+                    tool_results.push(ToolResult {
+                        id: c.id.clone(),
+                        tool_name: c.function_name.clone(),
+                        content: format!("Error: {}", e),
+                    });
+                }
+            }
+        }
+
+        let has_tool_calls = !tool_results.is_empty();
+        if has_tool_calls {
+            let message_id = turn_context.context.last()
+                .map(|m| m.id)
+                .unwrap_or_default();
+
+            // Add tool results to the context for the next iteration
+            let tool_message = Message {
+                id: MessageId(uuid::Uuid::new_v4()),
+                prev_id: message_id,
+                sender_id: ActorId::Agent(self.agent_id),
+                sender_name: self.agent_name.clone(),
+                role: MessageRole::Tool,
+                tool_results,
+                content: None,
+                timestamp: chrono::Utc::now(),
+                ..Message::default()
+            };
+            // Put tool message into context
+            turn_context.context.push(tool_message)
+        }
+
+        has_tool_calls
+    }
+
+    async fn execute_tool(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
         let tool_name = &call.function_name;
         for provider in &self.tool_providers {
             let tools = provider.facet.tools();
@@ -328,21 +370,19 @@ impl AgentLoop {
             processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
             let mut state = state_arc.lock().await;
             let mut loop_count = 0;
-            let mut turn_context = TurnContext::default();
-            while loop_count < max_iterations {
-                let _ = loop_count;
+            let mut turn_context = state.plan_init().await;
+
+            'steps: while loop_count < max_iterations {
                 loop_count += 1;
-                let _ = loop_count;
 
                 // --- PHASE 2: PLAN ---
                 // Call LLM with the current context
                 // The LLM returns a stream of tokens or structured parts
-                let mut response = state.plan(&mut turn_context).await;
+                let mut response = state.plan_next(&mut turn_context).await;
                 while let Some(event) = response.try_next().await? {
                     // Check for cancellation
                     if ProcessingState::from(processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling {
-                        yield Ok(MessageEvent::EndOfTurn(Vec::new()));
-                        break;
+                        break 'steps;
                     }
 
                     match event {
@@ -356,62 +396,21 @@ impl AgentLoop {
                         MessageEvent::Complete(mut message) => {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
+                            turn_context.messages.push(message.clone());
+                            turn_context.context.push(message.clone());
                             let tool_calls = message.tool_calls.clone();
-                            let message_id = message.id;
                             if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
-                            // Execute all tools
-                            let mut tool_results = Vec::new();
-                            for c in tool_calls {
-                                match state.execute(&c, &security_context).await {
-                                    Ok(r) => {
-                                        tool_results.push(r);
-                                    }
-                                    Err(e) => {
-                                        warn!("Tool execution failed: {}", e);
-                                        tool_results.push(ToolResult {
-                                            id: c.id.clone(),
-                                            tool_name: c.function_name.clone(),
-                                            content: format!("Error: {}", e),
-                                        });
-                                    }
-                                }
-                            }
-
-                            if !tool_results.is_empty() {
-                                // Add tool results to the context for the next iteration
-                                let tool_message = Message {
-                                    id: MessageId(uuid::Uuid::new_v4()),
-                                    prev_id: message_id,
-                                    sender_id: agent_id,
-                                    sender_name: agent_name.clone(),
-                                    role: MessageRole::Tool,
-                                    tool_results,
-                                    content: None,
-                                    timestamp: chrono::Utc::now(),
-                                    ..Message::default()
-                                };
-                                state.perceive(vec![tool_message], &mut turn_context).await;
-                                // After adding tool results, we continue the loop to call LLM again
-                                continue;
+                            let more = state.execute(tool_calls, &mut turn_context, &security_context).await;
+                            if more {
+                                continue 'steps;
                             }
                         },
-                        MessageEvent::EndOfTurn(mut messages) => {
-                            for m in &mut messages {
-                                m.sender_name = agent_name.clone();
-                                m.sender_id = agent_id;
-                            }
-                            yield Ok(MessageEvent::EndOfTurn(messages));
+                        MessageEvent::EndOfTurn(_) => {
                         }
                     }
                 };
-
-                // Check for cancellation after the inner loop
-                if ProcessingState::from(processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling {
-                    yield Ok(MessageEvent::EndOfTurn(Vec::new()));
-                    break;
-                }
 
                 // Check if the LLM finished with a "Final Answer" or "Reflect" signal
                 // If there were no tool calls, we are done
@@ -420,10 +419,10 @@ impl AgentLoop {
 
             // --- PHASE 4: REFLECT ---
             // After the loop or if we have enough context, perform a final reflection
-            state.reflect().await?;
+            state.reflect(&mut turn_context).await;
 
             processing_state.store(ProcessingState::Idle.into(), Ordering::SeqCst);
-            //yield Ok(MessageEvent::EndOfTurn(Vec::new()));
+            yield Ok(MessageEvent::EndOfTurn(turn_context.messages));
         };
         Box::pin(stream)
     }
