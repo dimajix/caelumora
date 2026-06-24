@@ -1,5 +1,5 @@
 use crate::agent::Agent;
-use crate::event::{EventSender, GlobalEvent};
+use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::session::SessionId;
 use crate::user::User;
@@ -16,17 +16,20 @@ pub enum ChannelUpdateEvent {
 #[derive(Debug)]
 pub struct ChannelController {
     id: ChannelId,
+    session_id: SessionId,
     channel: ArcSwap<Channel>,
-    event_sender: Arc<dyn EventSender<ChannelUpdateEvent>>,
+    event_publisher: Arc<dyn EventPublisher>,
 }
 
 impl ChannelController {
-    pub fn new(channel: Channel, event_sender: Arc<dyn EventSender<ChannelUpdateEvent>>) -> Self {
+    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>) -> Self {
         let id = channel.id;
+        let session_id = channel.session_id;
         Self {
             id,
+            session_id,
             channel: ArcSwap::from_pointee(channel),
-            event_sender,
+            event_publisher,
         }
     }
 
@@ -45,7 +48,7 @@ impl ChannelController {
     pub async fn update_name(&self, new_name: String) {
         let event = ChannelUpdateEvent::NameChanged(new_name);
         self.process_channel_update(&event).await;
-        self.event_sender.send(event);
+        self.event_publisher.publish(GlobalEvent::ChannelUpdated(self.session_id, self.id, event));
     }
 
     async fn process_channel_update(&self, event: &ChannelUpdateEvent) {

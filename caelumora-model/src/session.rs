@@ -1,5 +1,5 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
-use crate::event::{EventSender, GlobalEvent};
+use crate::event::{EventPublisher, GlobalEvent};
 use crate::meta::Metadata;
 use crate::security::SecurityContext;
 use crate::store::EntityStore;
@@ -18,21 +18,21 @@ pub enum SessionUpdateEvent {
 pub struct SessionController {
     id: SessionId,
     session: ArcSwap<Session>,
-    event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
+    event_publisher: Arc<dyn EventPublisher>,
     entity_store: Arc<dyn EntityStore>,
 }
 
 impl SessionController {
     pub async fn new(
         session: Session,
-        event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
+        event_publisher: Arc<dyn EventPublisher>,
         entity_store: Arc<dyn EntityStore>
     ) -> anyhow::Result<Self> {
         let id = session.id;
         Ok(Self {
             id,
             session: ArcSwap::from_pointee(session),
-            event_sender,
+            event_publisher,
             entity_store,
         })
     }
@@ -52,7 +52,7 @@ impl SessionController {
     pub async fn update_name(&self, new_name: String) {
         let event = SessionUpdateEvent::NameChanged(new_name);
         self.process_session_update(&event).await;
-        self.event_sender.send(event);
+        self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event));
     }
 
     async fn process_session_update(&self, event: &SessionUpdateEvent) {

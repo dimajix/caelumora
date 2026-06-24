@@ -4,9 +4,9 @@ use std::fmt::Debug;
 use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
 use crate::meta::Scope;
+use crate::security::SecurityContext;
 use crate::session::{Session, SessionId, SessionState};
 use crate::template::{SessionTemplate, SessionTemplateId};
-use crate::security::SecurityContext;
 use crate::user::{User, UserId};
 
 
@@ -76,15 +76,14 @@ pub trait StateStore : Debug + Sync + Send {
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::Arc;
-    use uuid::Uuid;
     use super::*;
     use crate::meta::Metadata;
     use crate::security::SecurityContext;
     use crate::session::Participant;
-    use crate::user::UserId;
     use crate::store_impl::memory::MemoryStore;
-
+    use crate::user::UserId;
+    use std::sync::Arc;
+    use uuid::Uuid;
 
 
     fn personality_template() -> Personality {
@@ -178,8 +177,13 @@ pub mod tests {
         let ctx = SecurityContext::default();
         store.create_agent(&ctx, &agent).await.unwrap();
 
-        let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
-        let controller = crate::agent::AgentController::new(agent.clone(), event_sender, store.clone());
+        let controller = crate::agent::AgentController::new(
+            SessionId(Uuid::new_v4()),
+            ChannelId(Uuid::new_v4()),
+            agent.clone(),
+            Arc::new(()),
+            store.clone()
+        );
 
         controller.update_name("new_name".to_string()).await;
 
@@ -203,9 +207,8 @@ pub mod tests {
         };
         let store = Arc::new(MemoryStore::new());
 
-        let event_sender = Arc::new(crate::event::FnEventSender::new(|_| {}));
         store.create_session(&SecurityContext::default(), &session).await.unwrap();
-        let _controller = crate::session::SessionController::new(session.clone(), event_sender, store.clone()).await.unwrap();
+        let _controller = crate::session::SessionController::new(session.clone(), Arc::new(()), store.clone()).await.unwrap();
 
         let persisted = store.get_session(&SecurityContext::default(), session.id).await.unwrap();
         assert_eq!(persisted.id, session.id);

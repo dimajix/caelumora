@@ -27,8 +27,6 @@ struct ActorHandle {
     actor_sender: Box<dyn ActorSender>,
 }
 
-
-
 #[derive(Debug)]
 pub struct ChannelLoop {
     id: ChannelId,

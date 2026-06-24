@@ -1,12 +1,12 @@
-use anyhow::Result;
-use std::sync::Arc;
-use async_trait::async_trait;
-use caelumora_model::agent::AgentState;
-use caelumora_model::message::Message;
 use crate::component::{
     ComponentFacets, ComponentRegistry, TurnContext
 };
 use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
+use anyhow::Result;
+use async_trait::async_trait;
+use caelumora_model::agent::AgentState;
+use caelumora_model::message::Message;
+use std::sync::Arc;
 
 
 pub const STATE_HISTORY_WRITER_KIND: &str = "state_history_writer";
@@ -32,7 +32,7 @@ impl PerceiveInProcessor for StateHistoryWriter {}
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         STATE_HISTORY_WRITER_KIND,
-        Arc::new(|descriptor| {
+        Arc::new(|_descriptor| {
             let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryWriter { }));
             Ok(capabilities)

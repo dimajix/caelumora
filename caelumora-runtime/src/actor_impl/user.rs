@@ -113,15 +113,7 @@ impl UserActor {
         let mut global_rx_closed = false;
         match maybe_global {
             Some(event) => {
-                match &event {
-                    GlobalEvent::ChannelUpdated(_, cid, _) => {
-                        self.user.process_global_event(&event);
-                    }
-                    GlobalEvent::UserUpdated(id, _) => {
-                        self.user.process_global_event(&event);
-                    }
-                    _ => {}
-                }
+                self.user.process_global_event(&event);
             }
             None => {
                 global_rx_closed = true;

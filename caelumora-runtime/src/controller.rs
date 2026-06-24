@@ -26,18 +26,18 @@ impl ControllerManager {
         channel_id: ChannelId,
         agent: Agent,
     ) -> Arc<AgentController> {
-        let event_sender = self.event_bus.agent_event_sender(session_id, channel_id, agent.id);
         Arc::new(AgentController::new(
+            session_id,
+            channel_id,
             agent,
-            event_sender,
+            self.event_bus.clone(),
             self.entity_store.clone(),
         ))
     }
 
     pub async fn new_session_controller(&self, session: Session) -> anyhow::Result<Arc<SessionController>> {
-        let event_sender = self.event_bus.session_event_sender(session.id);
         Ok(Arc::new(
-            SessionController::new(session, event_sender, self.entity_store.clone()).await?,
+            SessionController::new(session, self.event_bus.clone(), self.entity_store.clone()).await?,
         ))
     }
 
@@ -45,8 +45,7 @@ impl ControllerManager {
         &self,
         channel: Channel,
     ) -> Arc<ChannelController> {
-        let event_sender = self.event_bus.channel_event_sender(channel.session_id, channel.id);
-        Arc::new(ChannelController::new(channel, event_sender))
+        Arc::new(ChannelController::new(channel, self.event_bus.clone()))
     }
 
     pub fn new_user_controller(
@@ -54,7 +53,6 @@ impl ControllerManager {
         user: User,
         channel_name: String,
     ) -> Arc<UserController> {
-        let event_sender = self.event_bus.user_event_sender(user.id);
-        Arc::new(UserController::new(user, channel_name, event_sender))
+        Arc::new(UserController::new(user, channel_name, self.event_bus.clone()))
     }
 }

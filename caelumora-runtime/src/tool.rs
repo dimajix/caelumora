@@ -70,7 +70,7 @@ impl DefaultToolExecutor {
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
-        let mut execution = ToolExecution {
+        let mut _execution = ToolExecution {
             id: Uuid::new_v4(),
             session_id: security.session_id,
             agent_id: security.sender_id.as_agent_id().unwrap(),
@@ -87,12 +87,12 @@ impl ToolExecutor for DefaultToolExecutor {
         for provider in &self.tool_providers {
             let tools = provider.tools();
             if tools.iter().any(|t| t.name == *tool_name) {
-                execution.status = ExecutionStatus::Running;
+                _execution.status = ExecutionStatus::Running;
                 let params = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
                 return match provider.execute(tool_name, params, security).await {
                     Ok(value) => {
-                        execution.status = ExecutionStatus::Completed;
-                        execution.finished_at = Some(Utc::now());
+                        _execution.status = ExecutionStatus::Completed;
+                        _execution.finished_at = Some(Utc::now());
                         Ok(ToolResult {
                             id: call.id.clone(),
                             tool_name: call.function_name.clone(),
@@ -100,8 +100,8 @@ impl ToolExecutor for DefaultToolExecutor {
                         })
                     }
                     Err(e) => {
-                        execution.status = ExecutionStatus::Failed;
-                        execution.finished_at = Some(Utc::now());
+                        _execution.status = ExecutionStatus::Failed;
+                        _execution.finished_at = Some(Utc::now());
                         // TODO: Log error in execution
                         Err(e)
                     }

@@ -1,8 +1,10 @@
+use crate::channel::ChannelId;
 use crate::component::ComponentConfig;
-use crate::event::{EventSender, GlobalEvent};
+use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::security::SecurityContext;
+use crate::session::SessionId;
 use crate::store::EntityStore;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
@@ -17,21 +19,27 @@ pub enum AgentUpdateEvent {
 #[derive(Debug)]
 pub struct AgentController {
     id: AgentId,
+    session_id: SessionId,
+    channel_id: ChannelId,
     agent: ArcSwap<Agent>,
-    event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
+    event_publisher: Arc<dyn EventPublisher>,
     entity_store: Arc<dyn EntityStore>,
 }
 
 impl AgentController {
     pub fn new(
+        session_id: SessionId,
+        channel_id: ChannelId,
         agent: Agent,
-        event_sender: Arc<dyn EventSender<AgentUpdateEvent>>,
+        event_publisher: Arc<dyn EventPublisher>,
         entity_store: Arc<dyn EntityStore>
     ) -> Self {
         Self {
             id: agent.id,
+            session_id,
+            channel_id,
             agent: ArcSwap::from_pointee(agent),
-            event_sender,
+            event_publisher,
             entity_store,
         }
     }
@@ -51,7 +59,7 @@ impl AgentController {
     pub async fn update_name(&self, new_name: String) {
         let event = AgentUpdateEvent::NameChanged(new_name);
         self.process_update(&event).await;
-        self.event_sender.send(event);
+        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.channel_id, self.id, event));
     }
 
     async fn process_update(&self, event: &AgentUpdateEvent) {

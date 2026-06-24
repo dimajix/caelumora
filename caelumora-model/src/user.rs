@@ -1,4 +1,4 @@
-use crate::event::{EventSender, GlobalEvent};
+use crate::event::{EventPublisher, GlobalEvent};
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,17 +23,17 @@ pub struct UserController {
     id: UserId,
     user: ArcSwap<User>,
     channel_name: ArcSwap<String>,
-    event_sender: Arc<dyn EventSender<UserUpdateEvent>>,
+    event_publisher: Arc<dyn EventPublisher>,
 }
 
 impl UserController {
-    pub fn new(user: User, channel_name: String, event_sender: Arc<dyn EventSender<UserUpdateEvent>>) -> Self {
+    pub fn new(user: User, channel_name: String, event_publisher: Arc<dyn EventPublisher>) -> Self {
         let id = user.id;
         Self {
             id,
             user: ArcSwap::from_pointee(user),
             channel_name: ArcSwap::from_pointee(channel_name),
-            event_sender,
+            event_publisher,
         }
     }
 
@@ -56,7 +56,7 @@ impl UserController {
     pub fn update_username(&self, new_name: String) {
         let event = UserUpdateEvent::NameChanged(new_name);
         self.process_user_update(&event);
-        self.event_sender.send(event);
+        self.event_publisher.publish(GlobalEvent::UserUpdated(self.id, event));
     }
 
     fn process_user_update(&self, event: &UserUpdateEvent) {

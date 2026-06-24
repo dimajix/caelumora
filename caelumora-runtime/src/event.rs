@@ -1,11 +1,10 @@
-use caelumora_model::agent::{AgentId, AgentUpdateEvent};
-use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
+use caelumora_model::agent::AgentId;
+use caelumora_model::channel::ChannelId;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::session::{SessionId, SessionUpdateEvent};
-use caelumora_model::user::{UserId, UserUpdateEvent};
+use caelumora_model::session::SessionId;
+use caelumora_model::user::UserId;
 use dashmap::DashMap;
 use log::warn;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,34 +61,6 @@ impl EventBus {
 
     pub fn subscribe_user(&self, id: UserId) -> mpsc::Receiver<GlobalEvent> {
         self.subscribe(vec![SubscriptionTopic::User(id)])
-    }
-
-    pub fn session_event_sender(self: &Arc<Self>, session_id: SessionId) -> Arc<dyn caelumora_model::event::EventSender<SessionUpdateEvent>> {
-        let bus = self.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::SessionUpdated(session_id, event));
-        }))
-    }
-
-    pub fn channel_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId) -> Arc<dyn caelumora_model::event::EventSender<ChannelUpdateEvent>> {
-        let bus = self.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::ChannelUpdated(session_id, channel_id, event));
-        }))
-    }
-
-    pub fn agent_event_sender(self: &Arc<Self>, session_id: SessionId, channel_id: ChannelId, agent_id: AgentId) -> Arc<dyn caelumora_model::event::EventSender<AgentUpdateEvent>> {
-        let bus = self.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::AgentUpdated(session_id, channel_id, agent_id, event));
-        }))
-    }
-
-    pub fn user_event_sender(self: &Arc<Self>, user_id: UserId) -> Arc<dyn caelumora_model::event::EventSender<UserUpdateEvent>> {
-        let bus = self.clone();
-        Arc::new(caelumora_model::event::FnEventSender::new(move |event| {
-            bus.publish(GlobalEvent::UserUpdated(user_id, event));
-        }))
     }
 
     pub fn publish(&self, event: GlobalEvent) {
