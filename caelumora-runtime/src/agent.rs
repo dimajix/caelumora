@@ -38,7 +38,7 @@ struct AgentLoopState {
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
-    tool_executor: Box<ToolExecutor>,
+    tool_executor: Box<dyn ToolExecutor>,
 }
 impl AgentLoopState {
     async fn new(session_id: SessionId,

@@ -6,8 +6,7 @@ use crate::llm::LLMClient;
 use crate::llm_impl::ollama::OllamaClient;
 use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobinModerator};
 use crate::recorder::Recorder;
-use crate::tool::ToolExecutor;
-use crate::tool::ToolProvider;
+use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
 use caelumora_model::message::ActorId;
 use caelumora_model::security::{DummySecurityManager, SecurityContext, SecurityManager};
@@ -90,8 +89,8 @@ impl RuntimeManager {
         self.controller_manager.clone()
     }
 
-    pub fn new_tool_executor(&self, tool_providers: Vec<Arc<dyn ToolProvider>>) -> Box<ToolExecutor> {
-        Box::new(ToolExecutor::new(tool_providers))
+    pub fn new_tool_executor(&self, tool_providers: Vec<Arc<dyn ToolProvider>>) -> Box<dyn ToolExecutor> {
+        Box::new(DefaultToolExecutor::new(self.security_manager.clone(), tool_providers))
     }
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
