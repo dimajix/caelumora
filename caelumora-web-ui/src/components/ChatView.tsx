@@ -1,5 +1,12 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {Send, Square, Users} from 'lucide-react';
+import {
+    CheckCircle2,
+    Send,
+    Square,
+    Terminal,
+    Users,
+    Wrench
+} from 'lucide-react';
 import type {ChannelResponse, Envelope, Message} from '../types';
 import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
@@ -39,7 +46,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           setIsGenerating(true);
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
         } else if (actorEvent.CompleteMessageGenerated) {
-          setMessages(prev => [...prev, actorEvent.CompleteMessageGenerated!]);
+          setMessages(prev => {
+            const newMsg = actorEvent.CompleteMessageGenerated!;
+            if (newMsg.tool_results && newMsg.tool_results.length > 0) {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.some(tc => newMsg.tool_results?.some(tr => tr.id === tc.id))) {
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  tool_results: [...(lastMsg.tool_results || []), ...newMsg.tool_results]
+                };
+                return [...prev.slice(0, -1), updatedLastMsg];
+              }
+            }
+            return [...prev, newMsg];
+          });
           setStreamingMessage(null);
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
@@ -63,7 +83,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage]);
+  }, [messages, streamingMessage, isGenerating]);
 
   const loadMessages = async () => {
     try {
@@ -119,7 +139,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.map((msg, idx) => (
+          {messages.reduce((acc: Message[], msg) => {
+            // Logic to merge tool calls and results
+            if (msg.tool_results && msg.tool_results.length > 0) {
+              const lastMsg = acc[acc.length - 1];
+              if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.some(tc => msg.tool_results?.some(tr => tr.id === tc.id))) {
+                // Merge tool result into previous message that had the tool call
+                const newLastMsg = { 
+                  ...lastMsg, 
+                  tool_results: [...(lastMsg.tool_results || []), ...msg.tool_results] 
+                };
+                return [...acc.slice(0, -1), newLastMsg];
+              }
+            }
+            return [...acc, msg];
+          }, []).map((msg, idx) => (
             <div
               key={idx}
               className={cn(
@@ -129,10 +163,51 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                   : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600"
               )}
             >
-              <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider">
+              <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
                 {msg.sender_name || msg.role}
               </div>
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              
+              {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
+
+              {msg.tool_calls && msg.tool_calls.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {msg.tool_calls.map((call, cidx) => {
+                    const result = msg.tool_results?.find(r => r.id === call.id);
+                    return (
+                      <div key={cidx} className="bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600 overflow-hidden">
+                        <div className="bg-gray-100 dark:bg-gray-900 px-2 py-1 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
+                          <div className="flex items-center gap-2 text-xs font-mono">
+                            <Wrench size={12} className="text-blue-500" />
+                            <span>{call.function_name}</span>
+                          </div>
+                          {result ? (
+                            <CheckCircle2 size={12} className="text-green-500" />
+                          ) : (
+                            <div className="flex items-center gap-1">
+                               <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                               <span className="text-[10px] text-blue-500 uppercase">Executing</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-2">
+                           <div className="flex items-start gap-2 mb-1">
+                             <Terminal size={12} className="mt-0.5 opacity-50" />
+                             <code className="text-[11px] font-mono break-all">{call.arguments}</code>
+                           </div>
+                           {result && (
+                             <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                               <div className="text-[10px] uppercase opacity-50 mb-1">Result</div>
+                               <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded border border-gray-100 dark:border-gray-900">
+                                 {result.content}
+                               </pre>
+                             </div>
+                           )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
           {streamingMessage && (

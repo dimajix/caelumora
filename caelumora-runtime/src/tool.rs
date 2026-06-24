@@ -6,6 +6,7 @@ use caelumora_model::security::{ActionType, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::Tool;
 use chrono::{DateTime, Utc};
+use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
@@ -70,6 +71,15 @@ impl DefaultToolExecutor {
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
+        info!(
+            "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
+            call.function_name,
+            security.initiator_id,
+            security.sender_id,
+            security.session_id,
+            security.channel_id
+        );
+
         let mut _execution = ToolExecution {
             id: Uuid::new_v4(),
             session_id: security.session_id,

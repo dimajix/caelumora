@@ -17,12 +17,26 @@ export interface ChannelResponse {
   participants: string[];
 }
 
+export interface ToolCall {
+  id?: string;
+  function_name: string;
+  arguments: string;
+}
+
+export interface ToolResult {
+  id?: string;
+  tool_name: string;
+  content: string;
+}
+
 export interface Message {
   id?: string;
-  role: 'User' | 'Assistant' | 'System';
+  role: 'User' | 'Assistant' | 'System' | 'Tool';
   content: string | null;
   sender_name?: string;
   timestamp?: string;
+  tool_calls?: ToolCall[];
+  tool_results?: ToolResult[];
   [key: string]: any;
 }
 
