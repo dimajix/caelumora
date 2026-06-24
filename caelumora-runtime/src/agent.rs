@@ -5,6 +5,7 @@ use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, PlanPreProcessor};
 use crate::message::MessageEvent;
 use crate::runtime::RuntimeManager;
+use crate::tool::ToolExecutor;
 use crate::tool::ToolProvider;
 use anyhow::Result;
 use async_stream::stream;
@@ -16,7 +17,6 @@ use caelumora_model::message::{ActorId, Message, MessageId, MessageRole, ToolCal
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{StateStore, StoreError};
-use caelumora_model::tool::ToolExecution;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use log::warn;
@@ -38,7 +38,7 @@ struct AgentLoopState {
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
-    tool_providers: Vec<ComponentImpl<dyn ToolProvider>>,
+    tool_executor: Box<ToolExecutor>,
 }
 impl AgentLoopState {
     async fn new(session_id: SessionId,
@@ -75,6 +75,9 @@ impl AgentLoopState {
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let plan_pre_processors = components.get_all::<dyn PlanPreProcessor>(None)?;
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
+        let tool_executor = runtime_manager.new_tool_executor(
+            tool_providers.into_iter().map(|p| p.facet).collect()
+        );
 
         Ok(Self {
             agent: agent_controller,
@@ -89,7 +92,7 @@ impl AgentLoopState {
             perceive_in_processors,
             emit_out_processors,
             plan_pre_processors,
-            tool_providers,
+            tool_executor,
         })
     }
 
@@ -175,7 +178,7 @@ impl AgentLoopState {
 
         let mut context = turn_context.context.clone();
         context.extend_from_slice(turn_context.messages.as_slice());
-        let tools = self.tool_providers.iter().flat_map(|p| p.facet.tools()).collect::<Vec<_>>();
+        let tools = self.tool_executor.tools();
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
@@ -183,7 +186,7 @@ impl AgentLoopState {
         // Execute all tools
         let mut tool_results = Vec::new();
         for c in tool_calls {
-            match self.execute_tool(&c, &security_context).await {
+            match self.tool_executor.execute(&c, &security_context).await {
                 Ok(r) => {
                     tool_results.push(r);
                 }
@@ -222,46 +225,6 @@ impl AgentLoopState {
         else {
             None
         }
-    }
-
-    async fn execute_tool(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
-        let tool_name = &call.function_name;
-        for provider in &self.tool_providers {
-            let tools = provider.facet.tools();
-            if tools.iter().any(|t| t.name == *tool_name) {
-                let mut execution = ToolExecution {
-                    id: uuid::Uuid::new_v4(),
-                    session_id: self.session_id,
-                    agent_id: self.agent_id,
-                    input: serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null),
-                    output: None,
-                    status: caelumora_model::tool::ExecutionStatus::Running,
-                    started_at: chrono::Utc::now(),
-                    finished_at: None,
-                };
-
-                let params = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-                return match provider.facet.execute(tool_name, params, security).await {
-                    Ok(value) => {
-                        execution.output = Some(value.clone());
-                        execution.status = caelumora_model::tool::ExecutionStatus::Completed;
-                        execution.finished_at = Some(chrono::Utc::now());
-                        Ok(ToolResult {
-                            id: call.id.clone(),
-                            tool_name: call.function_name.clone(),
-                            content: value.to_string(),
-                        })
-                    }
-                    Err(e) => {
-                        execution.status = caelumora_model::tool::ExecutionStatus::Failed;
-                        execution.finished_at = Some(chrono::Utc::now());
-                        // TODO: Log error in execution
-                        Err(e)
-                    }
-                }
-            }
-        }
-        Err(anyhow::anyhow!("Tool not found: {}", tool_name))
     }
 
     async fn apply_stage_processors<T>(
