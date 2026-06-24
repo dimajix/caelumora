@@ -1,7 +1,7 @@
 use crate::channel::ChannelLoop;
-use crate::event::GlobalEvent;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
 use dashmap::DashMap;
@@ -113,32 +113,7 @@ impl SessionLoop {
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
-            match global_event {
-                GlobalEvent::AgentUpdated(_, cid, _, event) => {
-                    //TODO
-                }
-                GlobalEvent::AgentCreated(_, cid, _) => {
-                    //TODO
-                }
-                GlobalEvent::AgentDeleted(_, cid, _) => {
-                    //TODO
-                }
-                GlobalEvent::ChannelUpdated(sid, _, event) => {
-                    // TODO
-                },
-                GlobalEvent::ChannelCreated(sid,  event) => {
-                    // TODO
-                },
-                GlobalEvent::ChannelDeleted(sid,  id) => {
-                    // TODO
-                },
-                GlobalEvent::SessionUpdated(sid, event) => {
-                    if sid == self.id() {
-                        self.session_controller.process_update(&event).await;
-                    }
-                }
-                _ => {}
-            }
+            self.session_controller.process_global_event(&global_event).await;
         }
     }
 

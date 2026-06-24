@@ -1,13 +1,13 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
+use crate::event::{EventSender, GlobalEvent};
 use crate::meta::Metadata;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use crate::security::SecurityContext;
 use crate::store::EntityStore;
 use crate::user::UserId;
-use std::sync::Arc;
 use arc_swap::ArcSwap;
-use crate::event::EventSender;
-use crate::security::SecurityContext;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -16,6 +16,7 @@ pub enum SessionUpdateEvent {
 
 #[derive(Debug)]
 pub struct SessionController {
+    id: SessionId,
     session: ArcSwap<Session>,
     event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
     entity_store: Arc<dyn EntityStore>,
@@ -27,7 +28,9 @@ impl SessionController {
         event_sender: Arc<dyn EventSender<SessionUpdateEvent>>,
         entity_store: Arc<dyn EntityStore>
     ) -> anyhow::Result<Self> {
+        let id = session.id;
         Ok(Self {
+            id,
             session: ArcSwap::from_pointee(session),
             event_sender,
             entity_store,
@@ -39,7 +42,7 @@ impl SessionController {
     }
 
     pub fn id(&self) -> SessionId {
-        self.session.load().id
+        self.id
     }
 
     pub fn name(&self) -> String {
@@ -47,15 +50,12 @@ impl SessionController {
     }
 
     pub async fn update_name(&self, new_name: String) {
-        self.apply_update(SessionUpdateEvent::NameChanged(new_name)).await;
-    }
-
-    async fn apply_update(&self, event: SessionUpdateEvent) {
-        self.process_update(&event).await;
+        let event = SessionUpdateEvent::NameChanged(new_name);
+        self.process_session_update(&event).await;
         self.event_sender.send(event);
     }
 
-    pub async fn process_update(&self, event: &SessionUpdateEvent) {
+    async fn process_session_update(&self, event: &SessionUpdateEvent) {
         match event {
             SessionUpdateEvent::NameChanged(name) => {
                 let mut session = (**self.session.load()).clone();
@@ -65,6 +65,33 @@ impl SessionController {
                 let ctx = SecurityContext::default();
                 self.entity_store.update_session(&ctx, &session).await.expect("failed to update session");
             }
+        }
+    }
+
+    pub async fn process_global_event(&self, event: &GlobalEvent) {
+        match event {
+            GlobalEvent::SessionUpdated(sid, update) if *sid == self.id => {
+                self.process_session_update(update).await;
+            }
+            GlobalEvent::ChannelCreated(sid, cid) if *sid == self.id => {
+                // TODO: Update internal session state to include the new channel
+            }
+            GlobalEvent::ChannelUpdated(sid, cid, update) if *sid == self.id => {
+                // TODO: Update internal session state
+            }
+            GlobalEvent::ChannelDeleted(sid, cid) if *sid == self.id => {
+                // TODO: Update internal session state
+            }
+            GlobalEvent::AgentCreated(sid, cid, aid) if *sid == self.id => {
+                // TODO: Update internal session state
+            }
+            GlobalEvent::AgentUpdated(sid, cid, aid, update) if *sid == self.id => {
+                // TODO: React to agent updates if necessary
+            }
+            GlobalEvent::AgentDeleted(sid, cid, aid) if *sid == self.id => {
+                // TODO: Update internal session state
+            }
+            _ => {}
         }
     }
 }

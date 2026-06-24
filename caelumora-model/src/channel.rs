@@ -1,5 +1,5 @@
 use crate::agent::Agent;
-use crate::event::EventSender;
+use crate::event::{EventSender, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::session::SessionId;
 use crate::user::User;
@@ -15,13 +15,16 @@ pub enum ChannelUpdateEvent {
 
 #[derive(Debug)]
 pub struct ChannelController {
+    id: ChannelId,
     channel: ArcSwap<Channel>,
     event_sender: Arc<dyn EventSender<ChannelUpdateEvent>>,
 }
 
 impl ChannelController {
     pub fn new(channel: Channel, event_sender: Arc<dyn EventSender<ChannelUpdateEvent>>) -> Self {
+        let id = channel.id;
         Self {
+            id,
             channel: ArcSwap::from_pointee(channel),
             event_sender,
         }
@@ -32,7 +35,7 @@ impl ChannelController {
     }
 
     pub fn id(&self) -> ChannelId {
-        self.channel.load().id
+        self.id
     }
 
     pub fn name(&self) -> String {
@@ -40,21 +43,36 @@ impl ChannelController {
     }
 
     pub async fn update_name(&self, new_name: String) {
-        self.apply_update(ChannelUpdateEvent::NameChanged(new_name)).await;
-    }
-
-    async fn apply_update(&self, event: ChannelUpdateEvent) {
-        self.process_update(&event).await;
+        let event = ChannelUpdateEvent::NameChanged(new_name);
+        self.process_channel_update(&event).await;
         self.event_sender.send(event);
     }
 
-    pub async fn process_update(&self, event: &ChannelUpdateEvent) {
+    async fn process_channel_update(&self, event: &ChannelUpdateEvent) {
         match event {
             ChannelUpdateEvent::NameChanged(name) => {
                 let mut channel = (**self.channel.load()).clone();
                 channel.name = name.clone();
                 self.channel.store(Arc::new(channel));
             }
+        }
+    }
+
+    pub async fn process_global_event(&self, event: &GlobalEvent) {
+        match event {
+            GlobalEvent::ChannelUpdated(_, cid, update) if *cid == self.id => {
+                self.process_channel_update(update).await;
+            }
+            GlobalEvent::AgentCreated(sid, cid, aid) if *cid == self.id => {
+                // TODO: Update internal session state
+            }
+            GlobalEvent::AgentUpdated(sid, cid, aid, update) if *cid == self.id => {
+                // TODO: React to agent updates if necessary
+            }
+            GlobalEvent::AgentDeleted(sid, cid, aid) if *cid == self.id => {
+                // TODO: Update internal session state
+            }
+            _ => {}
         }
     }
 }

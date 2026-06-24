@@ -305,8 +305,8 @@ impl AgentLoop {
         self.agent_controller.name()
     }
 
-    pub async fn process_update(&self, event: caelumora_model::agent::AgentUpdateEvent) {
-        self.agent_controller.process_update(&event).await;
+    pub async fn process_global_event(&self, event: &caelumora_model::event::GlobalEvent) {
+        self.agent_controller.process_global_event(event).await;
     }
 
     pub fn runtime_manager(&self) -> Arc<RuntimeManager> {

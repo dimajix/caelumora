@@ -1,28 +1,12 @@
 use caelumora_model::agent::{AgentId, AgentUpdateEvent};
 use caelumora_model::channel::{ChannelId, ChannelUpdateEvent};
+use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::session::{SessionId, SessionUpdateEvent};
 use caelumora_model::user::{UserId, UserUpdateEvent};
 use dashmap::DashMap;
 use log::warn;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GlobalEvent {
-    SessionCreated(SessionId),
-    SessionUpdated(SessionId, SessionUpdateEvent),
-    SessionDeleted(SessionId),
-    ChannelCreated(SessionId, ChannelId),
-    ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
-    ChannelDeleted(SessionId, ChannelId),
-    AgentCreated(SessionId, ChannelId, AgentId),
-    AgentUpdated(SessionId, ChannelId, AgentId, AgentUpdateEvent),
-    AgentDeleted(SessionId, ChannelId, AgentId),
-    UserCreated(UserId),
-    UserUpdated(UserId, UserUpdateEvent),
-    UserDeleted(UserId),
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
@@ -36,6 +20,12 @@ pub enum SubscriptionTopic {
 #[derive(Debug)]
 pub struct EventBus {
     subscribers: DashMap<SubscriptionTopic, Vec<mpsc::Sender<GlobalEvent>>>,
+}
+
+impl EventPublisher for EventBus {
+    fn publish(&self, event: GlobalEvent) {
+        self.publish(event);
+    }
 }
 
 impl EventBus {

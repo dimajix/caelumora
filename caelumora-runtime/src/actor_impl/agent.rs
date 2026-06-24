@@ -1,11 +1,11 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::agent::AgentLoop;
-use crate::event::GlobalEvent;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::Agent;
 use caelumora_model::channel::Channel;
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
 use log::{debug, info, warn};
@@ -73,14 +73,7 @@ impl AgentActor {
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
-            match global_event {
-                GlobalEvent::AgentUpdated(_, _, id, event) => {
-                    if ActorId::Agent(id) == self.id {
-                        self.agent.process_update(event).await;
-                    }
-                }
-                _ => {}
-            }
+            self.agent.process_global_event(&global_event).await;
         }
     }
 

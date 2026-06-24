@@ -1,13 +1,13 @@
-use crate::security::SecurityContext;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use std::sync::Arc;
-use arc_swap::ArcSwap;
+use crate::component::ComponentConfig;
+use crate::event::{EventSender, GlobalEvent};
 use crate::message::{MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
-use crate::component::ComponentConfig;
-use crate::event::EventSender;
+use crate::security::SecurityContext;
 use crate::store::EntityStore;
+use arc_swap::ArcSwap;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
@@ -49,15 +49,12 @@ impl AgentController {
     }
 
     pub async fn update_name(&self, new_name: String) {
-        self.apply_update(AgentUpdateEvent::NameChanged(new_name)).await;
-    }
-
-    async fn apply_update(&self, event: AgentUpdateEvent) {
+        let event = AgentUpdateEvent::NameChanged(new_name);
         self.process_update(&event).await;
         self.event_sender.send(event);
     }
 
-    pub async fn process_update(&self, event: &AgentUpdateEvent) {
+    async fn process_update(&self, event: &AgentUpdateEvent) {
         match event {
             AgentUpdateEvent::NameChanged(name) => {
                 let mut agent = (**self.agent.load()).clone();
@@ -67,6 +64,15 @@ impl AgentController {
                 let ctx = SecurityContext::default();
                 self.entity_store.update_agent(&ctx, &agent).await.expect("failed to update agent");
             }
+        }
+    }
+
+    pub async fn process_global_event(&self, event: &GlobalEvent) {
+        match event {
+            GlobalEvent::AgentUpdated(_, _, aid, update) if *aid == self.id => {
+                self.process_update(update).await;
+            }
+            _ => {}
         }
     }
 }

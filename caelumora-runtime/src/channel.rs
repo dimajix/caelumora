@@ -1,13 +1,13 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
-use crate::event::GlobalEvent;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
@@ -200,23 +200,7 @@ impl ChannelLoop {
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
-            match global_event {
-                GlobalEvent::AgentUpdated(_, cid, _, event) => {
-                    //TODO
-                }
-                GlobalEvent::AgentCreated(_, cid, _) => {
-                    //TODO
-                }
-                GlobalEvent::AgentDeleted(_, cid, _) => {
-                    //TODO
-                }
-                GlobalEvent::ChannelUpdated(_, cid, event) => {
-                    if cid == self.id {
-                        self.channel.process_update(&event).await;
-                    }
-                }
-                _ => {}
-            }
+            self.channel.process_global_event(&global_event).await;
         }
     }
 

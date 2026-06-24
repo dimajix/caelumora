@@ -1,9 +1,9 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
-use crate::event::GlobalEvent;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -113,16 +113,12 @@ impl UserActor {
         let mut global_rx_closed = false;
         match maybe_global {
             Some(event) => {
-                match event {
-                    GlobalEvent::ChannelUpdated(_, cid, event) => {
-                        if cid == self.channel_id {
-                            self.user.process_channel_update(&event);
-                        }
+                match &event {
+                    GlobalEvent::ChannelUpdated(_, cid, _) => {
+                        self.user.process_global_event(&event);
                     }
-                    GlobalEvent::UserUpdated(id, event) => {
-                        if ActorId::User(id) == self.id {
-                            self.user.process_update(&event);
-                        }
+                    GlobalEvent::UserUpdated(id, _) => {
+                        self.user.process_global_event(&event);
                     }
                     _ => {}
                 }

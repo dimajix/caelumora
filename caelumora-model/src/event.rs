@@ -1,3 +1,29 @@
+use crate::agent::{AgentId, AgentUpdateEvent};
+use crate::channel::{ChannelId, ChannelUpdateEvent};
+use crate::session::{SessionId, SessionUpdateEvent};
+use crate::user::{UserId, UserUpdateEvent};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GlobalEvent {
+    SessionCreated(SessionId),
+    SessionUpdated(SessionId, SessionUpdateEvent),
+    SessionDeleted(SessionId),
+    ChannelCreated(SessionId, ChannelId),
+    ChannelUpdated(SessionId, ChannelId, ChannelUpdateEvent),
+    ChannelDeleted(SessionId, ChannelId),
+    AgentCreated(SessionId, ChannelId, AgentId),
+    AgentUpdated(SessionId, ChannelId, AgentId, AgentUpdateEvent),
+    AgentDeleted(SessionId, ChannelId, AgentId),
+    UserCreated(UserId),
+    UserUpdated(UserId, UserUpdateEvent),
+    UserDeleted(UserId),
+}
+
+pub trait EventPublisher: Send + Sync {
+    fn publish(&self, event: GlobalEvent);
+}
+
 use std::fmt;
 
 pub trait EventSender<E>: Send + Sync + fmt::Debug {
