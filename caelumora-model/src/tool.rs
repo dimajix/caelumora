@@ -1,6 +1,3 @@
-use crate::agent::AgentId;
-use crate::session::SessionId;
-use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -61,25 +58,4 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolExecution {
-    pub id: Uuid,
-    pub session_id: SessionId,
-    pub agent_id: AgentId,
-    pub input: serde_json::Value,
-    pub output: Option<serde_json::Value>,
-    pub status: ExecutionStatus,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ExecutionStatus {
-    PendingApproval,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
 }

@@ -1,11 +1,16 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::agent::AgentId;
 use caelumora_model::message::{ToolCall, ToolResult};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{Tool, ToolExecution};
+use caelumora_model::session::SessionId;
+use caelumora_model::tool::Tool;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[async_trait]
 pub trait ToolProvider: Send + Sync + Debug {
@@ -14,6 +19,28 @@ pub trait ToolProvider: Send + Sync + Debug {
 
     /// Executes a specific tool by name.
     async fn execute(&self, name: &str, params: Value, security: &SecurityContext) -> Result<Value>;
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecution {
+    pub id: Uuid,
+    pub session_id: SessionId,
+    pub agent_id: AgentId,
+    pub input: serde_json::Value,
+    pub output: Option<serde_json::Value>,
+    pub status: ExecutionStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExecutionStatus {
+    PendingApproval,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 
@@ -42,7 +69,7 @@ impl ToolExecutor {
                     agent_id: security.sender_id.as_agent_id().unwrap(),
                     input: serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null),
                     output: None,
-                    status: caelumora_model::tool::ExecutionStatus::Running,
+                    status: ExecutionStatus::Running,
                     started_at: chrono::Utc::now(),
                     finished_at: None,
                 };
@@ -51,7 +78,7 @@ impl ToolExecutor {
                 return match provider.execute(tool_name, params, security).await {
                     Ok(value) => {
                         execution.output = Some(value.clone());
-                        execution.status = caelumora_model::tool::ExecutionStatus::Completed;
+                        execution.status = ExecutionStatus::Completed;
                         execution.finished_at = Some(chrono::Utc::now());
                         Ok(ToolResult {
                             id: call.id.clone(),
@@ -60,7 +87,7 @@ impl ToolExecutor {
                         })
                     }
                     Err(e) => {
-                        execution.status = caelumora_model::tool::ExecutionStatus::Failed;
+                        execution.status = ExecutionStatus::Failed;
                         execution.finished_at = Some(chrono::Utc::now());
                         // TODO: Log error in execution
                         Err(e)
