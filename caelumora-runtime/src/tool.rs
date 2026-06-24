@@ -27,8 +27,6 @@ pub struct ToolExecution {
     pub id: Uuid,
     pub session_id: SessionId,
     pub agent_id: AgentId,
-    pub input: Value,
-    pub output: Option<Value>,
     pub status: ExecutionStatus,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -72,6 +70,15 @@ impl DefaultToolExecutor {
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
+        let mut execution = ToolExecution {
+            id: Uuid::new_v4(),
+            session_id: security.session_id,
+            agent_id: security.sender_id.as_agent_id().unwrap(),
+            status: ExecutionStatus::PendingApproval,
+            started_at: Utc::now(),
+            finished_at: None,
+        };
+
         if !self.security_manager.check(security, ActionType::CallTool(call)).await {
             return Err(anyhow::anyhow!("Security check failed: Access denied to tool '{}'", call.function_name));
         }
@@ -80,21 +87,10 @@ impl ToolExecutor for DefaultToolExecutor {
         for provider in &self.tool_providers {
             let tools = provider.tools();
             if tools.iter().any(|t| t.name == *tool_name) {
-                let mut execution = ToolExecution {
-                    id: Uuid::new_v4(),
-                    session_id: security.session_id,
-                    agent_id: security.sender_id.as_agent_id().unwrap(),
-                    input: serde_json::from_str(&call.arguments).unwrap_or(Value::Null),
-                    output: None,
-                    status: ExecutionStatus::Running,
-                    started_at: Utc::now(),
-                    finished_at: None,
-                };
-
+                execution.status = ExecutionStatus::Running;
                 let params = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
                 return match provider.execute(tool_name, params, security).await {
                     Ok(value) => {
-                        execution.output = Some(value.clone());
                         execution.status = ExecutionStatus::Completed;
                         execution.finished_at = Some(Utc::now());
                         Ok(ToolResult {
