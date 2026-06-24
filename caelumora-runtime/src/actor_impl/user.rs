@@ -1,6 +1,7 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::event::GlobalEvent;
 use anyhow::anyhow;
+use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
@@ -29,11 +30,11 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub fn new(channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Self {
+    pub async fn new(channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
         let user_controller = runtime_manager.controller_manager().new_user_controller(user, channel.name.clone());
-        Self {
+        Ok(Self {
             id: ActorId::User(user_controller.id()),
             session_id: channel.session_id,
             channel_id: channel.id,
@@ -49,7 +50,7 @@ impl UserActor {
             user_tx: utx,
             actor_rx: Mutex::new(arx),
             actor_tx: atx,
-        }
+        })
     }
 
     pub async fn send_message(&self, message: String) -> anyhow::Result<()> {

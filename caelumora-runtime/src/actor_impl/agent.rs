@@ -2,11 +2,15 @@ use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, Stand
 use crate::agent::AgentLoop;
 use crate::event::GlobalEvent;
 use anyhow::anyhow;
+use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::agent::Agent;
+use caelumora_model::channel::Channel;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
 use log::{debug, info, warn};
 use std::mem;
+use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -20,13 +24,15 @@ pub struct AgentActor {
 }
 
 impl AgentActor {
-    pub fn new(agent: AgentLoop) -> Self {
-        AgentActor {
-            id: agent.id(),
+    pub async fn new(channel: &Channel, agent:Agent, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
+        let agent_id = agent.id;
+        let l = AgentLoop::new(channel, agent, runtime_manager.clone()).await?;
+        Ok(AgentActor {
+            id: ActorId::Agent(agent_id),
             kind: "agent".to_string(),
-            agent,
+            agent: l,
             run_lock: Mutex::new(())
-        }
+        })
     }
 }
 

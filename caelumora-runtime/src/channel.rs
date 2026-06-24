@@ -1,7 +1,6 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
-use crate::agent::AgentLoop;
 use crate::event::GlobalEvent;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
@@ -150,12 +149,11 @@ impl ChannelLoop {
     async fn create_actor(channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
             Participant::User(user) => {
-                let actor = UserActor::new(channel, user.clone(), runtime_manager.clone());
+                let actor = UserActor::new(channel, user.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let l = AgentLoop::new(channel, agent.clone(), runtime_manager.clone()).await?;
-                let actor = AgentActor::new(l);
+                let actor = AgentActor::new(channel, agent.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
             }
         }
