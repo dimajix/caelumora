@@ -17,6 +17,7 @@ struct ChannelHandle {
 
 #[derive(Debug)]
 pub struct SessionLoop {
+    id: SessionId,
     session_controller: Arc<SessionController>,
     runtime_manager: Arc<RuntimeManager>,
     channels: HashMap<ChannelId,Arc<ChannelLoop>>,
@@ -25,6 +26,7 @@ pub struct SessionLoop {
 
 impl SessionLoop {
     pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+        let id = session.id;
         let mut channels = HashMap::new();
         for channel in &session.channels {
             let cl = ChannelLoop::new(channel.clone(), runtime_manager.clone()).await?;
@@ -34,6 +36,7 @@ impl SessionLoop {
         let session_controller = runtime_manager.controller_manager().new_session_controller(session).await?;
 
         Ok(Self {
+            id,
             session_controller,
             runtime_manager,
             channels,
@@ -53,9 +56,8 @@ impl SessionLoop {
         self.session_controller.name()
     }
 
-    pub async fn update_name(&self, new_name: String) -> Result<()> {
+    pub async fn update_name(&self, new_name: String) {
         self.session_controller.update_name(new_name).await;
-        Ok(())
     }
 
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
@@ -112,6 +114,24 @@ impl SessionLoop {
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             match global_event {
+                GlobalEvent::AgentUpdated(_, cid, _, event) => {
+                    //TODO
+                }
+                GlobalEvent::AgentCreated(_, cid, _) => {
+                    //TODO
+                }
+                GlobalEvent::AgentDeleted(_, cid, _) => {
+                    //TODO
+                }
+                GlobalEvent::ChannelUpdated(sid, _, event) => {
+                    // TODO
+                },
+                GlobalEvent::ChannelCreated(sid,  event) => {
+                    // TODO
+                },
+                GlobalEvent::ChannelDeleted(sid,  id) => {
+                    // TODO
+                },
                 GlobalEvent::SessionUpdated(sid, event) => {
                     if sid == self.id() {
                         self.session_controller.process_update(&event).await;

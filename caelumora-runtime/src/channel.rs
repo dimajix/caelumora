@@ -48,16 +48,16 @@ pub struct ChannelLoop {
 
 impl ChannelLoop {
     pub async fn new(channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        let state_store = runtime_manager.state_store();
-        let channel_id = channel.id;
+        let id = channel.id;
         let session_id = channel.session_id;
+        let state_store = runtime_manager.state_store();
         let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
         
-        let state = match state_store.get_channel_state(channel_id).await {
+        let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
             Err(StoreError::NotFound { entity: _, id: _ }) => {
-                let state = ChannelState::new(channel_id);
-                state_store.put_channel_state(channel_id, &state).await?;
+                let state = ChannelState::new(id);
+                state_store.put_channel_state(id, &state).await?;
                 state
             }
             Err(e) => return Err(e.into()),
@@ -77,7 +77,7 @@ impl ChannelLoop {
         let channel_controller = runtime_manager.controller_manager().new_channel_controller(channel);
 
         Ok(Self {
-            id: channel_id,
+            id,
             session_id,
             channel: channel_controller,
             runtime_manager,
@@ -108,9 +108,8 @@ impl ChannelLoop {
         self.channel.name()
     }
 
-    pub async fn update_name(&self, new_name: String) -> Result<()> {
-        self.channel.update_name(new_name);
-        Ok(())
+    pub async fn update_name(&self, new_name: String) {
+        self.channel.update_name(new_name).await;
     }
 
     pub async fn cancel_all_actors(&self) -> Result<()> {
@@ -202,9 +201,18 @@ impl ChannelLoop {
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             match global_event {
+                GlobalEvent::AgentUpdated(_, cid, _, event) => {
+                    //TODO
+                }
+                GlobalEvent::AgentCreated(_, cid, _) => {
+                    //TODO
+                }
+                GlobalEvent::AgentDeleted(_, cid, _) => {
+                    //TODO
+                }
                 GlobalEvent::ChannelUpdated(_, cid, event) => {
                     if cid == self.id {
-                        self.channel.process_update(&event);
+                        self.channel.process_update(&event).await;
                     }
                 }
                 _ => {}

@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse};
+use crate::state::AppState;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
-use uuid::Uuid;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::SessionTemplateId;
-use crate::state::AppState;
-use crate::models::{CreateSessionRequest, SessionResponse, RenameSessionRequest};
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
@@ -98,8 +98,7 @@ pub async fn rename_session(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, session_id).await?;
 
-    session_loop.update_name(payload.name).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    session_loop.update_name(payload.name).await;
 
     let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {

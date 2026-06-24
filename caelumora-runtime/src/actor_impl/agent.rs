@@ -75,8 +75,8 @@ impl AgentActor {
         if let Some(global_event) = maybe_global {
             match global_event {
                 GlobalEvent::AgentUpdated(_, _, id, event) => {
-                    if id == self.id.as_agent_id().unwrap() {
-                        let _ = self.agent.process_update(event).await;
+                    if ActorId::Agent(id) == self.id {
+                        self.agent.process_update(event).await;
                     }
                 }
                 _ => {}

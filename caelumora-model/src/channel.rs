@@ -39,16 +39,16 @@ impl ChannelController {
         self.channel.load().name.clone()
     }
 
-    pub fn update_name(&self, new_name: String) {
-        self.apply_update(ChannelUpdateEvent::NameChanged(new_name));
+    pub async fn update_name(&self, new_name: String) {
+        self.apply_update(ChannelUpdateEvent::NameChanged(new_name)).await;
     }
 
-    pub fn apply_update(&self, event: ChannelUpdateEvent) {
-        self.process_update(&event);
+    async fn apply_update(&self, event: ChannelUpdateEvent) {
+        self.process_update(&event).await;
         self.event_sender.send(event);
     }
 
-    pub fn process_update(&self, event: &ChannelUpdateEvent) {
+    pub async fn process_update(&self, event: &ChannelUpdateEvent) {
         match event {
             ChannelUpdateEvent::NameChanged(name) => {
                 let mut channel = (**self.channel.load()).clone();
