@@ -7,7 +7,7 @@ use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
 use log::{debug, info, warn};
 use std::mem;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -128,20 +128,16 @@ impl Actor for AgentActor {
         self.agent.name()
     }
 
-    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
-        let (tx, rx) = mpsc::channel(10);
-        (
-            Box::new(StandardActorSender {
-                tx,
-                filter: Box::new(|event| {
-                    !matches!(event.event, ActorEvent::PartialMessageGenerated(_))
-                }),
+    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
+        Box::new(StandardActorSender {
+            tx,
+            filter: Box::new(|event| {
+                !matches!(event.event, ActorEvent::PartialMessageGenerated(_))
             }),
-            rx
-        )
+        })
     }
 
-    async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {
+    async fn run(&self, mut input: Receiver<Envelope>, output: Sender<Envelope>) -> anyhow::Result<()> {
         let _guard = self.run_lock.try_lock()
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
@@ -153,8 +149,8 @@ impl Actor for AgentActor {
 
         loop {
             tokio::select! {
-                res = rx.recv_many(&mut buffer, 100) => {
-                    if self.handle_actor_envelopes(res, &mut buffer, &tx).await {
+                res = input.recv_many(&mut buffer, 100) => {
+                    if self.handle_actor_envelopes(res, &mut buffer, &output).await {
                         break;
                     }
                 }

@@ -157,7 +157,7 @@ pub trait Actor : Any + Debug + Send + Sync {
     fn name(&self) -> String;
 
     /// Returns an ActorSender and a Receiver, which handles filtering and queue management
-    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>);
+    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender>;
 
     async fn run(&self, rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()>;
 

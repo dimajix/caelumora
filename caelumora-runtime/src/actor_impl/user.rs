@@ -148,20 +148,17 @@ impl Actor for UserActor {
         self.user.username()
     }
 
-    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
-        let (tx, rx) = mpsc::channel(100);
-        (
-            Box::new(StandardActorSender {
-                tx,
-                filter: Box::new(|_| true),
-            }),
-            rx
-        )
+    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
+        Box::new(StandardActorSender {
+            tx,
+            filter: Box::new(|_| true),
+        })
     }
 
-    async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {
+    async fn run(&self, mut input: Receiver<Envelope>, output: Sender<Envelope>) -> anyhow::Result<()> {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
+        
         let user_id = self.id.as_user_id().unwrap();
         let mut global_rx = self.runtime_manager.event_bus().subscribe(vec![
             crate::event::SubscriptionTopic::User(user_id),
@@ -174,11 +171,11 @@ impl Actor for UserActor {
         info!("UserActor {} is starting", self.id());
         while !rx_closed || !user_rx_closed || !global_rx_closed {
             tokio::select! {
-                maybe_event = rx.recv(), if !rx_closed => {
+                maybe_event = input.recv(), if !rx_closed => {
                     rx_closed = self.handle_actor_envelope(maybe_event).await;
                 }
                 maybe_message = user_rx.recv(), if !user_rx_closed => {
-                    user_rx_closed = self.handle_user_event(maybe_message, &tx).await;
+                    user_rx_closed = self.handle_user_event(maybe_message, &output).await;
                 }
                 maybe_global = global_rx.recv(), if !global_rx_closed => {
                     global_rx_closed = self.handle_global_event(maybe_global).await;

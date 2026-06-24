@@ -1,14 +1,14 @@
-use std::mem;
-use anyhow::anyhow;
-use async_trait::async_trait;
-use log::{debug, info, warn};
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::Mutex;
-use tokio_stream::StreamExt;
-use caelumora_model::message::{ActorId, Message};
-use caelumora_model::security::SecurityContext;
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::message::MessageProcessor;
+use anyhow::anyhow;
+use async_trait::async_trait;
+use caelumora_model::message::{ActorId, Message};
+use caelumora_model::security::SecurityContext;
+use log::{debug, info, warn};
+use std::mem;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::Mutex;
+use tokio_stream::StreamExt;
 
 #[derive(Debug)]
 pub struct MessageProcessorActor {
@@ -66,20 +66,16 @@ impl Actor for MessageProcessorActor {
         self.processor.name()
     }
 
-    fn create_channel(&self) -> (Box<dyn ActorSender>, Receiver<Envelope>) {
-        let (tx, rx) = mpsc::channel(10);
-        (
-            Box::new(StandardActorSender {
-                tx,
-                filter: Box::new(|event| {
-                    !matches!(event.event, ActorEvent::PartialMessageGenerated(_))
-                }),
+    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
+        Box::new(StandardActorSender {
+            tx,
+            filter: Box::new(|event| {
+                !matches!(event.event, ActorEvent::PartialMessageGenerated(_))
             }),
-            rx
-        )
+        })
     }
 
-    async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> anyhow::Result<()> {
+    async fn run(&self, mut input: Receiver<Envelope>, output: Sender<Envelope>) -> anyhow::Result<()> {
         let _guard = self.run_lock.try_lock()
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
@@ -89,7 +85,7 @@ impl Actor for MessageProcessorActor {
         let mut messages = Vec::new();
         let mut response_requested = false;
 
-        while rx.recv_many(&mut buffer, 100).await > 0 {
+        while input.recv_many(&mut buffer, 100).await > 0 {
             debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
             let last_security = buffer.last().unwrap().security.clone();
             let last_context = buffer.last().unwrap().context.clone();
@@ -107,7 +103,7 @@ impl Actor for MessageProcessorActor {
             buffer.clear();
 
             if response_requested && !messages.is_empty() {
-                self.request_response(&mut messages, &last_context, &last_security, &tx).await;
+                self.request_response(&mut messages, &last_context, &last_security, &output).await;
                 messages.clear();
                 response_requested = false;
             }

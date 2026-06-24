@@ -25,7 +25,7 @@ use tokio::task::{AbortHandle, JoinSet};
 struct ActorHandle {
     id: ActorId,
     abort_handle: AbortHandle,
-    request_tx: Box<dyn ActorSender>,
+    actor_sender: Box<dyn ActorSender>,
 }
 
 
@@ -214,21 +214,22 @@ impl ChannelLoop {
         }
     }
 
-    fn spawn_actors(&self, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
+    fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
         let mut actors = HashMap::new();
         for (id, actor) in &self.actors {
-            let handle = self.spawn_actor(actor.clone(), event_tx.clone(), join_set);
+            let handle = self.spawn_actor(actor.clone(), actor_output.clone(), join_set);
             actors.insert(*id, handle);
         };
 
         Ok(actors)
     }
 
-    fn spawn_actor(&self, actor: Arc<dyn Actor>, event_tx:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
+    fn spawn_actor(&self, actor: Arc<dyn Actor>, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
-        let (request_tx, msg_rx) = actor.create_channel();
+        let (tx, actor_input) = mpsc::channel(100);
+        let actor_sender = actor.new_sender(tx);
         let abort_handle = join_set.spawn(async move {
-            let result = actor.run(msg_rx, event_tx).await;
+            let result = actor.run(actor_input, actor_output).await;
             if let Err(e) = result {
                 warn!("Failed to spawn actor {}: {}", actor.id(), e)
             }
@@ -238,7 +239,7 @@ impl ChannelLoop {
         ActorHandle {
             id,
             abort_handle,
-            request_tx,
+            actor_sender,
         }
     }
 
@@ -265,7 +266,7 @@ impl ChannelLoop {
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
         let mut moderator = self.moderator.lock().await;
-        let mut routes = moderator.route(&event).await;
+        let routes = moderator.route(&event).await;
         drop(moderator);
 
         // Always route back event to source, this helps the Actor to rebuild the full
@@ -310,7 +311,7 @@ impl ChannelLoop {
             if let Some(actor) = actors.get(&target_id) {
                 debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
                 self.record_send_event(&target_event).await;
-                if let Err(e) = actor.request_tx.try_send(target_event) {
+                if let Err(e) = actor.actor_sender.try_send(target_event) {
                     match e {
                         SendError::Full => warn!("Queue full for actor {}", target_id),
                         SendError::Filtered => {}, // Normal behavior
