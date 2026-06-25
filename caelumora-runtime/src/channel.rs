@@ -111,7 +111,7 @@ impl ChannelLoop {
         self.channel.update_name(new_name).await;
     }
 
-    pub async fn cancel_all_actors(&self) -> Result<()> {
+    pub async fn cancel(&self) -> Result<()> {
         self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.cancel().await?;

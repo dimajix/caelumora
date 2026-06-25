@@ -388,8 +388,8 @@ impl AgentLoop {
                                 if msg.tool_results.iter().any(|r| r.tool_name == "stop" || r.tool_name == "bye") {
                                     info!("Stopping agent {} {}", agent_id, agent_name);
                                     processing_state.store(ProcessingState::Stopped.into(), Ordering::SeqCst);
-                                    // No yield Stopped here, AgentActor will handle transition
-                                    break 'steps;
+                                    // Do not break the loop, give the agent the chance to explicitly say "good bye"
+                                    //break 'steps;
                                 }
 
                                 continue 'steps;

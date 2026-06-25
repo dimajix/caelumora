@@ -78,7 +78,7 @@ impl SessionLoop {
 
     pub async fn cancel_channel(&self, channel_id: ChannelId) -> Result<()> {
         if let Some(c) = self.channel_by_id(channel_id) {
-            c.cancel_all_actors().await?;
+            c.cancel().await?;
             Ok(())
         } else {
             Err(anyhow!("Channel not found"))
