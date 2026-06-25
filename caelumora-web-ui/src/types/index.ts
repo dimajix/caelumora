@@ -37,6 +37,12 @@ export interface Message {
   timestamp?: string;
   tool_calls?: ToolCall[];
   tool_results?: ToolResult[];
+  // Usage statistics
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_duration?: number; // ns
+  completion_duration?: number; // ns
+  total_duration?: number; // ns
   [key: string]: any;
 }
 

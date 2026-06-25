@@ -16,7 +16,7 @@ use caelumora_model::component::{
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole, ToolCall, ToolResult};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::store::StateStore;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use log::warn;

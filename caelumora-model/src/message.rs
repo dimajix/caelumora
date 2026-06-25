@@ -71,13 +71,30 @@ pub struct Message {
     pub sender_id: ActorId,
     pub sender_name: String,
     pub role: MessageRole,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tool_results: Vec<ToolResult>,
     pub timestamp: DateTime<Utc>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
+    // Usage statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_duration: Option<u64>,        // ns
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_duration: Option<u64>,    // ns
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_duration: Option<u64>,         // ns
 }
+
 impl Default for Message {
     fn default() -> Self {
         Message {
@@ -91,7 +108,12 @@ impl Default for Message {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             timestamp: Utc::now(),
-            metadata: HashMap::new()
+            metadata: HashMap::new(),
+            prompt_tokens: None,
+            completion_tokens: None,
+            prompt_duration: None,
+            completion_duration: None,
+            total_duration: None,
         }
     }
 }
@@ -212,11 +234,8 @@ mod tests {
             sender_name: "tester".to_string(),
             role: MessageRole::User,
             content: Some("hello".to_string()),
-            reasoning: None,
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
             timestamp: Utc::now(),
-            metadata: HashMap::new(),
+            ..Message::default()
         }
     }
 

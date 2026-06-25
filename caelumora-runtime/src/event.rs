@@ -82,7 +82,7 @@ impl EventBus {
             GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) => {
                 topics_to_notify.push(SubscriptionTopic::User(*uid));
             }
-            GlobalEvent::AgentChannelJoined(sid, cid, aid) | GlobalEvent::AgentChannelLeft(sid, cid, aid) => {
+            GlobalEvent::AgentChannelJoined(sid, cid, _) | GlobalEvent::AgentChannelLeft(sid, cid, _) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }

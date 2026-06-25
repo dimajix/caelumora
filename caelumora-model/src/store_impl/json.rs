@@ -79,7 +79,7 @@ impl JsonFileStore {
     }
 
     fn agent_channel_states_dir(&self) -> PathBuf {
-        self.root.join("agent_channel_state")
+        self.root.join("runtime").join("agent_channel_state")
     }
 
     fn session_states_dir(&self) -> PathBuf {

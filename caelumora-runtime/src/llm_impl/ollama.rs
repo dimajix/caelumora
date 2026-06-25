@@ -107,6 +107,18 @@ struct OllamaToolCallFunction {
 struct OllamaChatResponse {
     message: Option<OllamaChatMessage>,
     done: bool,
+    #[serde(default)]
+    total_duration: Option<u64>,
+    #[serde(default)]
+    load_duration: Option<u64>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    prompt_eval_duration: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    eval_duration: Option<u64>,
 }
 
 impl OllamaChatMessage {
@@ -317,7 +329,7 @@ impl LLMClient for OllamaClient {
                                 }
                             }
                             if body.done {
-                                let message = Message {
+                                let mut message = Message {
                                     id: MessageId(Uuid::new_v4()),
                                     prev_id,
                                     sender_id,
@@ -328,6 +340,12 @@ impl LLMClient for OllamaClient {
                                     timestamp: Utc::now(),
                                     ..Message::default()
                                 };
+                                // Fill in usage metrics from Ollama if available
+                                message.total_duration = body.total_duration;
+                                message.prompt_tokens = body.prompt_eval_count;
+                                message.completion_tokens = body.eval_count;
+                                message.prompt_duration = body.prompt_eval_duration;
+                                message.completion_duration = body.eval_duration;
 
                                 yield Ok(MessageEvent::Complete(message.clone()));
                                 return;
