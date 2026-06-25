@@ -74,13 +74,17 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
-            GlobalEvent::AgentCreated(sid, cid, aid) | GlobalEvent::AgentUpdated(sid, cid, aid, _) | GlobalEvent::AgentDeleted(sid, cid, aid) => {
+            GlobalEvent::AgentCreated(sid, aid) | GlobalEvent::AgentUpdated(sid, aid, _) | GlobalEvent::AgentDeleted(sid, aid) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
-                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
+                //topics_to_notify.push(SubscriptionTopic::Channel(*cid));
                 topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
             GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) => {
                 topics_to_notify.push(SubscriptionTopic::User(*uid));
+            }
+            GlobalEvent::AgentChannelJoined(sid, cid, aid) | GlobalEvent::AgentChannelLeft(sid, cid, aid) => {
+                topics_to_notify.push(SubscriptionTopic::Session(*sid));
+                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
         }
 

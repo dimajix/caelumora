@@ -1,4 +1,4 @@
-use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
 use crate::meta::Scope;
 use crate::security::SecurityManager;
@@ -43,6 +43,7 @@ impl JsonFileStore {
             self.sessions_dir(),
             self.users_dir(),
             self.agent_states_dir(),
+            self.agent_channel_states_dir(),
             self.session_states_dir(),
             self.channel_states_dir(),
         ];
@@ -77,6 +78,10 @@ impl JsonFileStore {
         self.root.join("runtime").join("agent_state")
     }
 
+    fn agent_channel_states_dir(&self) -> PathBuf {
+        self.root.join("agent_channel_state")
+    }
+
     fn session_states_dir(&self) -> PathBuf {
         self.root.join("runtime").join("session_state")
     }
@@ -104,6 +109,12 @@ impl JsonFileStore {
 
     fn user_path(&self, id: UserId) -> PathBuf {
         self.users_dir().join(format!("{id}.json"))
+    }
+
+    fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
+        self.agent_channel_states_dir()
+            .join(channel_id.to_string())
+            .join(format!("{}.json", agent_id))
     }
 
     fn agent_state_path(&self, id: AgentId) -> PathBuf {
@@ -503,6 +514,29 @@ impl EntityStore for JsonFileStore {
 
 #[async_trait]
 impl StateStore for JsonFileStore {
+    async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
+        let path = self.agent_channel_state_path(agent_id, channel_id);
+        info!("Reading agent channel state from {}", path.display());
+        let loaded = read_json_opt::<Persisted<AgentChannelState>>(&path)?.map(|p| p.value);
+        Ok(loaded.unwrap_or_default())
+    }
+
+    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()> {
+        let path = self.agent_channel_state_path(agent_id, channel_id);
+        info!("Writing agent channel state to {}", path.display());
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(to_backend_error)?;
+        }
+        write_json_atomic(
+            &path,
+            &Persisted {
+                schema_version: 1,
+                persisted_at: Utc::now(),
+                value: state,
+            },
+        )
+    }
+
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         info!("Reading agent state from {}", path.display());
@@ -595,10 +629,11 @@ mod tests {
                 ..Metadata::default()
             },
             scope: ScopeTemplate::GlobalScope,
+            participants: vec![ParticipantTemplate::User],
             channels: vec![ChannelTemplate {
                 name: "general".to_string(),
                 moderator: "broadcast".to_string(),
-                participants: vec![ParticipantTemplate::User],
+                participants: vec!["user".to_string()],
             }],
         }
     }
@@ -744,6 +779,7 @@ mod tests {
                 scope: Scope::GlobalScope,
                 ..crate::meta::Metadata::default()
             },
+            participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -755,6 +791,7 @@ mod tests {
                 scope: Scope::GlobalScope,
                 ..crate::meta::Metadata::default()
             },
+            participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -783,6 +820,7 @@ mod tests {
                 scope: Scope::GlobalScope,
                 ..crate::meta::Metadata::default()
             },
+            participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),

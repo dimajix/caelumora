@@ -40,7 +40,7 @@ pub struct ChannelTemplate {
     pub name: String,
     #[serde(default = "default_moderator")]
     pub moderator: String,
-    pub participants: Vec<ParticipantTemplate>,
+    pub participants: Vec<String>,
 }
 
 fn default_moderator() -> String {
@@ -48,11 +48,17 @@ fn default_moderator() -> String {
 }
 
 impl ChannelTemplate {
-    pub async fn instantiate(&self, context: &SessionContext) -> anyhow::Result<Channel> {
+    pub async fn instantiate(&self, context: &SessionContext, session_participants: &[Participant]) -> anyhow::Result<Channel> {
         let mut participants = Vec::new();
 
-        for participant in &self.participants {
-            participants.push(participant.instantiate(context).await?);
+        for name in &self.participants {
+            let participant = session_participants.iter().find(|p| {
+                match p {
+                    Participant::User(u) => u.username == *name,
+                    Participant::Agent(a) => a.metadata.name == *name,
+                }
+            }).cloned().ok_or_else(|| anyhow::anyhow!("Participant {} not found in session", name))?;
+            participants.push(participant);
         }
 
         Ok(Channel::new(
@@ -74,6 +80,7 @@ pub struct SessionTemplate {
     pub id: SessionTemplateId,
     pub metadata: Metadata,
     pub scope: ScopeTemplate,
+    pub participants: Vec<ParticipantTemplate>,
     pub channels: Vec<ChannelTemplate>,
 }
 
@@ -81,9 +88,14 @@ impl SessionTemplate {
     pub async fn instantiate(&self, name:String, context:&SessionContext) -> anyhow::Result<Session> {
         let now = Utc::now();
 
+        let mut participants = Vec::new();
+        for participant in &self.participants {
+            participants.push(participant.instantiate(context).await?);
+        }
+
         let mut channels = Vec::new();
         for channel in &self.channels {
-            channels.push(channel.instantiate(context).await?)
+            channels.push(channel.instantiate(context, &participants).await?)
         }
 
         let session = Session {
@@ -95,6 +107,7 @@ impl SessionTemplate {
                 description: self.metadata.description.clone(),
                 ..Metadata::default()
             },
+            participants,
             channels,
             created_at: now,
             updated_at: now,

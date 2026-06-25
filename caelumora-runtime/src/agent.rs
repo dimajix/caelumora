@@ -9,7 +9,7 @@ use crate::tool::ToolExecutor;
 use crate::tool::ToolProvider;
 use anyhow::Result;
 use async_stream::stream;
-use caelumora_model::agent::{Agent, AgentController, AgentId, AgentState, ProcessingState};
+use caelumora_model::agent::{Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState};
 use caelumora_model::component::{
     ComponentConfig, ComponentFailPolicy
 };
@@ -31,6 +31,7 @@ struct AgentLoopState {
     channel_id: ChannelId,
     agent_id: AgentId,
     agent_name: String,
+    agent_channel_state: AgentChannelState,
     agent_state: AgentState,
     runtime_manager: Arc<RuntimeManager>,
     state_store: Arc<dyn StateStore>,
@@ -50,17 +51,8 @@ impl AgentLoopState {
         let store = runtime_manager.state_store();
         let agent_id = agent_controller.id();
         let agent_name = agent_controller.name();
-        let agent_state = match store.get_agent_state(agent_id).await {
-            Ok(s) => s,
-            Err(StoreError::NotFound{entity: _, id:_}) => {
-                let state = AgentState::default();
-                store.put_agent_state(agent_id, &state).await?;
-                state
-            }
-            Err(e) => {
-                Err(e)?
-            }
-        };
+        let agent_channel_state = store.get_agent_channel_state(agent_id, channel_id).await?;
+        let agent_state = store.get_agent_state(agent_id).await?;
         let components = ComponentContainer::from_config(
             &pipeline_config,
             runtime_manager.component_registry().as_ref()
@@ -85,6 +77,7 @@ impl AgentLoopState {
             channel_id,
             agent_id,
             agent_name,
+            agent_channel_state,
             agent_state,
             runtime_manager: runtime_manager.clone(),
             state_store: runtime_manager.state_store(),
@@ -98,7 +91,7 @@ impl AgentLoopState {
 
     async fn perceive(&mut self, messages: Vec<Message>, turn_context: &mut TurnContext) -> () {
         let original_messages = messages.clone();
-        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, &mut self.agent_state, turn_context)
+        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, &mut self.agent_channel_state, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
@@ -107,13 +100,16 @@ impl AgentLoopState {
 
         let _ = perceived;
 
+        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &self.agent_channel_state).await {
+            warn!("Cannot store channel state of agent {} after perceive", self.agent_id)
+        }
         if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
             warn!("Cannot store state of agent {} after perceive", self.agent_id)
         }
     }
 
     async fn respond_complete(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_state, turn_context)
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_channel_state, turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -123,23 +119,23 @@ impl AgentLoopState {
         let msg = output.remove(0);
         turn_context.messages.push(msg.clone());
 
-        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
-            warn!("Cannot store state of agent {} after respond_complete", self.agent_id)
+        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &self.agent_channel_state).await {
+            warn!("Cannot store channel state of agent {} after respond_complete", self.agent_id)
         }
         Some(msg)
     }
 
     async fn reflect(&mut self, turn_context: &mut TurnContext) -> () {
-        self.agent_state.context.extend(turn_context.messages.clone());
-        self.agent_state.history.extend(turn_context.messages.clone());
+        self.agent_channel_state.context.extend(turn_context.messages.clone());
+        self.agent_channel_state.history.extend(turn_context.messages.clone());
 
-        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
-            warn!("Cannot store state of agent {} after perceive", self.agent_id)
+        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &self.agent_channel_state).await {
+            warn!("Cannot store channel state of agent {} after reflect", self.agent_id)
         }
     }
 
     async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_state, turn_context)
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_channel_state, turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -152,13 +148,13 @@ impl AgentLoopState {
         let mut turn_context = TurnContext::default();
         let context = self
             .context_provider
-            .current_context(&self.agent_state)
+            .current_context(&self.agent_channel_state)
             .await
             .unwrap_or_else(|e| {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), &mut self.agent_state, &mut turn_context)
+        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), &mut self.agent_channel_state, &mut turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
@@ -230,7 +226,7 @@ impl AgentLoopState {
     async fn apply_stage_processors<T>(
         processors: &[ComponentImpl<T>],
         mut input: Vec<Message>,
-        state: &mut AgentState,
+        state: &mut AgentChannelState,
         context: &mut TurnContext,
     ) -> Result<Vec<Message>>
     where
@@ -272,17 +268,23 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub async fn new(
-        channel: &caelumora_model::channel::Channel,
+        session_id: SessionId,
+        channel_id: ChannelId,
         agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let security_context = runtime_manager.system_security_context(channel);
+        let security_context = SecurityContext {
+            initiator_id: ActorId::None,
+            sender_id: ActorId::None,
+            session_id,
+            channel_id,
+        };
         let personality = runtime_manager.entity_store().get_personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let agent_controller = runtime_manager.controller_manager().new_agent_controller(channel.session_id, channel.id, agent).await;
+        let agent_controller = runtime_manager.controller_manager().new_agent_controller(session_id, agent).await;
         let state = AgentLoopState::new(
-            channel.session_id,
-            channel.id,
+            session_id,
+            channel_id,
             agent_controller.clone(),
             runtime_manager.clone(),
             personality.components
@@ -416,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn state_history_writer_is_passthrough_and_persists_history() {
-        let mut state = AgentState::default();
+        let mut state = AgentChannelState::default();
         let processor = StateHistoryWriter {
         };
         let input = vec![make_message("hello")];
@@ -436,7 +438,7 @@ mod tests {
 
     #[tokio::test]
     async fn state_context_appender_is_passthrough_and_updates_provider_context() {
-        let mut state = AgentState::default();
+        let mut state = AgentChannelState::default();
         let appender = StateContextAppender {
         };
         let provider = StateContextProvider { prompt_providers: vec![] };

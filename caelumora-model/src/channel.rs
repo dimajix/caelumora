@@ -66,13 +66,10 @@ impl ChannelController {
             GlobalEvent::ChannelUpdated(_, cid, update) if *cid == self.id => {
                 self.process_channel_update(update).await;
             }
-            GlobalEvent::AgentCreated(sid, cid, aid) if *cid == self.id => {
+            GlobalEvent::AgentChannelJoined(sid, cid, aid) if *cid == self.id => {
                 // TODO: Update internal session state
             }
-            GlobalEvent::AgentUpdated(sid, cid, aid, update) if *cid == self.id => {
-                // TODO: React to agent updates if necessary
-            }
-            GlobalEvent::AgentDeleted(sid, cid, aid) if *cid == self.id => {
+            GlobalEvent::AgentChannelLeft(sid, cid, aid) if *cid == self.id => {
                 // TODO: Update internal session state
             }
             _ => {}

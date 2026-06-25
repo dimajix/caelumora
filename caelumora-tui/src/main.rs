@@ -1,12 +1,17 @@
-use caelumora_model::agent::{Personality};
-use caelumora_model::store::{EntityStore};
-use caelumora_model::config::{AppConfig};
+use caelumora_model::agent::PersonalityId;
+use caelumora_model::agent::Personality;
+use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig, STAGE_PERCEIVE};
+use caelumora_model::config::AppConfig;
 use caelumora_model::meta::{Metadata, Scope};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
+use caelumora_model::store::EntityStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
-use caelumora_model::agent::PersonalityId;
 use caelumora_runtime::actor::ActorEvent;
+use caelumora_runtime::channel::ChannelLoop;
+use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
+use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 use clap::Parser;
@@ -19,11 +24,6 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use caelumora_model::component::{ComponentConfig, ComponentNodeConfig, ComponentFailPolicy, STAGE_PERCEIVE};
-use caelumora_model::security::SecurityContext;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
-use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 
 fn init_logging() {
     let mut builder = env_logger::Builder::new();
@@ -113,22 +113,27 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
             ..Metadata::default()
         },
         scope: ScopeTemplate::GlobalScope,
+        participants: vec![
+            ParticipantTemplate::User,
+            ParticipantTemplate::Agent {
+                name: "Jonathan".to_string(),
+                scope: ScopeTemplate::GlobalScope,
+                personality_id: personality_a.id,
+            },
+            ParticipantTemplate::Agent {
+                name: "Sarah".to_string(),
+                scope: ScopeTemplate::GlobalScope,
+                personality_id: personality_b.id,
+            },
+        ],
         channels: vec![
             ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "round_robin".to_string(),
                 participants: vec![
-                    ParticipantTemplate::User,
-                    ParticipantTemplate::Agent {
-                        name: "Jonathan".to_string(),
-                        scope: ScopeTemplate::GlobalScope,
-                        personality_id: personality_a.id,
-                    },
-                    ParticipantTemplate::Agent {
-                        name: "Sarah".to_string(),
-                        scope: ScopeTemplate::GlobalScope,
-                        personality_id: personality_b.id,
-                    },
+                    "user".to_string(),
+                    "Jonathan".to_string(),
+                    "Sarah".to_string(),
                 ],
             }
         ],

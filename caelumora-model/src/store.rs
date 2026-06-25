@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::fmt::Debug;
 
-use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
 use crate::meta::Scope;
 use crate::security::SecurityContext;
@@ -63,6 +63,9 @@ pub trait EntityStore : Debug + Sync + Send {
 
 #[async_trait]
 pub trait StateStore : Debug + Sync + Send {
+    async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState>;
+    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()>;
+
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
     async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()>;
 
@@ -179,7 +182,6 @@ pub mod tests {
 
         let controller = crate::agent::AgentController::new(
             SessionId(Uuid::new_v4()),
-            ChannelId(Uuid::new_v4()),
             agent.clone(),
             Arc::new(()),
             store.clone()
@@ -201,6 +203,7 @@ pub mod tests {
                 scope: Scope::GlobalScope,
                 ..Metadata::default()
             },
+            participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -223,6 +226,7 @@ pub mod tests {
                 scope: Scope::GlobalScope,
                 ..Metadata::default()
             },
+            participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -234,6 +238,7 @@ pub mod tests {
                 scope: Scope::GlobalScope,
                 ..Metadata::default()
             },
+            participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

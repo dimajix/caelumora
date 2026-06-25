@@ -68,16 +68,20 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 description: "Simple user+assistant session".to_string(),
             },
             scope: ScopeTemplate::SessionScope,
+            participants: vec![
+                ParticipantTemplate::User,
+                ParticipantTemplate::Agent {
+                    name: "assistant".to_string(),
+                    scope: ScopeTemplate::SessionScope,
+                    personality_id: jonathan.id.clone(),
+                }
+            ],
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "round_robin".to_string(),
                 participants: vec![
-                    ParticipantTemplate::User,
-                    ParticipantTemplate::Agent {
-                        name: "assistant".to_string(),
-                        scope: ScopeTemplate::SessionScope,
-                        personality_id: jonathan.id.clone(),
-                    }
+                    "user".to_string(),
+                    "assistant".to_string(),
                 ],
             }],
         };
@@ -94,21 +98,26 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 description: "Sassy user+assistant session".to_string(),
             },
             scope: ScopeTemplate::SessionScope,
+            participants: vec![
+                ParticipantTemplate::User,
+                ParticipantTemplate::Agent {
+                    name: "Jonathan".to_string(),
+                    scope: ScopeTemplate::SessionScope,
+                    personality_id: jonathan.id.clone(),
+                },
+                ParticipantTemplate::Agent {
+                    name: "Sassy".to_string(),
+                    scope: ScopeTemplate::SessionScope,
+                    personality_id: sassy.id.clone(),
+                },
+            ],
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "round_robin".to_string(),
                 participants: vec![
-                    ParticipantTemplate::User,
-                    ParticipantTemplate::Agent {
-                        name: "Jonathan".to_string(),
-                        scope: ScopeTemplate::SessionScope,
-                        personality_id: jonathan.id.clone(),
-                    },
-                    ParticipantTemplate::Agent {
-                        name: "Sassy".to_string(),
-                        scope: ScopeTemplate::SessionScope,
-                        personality_id: sassy.id.clone(),
-                    },
+                    "user".to_string(),
+                    "Jonathan".to_string(),
+                    "Sassy".to_string(),
                 ],
             }],
         };

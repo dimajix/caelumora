@@ -1,4 +1,3 @@
-use crate::channel::ChannelId;
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{MessageContext, MessageHistory};
@@ -20,7 +19,6 @@ pub enum AgentUpdateEvent {
 pub struct AgentController {
     id: AgentId,
     session_id: SessionId,
-    channel_id: ChannelId,
     agent: ArcSwap<Agent>,
     event_publisher: Arc<dyn EventPublisher>,
     entity_store: Arc<dyn EntityStore>,
@@ -29,7 +27,6 @@ pub struct AgentController {
 impl AgentController {
     pub fn new(
         session_id: SessionId,
-        channel_id: ChannelId,
         agent: Agent,
         event_publisher: Arc<dyn EventPublisher>,
         entity_store: Arc<dyn EntityStore>
@@ -37,7 +34,6 @@ impl AgentController {
         Self {
             id: agent.id,
             session_id,
-            channel_id,
             agent: ArcSwap::from_pointee(agent),
             event_publisher,
             entity_store,
@@ -59,7 +55,7 @@ impl AgentController {
     pub async fn update_name(&self, new_name: String) {
         let event = AgentUpdateEvent::NameChanged(new_name);
         self.process_update(&event).await;
-        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.channel_id, self.id, event));
+        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.id, event));
     }
 
     async fn process_update(&self, event: &AgentUpdateEvent) {
@@ -77,7 +73,7 @@ impl AgentController {
 
     pub async fn process_global_event(&self, event: &GlobalEvent) {
         match event {
-            GlobalEvent::AgentUpdated(_, _, aid, update) if *aid == self.id => {
+            GlobalEvent::AgentUpdated(_, aid, update) if *aid == self.id => {
                 self.process_update(update).await;
             }
             _ => {}
@@ -155,18 +151,23 @@ impl Agent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentState {
+pub struct AgentChannelState {
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub context: MessageContext,
 }
 
-impl Default for AgentState {
+impl Default for AgentChannelState {
     fn default() -> Self {
         Self {
             history: MessageHistory::new(),
             context: MessageContext::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentState {
+    // Add session specific data of an individual agent from multiple channels here if needed
 }

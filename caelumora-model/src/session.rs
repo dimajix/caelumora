@@ -82,13 +82,13 @@ impl SessionController {
             GlobalEvent::ChannelDeleted(sid, cid) if *sid == self.id => {
                 // TODO: Update internal session state
             }
-            GlobalEvent::AgentCreated(sid, cid, aid) if *sid == self.id => {
+            GlobalEvent::AgentCreated(sid,  aid) if *sid == self.id => {
                 // TODO: Update internal session state
             }
-            GlobalEvent::AgentUpdated(sid, cid, aid, update) if *sid == self.id => {
+            GlobalEvent::AgentUpdated(sid,  aid, update) if *sid == self.id => {
                 // TODO: React to agent updates if necessary
             }
-            GlobalEvent::AgentDeleted(sid, cid, aid) if *sid == self.id => {
+            GlobalEvent::AgentDeleted(sid,  aid) if *sid == self.id => {
                 // TODO: Update internal session state
             }
             _ => {}
@@ -109,6 +109,7 @@ pub struct SessionContext {
 pub struct Session {
     pub id: SessionId,
     pub metadata: Metadata,
+    pub participants: Vec<Participant>,
     pub channels: Vec<Channel>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -1,13 +1,13 @@
-use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::RwLock;
-use log::info;
-use crate::agent::{Agent, AgentId, AgentState, Personality, PersonalityId};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
-use crate::store::{StateStore, StoreError, StoreResult, EntityStore};
+use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
+use async_trait::async_trait;
+use log::info;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 #[derive(Debug, Default)]
 pub struct MemoryStore {
@@ -17,6 +17,7 @@ pub struct MemoryStore {
     sessions: RwLock<HashMap<SessionId, Session>>,
     users: RwLock<HashMap<UserId, User>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
+    agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     session_states: RwLock<HashMap<SessionId, SessionState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
 }
@@ -260,9 +261,20 @@ impl EntityStore for MemoryStore {
 
 #[async_trait]
 impl StateStore for MemoryStore {
+    async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
+        let values = self.read_lock(&self.agent_channel_states, |v| v.clone())?;
+        Ok(values.get(&(agent_id, channel_id)).cloned().unwrap_or_default())
+    }
+
+    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()> {
+        self.write_lock(&self.agent_channel_states, |v| {
+            v.insert((agent_id, channel_id), state.clone());
+        })
+    }
+
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let values = self.read_lock(&self.agent_states, |v| v.clone())?;
-        require_entity(values.get(&agent_id).cloned(), "agent_state", agent_id.to_string())
+        Ok(values.get(&agent_id).cloned().unwrap_or_default())
     }
 
     async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
@@ -300,11 +312,11 @@ impl StateStore for MemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
     use super::*;
     use crate::meta::Metadata;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
     use crate::user::UserId;
+    use uuid::Uuid;
 
     fn make_personality(name: &str, scope: Scope) -> Personality {
         Personality {
@@ -327,10 +339,11 @@ mod tests {
                 ..Metadata::default()
             },
             scope: ScopeTemplate::GlobalScope,
+            participants: vec![ParticipantTemplate::User],
             channels: vec![ChannelTemplate {
                 name: "general".to_string(),
                 moderator: "broadcast".to_string(),
-                participants: vec![ParticipantTemplate::User],
+                participants: vec![],
             }],
         }
     }

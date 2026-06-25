@@ -4,10 +4,11 @@ use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::Agent;
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::ChannelId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
+use caelumora_model::session::SessionId;
 use log::{debug, info, warn};
 use std::mem;
 use std::sync::Arc;
@@ -24,9 +25,9 @@ pub struct AgentActor {
 }
 
 impl AgentActor {
-    pub async fn new(channel: &Channel, agent:Agent, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
+    pub async fn new(session_id: SessionId, channel_id: ChannelId, agent:Agent, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
         let agent_id = agent.id;
-        let l = AgentLoop::new(channel, agent, runtime_manager.clone()).await?;
+        let l = AgentLoop::new(session_id, channel_id, agent, runtime_manager.clone()).await?;
         Ok(AgentActor {
             id: ActorId::Agent(agent_id),
             kind: "agent".to_string(),

@@ -1,12 +1,12 @@
-use async_trait::async_trait;
-use caelumora_model::agent::AgentState;
-use caelumora_model::message::Message;
 use crate::component::TurnContext;
+use async_trait::async_trait;
+use caelumora_model::agent::AgentChannelState;
+use caelumora_model::message::Message;
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str;
-    async fn process_messages(&self, input: Vec<Message>, state: &mut AgentState, context: &mut TurnContext) -> anyhow::Result<Vec<Message>>;
+    async fn process_messages(&self, input: Vec<Message>, state: &mut AgentChannelState, context: &mut TurnContext) -> anyhow::Result<Vec<Message>>;
 }
 
 pub trait PerceiveInProcessor: MessageProcessor {}

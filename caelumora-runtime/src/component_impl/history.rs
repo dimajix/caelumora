@@ -4,7 +4,7 @@ use crate::component::{
 use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::agent::AgentState;
+use caelumora_model::agent::AgentChannelState;
 use caelumora_model::message::Message;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ impl MessageProcessor for StateHistoryWriter {
         STATE_HISTORY_WRITER_KIND
     }
 
-    async fn process_messages(&self, input: Vec<Message>, state: &mut AgentState, _context: &mut TurnContext) -> Result<Vec<Message>> {
+    async fn process_messages(&self, input: Vec<Message>, state: &mut AgentChannelState, _context: &mut TurnContext) -> Result<Vec<Message>> {
         state.history.extend(input.clone());
         Ok(input)
     }

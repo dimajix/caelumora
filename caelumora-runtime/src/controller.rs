@@ -1,6 +1,6 @@
 use crate::event::EventBus;
 use caelumora_model::agent::{Agent, AgentController};
-use caelumora_model::channel::{Channel, ChannelController, ChannelId};
+use caelumora_model::channel::{Channel, ChannelController};
 use caelumora_model::session::{Session, SessionController, SessionId};
 use caelumora_model::store::EntityStore;
 use caelumora_model::user::{User, UserController};
@@ -23,12 +23,10 @@ impl ControllerManager {
     pub async fn new_agent_controller(
         &self,
         session_id: SessionId,
-        channel_id: ChannelId,
         agent: Agent,
     ) -> Arc<AgentController> {
         Arc::new(AgentController::new(
             session_id,
-            channel_id,
             agent,
             self.event_bus.clone(),
             self.entity_store.clone(),
