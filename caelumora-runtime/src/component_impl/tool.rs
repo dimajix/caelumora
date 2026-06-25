@@ -10,6 +10,34 @@ use std::sync::Arc;
 
 pub const ECHO_TOOL_PROVIDER_KIND: &str = "echo_tool";
 pub const CALCULATOR_TOOL_PROVIDER_KIND: &str = "calculator_tool";
+pub const STOP_TOOL_PROVIDER_KIND: &str = "stop_tool";
+
+#[derive(Debug)]
+pub struct StopToolProvider;
+
+#[async_trait]
+impl ToolProvider for StopToolProvider {
+    fn tools(&self) -> Vec<Tool> {
+        let properties: Vec<(String, ToolParameters)> = vec![];
+        let required: Vec<String> = vec![];
+        vec![
+            Tool {
+                name: "stop".to_string(),
+                description: "Signal that you have finished your task and have no further input.".to_string(),
+                parameters: ToolParameters::object(properties.clone(), required.clone()),
+            },
+            Tool {
+                name: "bye".to_string(),
+                description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
+                parameters: ToolParameters::object(properties, required),
+            }
+        ]
+    }
+
+    async fn execute(&self, _name: &str, _params: Value, _security: &SecurityContext) -> Result<Value> {
+        Ok(serde_json::json!({ "status": "stopped" }))
+    }
+}
 
 #[derive(Debug)]
 pub struct EchoToolProvider;
@@ -105,6 +133,19 @@ mod tests {
         let result = provider.execute("calculate", params, &security).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_stop_tool() {
+        let provider = StopToolProvider;
+        let security = SecurityContext::default();
+
+        let result = provider.execute("stop", json!({}), &security).await.unwrap();
+        assert_eq!(result["status"], "stopped");
+
+        let tools = provider.tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "stop");
+    }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -121,6 +162,14 @@ pub fn register(registry: &mut ComponentRegistry) {
         Arc::new(|_descriptor| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider));
+            Ok(facets)
+        }),
+    );
+    registry.register(
+        STOP_TOOL_PROVIDER_KIND,
+        Arc::new(|_descriptor| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider));
             Ok(facets)
         }),
     );

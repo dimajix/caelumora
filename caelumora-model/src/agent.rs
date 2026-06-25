@@ -96,6 +96,7 @@ pub enum ProcessingState {
     Idle,
     Active,
     Cancelling,
+    Stopped,
 }
 
 impl Default for ProcessingState {
@@ -110,6 +111,7 @@ impl From<u8> for ProcessingState {
             0 => ProcessingState::Idle,
             1 => ProcessingState::Active,
             2 => ProcessingState::Cancelling,
+            3 => ProcessingState::Stopped,
             _ => ProcessingState::Idle,
         }
     }
@@ -121,6 +123,7 @@ impl From<ProcessingState> for u8 {
             ProcessingState::Idle => 0,
             ProcessingState::Active => 1,
             ProcessingState::Cancelling => 2,
+            ProcessingState::Stopped => 3,
         }
     }
 }

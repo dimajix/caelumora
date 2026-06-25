@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{ActorId, Message};
+use caelumora_model::message::{ActorId, Message, MessageRole};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use log::{debug, info, warn};
@@ -68,8 +68,9 @@ impl ChannelLoop {
         let mut actors = HashMap::new();
         for participant in &channel.participants {
             let actor = Self::create_actor(&channel, participant, runtime_manager.clone()).await?;
-            moderator.add_actor(actor.as_ref());
-            actors.insert(actor.id(), Arc::from(actor));
+            let actor: Arc<dyn Actor> = Arc::from(actor);
+            moderator.add_actor(actor.clone());
+            actors.insert(actor.id(), actor);
         }
 
         let channel_controller = runtime_manager.controller_manager().new_channel_controller(channel);
@@ -119,6 +120,9 @@ impl ChannelLoop {
     }
     pub async fn wakeup(&self) -> Result<()> {
         self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        for actor in self.actors.values() {
+            actor.wakeup().await?;
+        }
         Ok(())
     }
 
@@ -233,8 +237,14 @@ impl ChannelLoop {
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
         if matches!(event.event, ActorEvent::WakeupRequested) {
-            self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+            let _ = self.wakeup().await;
         }
+
+        //if let ActorEvent::FullResponseGenerated(messages) = &event.event {
+        //    if messages.iter().any(|m| m.role == MessageRole::User) {
+        //        let _ = self.wakeup().await;
+        //    }
+        //}
 
         let is_cancelling = ProcessingState::from(self.processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling;
         if !is_cancelling {
@@ -256,10 +266,6 @@ impl ChannelLoop {
         let mut moderator = self.moderator.lock().await;
         let routes = moderator.route(&event).await;
         drop(moderator);
-
-        // Always route back event to source, this helps the Actor to rebuild the full
-        // history in correct order
-        //routes.push((event.context.sender_id, event.clone()));
 
         // First, route all messages to all agents...
         for route in routes {

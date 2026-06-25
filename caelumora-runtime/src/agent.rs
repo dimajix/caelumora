@@ -18,8 +18,8 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::StateStore;
 use futures::stream::BoxStream;
-use futures::TryStreamExt;
-use log::warn;
+use futures::{stream, TryStreamExt};
+use log::{info, warn};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -315,7 +315,15 @@ impl AgentLoop {
         self.runtime_manager.clone()
     }
 
+    pub fn state(&self) -> ProcessingState {
+        ProcessingState::from(self.processing_state.load(Ordering::SeqCst))
+    }
+    pub fn wakeup(&self) {
+        info!("Waking up agent {} {}", self.id, self.name());
+        self.processing_state.store(ProcessingState::Idle.into(), Ordering::SeqCst);
+    }
     pub fn cancel(&self) {
+        info!("Cancelling agent {} {}", self.id, self.name());
         self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
     }
 
@@ -332,6 +340,13 @@ impl AgentLoop {
         let max_iterations = self.max_iterations;
         let security_context = security_context.next(self.id());
         let processing_state = self.processing_state.clone();
+
+        // Do not respond if in stopped or canceled state!
+        let current_state = ProcessingState::from(processing_state.load(Ordering::SeqCst));
+        if current_state == ProcessingState::Stopped || current_state == ProcessingState::Cancelling {
+            info!("Returning empty stream for inactive agent {} {}", self.id, self.name());
+            return Box::pin(stream::empty());
+        }
 
         let stream = stream! {
             processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
@@ -368,7 +383,15 @@ impl AgentLoop {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
                             if let Some(msg) = state.execute(tool_calls, &mut turn_context, &security_context).await {
-                                yield Ok(MessageEvent::Complete(msg));
+                                yield Ok(MessageEvent::Complete(msg.clone()));
+
+                                if msg.tool_results.iter().any(|r| r.tool_name == "stop" || r.tool_name == "bye") {
+                                    info!("Stopping agent {} {}", agent_id, agent_name);
+                                    processing_state.store(ProcessingState::Stopped.into(), Ordering::SeqCst);
+                                    // No yield Stopped here, AgentActor will handle transition
+                                    break 'steps;
+                                }
+
                                 continue 'steps;
                             }
                         },
@@ -386,7 +409,10 @@ impl AgentLoop {
             // After the loop or if we have enough context, perform a final reflection
             state.reflect(&mut turn_context).await;
 
-            processing_state.store(ProcessingState::Idle.into(), Ordering::SeqCst);
+            let current_state = ProcessingState::from(processing_state.load(Ordering::SeqCst));
+            if current_state != ProcessingState::Stopped && current_state != ProcessingState::Cancelling {
+                processing_state.store(ProcessingState::Idle.into(), Ordering::SeqCst);
+            }
             yield Ok(MessageEvent::EndOfTurn(turn_context.messages));
         };
         Box::pin(stream)

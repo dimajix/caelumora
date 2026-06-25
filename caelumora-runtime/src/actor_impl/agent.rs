@@ -128,6 +128,20 @@ impl Actor for AgentActor {
         self.agent.name()
     }
 
+    fn state(&self) -> caelumora_model::agent::ProcessingState {
+        self.agent.state()
+    }
+
+    async fn wakeup(&self) -> Result<()> {
+        self.agent.wakeup();
+        Ok(())
+    }
+
+    async fn cancel(&self) -> Result<()> {
+        self.agent.cancel();
+        Ok(())
+    }
+
     fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
         Box::new(StandardActorSender {
             tx,
@@ -137,7 +151,7 @@ impl Actor for AgentActor {
         })
     }
 
-    async fn run(&self, mut input: Receiver<Envelope>, output: Sender<Envelope>) -> anyhow::Result<()> {
+    async fn run(&self, mut input: Receiver<Envelope>, output: Sender<Envelope>) -> Result<()> {
         let _guard = self.run_lock.try_lock()
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
@@ -161,11 +175,6 @@ impl Actor for AgentActor {
         }
 
         info!("AgentActor {} has finished", self.id());
-        Ok(())
-    }
-
-    async fn cancel(&self) -> anyhow::Result<()> {
-        self.agent.cancel();
         Ok(())
     }
 }

@@ -1,7 +1,8 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::message::MessageProcessor;
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
 use log::{debug, info, warn};
@@ -64,6 +65,14 @@ impl Actor for MessageProcessorActor {
     }
     fn name(&self) -> String {
         self.processor.name()
+    }
+
+    fn state(&self) -> ProcessingState {
+        ProcessingState::Idle
+    }
+
+    async fn wakeup(&self) -> Result<()> {
+        Ok(())
     }
 
     fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {

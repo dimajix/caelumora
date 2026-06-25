@@ -3,46 +3,48 @@ use rand::seq::IndexedRandom;
 use std::any::Any;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use crate::actor::{Actor, ActorEvent, Envelope};
 use crate::actor_impl::user::UserActor;
+use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message, MessageRole};
-use dashmap::DashSet;
+use dashmap::DashMap;
 use rand::rngs::StdRng;
 
 #[async_trait]
 pub trait Moderator : Send + Sync + Debug {
     async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)>;
-    fn add_actor(&mut self, actor: &dyn Actor) -> ();
-    fn remove_actor(&mut self, actor: &dyn Actor) -> ();
+    fn add_actor(&mut self, actor: Arc<dyn Actor>) -> ();
+    fn remove_actor(&mut self, actor: Arc<dyn Actor>) -> ();
 }
 
 
 #[derive(Debug)]
 struct ModeratorActors {
-    agent_actors: DashSet<ActorId>,
-    user_actors: DashSet<ActorId>,
+    agent_actors: DashMap<ActorId, Arc<dyn Actor>>,
+    user_actors: DashMap<ActorId, Arc<dyn Actor>>,
 }
 
 impl ModeratorActors {
     fn new() -> Self {
         Self {
-            agent_actors: DashSet::new(),
-            user_actors: DashSet::new(),
+            agent_actors: DashMap::new(),
+            user_actors: DashMap::new(),
         }
     }
 
-    fn add_actor(&mut self, actor: &dyn Actor) {
-        let any_actor:&dyn Any = actor;
+    fn add_actor(&mut self, actor: Arc<dyn Actor>) {
+        let any_actor:&dyn Any = actor.as_ref();
         if any_actor.downcast_ref::<UserActor>().is_some() {
-            self.user_actors.insert(actor.id());
+            self.user_actors.insert(actor.id(), actor);
         }
         else {
-            self.agent_actors.insert(actor.id());
+            self.agent_actors.insert(actor.id(), actor);
         }
     }
 
-    fn remove_actor(&mut self, actor: &dyn Actor) {
+    fn remove_actor(&mut self, actor: Arc<dyn Actor>) {
         self.agent_actors.remove(&actor.id());
         self.user_actors.remove(&actor.id());
     }
@@ -59,15 +61,16 @@ impl ModeratorActors {
         let forward_event = event.forward_with_response(user_messages);
         self.agent_actors.iter()
             .chain(self.user_actors.iter())
-            .filter(|id| !sender_ids.contains(id))
-            .map(|id| (*id, forward_event.clone()))
+            .filter(|r| !sender_ids.contains(r.key()))
+            .map(|r| (*r.key(), forward_event.clone()))
             .collect()
     }
 
     fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorId> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         self.agent_actors.iter()
-            .map(|id| *id)
+            .filter(|r| r.value().state() != ProcessingState::Stopped)
+            .map(|r| *r.key())
             .filter(|id| !sender_ids.contains(id))
             .collect()
     }
@@ -119,11 +122,11 @@ impl Moderator for BroadcastModerator {
         }
     }
 
-    fn add_actor(&mut self, actor: &dyn Actor) -> () {
+    fn add_actor(&mut self, actor: Arc<dyn Actor>) -> () {
         self.actors.add_actor(actor);
     }
 
-    fn remove_actor(&mut self, agent: &dyn Actor) -> () {
+    fn remove_actor(&mut self, agent: Arc<dyn Actor>) -> () {
         self.actors.remove_actor(agent);
     }
 }
@@ -177,11 +180,11 @@ impl Moderator for RandomModerator {
         }
     }
 
-    fn add_actor(&mut self, actor: &dyn Actor) -> () {
+    fn add_actor(&mut self, actor: Arc<dyn Actor>) -> () {
         self.actors.add_actor(actor);
     }
 
-    fn remove_actor(&mut self, agent: &dyn Actor) -> () {
+    fn remove_actor(&mut self, agent: Arc<dyn Actor>) -> () {
         self.actors.remove_actor(agent);
     }
 }
@@ -243,11 +246,11 @@ impl Moderator for RoundRobinModerator {
         }
     }
 
-    fn add_actor(&mut self, actor: &dyn Actor) -> () {
+    fn add_actor(&mut self, actor: Arc<dyn Actor>) -> () {
         self.actors.add_actor(actor);
     }
 
-    fn remove_actor(&mut self, agent: &dyn Actor) -> () {
+    fn remove_actor(&mut self, agent: Arc<dyn Actor>) -> () {
         self.actors.remove_actor(agent);
         if self.actors.agent_actors.is_empty() {
             self.next_agent_index = 0;

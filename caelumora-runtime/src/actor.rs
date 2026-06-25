@@ -1,6 +1,7 @@
 use crate::message::MessageEvent;
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::{ChannelId, SessionId};
 use chrono::{DateTime, Utc};
@@ -157,6 +158,14 @@ pub trait Actor : Any + Debug + Send + Sync {
     fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender>;
 
     async fn run(&self, rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()>;
+
+    /// Returns the current processing state of the actor
+    fn state(&self) -> ProcessingState;
+
+    /// Wakes up the actor from a Stopped state
+    async fn wakeup(&self) -> Result<()>  {
+        Ok(())
+    }
 
     async fn cancel(&self) -> Result<()> {
         Ok(())

@@ -2,6 +2,7 @@ use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, Stand
 use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
@@ -134,6 +135,10 @@ impl Actor for UserActor {
 
     fn name(&self) -> String {
         self.user.username()
+    }
+
+    fn state(&self) -> ProcessingState {
+        ProcessingState::Idle
     }
 
     fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
