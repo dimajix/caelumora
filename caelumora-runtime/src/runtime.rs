@@ -67,7 +67,6 @@ impl RuntimeManager {
         crate::actor::EventContext::new(
             channel.session_id,
             channel.id,
-            channel.name.clone(),
             ActorId::None,
             "System".to_string(),
         )

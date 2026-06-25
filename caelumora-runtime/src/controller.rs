@@ -49,8 +49,7 @@ impl ControllerManager {
     pub fn new_user_controller(
         &self,
         user: User,
-        channel_name: String,
     ) -> Arc<UserController> {
-        Arc::new(UserController::new(user, channel_name, self.event_bus.clone()))
+        Arc::new(UserController::new(user, self.event_bus.clone()))
     }
 }

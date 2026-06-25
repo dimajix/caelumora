@@ -69,7 +69,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             },
             scope: ScopeTemplate::SessionScope,
             participants: vec![
-                ParticipantTemplate::User,
+                ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
                     name: "assistant".to_string(),
                     scope: ScopeTemplate::SessionScope,
@@ -99,7 +99,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             },
             scope: ScopeTemplate::SessionScope,
             participants: vec![
-                ParticipantTemplate::User,
+                ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
                     name: "Jonathan".to_string(),
                     scope: ScopeTemplate::SessionScope,

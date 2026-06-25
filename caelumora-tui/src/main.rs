@@ -1,13 +1,13 @@
-use caelumora_model::agent::PersonalityId;
 use caelumora_model::agent::Personality;
+use caelumora_model::agent::PersonalityId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::EntityStore;
-use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
-use caelumora_model::user::{User, UserId};
+use caelumora_model::template::{ChannelTemplate, ParticipantId, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_model::user::UserId;
 use caelumora_runtime::actor::ActorEvent;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
@@ -19,6 +19,7 @@ use env_logger::WriteStyle;
 use log::{error, info, LevelFilter};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -114,7 +115,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
         },
         scope: ScopeTemplate::GlobalScope,
         participants: vec![
-            ParticipantTemplate::User,
+            ParticipantTemplate::User { name: "user".to_string() },
             ParticipantTemplate::Agent {
                 name: "Jonathan".to_string(),
                 scope: ScopeTemplate::GlobalScope,
@@ -270,7 +271,9 @@ async fn main() -> anyhow::Result<()> {
         security,
         entity_store: entity_store.clone(),
     };
-    let session = template.instantiate("default-session".to_string(), &context).await?;
+    let mut mapping = HashMap::new();
+    mapping.insert("user".to_string(), ParticipantId::UserId(owner));
+    let session = template.instantiate("default-session".to_string(), &context, mapping).await?;
     let session_loop = Arc::new(SessionLoop::new(session, runtime.clone()).await?);
     let runner = tokio::spawn({
         let session_loop = session_loop.clone();

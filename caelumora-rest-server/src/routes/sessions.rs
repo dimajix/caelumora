@@ -3,7 +3,8 @@ use crate::state::AppState;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
-use caelumora_model::template::SessionTemplateId;
+use caelumora_model::template::{ParticipantId, SessionTemplateId};
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -30,7 +31,9 @@ pub async fn create_session(
     };
 
     let name = payload.name.unwrap_or_else(|| template.metadata.name.clone());
-    let session = template.instantiate(name, &context).await
+    let mut mapping = HashMap::new();
+    mapping.insert("user".to_string(), ParticipantId::UserId(owner));
+    let session = template.instantiate(name, &context, mapping).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let session_loop = state.session_manager.create_session(session).await

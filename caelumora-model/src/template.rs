@@ -1,4 +1,4 @@
-use crate::agent::PersonalityId;
+use crate::agent::{AgentId, PersonalityId};
 use crate::channel::{Channel, Participant};
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
@@ -7,6 +7,15 @@ use chrono::Utc;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::user::UserId;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ParticipantId {
+    UserId(UserId),
+    AgentId(AgentId),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScopeTemplate {
@@ -85,12 +94,12 @@ pub struct SessionTemplate {
 }
 
 impl SessionTemplate {
-    pub async fn instantiate(&self, name:String, context:&SessionContext) -> anyhow::Result<Session> {
+    pub async fn instantiate(&self, name:String, context:&SessionContext, mapping: HashMap<String, ParticipantId>) -> anyhow::Result<Session> {
         let now = Utc::now();
 
         let mut participants = Vec::new();
         for participant in &self.participants {
-            participants.push(participant.instantiate(context).await?);
+            participants.push(participant.instantiate(context, &mapping).await?);
         }
 
         let mut channels = Vec::new();
@@ -119,7 +128,7 @@ impl SessionTemplate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParticipantTemplate {
-    User,
+    User { name: String },
     Agent {
         name: String,
         scope: ScopeTemplate,
@@ -128,17 +137,32 @@ pub enum ParticipantTemplate {
 }
 
 impl ParticipantTemplate {
-    pub async fn instantiate(&self, context:&SessionContext) -> anyhow::Result<Participant> {
+    pub async fn instantiate(&self, context:&SessionContext, mapping: &HashMap<String, ParticipantId>) -> anyhow::Result<Participant> {
         let participant = match self {
-            ParticipantTemplate::User => {
-                let user = context.entity_store.get_user(&context.security, context.owner).await?;
+            ParticipantTemplate::User { name } => {
+                let id = mapping.get(name).and_then(|id| {
+                    if let ParticipantId::UserId(uid) = id {
+                        Some(*uid)
+                    } else {
+                        None
+                    }
+                }).ok_or_else(|| anyhow::anyhow!("UserId for {} not found in mapping", name))?;
+                let user = context.entity_store.get_user(&context.security, id).await?;
                 Participant::User(user)
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
-                let sc = scope.instantiate(&context);
-                let agent = if let Ok(agent) = context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
-                    agent
+                let agent_id = mapping.get(name).and_then(|id| {
+                    if let ParticipantId::AgentId(aid) = id {
+                        Some(*aid)
+                    } else {
+                        None
+                    }
+                });
+
+                let agent = if let Some(aid) = agent_id {
+                    context.entity_store.get_agent(&context.security, aid).await?
                 } else {
+                    let sc = scope.instantiate(&context);
                     let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await.expect("failed to get personality");
                     let agent = crate::agent::Agent::new(name.clone(), sc, &personality);
                     context.entity_store.create_agent(&context.security, &agent).await.expect("failed to create agent");

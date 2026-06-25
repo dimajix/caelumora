@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 pub struct EventContext {
     pub session_id: SessionId,
     pub channel_id: ChannelId,
-    pub channel_name: String,
     pub sender_id: ActorId,
     pub sender_name: String,
     pub event_id: Uuid,
@@ -26,11 +25,10 @@ pub struct EventContext {
 }
 
 impl EventContext {
-    pub fn new(session_id: SessionId, channel_id: ChannelId, channel_name:String, sender_id:ActorId, sender_name:String) -> Self {
+    pub fn new(session_id: SessionId, channel_id: ChannelId, sender_id:ActorId, sender_name:String) -> Self {
         Self {
             session_id,
             channel_id,
-            channel_name,
             sender_id,
             sender_name,
             event_id: Uuid::new_v4(),
@@ -44,7 +42,6 @@ impl EventContext {
         Self {
             session_id: self.session_id,
             channel_id: self.channel_id,
-            channel_name: self.channel_name.clone(),
             sender_id,
             sender_name,
             event_id: Uuid::new_v4(),

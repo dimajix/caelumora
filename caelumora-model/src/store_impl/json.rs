@@ -629,7 +629,7 @@ mod tests {
                 ..Metadata::default()
             },
             scope: ScopeTemplate::GlobalScope,
-            participants: vec![ParticipantTemplate::User],
+            participants: vec![ParticipantTemplate::User{ name: "user".to_string() }],
             channels: vec![ChannelTemplate {
                 name: "general".to_string(),
                 moderator: "broadcast".to_string(),

@@ -21,9 +21,9 @@ pub struct UserActor {
     pub session_id: SessionId,
     pub channel_id: ChannelId,
     pub security_context: SecurityContext,
-    pub user: Arc<UserController>,
-    pub runtime_manager: Arc<crate::runtime::RuntimeManager>,
-    pub user_rx: Mutex<Receiver<ActorEvent>>,
+    user: Arc<UserController>,
+    runtime_manager: Arc<crate::runtime::RuntimeManager>,
+    user_rx: Mutex<Receiver<ActorEvent>>,
     user_tx: Sender<ActorEvent>,
     actor_rx: Mutex<Receiver<ActorEvent>>,
     actor_tx: Sender<ActorEvent>,
@@ -33,7 +33,7 @@ impl UserActor {
     pub async fn new(channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
-        let user_controller = runtime_manager.controller_manager().new_user_controller(user, channel.name.clone());
+        let user_controller = runtime_manager.controller_manager().new_user_controller(user);
         Ok(Self {
             id: ActorId::User(user_controller.id()),
             session_id: channel.session_id,
@@ -94,8 +94,7 @@ impl UserActor {
         match maybe_message {
             Some(message) => {
                 debug!("Received user message: {:?}", message);
-                let channel_name = self.user.channel_name();
-                let context = EventContext::new(self.session_id, self.channel_id, channel_name, self.id(), self.name());
+                let context = EventContext::new(self.session_id, self.channel_id, self.id(), self.name());
                 let event = Envelope::new(self.security_context.clone(), context, message);
                 if let Err(e) = tx.send(event).await {
                     warn!("UserActor {} cannot forward user message because of an error: {}", self.id(), e);

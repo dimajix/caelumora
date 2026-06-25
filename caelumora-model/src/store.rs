@@ -85,6 +85,7 @@ pub mod tests {
     use crate::session::Participant;
     use crate::store_impl::memory::MemoryStore;
     use crate::user::UserId;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use uuid::Uuid;
 
@@ -125,7 +126,7 @@ pub mod tests {
             personality_id: personality.id,
         };
 
-        let resolved = pt.instantiate(&context).await.unwrap();
+        let resolved = pt.instantiate(&context, &HashMap::new()).await.unwrap();
 
         if let Participant::Agent(agent) = resolved {
             assert_eq!(agent.id, existing.id);
@@ -154,14 +155,14 @@ pub mod tests {
             personality_id: personality.id,
         };
 
-        let created_participant = pt.instantiate(&context).await.unwrap();
+        let created_participant = pt.instantiate(&context, &HashMap::new()).await.unwrap();
         let created = if let Participant::Agent(agent) = created_participant {
             agent
         } else {
             panic!("Expected agent participant");
         };
 
-        let fetched_participant = pt.instantiate(&context).await.unwrap();
+        let fetched_participant = pt.instantiate(&context, &HashMap::new()).await.unwrap();
         let fetched = if let Participant::Agent(agent) = fetched_participant {
             agent
         } else {
