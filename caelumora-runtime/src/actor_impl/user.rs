@@ -1,4 +1,5 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::runtime::RuntimeManager;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -23,7 +24,7 @@ pub struct UserActor {
     channel_id: ChannelId,
     security_context: SecurityContext,
     user: Arc<UserController>,
-    runtime_manager: Arc<crate::runtime::RuntimeManager>,
+    runtime_manager: Arc<RuntimeManager>,
     user_rx: Mutex<Receiver<ActorEvent>>,
     user_tx: Sender<ActorEvent>,
     actor_rx: Mutex<Receiver<ActorEvent>>,
@@ -31,7 +32,7 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub async fn new(channel: &Channel, mut user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
+    pub async fn new(channel: &Channel, mut user:User, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         user.security.session_id = channel.session_id;
         user.security.channel_id = channel.id;
         let security_context = user.security.clone();
