@@ -8,8 +8,7 @@ use crate::moderator::{BroadcastModerator, Moderator, RandomModerator, RoundRobi
 use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
-use caelumora_model::message::ActorId;
-use caelumora_model::security::{DummySecurityManager, SecurityContext, SecurityManager};
+use caelumora_model::security::{DummySecurityManager, SecurityManager};
 use caelumora_model::store::{EntityStore, StateStore};
 use std::sync::Arc;
 
@@ -54,24 +53,6 @@ impl RuntimeManager {
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
 
-    pub fn system_security_context(&self, channel: &caelumora_model::channel::Channel) -> SecurityContext {
-        SecurityContext {
-            initiator_id: ActorId::None,
-            sender_id: ActorId::None,
-            session_id: channel.session_id,
-            channel_id: channel.id,
-        }
-    }
-
-    pub fn system_event_context(&self, channel: &caelumora_model::channel::Channel) -> crate::actor::EventContext {
-        crate::actor::EventContext::new(
-            channel.session_id,
-            channel.id,
-            ActorId::None,
-            "System".to_string(),
-        )
-    }
-    
     pub fn llm_client(&self) -> Arc<dyn LLMClient> {
         self.llm_client.clone()
     }

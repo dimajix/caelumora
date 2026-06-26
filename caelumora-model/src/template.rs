@@ -75,6 +75,7 @@ impl ChannelTemplate {
             self.name.clone(),
             self.moderator.clone(),
             participants,
+            context.security.clone(),
         ))
     }
 }
@@ -120,6 +121,7 @@ impl SessionTemplate {
             channels,
             created_at: now,
             updated_at: now,
+            security: context.security.clone(),
         };
         context.entity_store.create_session(&context.security, &session).await?;
         Ok(session)
@@ -159,12 +161,14 @@ impl ParticipantTemplate {
                     }
                 });
 
+                let sc = scope.instantiate(&context);
                 let agent = if let Some(aid) = agent_id {
                     context.entity_store.get_agent(&context.security, aid).await?
+                } else if let Ok(agent) = context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
+                    agent
                 } else {
-                    let sc = scope.instantiate(&context);
                     let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await.expect("failed to get personality");
-                    let agent = crate::agent::Agent::new(name.clone(), sc, &personality);
+                    let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.clone());
                     context.entity_store.create_agent(&context.security, &agent).await.expect("failed to create agent");
                     agent
                 };

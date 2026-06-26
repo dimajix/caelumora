@@ -2,6 +2,7 @@ use crate::channel::ChannelLoop;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::message::ActorId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
 use dashmap::DashMap;
@@ -156,8 +157,14 @@ impl SessionManager {
         }
     }
 
-    pub async fn create_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
+    pub async fn create_session(&self, mut session: Session) -> Result<Arc<SessionLoop>> {
         let id = session.id;
+        session.security = SecurityContext {
+            initiator_id: ActorId::None,
+            sender_id: ActorId::None,
+            session_id: session.id,
+            channel_id: caelumora_model::channel::ChannelId::default()
+        };
         let session_loop = SessionLoop::new(session, self.runtime_manager.clone()).await?;
         let session_ref = Arc::new(session_loop);
         self.sessions.insert(id, session_ref.clone());

@@ -1,6 +1,6 @@
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
-use crate::message::{MessageContext, MessageHistory};
+use crate::message::{ActorId, MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
@@ -135,11 +135,13 @@ pub struct Agent {
     pub id: AgentId,
     pub metadata: Metadata,
     pub personality_id: PersonalityId,
+    pub security: SecurityContext,
 }
 
 impl Agent {
-    pub fn new(name:String, scope:Scope, personality: &Personality) -> Self {
+    pub fn new(name:String, scope:Scope, personality: &Personality, mut security: SecurityContext) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
+        security.sender_id = ActorId::Agent(agent_id);
         Agent {
             id: agent_id,
             personality_id: personality.id,
@@ -148,7 +150,8 @@ impl Agent {
                 scope,
                 description: personality.metadata.description.clone(),
                 ..Metadata::default()
-            }
+            },
+            security,
         }
     }
 }

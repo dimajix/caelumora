@@ -18,10 +18,10 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct UserActor {
-    pub id: ActorId,
-    pub session_id: SessionId,
-    pub channel_id: ChannelId,
-    pub security_context: SecurityContext,
+    id: ActorId,
+    session_id: SessionId,
+    channel_id: ChannelId,
+    security_context: SecurityContext,
     user: Arc<UserController>,
     runtime_manager: Arc<crate::runtime::RuntimeManager>,
     user_rx: Mutex<Receiver<ActorEvent>>,
@@ -31,20 +31,20 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub async fn new(channel: &Channel, user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
+    pub async fn new(channel: &Channel, mut user:User, runtime_manager: Arc<crate::runtime::RuntimeManager>) -> Result<Self> {
+        user.security.session_id = channel.session_id;
+        user.security.channel_id = channel.id;
+        let security_context = user.security.clone();
+        let user_controller = runtime_manager.controller_manager().new_user_controller(user);
+
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
-        let user_controller = runtime_manager.controller_manager().new_user_controller(user);
+
         Ok(Self {
             id: ActorId::User(user_controller.id()),
             session_id: channel.session_id,
             channel_id: channel.id,
-            security_context: SecurityContext {
-                initiator_id: ActorId::User(user_controller.id()),
-                sender_id: ActorId::User(user_controller.id()),
-                session_id: channel.session_id,
-                channel_id: channel.id
-            },
+            security_context,
             user: user_controller,
             runtime_manager,
             user_rx: Mutex::new(urx),

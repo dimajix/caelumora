@@ -143,8 +143,9 @@ mod tests {
         assert_eq!(result["status"], "stopped");
 
         let tools = provider.tools();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "stop");
+        assert_eq!(tools[1].name, "bye");
     }
 }
 

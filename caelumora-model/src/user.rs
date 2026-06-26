@@ -1,4 +1,5 @@
 use crate::event::{EventPublisher, GlobalEvent};
+use crate::security::SecurityContext;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub roles: Vec<String>,
+    pub security: SecurityContext,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

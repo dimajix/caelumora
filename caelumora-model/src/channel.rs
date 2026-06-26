@@ -1,6 +1,7 @@
 use crate::agent::Agent;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
+use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::User;
 use arc_swap::ArcSwap;
@@ -86,17 +87,20 @@ pub struct Channel {
     pub name: String,
     pub moderator: String,
     pub participants: Vec<Participant>,
+    pub security: SecurityContext,
 }
 
 impl Channel {
-    pub fn new(session_id: SessionId, name: String, moderator: String, participants: Vec<Participant>) -> Self {
+    pub fn new(session_id: SessionId, name: String, moderator: String, participants: Vec<Participant>, mut security: SecurityContext) -> Self {
         let id = ChannelId(Uuid::new_v4());
+        security.channel_id = id;
         Self {
             id,
             session_id,
             name,
             moderator,
             participants,
+            security,
         }
     }
 }

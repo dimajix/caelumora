@@ -10,6 +10,7 @@ use crate::tool::ToolProvider;
 use anyhow::Result;
 use async_stream::stream;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState};
+use caelumora_model::channel::Channel;
 use caelumora_model::component::{
     ComponentConfig, ComponentFailPolicy
 };
@@ -30,7 +31,6 @@ struct AgentLoopState {
     session_id: SessionId,
     channel_id: ChannelId,
     agent_id: AgentId,
-    agent_name: String,
     agent_channel_state: AgentChannelState,
     agent_state: AgentState,
     runtime_manager: Arc<RuntimeManager>,
@@ -50,7 +50,6 @@ impl AgentLoopState {
     ) -> Result<Self> {
         let store = runtime_manager.state_store();
         let agent_id = agent_controller.id();
-        let agent_name = agent_controller.name();
         let agent_channel_state = store.get_agent_channel_state(agent_id, channel_id).await?;
         let agent_state = store.get_agent_state(agent_id).await?;
         let components = ComponentContainer::from_config(
@@ -76,7 +75,6 @@ impl AgentLoopState {
             session_id,
             channel_id,
             agent_id,
-            agent_name,
             agent_channel_state,
             agent_state,
             runtime_manager: runtime_manager.clone(),
@@ -207,7 +205,7 @@ impl AgentLoopState {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
                 sender_id: ActorId::Agent(self.agent_id),
-                sender_name: self.agent_name.clone(),
+                sender_name: self.agent.name(),
                 role: MessageRole::Tool,
                 tool_results,
                 content: None,
@@ -260,6 +258,7 @@ impl AgentLoopState {
 pub struct AgentLoop {
     id: ActorId,
     state: Arc<Mutex<AgentLoopState>>,
+    security_context: SecurityContext,
     agent_controller: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
     max_iterations: i32,
@@ -268,23 +267,19 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub async fn new(
-        session_id: SessionId,
-        channel_id: ChannelId,
-        agent: Agent,
+        channel: &Channel,
+        mut agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        let security_context = SecurityContext {
-            initiator_id: ActorId::None,
-            sender_id: ActorId::None,
-            session_id,
-            channel_id,
-        };
+        agent.security.session_id = channel.session_id;
+        agent.security.channel_id = channel.id;
+        let security_context = agent.security.clone();
         let personality = runtime_manager.entity_store().get_personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let agent_controller = runtime_manager.controller_manager().new_agent_controller(session_id, agent).await;
+        let agent_controller = runtime_manager.controller_manager().new_agent_controller(channel.session_id, agent).await;
         let state = AgentLoopState::new(
-            session_id,
-            channel_id,
+            channel.session_id,
+            channel.id,
             agent_controller.clone(),
             runtime_manager.clone(),
             personality.components
@@ -292,6 +287,7 @@ impl AgentLoop {
         Ok(Self {
             id: ActorId::Agent(agent_id),
             state: Arc::new(Mutex::new(state)),
+            security_context,
             agent_controller,
             runtime_manager,
             max_iterations: 10,

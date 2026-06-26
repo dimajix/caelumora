@@ -481,7 +481,6 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let _ = _ctx;
         let dir = self.users_dir();
         let users: Vec<Persisted<User>> = read_all_from_dir(&dir)?;
         require_entity(
@@ -728,6 +727,7 @@ mod tests {
             "assistant-1".to_string(),
             Scope::GlobalScope,
             &template,
+            SecurityContext::default(),
         );
         store.create_agent(&ctx, &agent).await.unwrap();
 
@@ -751,6 +751,7 @@ mod tests {
             "assistant-1".to_string(),
             Scope::GlobalScope,
             &template,
+            SecurityContext::default(),
         );
 
         store.create_agent(&ctx, &agent).await.unwrap();
@@ -783,6 +784,7 @@ mod tests {
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            security: SecurityContext::default(),
         };
         let s2 = Session {
             id: SessionId(Uuid::new_v4()),
@@ -795,6 +797,7 @@ mod tests {
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            security: SecurityContext::default(),
         };
 
         store.create_session(&ctx, &s1).await.unwrap();
@@ -824,6 +827,7 @@ mod tests {
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            security: SecurityContext::default(),
         };
         store.create_session(&ctx, &s1).await.unwrap();
 

@@ -113,6 +113,7 @@ pub struct Session {
     pub channels: Vec<Channel>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub security: SecurityContext,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
