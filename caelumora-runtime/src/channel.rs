@@ -154,7 +154,7 @@ impl ChannelLoop {
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let actor = AgentActor::new(channel.session_id, channel.id, agent.clone(), runtime_manager.clone()).await?;
+                let actor = AgentActor::new(channel, agent.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
             }
         }
