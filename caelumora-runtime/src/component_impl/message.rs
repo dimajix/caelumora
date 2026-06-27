@@ -9,5 +9,4 @@ pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
 }
 
 pub trait PerceiveInProcessor: MessageProcessor {}
-pub trait PlanPreProcessor: MessageProcessor {}
 pub trait EmitOutProcessor: MessageProcessor {}

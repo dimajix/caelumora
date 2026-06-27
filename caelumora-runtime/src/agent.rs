@@ -2,7 +2,7 @@ use crate::component::{
     ComponentContainer, ComponentImpl,
 };
 use crate::component_impl::context::ContextProvider;
-use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor, PlanPreProcessor};
+use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::message::{MessageEvent, TurnContext};
 use crate::runtime::RuntimeManager;
 use crate::tool::ToolExecutor;
@@ -69,33 +69,26 @@ struct AgentLoopImpl {
     agent_id: AgentId,
     runtime_manager: Arc<RuntimeManager>,
     state_store: Arc<dyn StateStore>,
-    context_provider: Arc<dyn ContextProvider>,
+    context_provider: Vec<ComponentImpl<dyn ContextProvider>>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
-    plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
     tool_executor: Box<dyn ToolExecutor>,
 }
 impl AgentLoopImpl {
     async fn new(session_id: SessionId,
                  channel_id: ChannelId,
-            agent_controller: Arc<AgentController>,
-           runtime_manager: Arc<RuntimeManager>,
-           pipeline_config: ComponentConfig,
+                 agent_controller: Arc<AgentController>,
+                 runtime_manager: Arc<RuntimeManager>,
+                 pipeline_config: ComponentConfig,
     ) -> Result<Self> {
         let agent_id = agent_controller.id();
         let components = ComponentContainer::from_config(
             &pipeline_config,
             runtime_manager.component_registry().as_ref()
         )?;
-        let context_provider = components
-            .get_all::<dyn ContextProvider>(None)
-            .ok()
-            .and_then(|providers| providers.into_iter().next())
-            .map(|p| p.facet)
-            .ok_or_else(|| anyhow::anyhow!("No context provider configured in pipeline"))?;
+        let context_provider = components.get_all::<dyn ContextProvider>(None)?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
-        let plan_pre_processors = components.get_all::<dyn PlanPreProcessor>(None)?;
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
         let tool_executor = runtime_manager.new_tool_executor(
             tool_providers.into_iter().map(|p| p.facet).collect()
@@ -111,7 +104,6 @@ impl AgentLoopImpl {
             context_provider,
             perceive_in_processors,
             emit_out_processors,
-            plan_pre_processors,
             tool_executor,
         })
     }
@@ -175,26 +167,24 @@ impl AgentLoopImpl {
         Some(output.remove(0))
     }
 
-    async fn next_turn<'a>(&self, turn_context: &mut TurnContext<'a>) -> () {
-        let context = self
-            .context_provider
-            .current_context(turn_context).await
-            .unwrap_or_else(|e| {
-                warn!("Failed to read context from provider: {}", e);
-                Vec::new()
-            });
-        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), turn_context)
-            .await
-            .unwrap_or_else(|e| {
-                warn!("PlanPre stage failed: {}", e);
-                context
-            });
+    async fn next_turn<'a>(&self, turn_context: &mut TurnContext<'a>) -> Result<()> {
+        for context_provider in &self.context_provider {
+            match context_provider.facet.current_context(turn_context).await {
+                Ok(output) => {}
+                Err(e) => match context_provider.fail_policy {
+                    ComponentFailPolicy::FailOpen => {
+                        warn!(
+                            "Component '{}' failed with fail-open policy: {}",
+                            context_provider.id,
+                            e
+                        );
+                    }
+                    ComponentFailPolicy::FailClosed => return Err(e),
+                },
+            }
+        }
 
-        //if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
-        //    warn!("Cannot store state of agent {} after context preparation", self.agent_id)
-        //}
-
-        turn_context.context = context;
+        Ok(())
     }
 
     async fn plan<'a>(&self, turn_context: &mut TurnContext<'a>) -> BoxStream<'static, Result<MessageEvent>> {
@@ -206,7 +196,7 @@ impl AgentLoopImpl {
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute<'a>(&self, tool_calls:Vec<ToolCall>, turn_context: &mut TurnContext<'a>, security_context: &SecurityContext) -> Option<Message> {
+    async fn execute<'a>(&self, tool_calls: Vec<ToolCall>, turn_context: &mut TurnContext<'a>, security_context: &SecurityContext) -> Option<Message> {
         // Execute all tools
         let mut tool_results = Vec::new();
         for c in tool_calls {
@@ -245,8 +235,7 @@ impl AgentLoopImpl {
             // Put tool message into context
             turn_context.messages.push(tool_message.clone());
             Some(tool_message)
-        }
-        else {
+        } else {
             None
         }
     }
@@ -279,7 +268,6 @@ impl AgentLoopImpl {
         }
         Ok(input)
     }
-
 }
 
 
@@ -386,7 +374,7 @@ impl AgentLoop {
             processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
             let mut agent_state = agent_state_arc.lock().await;
             let mut turn_context = agent_state.new_turn_context();
-            agent_impl.next_turn(&mut turn_context).await;
+            agent_impl.next_turn(&mut turn_context).await?;
 
             let mut loop_count = 0;
 
