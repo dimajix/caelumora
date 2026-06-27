@@ -1,23 +1,12 @@
 use anyhow::{anyhow, Result};
-use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig};
-use caelumora_model::message::Message;
-use serde_json::Value;
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-#[derive(Debug, Default, Clone)]
-pub struct TurnContext {
-    pub scratch: HashMap<String, Value>,
-    pub context: Vec<Message>,
-    pub messages: Vec<Message>
-}
 
 #[derive(Debug, Clone)]
-pub struct ComponentDescriptor {
-    pub id: String,
-    pub kind: String,
-    pub params: Value,
+pub struct ComponentContext {
     pub deps: HashMap<String, ComponentFacets>,
 }
 
@@ -43,7 +32,7 @@ impl ComponentFacets {
     }
 }
 
-pub type ComponentFactory = Arc<dyn Fn(ComponentDescriptor) -> Result<ComponentFacets> + Send + Sync>;
+pub type ComponentFactory = Box<dyn Fn(&ComponentDescriptor, &ComponentContext) -> Result<ComponentFacets> + Send + Sync>;
 
 #[derive(Default)]
 pub struct ComponentRegistry {
@@ -67,16 +56,11 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentNodeConfig, dep_facets: HashMap<String, ComponentFacets>) -> Result<ComponentFacets> {
+    fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> Result<ComponentFacets> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(anyhow!("Unsupported component kind: {}", node.kind));
         };
-        factory(ComponentDescriptor {
-            id: node.id.clone(),
-            kind: node.kind.clone(),
-            params: node.params.clone(),
-            deps: dep_facets,
-        })
+        factory(node, context)
     }
 }
 
@@ -112,7 +96,7 @@ impl ComponentContainer {
     ) -> Result<Self> {
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
-        let mut config_by_id: HashMap<String, &ComponentNodeConfig> = HashMap::new();
+        let mut config_by_id: HashMap<String, &ComponentDescriptor> = HashMap::new();
 
         for node in &config.component_nodes {
             if config_by_id.insert(node.id.clone(), node).is_some() {
@@ -165,7 +149,11 @@ impl ComponentContainer {
                 dep_facets.insert(dep_id.clone(), dep_node.facets.clone());
             }
 
-            let facets = registry.build(node_config, dep_facets)?;
+            let context = ComponentContext {
+                deps: dep_facets
+            };
+
+            let facets = registry.build(node_config, &context)?;
             nodes.insert(
                 id.clone(),
                 ComponentNode {

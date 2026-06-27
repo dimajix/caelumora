@@ -1,5 +1,5 @@
 use caelumora_model::agent::{Personality, PersonalityId};
-use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig, STAGE_PERCEIVE};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::store::EntityStore;
 use caelumora_model::template::{
@@ -130,7 +130,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
 
 fn create_personality(name: &str, description: &str, system_prompt: &str) -> Personality {
     let mut components = ComponentConfig::default();
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "history-appender".to_string(),
         kind: STATE_HISTORY_WRITER_KIND.to_string(),
         params: serde_json::Value::Null,
@@ -138,7 +138,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         tags: vec![STAGE_PERCEIVE.to_string()],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "context".to_string(),
         kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,
@@ -146,7 +146,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "context-appender".to_string(),
         kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
         params: serde_json::Value::Null,
@@ -154,7 +154,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         tags: vec![STAGE_PERCEIVE.to_string()],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "system-prompt".to_string(),
         kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
         params: json!({ "prompt": system_prompt }),
@@ -162,7 +162,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "echo-tool".to_string(),
         kind: ECHO_TOOL_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,
@@ -170,7 +170,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "calculator-tool".to_string(),
         kind: CALCULATOR_TOOL_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,
@@ -178,7 +178,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     });
-    components.component_nodes.push(ComponentNodeConfig {
+    components.component_nodes.push(ComponentDescriptor {
         id: "stop-tool".to_string(),
         kind: STOP_TOOL_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,

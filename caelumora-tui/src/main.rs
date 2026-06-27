@@ -1,6 +1,6 @@
 use caelumora_model::agent::Personality;
 use caelumora_model::agent::PersonalityId;
-use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentNodeConfig, STAGE_PERCEIVE};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::security::SecurityContext;
@@ -38,7 +38,7 @@ fn init_logging() {
 fn create_component_config(system_prompt: &str) -> ComponentConfig {
     ComponentConfig {
         component_nodes: vec![
-            ComponentNodeConfig {
+            ComponentDescriptor {
                 id: "system-prompt".to_string(),
                 kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
                 params: serde_json::json!({
@@ -48,7 +48,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
                 tags: Vec::new(),
                 fail_policy: ComponentFailPolicy::FailOpen,
             },
-            ComponentNodeConfig {
+            ComponentDescriptor {
                 id: "history-appender".to_string(),
                 kind: STATE_HISTORY_WRITER_KIND.to_string(),
                 params: serde_json::Value::Null,
@@ -56,7 +56,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
                 tags: vec![STAGE_PERCEIVE.to_string()],
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
-            ComponentNodeConfig {
+            ComponentDescriptor {
                 id: "context-appender".to_string(),
                 kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
                 params: serde_json::Value::Null,
@@ -64,7 +64,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
                 tags: vec![STAGE_PERCEIVE.to_string()],
                 fail_policy: ComponentFailPolicy::FailClosed,
             },
-            ComponentNodeConfig {
+            ComponentDescriptor {
                 id: "context".to_string(),
                 kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
                 params: serde_json::Value::Null,

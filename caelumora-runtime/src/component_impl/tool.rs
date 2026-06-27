@@ -152,7 +152,7 @@ mod tests {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ECHO_TOOL_PROVIDER_KIND,
-        Arc::new(|_descriptor| {
+        Box::new(|_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(EchoToolProvider));
             Ok(facets)
@@ -160,7 +160,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     );
     registry.register(
         CALCULATOR_TOOL_PROVIDER_KIND,
-        Arc::new(|_descriptor| {
+        Box::new(|_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider));
             Ok(facets)
@@ -168,7 +168,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     );
     registry.register(
         STOP_TOOL_PROVIDER_KIND,
-        Arc::new(|_descriptor| {
+        Box::new(|_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider));
             Ok(facets)

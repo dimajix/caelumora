@@ -1,5 +1,6 @@
-use crate::component::{ComponentFacets, ComponentRegistry, TurnContext};
+use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
+use crate::message::TurnContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::AgentChannelState;
@@ -85,7 +86,7 @@ impl ContextProvider for StateContextProvider {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         STATE_CONTEXT_APPENDER_KIND,
-        Arc::new(|_descriptor| {
+        Box::new(|_descriptor, _context| {
             let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateContextAppender { }));
             Ok(capabilities)
@@ -94,8 +95,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 
     registry.register(
         STATE_CONTEXT_PROVIDER_KIND,
-        Arc::new(|descriptor| {
-            let prompt_providers = descriptor.deps.values()
+        Box::new(|_descriptor, context| {
+            let prompt_providers = context.deps.values()
                 .filter_map(|facets| facets.get::<dyn SystemPromptProvider>())
                 .collect();
 
@@ -109,7 +110,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 
     registry.register(
         STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
-        Arc::new(|descriptor| {
+        Box::new(|descriptor, _context| {
             let prompt = descriptor.params.get("prompt")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())

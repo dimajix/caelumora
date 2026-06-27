@@ -58,7 +58,7 @@ impl AgentActor {
         for event in buffer.iter_mut() {
             match &mut event.event {
                 ActorEvent::FullResponseGenerated(m) => {
-                    self.send_messages(m, &last_context, &last_security).await;
+                    self.send_messages(m, &last_security).await;
                 }
                 ActorEvent::ResponseRequested => {
                     response_requested = true;
@@ -80,7 +80,7 @@ impl AgentActor {
         }
     }
 
-    async fn send_messages(&self, messages:&mut Vec<Message>, _event_context: &EventContext, event_security: &SecurityContext) {
+    async fn send_messages(&self, messages:&mut Vec<Message>, event_security: &SecurityContext) {
         self.agent.send_messages(mem::take(messages), event_security).await;
     }
 

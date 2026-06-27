@@ -46,7 +46,7 @@ pub enum ExecutionStatus {
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
     async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult>;
-    fn tool_providers(&self) -> Vec<Arc<dyn ToolProvider>>;
+    fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
 }
 
@@ -121,7 +121,7 @@ impl ToolExecutor for DefaultToolExecutor {
         Err(anyhow::anyhow!("Tool not found: {}", tool_name))
     }
 
-    fn tool_providers(&self) -> Vec<Arc<dyn ToolProvider>> {
+    fn providers(&self) -> Vec<Arc<dyn ToolProvider>> {
         self.tool_providers.clone()
     }
 

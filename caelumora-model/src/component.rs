@@ -9,7 +9,7 @@ pub const STAGE_EMIT: &str = "emit";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentConfig {
     #[serde(default)]
-    pub component_nodes: Vec<ComponentNodeConfig>,
+    pub component_nodes: Vec<ComponentDescriptor>,
 }
 
 impl Default for ComponentConfig {
@@ -21,7 +21,7 @@ impl Default for ComponentConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComponentNodeConfig {
+pub struct ComponentDescriptor {
     pub id: String,
     pub kind: String,
     #[serde(default)]

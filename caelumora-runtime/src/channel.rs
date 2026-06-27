@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{ActorId, Message, MessageRole};
+use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use log::{debug, info, warn};
