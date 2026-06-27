@@ -125,12 +125,12 @@ pub fn format_conversation(messages:&[Message]) -> String {
         .unwrap_or(String::new())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextEntry {
     pub message: Message,
     pub digest: String
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageContext {
     messages: Vec<ContextEntry>
 }
@@ -173,13 +173,13 @@ impl MessageContext {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HistoryEntry {
     pub message: Message,
     pub context: String,
     pub digest: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageHistory {
     messages: Vec<HistoryEntry>
 }

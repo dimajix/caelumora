@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use caelumora_model::agent::{AgentChannelState, AgentState};
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
 use futures::stream::BoxStream;
@@ -6,14 +7,26 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-
-#[derive(Debug, Default, Clone)]
-pub struct TurnContext {
+#[derive(Debug)]
+pub struct TurnContext<'a> {
     pub scratch: HashMap<String, Value>,
     pub context: Vec<Message>,
-    pub messages: Vec<Message>
+    pub messages: Vec<Message>,
+    pub agent_state: &'a mut AgentState,
+    pub agent_channel_state: &'a mut AgentChannelState,
 }
 
+impl<'a> TurnContext<'a> {
+    pub fn new( agent_state: &'a mut AgentState, agent_channel_state: &'a mut AgentChannelState) -> Self {
+        Self {
+            scratch: Default::default(),
+            context: vec![],
+            messages: vec![],
+            agent_state,
+            agent_channel_state,
+        }
+    }
+}
 
 #[async_trait]
 pub trait MessageFilter: Send + Sync {

@@ -156,21 +156,12 @@ impl Agent {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentChannelState {
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub context: MessageContext,
-}
-
-impl Default for AgentChannelState {
-    fn default() -> Self {
-        Self {
-            history: MessageHistory::new(),
-            context: MessageContext::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

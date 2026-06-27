@@ -3,7 +3,6 @@ use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
 use crate::message::TurnContext;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::agent::AgentChannelState;
 use caelumora_model::message::Message;
 use caelumora_model::message::MessageRole;
 use std::sync::Arc;
@@ -19,7 +18,7 @@ pub trait SystemPromptProvider: Send + Sync + std::fmt::Debug {
 
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
-    async fn current_context(&self, state: &AgentChannelState) -> Result<Vec<Message>>;
+    async fn current_context(&self, state: &mut TurnContext) -> Result<Vec<Message>>;
 }
 
 #[derive(Debug)]
@@ -32,8 +31,8 @@ impl MessageProcessor for StateContextAppender {
         STATE_CONTEXT_APPENDER_KIND
     }
 
-    async fn process_messages(&self, input: Vec<Message>, state: &mut AgentChannelState, _context: &mut TurnContext) -> Result<Vec<Message>> {
-        state.context.extend(input.clone());
+    async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>> {
+        context.agent_channel_state.context.extend(input.clone());
         Ok(input)
     }
 }
@@ -59,7 +58,7 @@ pub struct StateContextProvider {
 
 #[async_trait]
 impl ContextProvider for StateContextProvider {
-    async fn current_context(&self, state: &AgentChannelState) -> Result<Vec<Message>> {
+    async fn current_context(&self, state: &mut TurnContext) -> Result<Vec<Message>> {
         let mut full_context = Vec::new();
 
         // 1. Assemble System Prompt from all providers
@@ -77,7 +76,8 @@ impl ContextProvider for StateContextProvider {
         }
 
         // 2. Append history/compacted messages from state
-        full_context.extend(state.context.messages());
+        full_context.extend(state.agent_channel_state.context.messages());
+        state.context = full_context.clone();
 
         Ok(full_context)
     }

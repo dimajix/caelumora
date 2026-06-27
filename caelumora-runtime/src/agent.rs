@@ -25,14 +25,48 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+
 #[derive(Debug)]
 struct AgentLoopState {
+    agent_channel_state: AgentChannelState,
+    agent_state: AgentState,
+}
+impl AgentLoopState {
+    async fn new(session_id: SessionId,
+                 channel_id: ChannelId,
+                 agent_controller: Arc<AgentController>,
+                 runtime_manager: Arc<RuntimeManager>,
+    ) -> Result<Self> {
+        let store = runtime_manager.state_store();
+        let agent_id = agent_controller.id();
+        let agent_channel_state = store.get_agent_channel_state(agent_id, channel_id).await?;
+        let agent_state = store.get_agent_state(agent_id).await?;
+
+        Ok(Self {
+            agent_channel_state,
+            agent_state,
+        })
+    }
+
+    fn new_turn_context(&mut self) -> TurnContext {
+        let mut turn_context = TurnContext {
+            scratch: Default::default(),
+            context: vec![],
+            messages: vec![],
+            agent_state: &mut self.agent_state,
+            agent_channel_state: &mut self.agent_channel_state,
+        };
+        turn_context
+    }
+}
+
+
+#[derive(Debug)]
+struct AgentLoopImpl {
     agent: Arc<AgentController>,
     session_id: SessionId,
     channel_id: ChannelId,
     agent_id: AgentId,
-    agent_channel_state: AgentChannelState,
-    agent_state: AgentState,
     runtime_manager: Arc<RuntimeManager>,
     state_store: Arc<dyn StateStore>,
     context_provider: Arc<dyn ContextProvider>,
@@ -41,17 +75,14 @@ struct AgentLoopState {
     plan_pre_processors: Vec<ComponentImpl<dyn PlanPreProcessor>>,
     tool_executor: Box<dyn ToolExecutor>,
 }
-impl AgentLoopState {
+impl AgentLoopImpl {
     async fn new(session_id: SessionId,
                  channel_id: ChannelId,
             agent_controller: Arc<AgentController>,
            runtime_manager: Arc<RuntimeManager>,
            pipeline_config: ComponentConfig,
     ) -> Result<Self> {
-        let store = runtime_manager.state_store();
         let agent_id = agent_controller.id();
-        let agent_channel_state = store.get_agent_channel_state(agent_id, channel_id).await?;
-        let agent_state = store.get_agent_state(agent_id).await?;
         let components = ComponentContainer::from_config(
             &pipeline_config,
             runtime_manager.component_registry().as_ref()
@@ -75,8 +106,6 @@ impl AgentLoopState {
             session_id,
             channel_id,
             agent_id,
-            agent_channel_state,
-            agent_state,
             runtime_manager: runtime_manager.clone(),
             state_store: runtime_manager.state_store(),
             context_provider,
@@ -87,9 +116,9 @@ impl AgentLoopState {
         })
     }
 
-    async fn perceive(&mut self, messages: Vec<Message>, turn_context: &mut TurnContext) -> () {
+    async fn perceive<'a>(&self, messages: Vec<Message>, turn_context: &mut TurnContext<'a>) -> () {
         let original_messages = messages.clone();
-        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, &mut self.agent_channel_state, turn_context)
+        let perceived = Self::apply_stage_processors(&self.perceive_in_processors, messages, turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PerceiveIn stage failed: {}", e);
@@ -98,16 +127,18 @@ impl AgentLoopState {
 
         let _ = perceived;
 
-        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &self.agent_channel_state).await {
+        let agent_channel_state = &mut turn_context.agent_channel_state;
+        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, agent_channel_state).await {
             warn!("Cannot store channel state of agent {} after perceive", self.agent_id)
         }
-        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, &self.agent_state).await {
+        let agent_state = &mut turn_context.agent_state;
+        if let Err(_e) = self.state_store.put_agent_state(self.agent_id, agent_state).await {
             warn!("Cannot store state of agent {} after perceive", self.agent_id)
         }
     }
 
-    async fn respond_complete(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_channel_state, turn_context)
+    async fn respond_complete<'a>(&self, message: Message, turn_context: &mut TurnContext<'a>) -> Option<Message> {
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -117,23 +148,25 @@ impl AgentLoopState {
         let msg = output.remove(0);
         turn_context.messages.push(msg.clone());
 
-        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &self.agent_channel_state).await {
+        let agent_channel_state = &mut turn_context.agent_channel_state;
+        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, agent_channel_state).await {
             warn!("Cannot store channel state of agent {} after respond_complete", self.agent_id)
         }
         Some(msg)
     }
 
-    async fn reflect(&mut self, turn_context: &mut TurnContext) -> () {
-        self.agent_channel_state.context.extend(turn_context.messages.clone());
-        self.agent_channel_state.history.extend(turn_context.messages.clone());
+    async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) -> () {
+        let agent_channel_state = &mut turn_context.agent_channel_state;
+        agent_channel_state.context.extend(turn_context.messages.clone());
+        agent_channel_state.history.extend(turn_context.messages.clone());
 
-        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &self.agent_channel_state).await {
+        if let Err(_e) = self.state_store.put_agent_channel_state(self.agent_id, self.channel_id, &agent_channel_state).await {
             warn!("Cannot store channel state of agent {} after reflect", self.agent_id)
         }
     }
 
-    async fn respond_partial(&mut self, message: Message, turn_context: &mut TurnContext) -> Option<Message> {
-        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], &mut self.agent_channel_state, turn_context)
+    async fn respond_partial<'a>(&self, message: Message, turn_context: &mut TurnContext<'a>) -> Option<Message> {
+        let mut output = Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn_context)
             .await
             .ok()?;
         if output.is_empty() {
@@ -142,17 +175,15 @@ impl AgentLoopState {
         Some(output.remove(0))
     }
 
-    async fn plan_init(&mut self) -> TurnContext {
-        let mut turn_context = TurnContext::default();
+    async fn next_turn<'a>(&self, turn_context: &mut TurnContext<'a>) -> () {
         let context = self
             .context_provider
-            .current_context(&self.agent_channel_state)
-            .await
+            .current_context(turn_context).await
             .unwrap_or_else(|e| {
                 warn!("Failed to read context from provider: {}", e);
                 Vec::new()
             });
-        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), &mut self.agent_channel_state, &mut turn_context)
+        let context = Self::apply_stage_processors(&self.plan_pre_processors, context.clone(), turn_context)
             .await
             .unwrap_or_else(|e| {
                 warn!("PlanPre stage failed: {}", e);
@@ -164,10 +195,9 @@ impl AgentLoopState {
         //}
 
         turn_context.context = context;
-        turn_context
     }
 
-    async fn plan_next(&mut self, turn_context: &mut TurnContext) -> BoxStream<'static, Result<MessageEvent>> {
+    async fn plan<'a>(&self, turn_context: &mut TurnContext<'a>) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
 
         let mut context = turn_context.context.clone();
@@ -176,7 +206,7 @@ impl AgentLoopState {
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute(&self, tool_calls:Vec<ToolCall>, turn_context: &mut TurnContext, security_context: &SecurityContext) -> Option<Message> {
+    async fn execute<'a>(&self, tool_calls:Vec<ToolCall>, turn_context: &mut TurnContext<'a>, security_context: &SecurityContext) -> Option<Message> {
         // Execute all tools
         let mut tool_results = Vec::new();
         for c in tool_calls {
@@ -221,18 +251,17 @@ impl AgentLoopState {
         }
     }
 
-    async fn apply_stage_processors<T>(
+    async fn apply_stage_processors<'a, T>(
         processors: &[ComponentImpl<T>],
         mut input: Vec<Message>,
-        state: &mut AgentChannelState,
-        context: &mut TurnContext,
+        context: &mut TurnContext<'a>,
     ) -> Result<Vec<Message>>
     where
         T: MessageProcessor + ?Sized + Send + Sync,
     {
         for stage_processor in processors {
             let current = std::mem::take(&mut input);
-            match stage_processor.facet.process_messages(current, state, context).await {
+            match stage_processor.facet.process_messages(current, context).await {
                 Ok(output) => {
                     input = output;
                 }
@@ -257,7 +286,8 @@ impl AgentLoopState {
 #[derive(Debug)]
 pub struct AgentLoop {
     id: ActorId,
-    state: Arc<Mutex<AgentLoopState>>,
+    agent_impl: Arc<AgentLoopImpl>,
+    agent_state: Arc<Mutex<AgentLoopState>>,
     security_context: SecurityContext,
     agent_controller: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
@@ -277,16 +307,23 @@ impl AgentLoop {
         let personality = runtime_manager.entity_store().get_personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
         let agent_controller = runtime_manager.controller_manager().new_agent_controller(channel.session_id, agent).await;
-        let state = AgentLoopState::new(
+        let agent_impl = AgentLoopImpl::new(
             channel.session_id,
             channel.id,
             agent_controller.clone(),
             runtime_manager.clone(),
             personality.components
         ).await?;
+        let agent_state = AgentLoopState::new(
+            channel.session_id,
+            channel.id,
+            agent_controller.clone(),
+            runtime_manager.clone(),
+        ).await?;
         Ok(Self {
             id: ActorId::Agent(agent_id),
-            state: Arc::new(Mutex::new(state)),
+            agent_impl: Arc::new(agent_impl),
+            agent_state: Arc::new(Mutex::new(agent_state)),
             security_context,
             agent_controller,
             runtime_manager,
@@ -324,13 +361,14 @@ impl AgentLoop {
     }
 
     pub async fn send_messages(&self, messages: Vec<Message>, _security_context: &SecurityContext) {
-        let mut turn_context = TurnContext::default();
-        let mut state = self.state.lock().await;
-        state.perceive(messages, &mut turn_context).await
+        let mut agent_state = self.agent_state.lock().await;
+        let mut turn_context = agent_state.new_turn_context();
+        self.agent_impl.perceive(messages, &mut turn_context).await
     }
 
     pub async fn request_response(&self, security_context: &SecurityContext) -> BoxStream<'static, Result<MessageEvent>> {
-        let state_arc = self.state.clone();
+        let agent_impl = self.agent_impl.clone();
+        let agent_state_arc = self.agent_state.clone();
         let agent_id = self.id;
         let agent_name = self.name();
         let max_iterations = self.max_iterations;
@@ -346,9 +384,11 @@ impl AgentLoop {
 
         let stream = stream! {
             processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
-            let mut state = state_arc.lock().await;
+            let mut agent_state = agent_state_arc.lock().await;
+            let mut turn_context = agent_state.new_turn_context();
+            agent_impl.next_turn(&mut turn_context).await;
+
             let mut loop_count = 0;
-            let mut turn_context = state.plan_init().await;
 
             'steps: while loop_count < max_iterations {
                 loop_count += 1;
@@ -356,7 +396,7 @@ impl AgentLoop {
                 // --- PHASE 2: PLAN ---
                 // Call LLM with the current context
                 // The LLM returns a stream of tokens or structured parts
-                let mut response = state.plan_next(&mut turn_context).await;
+                let mut response = agent_impl.plan(&mut turn_context).await;
                 while let Some(event) = response.try_next().await? {
                     // Check for cancellation
                     if ProcessingState::from(processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling {
@@ -367,7 +407,7 @@ impl AgentLoop {
                         MessageEvent::Partial(mut message) => {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
-                            if let Some(msg) = state.respond_partial(message, &mut turn_context).await {
+                            if let Some(msg) = agent_impl.respond_partial(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Partial(msg));
                             }
                         },
@@ -375,10 +415,10 @@ impl AgentLoop {
                             message.sender_name = agent_name.clone();
                             message.sender_id = agent_id;
                             let tool_calls = message.tool_calls.clone();
-                            if let Some(msg) = state.respond_complete(message, &mut turn_context).await {
+                            if let Some(msg) = agent_impl.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
-                            if let Some(msg) = state.execute(tool_calls, &mut turn_context, &security_context).await {
+                            if let Some(msg) = agent_impl.execute(tool_calls, &mut turn_context, &security_context).await {
                                 yield Ok(MessageEvent::Complete(msg.clone()));
 
                                 if msg.tool_results.iter().any(|r| r.tool_name == "stop" || r.tool_name == "bye") {
@@ -403,7 +443,7 @@ impl AgentLoop {
 
             // --- PHASE 4: REFLECT ---
             // After the loop or if we have enough context, perform a final reflection
-            state.reflect(&mut turn_context).await;
+            agent_impl.reflect(&mut turn_context).await;
 
             let current_state = ProcessingState::from(processing_state.load(Ordering::SeqCst));
             if current_state != ProcessingState::Stopped && current_state != ProcessingState::Cancelling {
@@ -440,34 +480,38 @@ mod tests {
 
     #[tokio::test]
     async fn state_history_writer_is_passthrough_and_persists_history() {
-        let mut state = AgentChannelState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let mut turn_context = TurnContext::new(&mut agent_state, &mut agent_channel_state);
         let processor = StateHistoryWriter {
         };
         let input = vec![make_message("hello")];
 
         let output = processor
-            .process_messages(input.clone(), &mut state, &mut TurnContext::default())
+            .process_messages(input.clone(), &mut turn_context)
             .await
             .expect("history processor should succeed");
 
         assert_eq!(output.len(), input.len());
         assert_eq!(output[0].id, input[0].id);
 
-        let history = state.history.messages();
+        let history = agent_channel_state.history.messages();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, input[0].id);
     }
 
     #[tokio::test]
     async fn state_context_appender_is_passthrough_and_updates_provider_context() {
-        let mut state = AgentChannelState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let mut turn_context = TurnContext::new(&mut agent_state, &mut agent_channel_state);
         let appender = StateContextAppender {
         };
         let provider = StateContextProvider { prompt_providers: vec![] };
         let input = vec![make_message("ctx")];
 
         let output = appender
-            .process_messages(input.clone(), &mut state, &mut TurnContext::default())
+            .process_messages(input.clone(), &mut turn_context)
             .await
             .expect("context appender should succeed");
 
@@ -475,7 +519,7 @@ mod tests {
         assert_eq!(output[0].id, input[0].id);
 
         let context = provider
-            .current_context(&state)
+            .current_context(&mut turn_context)
             .await
             .expect("context provider should succeed");
         assert_eq!(context.len(), 1);
