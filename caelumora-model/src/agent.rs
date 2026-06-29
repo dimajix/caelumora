@@ -2,7 +2,7 @@ use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{ActorId, MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
-use crate::security::SecurityContext;
+use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
 use crate::store::EntityStore;
 use arc_swap::ArcSwap;
@@ -161,13 +161,17 @@ pub struct Agent {
     pub id: AgentId,
     pub metadata: Metadata,
     pub personality_id: PersonalityId,
-    pub security: SecurityContext,
+    pub security_attributes: SecurityAttributes,
+    pub security_context: SecurityContext,
 }
 
 impl Agent {
-    pub fn new(name:String, scope:Scope, personality: &Personality, mut security: SecurityContext) -> Self {
+    pub fn new(name:String, scope:Scope, personality: &Personality, mut security_context: SecurityContext) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
-        security.sender_id = ActorId::Agent(agent_id);
+        security_context.caller_id = ActorId::Agent(agent_id);
+        let security_attributes = SecurityAttributes {
+            owner_id: ActorId::Agent(agent_id),
+        };
         Agent {
             id: agent_id,
             personality_id: personality.id,
@@ -177,7 +181,8 @@ impl Agent {
                 description: personality.metadata.description.clone(),
                 ..Metadata::default()
             },
-            security,
+            security_attributes,
+            security_context,
         }
     }
 }

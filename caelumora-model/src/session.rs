@@ -1,7 +1,7 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::meta::Metadata;
-use crate::security::SecurityContext;
+use crate::security::{SecurityAttributes, SecurityContext};
 use crate::store::EntityStore;
 use crate::user::UserId;
 use arc_swap::ArcSwap;
@@ -113,7 +113,7 @@ pub struct Session {
     pub channels: Vec<Channel>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub security: SecurityContext,
+    pub security_attributes: SecurityAttributes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

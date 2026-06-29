@@ -26,8 +26,8 @@ pub struct AgentActor {
 
 impl AgentActor {
     pub async fn new(channel: &Channel, mut agent:Agent, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
-        agent.security.session_id = channel.session_id;
-        agent.security.channel_id = channel.id;
+        agent.security_context.session_id = channel.session_id;
+        agent.security_context.channel_id = channel.id;
         let agent_id = agent.id;
         let l = AgentLoop::new(channel, agent, runtime_manager.clone()).await?;
         Ok(AgentActor {

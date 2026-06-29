@@ -295,9 +295,9 @@ impl AgentLoop {
         mut agent: Agent,
         runtime_manager: Arc<RuntimeManager>
     ) -> Result<Self> {
-        agent.security.session_id = channel.session_id;
-        agent.security.channel_id = channel.id;
-        let security_context = agent.security.clone();
+        agent.security_context.session_id = channel.session_id;
+        agent.security_context.channel_id = channel.id;
+        let security_context = agent.security_context.clone();
         let personality = runtime_manager.entity_store().get_personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
         let agent_controller = runtime_manager.controller_manager().new_agent_controller(channel.session_id, agent).await;

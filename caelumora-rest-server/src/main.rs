@@ -1,12 +1,15 @@
-use std::sync::Arc;
-use dashmap::DashMap;
-use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use clap::Parser;
-
-use caelumora_model::config::{AppConfig};
+use caelumora_model::channel::ChannelId;
+use caelumora_model::config::AppConfig;
+use caelumora_model::message::ActorId;
+use caelumora_model::security::SecurityContext;
+use caelumora_model::session::SessionId;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
+use clap::Parser;
+use dashmap::DashMap;
+use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod data;
 mod models;
@@ -59,12 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     setup_initial_data(&entity_store, &args.user).await?;
 
-    let security_ctx = caelumora_model::security::SecurityContext {
-        initiator_id: caelumora_model::message::ActorId::None,
-        sender_id: caelumora_model::message::ActorId::None,
-        session_id: caelumora_model::session::SessionId::default(),
-        channel_id: caelumora_model::channel::ChannelId::default(),
-    };
+    let security_ctx = SecurityContext::new(ActorId::None, SessionId::default(), ChannelId::default());
     let user = entity_store.find_user_by_name(&security_ctx, &args.user).await?;
 
     let state = Arc::new(AppState {

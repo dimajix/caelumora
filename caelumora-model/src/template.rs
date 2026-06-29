@@ -8,6 +8,8 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::message::ActorId;
+use crate::security::SecurityAttributes;
 use crate::user::UserId;
 use std::collections::HashMap;
 
@@ -70,12 +72,16 @@ impl ChannelTemplate {
             participants.push(participant);
         }
 
+        let security_attributes = SecurityAttributes {
+            owner_id: ActorId::User(context.owner)
+        };
+
         Ok(Channel::new(
             context.id,
             self.name.clone(),
             self.moderator.clone(),
             participants,
-            context.security.clone(),
+            security_attributes
         ))
     }
 }
@@ -108,6 +114,10 @@ impl SessionTemplate {
             channels.push(channel.instantiate(context, &participants).await?)
         }
 
+        let security_attributes = SecurityAttributes {
+            owner_id: ActorId::User(context.owner)
+        };
+
         let session = Session {
             id: context.id,
             metadata: Metadata {
@@ -121,7 +131,7 @@ impl SessionTemplate {
             channels,
             created_at: now,
             updated_at: now,
-            security: context.security.clone(),
+            security_attributes,
         };
         context.entity_store.create_session(&context.security, &session).await?;
         Ok(session)

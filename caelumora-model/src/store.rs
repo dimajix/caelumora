@@ -81,7 +81,7 @@ pub trait StateStore : Debug + Sync + Send {
 pub mod tests {
     use super::*;
     use crate::meta::Metadata;
-    use crate::security::SecurityContext;
+    use crate::security::{SecurityAttributes, SecurityContext};
     use crate::session::Participant;
     use crate::store_impl::memory::MemoryStore;
     use crate::user::UserId;
@@ -208,7 +208,7 @@ pub mod tests {
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security: SecurityContext::default(),
+            security_attributes: SecurityAttributes::default(),
         };
         let store = Arc::new(MemoryStore::new());
 
@@ -232,7 +232,7 @@ pub mod tests {
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security: SecurityContext::default(),
+            security_attributes: SecurityAttributes::default(),
         };
         let session2 = Session {
             id: SessionId(Uuid::new_v4()),
@@ -245,7 +245,7 @@ pub mod tests {
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            security: SecurityContext::default(),
+            security_attributes: SecurityAttributes::default(),
         };
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();

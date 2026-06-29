@@ -23,27 +23,46 @@ pub enum ActionType<'a> {
     CreateAgent(&'a Agent),
     GetAgent(AgentId),
     FindAgent,
-    UpdateAgent(AgentId),
+    UpdateAgent(&'a Agent),
     CreateSession(&'a Session),
     GetSession(SessionId),
-    UpdateSession(SessionId),
+    UpdateSession(&'a Session),
     ListSessions,
     CallTool(&'a ToolCall),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SecurityAttributes {
+    pub owner_id: ActorId,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityContext {
     pub initiator_id: ActorId,
-    pub sender_id: ActorId,
+    pub caller_id: ActorId,
+    pub delegation_ids: Vec<ActorId>,
     pub session_id: SessionId,
     pub channel_id: ChannelId
 }
 
 impl SecurityContext {
-    pub fn next(&self, sender_id: ActorId) -> Self {
+    pub fn new(initiator: ActorId, session_id: SessionId, channel_id: ChannelId) -> Self {
+        Self {
+            initiator_id: initiator,
+            caller_id: initiator,
+            delegation_ids: vec![initiator],
+            session_id,
+            channel_id
+        }
+    }
+    pub fn next(&self, caller_id: ActorId) -> Self {
+        let mut delegation_ids = self.delegation_ids.clone();
+        delegation_ids.push(caller_id);
+
         Self {
             initiator_id: self.initiator_id,
-            sender_id,
+            caller_id,
+            delegation_ids,
             session_id: self.session_id,
             channel_id: self.channel_id
         }

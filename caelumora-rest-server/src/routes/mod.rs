@@ -1,11 +1,14 @@
-use std::sync::Arc;
+use crate::state::AppState;
 use axum::{
     http::StatusCode,
     routing::{delete, get, post},
     Router,
 };
+use caelumora_model::channel::ChannelId;
+use caelumora_model::message::ActorId;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use crate::state::AppState;
+use std::sync::Arc;
 
 mod channels;
 mod events;
@@ -20,10 +23,12 @@ pub async fn ensure_session(
         return Ok(session_loop);
     }
 
+    let security_context = SecurityContext::new(ActorId::User(state.user_id), SessionId::default(), ChannelId::default());
+
     // Try to load the session
     let session_loop = state
         .session_manager
-        .load_session(session_id)
+        .load_session(session_id, &security_context)
         .await
         .map_err(|e| {
             tracing::error!("Failed to load session {}: {}", session_id, e);

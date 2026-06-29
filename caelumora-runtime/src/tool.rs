@@ -77,7 +77,7 @@ impl ToolExecutor for DefaultToolExecutor {
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
             call.function_name,
             security.initiator_id,
-            security.sender_id,
+            security.caller_id,
             security.session_id,
             security.channel_id
         );
@@ -85,7 +85,7 @@ impl ToolExecutor for DefaultToolExecutor {
         let mut _execution = ToolExecution {
             id: Uuid::new_v4(),
             session_id: security.session_id,
-            agent_id: security.sender_id.as_agent_id().unwrap(),
+            agent_id: security.caller_id.as_agent_id().unwrap(),
             status: ExecutionStatus::PendingApproval,
             started_at: Utc::now(),
             finished_at: None,

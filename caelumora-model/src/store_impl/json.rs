@@ -374,7 +374,7 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::UpdateAgent(value.id)).await {
+        if !self.security_manager.check(ctx, ActionType::UpdateAgent(value)).await {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.agent_path(value.id);
@@ -426,7 +426,7 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::UpdateSession(value.id)).await {
+        if !self.security_manager.check(ctx, ActionType::UpdateSession(value)).await {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.session_path(value.id);
@@ -604,6 +604,7 @@ impl StateStore for JsonFileStore {
 mod tests {
     use super::*;
     use crate::meta::{Metadata, Scope};
+    use crate::security::SecurityAttributes;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
     use tempfile::tempdir;
     use uuid::Uuid;
@@ -775,29 +776,29 @@ mod tests {
 
         let s1 = Session {
             id: SessionId(Uuid::new_v4()),
-            metadata: crate::meta::Metadata {
+            metadata: Metadata {
                 name: "session-1".to_string(),
                 scope: Scope::GlobalScope,
-                ..crate::meta::Metadata::default()
+                ..Metadata::default()
             },
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security: SecurityContext::default(),
+            security_attributes: SecurityAttributes::default(),
         };
         let s2 = Session {
             id: SessionId(Uuid::new_v4()),
-            metadata: crate::meta::Metadata {
+            metadata: Metadata {
                 name: "session-2".to_string(),
                 scope: Scope::GlobalScope,
-                ..crate::meta::Metadata::default()
+                ..Metadata::default()
             },
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security: SecurityContext::default(),
+            security_attributes: SecurityAttributes::default(),
         };
 
         store.create_session(&ctx, &s1).await.unwrap();
@@ -818,16 +819,16 @@ mod tests {
 
         let s1 = Session {
             id: SessionId(Uuid::new_v4()),
-            metadata: crate::meta::Metadata {
+            metadata: Metadata {
                 name: "session-1".to_string(),
                 scope: Scope::GlobalScope,
-                ..crate::meta::Metadata::default()
+                ..Metadata::default()
             },
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            security: SecurityContext::default(),
+            security_attributes: SecurityAttributes::default(),
         };
         store.create_session(&ctx, &s1).await.unwrap();
 
