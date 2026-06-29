@@ -1,11 +1,14 @@
 use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::message::TurnContext;
 use crate::tool::ToolProvider;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::agent::ProcessingState;
 use caelumora_model::tool::{Tool, ToolParameters};
+use log::info;
 use serde_json::Value;
 use std::fmt::Debug;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub const ECHO_TOOL_PROVIDER_KIND: &str = "echo_tool";
@@ -34,7 +37,9 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, _name: &str, _params: Value, _security: &SecurityContext) -> Result<Value> {
+    async fn execute(&self, _name: &str, _params: Value, context: &TurnContext) -> Result<Value> {
+        info!("Stopping agent {} {}", context.agent_id, context.agent_name);
+        context.agent_channel_state.processing_state.store(ProcessingState::Stopped.into(), Ordering::SeqCst);
         Ok(serde_json::json!({ "status": "stopped" }))
     }
 }
@@ -55,7 +60,7 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: Value, _security: &SecurityContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: Value, _context: &TurnContext) -> Result<Value> {
         if name == "echo" {
             Ok(params)
         } else {
@@ -80,7 +85,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: Value, _security: &SecurityContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: Value, _context: &TurnContext) -> Result<Value> {
         if name == "calculate" {
             let expression = params["expression"]
                 .as_str()
@@ -99,13 +104,17 @@ impl ToolProvider for CalculatorToolProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::TurnContext;
+    use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
     use caelumora_model::security::SecurityContext;
     use serde_json::json;
 
     #[tokio::test]
     async fn test_calculator_tool() {
         let provider = CalculatorToolProvider;
-        let security = SecurityContext::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -118,7 +127,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute("calculate", params, &security).await.unwrap();
+            let result = provider.execute("calculate", params, &turn_context).await.unwrap();
             let val = result.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
@@ -127,19 +136,23 @@ mod tests {
     #[tokio::test]
     async fn test_calculator_tool_invalid_expression() {
         let provider = CalculatorToolProvider;
-        let security = SecurityContext::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute("calculate", params, &security).await;
+        let result = provider.execute("calculate", params, &turn_context).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_stop_tool() {
         let provider = StopToolProvider;
-        let security = SecurityContext::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
 
-        let result = provider.execute("stop", json!({}), &security).await.unwrap();
+        let result = provider.execute("stop", json!({}), &turn_context).await.unwrap();
         assert_eq!(result["status"], "stopped");
 
         let tools = provider.tools();

@@ -18,7 +18,7 @@ pub trait SystemPromptProvider: Send + Sync + std::fmt::Debug {
 
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
-    async fn current_context(&self, state: &mut TurnContext) -> Result<Vec<Message>>;
+    async fn current_context(&self, state: &mut TurnContext) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -58,7 +58,7 @@ pub struct StateContextProvider {
 
 #[async_trait]
 impl ContextProvider for StateContextProvider {
-    async fn current_context(&self, state: &mut TurnContext) -> Result<Vec<Message>> {
+    async fn current_context(&self, state: &mut TurnContext) -> Result<()> {
         let mut full_context = Vec::new();
 
         // 1. Assemble System Prompt from all providers
@@ -77,9 +77,9 @@ impl ContextProvider for StateContextProvider {
 
         // 2. Append history/compacted messages from state
         full_context.extend(state.agent_channel_state.context.messages());
-        state.context = full_context.clone();
+        state.context = full_context;
 
-        Ok(full_context)
+        Ok(())
     }
 }
 

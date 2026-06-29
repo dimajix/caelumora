@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentChannelState, AgentState};
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
 use futures::stream::BoxStream;
@@ -12,16 +12,22 @@ pub struct TurnContext<'a> {
     pub scratch: HashMap<String, Value>,
     pub context: Vec<Message>,
     pub messages: Vec<Message>,
+    pub security_context: SecurityContext,
+    pub agent_id: AgentId,
+    pub agent_name: String,
     pub agent_state: &'a mut AgentState,
     pub agent_channel_state: &'a mut AgentChannelState,
 }
 
 impl<'a> TurnContext<'a> {
-    pub fn new( agent_state: &'a mut AgentState, agent_channel_state: &'a mut AgentChannelState) -> Self {
+    pub fn new(agent_id: AgentId, agent_name:String, agent_state: &'a mut AgentState, agent_channel_state: &'a mut AgentChannelState, security_context: SecurityContext) -> Self {
         Self {
             scratch: Default::default(),
             context: vec![],
             messages: vec![],
+            security_context,
+            agent_id,
+            agent_name,
             agent_state,
             agent_channel_state,
         }

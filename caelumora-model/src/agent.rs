@@ -7,6 +7,8 @@ use crate::session::SessionId;
 use crate::store::EntityStore;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
+use serde::{Deserializer, Serializer};
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -91,18 +93,13 @@ pub struct Personality {
     pub components: ComponentConfig,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProcessingState {
+    #[default]
     Idle,
     Active,
     Cancelling,
     Stopped,
-}
-
-impl Default for ProcessingState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl From<u8> for ProcessingState {
@@ -127,6 +124,35 @@ impl From<ProcessingState> for u8 {
         }
     }
 }
+
+// We use this helper to bridge u8 <-> ProcessingState during Serde operations
+mod processing_state_serde {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    // Serialization: Arc<AtomicU8> -> ProcessingState (String/Enum)
+    pub fn serialize<S>(val: &Arc<AtomicU8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let state = ProcessingState::from(val.load(Ordering::SeqCst));
+        state.serialize(serializer)
+    }
+
+    // Deserialization: ProcessingState (String/Enum) -> Arc<AtomicU8>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<AtomicU8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let state: ProcessingState = Deserialize::deserialize(deserializer)?;
+        Ok(Arc::new(AtomicU8::new(u8::from(state))))
+    }
+}
+
+fn default_processing_state() -> Arc<AtomicU8> {
+    Arc::new(AtomicU8::new(ProcessingState::Idle as u8))
+}
+
 
 define_id!(AgentId);
 
@@ -158,6 +184,12 @@ impl Agent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentChannelState {
+    #[serde(
+        default = "default_processing_state",
+        serialize_with = "processing_state_serde::serialize",
+        deserialize_with = "processing_state_serde::deserialize"
+    )]
+    pub processing_state: Arc<AtomicU8>,
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context

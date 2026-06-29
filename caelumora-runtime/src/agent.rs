@@ -28,6 +28,8 @@ use tokio::sync::Mutex;
 
 #[derive(Debug)]
 struct AgentLoopState {
+    agent: Arc<AgentController>,
+    agent_id: AgentId,
     agent_channel_state: AgentChannelState,
     agent_state: AgentState,
 }
@@ -43,20 +45,24 @@ impl AgentLoopState {
         let agent_state = store.get_agent_state(agent_id).await?;
 
         Ok(Self {
+            agent: agent_controller,
+            agent_id,
             agent_channel_state,
             agent_state,
         })
     }
 
-    fn new_turn_context(&mut self) -> TurnContext {
-        let mut turn_context = TurnContext {
+    fn new_turn_context(&'_ mut self, security_context: SecurityContext) -> TurnContext<'_> {
+        TurnContext {
             scratch: Default::default(),
             context: vec![],
             messages: vec![],
+            agent_id: self.agent_id,
+            agent_name: self.agent.name(),
             agent_state: &mut self.agent_state,
             agent_channel_state: &mut self.agent_channel_state,
-        };
-        turn_context
+            security_context
+        }
     }
 }
 
@@ -196,11 +202,11 @@ impl AgentLoopImpl {
         llm_client.chat_completion(context.as_slice(), tools.as_slice()).await
     }
 
-    async fn execute<'a>(&self, tool_calls: Vec<ToolCall>, turn_context: &mut TurnContext<'a>, security_context: &SecurityContext) -> Option<Message> {
+    async fn execute<'a>(&self, tool_calls: Vec<ToolCall>, turn_context: &mut TurnContext<'a>) -> Option<Message> {
         // Execute all tools
         let mut tool_results = Vec::new();
         for c in tool_calls {
-            match self.tool_executor.execute(&c, &security_context).await {
+            match self.tool_executor.execute(&c, turn_context).await {
                 Ok(r) => {
                     tool_results.push(r);
                 }
@@ -308,6 +314,7 @@ impl AgentLoop {
             agent_controller.clone(),
             runtime_manager.clone(),
         ).await?;
+        let processing_state = agent_state.agent_channel_state.processing_state.clone();
         Ok(Self {
             id: ActorId::Agent(agent_id),
             agent_impl: Arc::new(agent_impl),
@@ -316,7 +323,7 @@ impl AgentLoop {
             agent_controller,
             runtime_manager,
             max_iterations: 10,
-            processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
+            processing_state,
         })
     }
 
@@ -350,7 +357,7 @@ impl AgentLoop {
 
     pub async fn send_messages(&self, messages: Vec<Message>, _security_context: &SecurityContext) {
         let mut agent_state = self.agent_state.lock().await;
-        let mut turn_context = agent_state.new_turn_context();
+        let mut turn_context = agent_state.new_turn_context(self.security_context.clone());
         self.agent_impl.perceive(messages, &mut turn_context).await
     }
 
@@ -373,7 +380,7 @@ impl AgentLoop {
         let stream = stream! {
             processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
             let mut agent_state = agent_state_arc.lock().await;
-            let mut turn_context = agent_state.new_turn_context();
+            let mut turn_context = agent_state.new_turn_context(security_context);
             agent_impl.next_turn(&mut turn_context).await?;
 
             let mut loop_count = 0;
@@ -406,16 +413,8 @@ impl AgentLoop {
                             if let Some(msg) = agent_impl.respond_complete(message, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg));
                             }
-                            if let Some(msg) = agent_impl.execute(tool_calls, &mut turn_context, &security_context).await {
+                            if let Some(msg) = agent_impl.execute(tool_calls, &mut turn_context).await {
                                 yield Ok(MessageEvent::Complete(msg.clone()));
-
-                                if msg.tool_results.iter().any(|r| r.tool_name == "stop" || r.tool_name == "bye") {
-                                    info!("Stopping agent {} {}", agent_id, agent_name);
-                                    processing_state.store(ProcessingState::Stopped.into(), Ordering::SeqCst);
-                                    // Do not break the loop, give the agent the chance to explicitly say "good bye"
-                                    //break 'steps;
-                                }
-
                                 continue 'steps;
                             }
                         },
@@ -470,7 +469,7 @@ mod tests {
     async fn state_history_writer_is_passthrough_and_persists_history() {
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let mut turn_context = TurnContext::new(&mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
         let processor = StateHistoryWriter {
         };
         let input = vec![make_message("hello")];
@@ -492,7 +491,7 @@ mod tests {
     async fn state_context_appender_is_passthrough_and_updates_provider_context() {
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let mut turn_context = TurnContext::new(&mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
         let appender = StateContextAppender {
         };
         let provider = StateContextProvider { prompt_providers: vec![] };
@@ -506,11 +505,11 @@ mod tests {
         assert_eq!(output.len(), input.len());
         assert_eq!(output[0].id, input[0].id);
 
-        let context = provider
+        provider
             .current_context(&mut turn_context)
             .await
             .expect("context provider should succeed");
-        assert_eq!(context.len(), 1);
-        assert_eq!(context[0].id, input[0].id);
+        assert_eq!(turn_context.context.len(), 1);
+        assert_eq!(turn_context.context[0].id, input[0].id);
     }
 }

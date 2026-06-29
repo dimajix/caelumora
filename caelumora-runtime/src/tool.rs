@@ -1,8 +1,9 @@
+use crate::message::TurnContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
 use caelumora_model::message::{ToolCall, ToolResult};
-use caelumora_model::security::{ActionType, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::Tool;
 use chrono::{DateTime, Utc};
@@ -19,7 +20,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 
     /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: Value, security: &SecurityContext) -> Result<Value>;
+    async fn execute(&self, name: &str, params: Value, context: &TurnContext) -> Result<Value>;
 }
 
 
@@ -45,7 +46,7 @@ pub enum ExecutionStatus {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult>;
+    async fn execute(&self, call: &ToolCall, security: &TurnContext) -> Result<ToolResult>;
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
 }
@@ -70,7 +71,8 @@ impl DefaultToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, security: &SecurityContext) -> Result<ToolResult> {
+    async fn execute(&self, call: &ToolCall, context: &TurnContext) -> Result<ToolResult> {
+        let security = &context.security_context;
         info!(
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
             call.function_name,
@@ -99,7 +101,7 @@ impl ToolExecutor for DefaultToolExecutor {
             if tools.iter().any(|t| t.name == *tool_name) {
                 _execution.status = ExecutionStatus::Running;
                 let params = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
-                return match provider.execute(tool_name, params, security).await {
+                return match provider.execute(tool_name, params, context).await {
                     Ok(value) => {
                         _execution.status = ExecutionStatus::Completed;
                         _execution.finished_at = Some(Utc::now());
