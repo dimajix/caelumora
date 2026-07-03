@@ -1,7 +1,7 @@
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::message::TurnContext;
 use crate::tool::ToolProvider;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::tool::{Tool, ToolParameters};
@@ -32,15 +32,32 @@ impl ToolProvider for StopToolProvider {
             Tool {
                 name: "bye".to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
+                parameters: ToolParameters::object(properties.clone(), required.clone()),
+            },
+            Tool {
+                name: "silence".to_string(),
+                description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
             }
         ]
     }
 
-    async fn execute(&self, _name: &str, _params: Value, context: &TurnContext) -> Result<Value> {
-        info!("Stopping agent {} {}", context.agent_id, context.agent_name);
-        context.agent_channel_state.processing_state.store(ProcessingState::Stopped.into(), Ordering::SeqCst);
-        Ok(serde_json::json!({ "status": "stopped" }))
+    async fn execute(&self, name: &str, _params: Value, context: &TurnContext) -> Result<Value> {
+        match name {
+            "stop" | "bye" => {
+                info!("Stopping agent {} {}", context.agent_id, context.agent_name);
+                context.agent_channel_state.processing_state.store(ProcessingState::Sleep.into(), Ordering::SeqCst);
+                Ok(serde_json::json!({ "status": "stopped" }))
+            },
+            "silence" => {
+                info!("Silencing agent {} {}", context.agent_id, context.agent_name);
+                context.agent_channel_state.processing_state.store(ProcessingState::Silence.into(), Ordering::SeqCst);
+                Ok(serde_json::json!({ "status": "silent" }))
+            },
+            &_ => {
+                Err(anyhow!("Unknown tool {}", name))
+            }
+        }
     }
 }
 

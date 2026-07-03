@@ -176,7 +176,7 @@ impl AgentLoopImpl {
     async fn next_turn<'a>(&self, turn_context: &mut TurnContext<'a>) -> Result<()> {
         for context_provider in &self.context_provider {
             match context_provider.facet.current_context(turn_context).await {
-                Ok(output) => {}
+                Ok(_) => {}
                 Err(e) => match context_provider.fail_policy {
                     ComponentFailPolicy::FailOpen => {
                         warn!(
@@ -372,7 +372,7 @@ impl AgentLoop {
 
         // Do not respond if in stopped or canceled state!
         let current_state = ProcessingState::from(processing_state.load(Ordering::SeqCst));
-        if current_state == ProcessingState::Stopped || current_state == ProcessingState::Cancelling {
+        if current_state == ProcessingState::Sleep || current_state == ProcessingState::Cancelling {
             info!("Returning empty stream for inactive agent {} {}", self.id, self.name());
             return Box::pin(stream::empty());
         }
@@ -386,6 +386,12 @@ impl AgentLoop {
             let mut loop_count = 0;
 
             'steps: while loop_count < max_iterations {
+                // Check if we want to break out
+                let current_state = ProcessingState::from(processing_state.load(Ordering::SeqCst));
+                if current_state == ProcessingState::Silence {
+                    break 'steps;
+                }
+
                 loop_count += 1;
 
                 // --- PHASE 2: PLAN ---
@@ -433,7 +439,7 @@ impl AgentLoop {
             agent_impl.reflect(&mut turn_context).await;
 
             let current_state = ProcessingState::from(processing_state.load(Ordering::SeqCst));
-            if current_state != ProcessingState::Stopped && current_state != ProcessingState::Cancelling {
+            if current_state != ProcessingState::Sleep && current_state != ProcessingState::Cancelling {
                 processing_state.store(ProcessingState::Idle.into(), Ordering::SeqCst);
             }
             yield Ok(MessageEvent::EndOfTurn(turn_context.messages));

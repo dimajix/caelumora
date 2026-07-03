@@ -69,7 +69,7 @@ impl ModeratorActors {
     fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorId> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         self.agent_actors.iter()
-            .filter(|r| r.value().state() != ProcessingState::Stopped)
+            .filter(|r| r.value().state() != ProcessingState::Sleep)
             .map(|r| *r.key())
             .filter(|id| !sender_ids.contains(id))
             .collect()
