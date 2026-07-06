@@ -50,11 +50,12 @@ export interface ActorEvent {
   ResponseStarted?: any;
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
-  ToolExecutionRequested?: any;
-  ToolExecutionGranted?: any;
-  ToolExecutionDenied?: any;
+  ToolExecutionRequested?: ApprovalRequest;
+  ToolExecutionGranted?: ApprovalRequest;
+  ToolExecutionDenied?: ApprovalRequest;
   ResponseRequested?: any;
   FullResponseGenerated?: Message[];
+  WakeupRequested?: any;
 }
 
 export interface Envelope {
@@ -91,7 +92,3 @@ export interface ApprovalResponse {
   id: string;
   status: ApprovalStatus;
 }
-
-export type GlobalEvent = 
-  | { ApprovalRequested: ApprovalRequest }
-  | { [key: string]: any };

@@ -11,7 +11,6 @@ import type {
   ApprovalRequest,
   ChannelResponse,
   Envelope,
-  GlobalEvent,
   Message
 } from '../types';
 import {api} from '../api';
@@ -68,6 +67,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             return [...prev, newMsg];
           });
           setStreamingMessage(null);
+        } else if (actorEvent.ToolExecutionRequested) {
+          setPendingApprovals(prev => [...prev, actorEvent.ToolExecutionRequested!]);
+        } else if (actorEvent.ToolExecutionGranted) {
+          const res = actorEvent.ToolExecutionGranted;
+          setPendingApprovals(prev => prev.filter(req => req.id !== res!.id));
+        } else if (actorEvent.ToolExecutionDenied) {
+          const res = actorEvent.ToolExecutionDenied;
+          setPendingApprovals(prev => prev.filter(req => req.id !== res!.id));
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
@@ -88,27 +95,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     };
   }, [sessionId, channelId]);
 
-  useEffect(() => {
-    const globalEventSource = api.getGlobalEventSource();
-
-    globalEventSource.onmessage = (event) => {
-      try {
-        const globalEvent: GlobalEvent = JSON.parse(event.data);
-        if ('ApprovalRequested' in globalEvent) {
-          const request = globalEvent.ApprovalRequested;
-          if (request.session_id === sessionId && request.channel_id === channelId) {
-            setPendingApprovals(prev => [...prev, request]);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to parse global event', e);
-      }
-    };
-
-    return () => {
-      globalEventSource.close();
-    };
-  }, [sessionId, channelId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

@@ -5,6 +5,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::Agent;
+use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message};
@@ -74,9 +75,33 @@ impl AgentActor {
         false
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, output: &Sender<Envelope>) {
         if let Some(global_event) = maybe_global {
-            self.agent.process_global_event(&global_event).await;
+            match &global_event {
+                GlobalEvent::ApprovalRequested(request) => {
+                    let envelope = Envelope::new(
+                        SecurityContext::default(),
+                        EventContext::new(request.session_id, request.channel_id, self.id, self.agent.name()),
+                        ActorEvent::ToolExecutionRequested(request.clone()),
+                    );
+                    let _ = output.send(envelope).await;
+                }
+                GlobalEvent::ApprovalResponded(request, response) => {
+                    let actor_event = match response.status {
+                        ApprovalStatus::Approved => ActorEvent::ToolExecutionGranted(request.clone()),
+                        ApprovalStatus::Denied => ActorEvent::ToolExecutionDenied(request.clone()),
+                    };
+                    let envelope = Envelope::new(
+                        SecurityContext::default(),
+                        EventContext::new(request.session_id, request.channel_id, self.id, self.agent.name()),
+                        actor_event,
+                    );
+                    let _ = output.send(envelope).await;
+                }
+                _ => {
+                    self.agent.process_global_event(&global_event).await;
+                }
+            }
         }
     }
 
@@ -171,7 +196,7 @@ impl Actor for AgentActor {
                     }
                 }
                 maybe_global = global_rx.recv() => {
-                    self.handle_global_event(maybe_global).await;
+                    self.handle_global_event(maybe_global, &output).await;
                 }
             }
         }

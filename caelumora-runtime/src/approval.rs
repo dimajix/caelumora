@@ -20,7 +20,7 @@ pub trait ApprovalManager: Send + Sync + std::fmt::Debug {
 /// Default implementation of the `ApprovalManager`.
 #[derive(Debug)]
 pub struct DefaultApprovalManager {
-    pending_approvals: DashMap<ApprovalId, oneshot::Sender<ApprovalResponse>>,
+    pending_approvals: DashMap<ApprovalId, (ApprovalRequest, oneshot::Sender<ApprovalResponse>)>,
     event_publisher: Arc<dyn EventPublisher>,
 }
 
@@ -39,13 +39,14 @@ impl ApprovalManager for DefaultApprovalManager {
     fn request_approval(&self, request: ApprovalRequest) -> oneshot::Receiver<ApprovalResponse> {
         let (tx, rx) = oneshot::channel();
         let id = request.id;
-        self.pending_approvals.insert(id, tx);
+        self.pending_approvals.insert(id, (request.clone(), tx));
         self.event_publisher.publish(GlobalEvent::ApprovalRequested(request));
         rx
     }
 
     fn respond(&self, id: ApprovalId, response: ApprovalResponse) -> anyhow::Result<()> {
-        if let Some((_, tx)) = self.pending_approvals.remove(&id) {
+        if let Some((_, (request, tx))) = self.pending_approvals.remove(&id) {
+            self.event_publisher.publish(GlobalEvent::ApprovalResponded(request, response.clone()));
             tx.send(response).map_err(|_| anyhow::anyhow!("Failed to send approval response"))?;
             Ok(())
         } else {
@@ -111,6 +112,18 @@ mod tests {
         };
 
         manager.respond(id, response.clone()).unwrap();
+
+        // Check if ApprovalResponded event was published
+        {
+            let events = publisher.events.lock().unwrap();
+            assert_eq!(events.len(), 2);
+            if let GlobalEvent::ApprovalResponded(ref req, ref res) = events[1] {
+                assert_eq!(req.id, id);
+                assert_eq!(res.status, ApprovalStatus::Approved);
+            } else {
+                panic!("Expected ApprovalResponded event");
+            }
+        }
 
         let result = rx.await.unwrap();
         assert_eq!(result.id, id);

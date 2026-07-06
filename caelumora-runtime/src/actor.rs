@@ -2,6 +2,7 @@ use crate::message::MessageEvent;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::ProcessingState;
+use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::session::{ChannelId, SessionId};
 use chrono::{DateTime, Utc};
@@ -57,9 +58,9 @@ impl EventContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
-    ToolExecutionRequested,
-    ToolExecutionGranted,
-    ToolExecutionDenied,
+    ToolExecutionRequested(ApprovalRequest),
+    ToolExecutionGranted(ApprovalRequest),
+    ToolExecutionDenied(ApprovalRequest),
     ResponseRequested,
     ResponseStarted,
     PartialMessageGenerated(Message),

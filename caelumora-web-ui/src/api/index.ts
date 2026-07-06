@@ -84,10 +84,6 @@ export const api = {
     return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
   },
 
-  getGlobalEventSource(): EventSource {
-    return new EventSource(`${API_BASE}/events`);
-  },
-
   async respondToApproval(id: string, response: ApprovalResponse): Promise<void> {
     const res = await fetch(`${API_BASE}/approvals/${id}/respond`, {
       method: 'POST',
