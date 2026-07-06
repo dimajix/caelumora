@@ -58,4 +58,6 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
+    #[serde(default)]
+    pub requires_approval: bool,
 }

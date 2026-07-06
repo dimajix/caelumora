@@ -28,16 +28,19 @@ impl ToolProvider for StopToolProvider {
                 name: "stop".to_string(),
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
+                requires_approval: false,
             },
             Tool {
                 name: "bye".to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
+                requires_approval: false,
             },
             Tool {
                 name: "silence".to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
+                requires_approval: false,
             }
         ]
     }
@@ -74,6 +77,7 @@ impl ToolProvider for EchoToolProvider {
                 vec![("message", ToolParameters::string("Input message to be echoed back"))],
                 vec!["message"],
             ),
+            requires_approval: false,
         }]
     }
 
@@ -99,6 +103,7 @@ impl ToolProvider for CalculatorToolProvider {
                 vec![("expression", ToolParameters::string("Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')"))],
                 vec!["expression"],
             ),
+            requires_approval: false,
         }]
     }
 
@@ -173,9 +178,10 @@ mod tests {
         assert_eq!(result["status"], "stopped");
 
         let tools = provider.tools();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0].name, "stop");
         assert_eq!(tools[1].name, "bye");
+        assert_eq!(tools[2].name, "silence");
     }
 }
 

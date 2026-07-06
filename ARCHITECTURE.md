@@ -82,6 +82,18 @@ Security in Caelumora is handled through a combination of context and explicit c
 *   **`SecurityManager`**: A trait responsible for authorizing actions based on the `SecurityContext`.
 *   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`) used by the `SecurityManager` for policy decisions.
 
+## Human-in-the-Loop Approvals
+
+Caelumora supports a mechanism for manual user approval of sensitive or impactful tool executions.
+
+*   **`ApprovalManager`**: A trait (in `caelumora-runtime`) responsible for managing the lifecycle of approval requests. It maintains a registry of pending approvals and provides a bridge between asynchronous tool execution and user response.
+*   **Approval Process**: 
+    1.  When a `ToolExecutor` encounters a tool marked with `requires_approval: true`, it pauses execution and registers an `ApprovalRequest` with the `ApprovalManager`.
+    2.  The `ApprovalManager` publishes an `ApprovalRequested` event via the `EventBus`.
+    3.  The UI receives this event and prompts the user for "Approve" or "Deny".
+    4.  The user's response is sent back via a REST API call, which triggers the `ApprovalManager` to resolve the pending request.
+    5.  The `ToolExecutor` resumes execution once the approval is received (or returns an error if denied).
+
 ## Storage and Persistence
 
 Caelumora uses a tiered storage approach to separate static definitions, dynamic identities, and runtime state.

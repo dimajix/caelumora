@@ -1,4 +1,11 @@
-import type { SessionResponse, ChannelResponse, Message, CreateSessionRequest, SessionTemplate } from '../types';
+import type {
+  ApprovalResponse,
+  ChannelResponse,
+  CreateSessionRequest,
+  Message,
+  SessionResponse,
+  SessionTemplate
+} from '../types';
 
 const API_BASE = '/api';
 
@@ -75,5 +82,18 @@ export const api = {
 
   getEventSource(sessionId: string, channelId: string): EventSource {
     return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
+  },
+
+  getGlobalEventSource(): EventSource {
+    return new EventSource(`${API_BASE}/events`);
+  },
+
+  async respondToApproval(id: string, response: ApprovalResponse): Promise<void> {
+    const res = await fetch(`${API_BASE}/approvals/${id}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(response),
+    });
+    if (!res.ok) throw new Error('Failed to respond to approval');
   }
 };

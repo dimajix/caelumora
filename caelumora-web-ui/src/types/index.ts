@@ -76,3 +76,22 @@ export interface CreateSessionRequest {
   template_id: string;
   name: string;
 }
+
+export type ApprovalStatus = 'Approved' | 'Denied';
+
+export interface ApprovalRequest {
+  id: string;
+  session_id: string;
+  channel_id: string;
+  agent_id: string;
+  tool_call: ToolCall;
+}
+
+export interface ApprovalResponse {
+  id: string;
+  status: ApprovalStatus;
+}
+
+export type GlobalEvent = 
+  | { ApprovalRequested: ApprovalRequest }
+  | { [key: string]: any };

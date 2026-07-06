@@ -11,6 +11,7 @@ use caelumora_model::session::SessionId;
 use std::sync::Arc;
 
 mod channels;
+mod approvals;
 mod events;
 mod sessions;
 mod templates;
@@ -64,5 +65,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
         .route("/sessions/{id}/channels/{cid}/events", get(events::join_channel))
         .route("/events", get(events::global_events))
+        .route("/approvals/{id}/respond", post(approvals::respond))
         .with_state(state)
 }

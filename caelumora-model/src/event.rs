@@ -1,4 +1,5 @@
 use crate::agent::{AgentId, AgentUpdateEvent};
+use crate::approval::ApprovalRequest;
 use crate::channel::{ChannelId, ChannelUpdateEvent};
 use crate::session::{SessionId, SessionUpdateEvent};
 use crate::user::{UserId, UserUpdateEvent};
@@ -20,6 +21,7 @@ pub enum GlobalEvent {
     UserCreated(UserId),
     UserUpdated(UserId, UserUpdateEvent),
     UserDeleted(UserId),
+    ApprovalRequested(ApprovalRequest),
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {

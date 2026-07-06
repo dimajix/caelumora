@@ -1,7 +1,9 @@
+use crate::approval::ApprovalManager;
 use crate::message::TurnContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
+use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::message::{ToolCall, ToolResult};
 use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
@@ -54,16 +56,19 @@ pub trait ToolExecutor: Send + Sync + Debug {
 #[derive(Debug)]
 pub struct DefaultToolExecutor {
     security_manager: Arc<dyn SecurityManager>,
+    approval_manager: Arc<dyn ApprovalManager>,
     tool_providers: Vec<Arc<dyn ToolProvider>>,
 }
 
 impl DefaultToolExecutor {
     pub fn new(
         security_manager: Arc<dyn SecurityManager>,
+        approval_manager: Arc<dyn ApprovalManager>,
         tool_providers: Vec<Arc<dyn ToolProvider>>,
     ) -> Self {
         Self {
             security_manager,
+            approval_manager,
             tool_providers,
         }
     }
@@ -98,7 +103,25 @@ impl ToolExecutor for DefaultToolExecutor {
         let tool_name = &call.function_name;
         for provider in &self.tool_providers {
             let tools = provider.tools();
-            if tools.iter().any(|t| t.name == *tool_name) {
+            if let Some(tool) = tools.iter().find(|t| t.name == *tool_name) {
+                if tool.requires_approval {
+                    info!("Tool '{}' requires manual approval", tool_name);
+                    let request = ApprovalRequest {
+                        id: ApprovalId::new(),
+                        session_id: security.session_id,
+                        channel_id: security.channel_id,
+                        agent_id: security.caller_id.as_agent_id().ok_or_else(|| anyhow::anyhow!("Caller is not an agent"))?,
+                        tool_call: call.clone(),
+                    };
+                    let rx = self.approval_manager.request_approval(request);
+                    let response = rx.await.map_err(|_| anyhow::anyhow!("Approval request cancelled"))?;
+                    if response.status == ApprovalStatus::Denied {
+                        _execution.status = ExecutionStatus::Cancelled;
+                        _execution.finished_at = Some(Utc::now());
+                        return Err(anyhow::anyhow!("Tool execution denied by user: '{}'", tool_name));
+                    }
+                }
+
                 _execution.status = ExecutionStatus::Running;
                 let params = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
                 return match provider.execute(tool_name, params, context).await {
@@ -132,5 +155,112 @@ impl ToolExecutor for DefaultToolExecutor {
             .iter()
             .flat_map(|p| p.tools())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::agent::AgentState;
+    use caelumora_model::approval::{ApprovalResponse, ApprovalStatus};
+    use caelumora_model::channel::ChannelId;
+    use caelumora_model::message::ActorId;
+    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::SecurityContext;
+    use serde_json::json;
+    use tokio::sync::oneshot;
+
+    #[derive(Debug)]
+    struct MockApprovalManager {
+        approve: bool,
+    }
+
+    #[async_trait]
+    impl ApprovalManager for MockApprovalManager {
+        fn request_approval(&self, request: ApprovalRequest) -> oneshot::Receiver<ApprovalResponse> {
+            let (tx, rx) = oneshot::channel();
+            let status = if self.approve { ApprovalStatus::Approved } else { ApprovalStatus::Denied };
+            tx.send(ApprovalResponse { id: request.id, status }).unwrap();
+            rx
+        }
+        fn respond(&self, _id: ApprovalId, _response: ApprovalResponse) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockToolProvider {
+        requires_approval: bool,
+    }
+
+    #[async_trait]
+    impl ToolProvider for MockToolProvider {
+        fn tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                name: "test_tool".to_string(),
+                description: "desc".to_string(),
+                parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+                requires_approval: self.requires_approval,
+            }]
+        }
+        async fn execute(&self, _name: &str, _params: Value, _context: &TurnContext) -> Result<Value> {
+            Ok(json!({"result": "ok"}))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_executor_with_approval() {
+        let security_manager = Arc::new(DummySecurityManager::new());
+        let approval_manager = Arc::new(MockApprovalManager { approve: true });
+        let provider = Arc::new(MockToolProvider { requires_approval: true });
+        let executor = DefaultToolExecutor::new(security_manager, approval_manager, vec![provider]);
+
+        let call = ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: "test_tool".to_string(),
+            arguments: "{}".to_string(),
+        };
+
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let security_context = SecurityContext {
+            session_id: SessionId::new(),
+            channel_id: ChannelId::new(),
+            caller_id: ActorId::Agent(AgentId::new()),
+            ..SecurityContext::default()
+        };
+        let context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut agent_channel_state, security_context);
+
+        let result = executor.execute(&call, &context).await.unwrap();
+        assert_eq!(result.content, "{\"result\":\"ok\"}");
+    }
+
+    #[tokio::test]
+    async fn test_tool_executor_denied() {
+        let security_manager = Arc::new(DummySecurityManager::new());
+        let approval_manager = Arc::new(MockApprovalManager { approve: false });
+        let provider = Arc::new(MockToolProvider { requires_approval: true });
+        let executor = DefaultToolExecutor::new(security_manager, approval_manager, vec![provider]);
+
+        let call = ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: "test_tool".to_string(),
+            arguments: "{}".to_string(),
+        };
+
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let security_context = SecurityContext {
+            session_id: SessionId::new(),
+            channel_id: ChannelId::new(),
+            caller_id: ActorId::Agent(AgentId::new()),
+            ..SecurityContext::default()
+        };
+        let context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut agent_channel_state, security_context);
+
+        let result = executor.execute(&call, &context).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("denied by user"));
     }
 }

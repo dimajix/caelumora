@@ -1,13 +1,19 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-    CheckCircle2,
-    Send,
-    Square,
-    Terminal,
-    Users,
-    Wrench
+  CheckCircle2,
+  Send,
+  Square,
+  Terminal,
+  Users,
+  Wrench
 } from 'lucide-react';
-import type {ChannelResponse, Envelope, Message} from '../types';
+import type {
+  ApprovalRequest,
+  ChannelResponse,
+  Envelope,
+  GlobalEvent,
+  Message
+} from '../types';
 import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
@@ -28,6 +34,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [isSending, setIsSending] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -82,6 +89,28 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   }, [sessionId, channelId]);
 
   useEffect(() => {
+    const globalEventSource = api.getGlobalEventSource();
+
+    globalEventSource.onmessage = (event) => {
+      try {
+        const globalEvent: GlobalEvent = JSON.parse(event.data);
+        if ('ApprovalRequested' in globalEvent) {
+          const request = globalEvent.ApprovalRequested;
+          if (request.session_id === sessionId && request.channel_id === channelId) {
+            setPendingApprovals(prev => [...prev, request]);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to parse global event', e);
+      }
+    };
+
+    return () => {
+      globalEventSource.close();
+    };
+  }, [sessionId, channelId]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage, isGenerating]);
 
@@ -132,6 +161,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       await api.cancelChannel(sessionId, channelId);
     } catch (error) {
       console.error('Failed to cancel generation', error);
+    }
+  };
+
+  const handleApproval = async (id: string, status: 'Approved' | 'Denied') => {
+    try {
+      await api.respondToApproval(id, { id, status });
+      setPendingApprovals(prev => prev.filter(a => a.id !== id));
+    } catch (e) {
+      console.error('Failed to respond to approval', e);
     }
   };
 
@@ -220,6 +258,40 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           )}
           <div ref={messagesEndRef} />
         </div>
+
+        {pendingApprovals.length > 0 && (
+          <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border-t border-yellow-200 dark:border-yellow-900/50 space-y-4">
+            <h4 className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
+              <Wrench size={16} />
+              Tool Execution Approval Required
+            </h4>
+            {pendingApprovals.map(approval => (
+              <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-sm p-4">
+                <div className="flex items-center justify-between mb-2">
+                   <div className="text-xs font-mono font-bold text-gray-500">{approval.tool_call.function_name}</div>
+                   <div className="text-[10px] text-gray-400">ID: {approval.id}</div>
+                </div>
+                <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded mb-4 overflow-x-auto">
+                  {approval.tool_call.arguments}
+                </pre>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleApproval(approval.id, 'Approved')}
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm py-2 rounded-md transition-colors"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleApproval(approval.id, 'Denied')}
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-md transition-colors"
+                  >
+                    Deny
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
           <form onSubmit={handleSendMessage} className="flex space-x-2">
