@@ -200,24 +200,14 @@ impl AgentActor {
     }
 
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
-        let agent_channel_state = &mut turn_context.agent_channel_state;
-        agent_channel_state
+        turn_context.agent_channel_state
             .context
             .extend(turn_context.messages.clone());
-        agent_channel_state
+        turn_context.agent_channel_state
             .history
             .extend(turn_context.messages.clone());
 
-        if let Err(_e) = self
-            .state_store
-            .put_agent_channel_state(self.agent_id, self.channel_id, agent_channel_state)
-            .await
-        {
-            warn!(
-                "Cannot store channel state of agent {} after reflect",
-                self.agent_id
-            )
-        }
+        self.store_channel_state(turn_context, "reflect").await;
     }
 
     async fn respond_partial<'a>(
