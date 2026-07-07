@@ -105,13 +105,16 @@ impl AgentActor {
         let tool_executor = runtime_manager
             .new_tool_executor(tool_providers.into_iter().map(|p| p.facet).collect());
 
-        let store = runtime_manager.state_store();
-        let agent_channel_state = store
+        let state_store = runtime_manager.state_store();
+        let agent_channel_state = state_store
             .get_agent_channel_state(agent_id, channel.id)
             .await?;
-        let agent_state = store.get_agent_state(agent_id).await?;
-
+        let agent_state = state_store.get_agent_state(agent_id).await?;
         let processing_state = agent_channel_state.processing_state.clone();
+        let state = Mutex::new(AgentActorState {
+            agent_channel_state,
+            agent_state,
+        });
 
         Ok(AgentActor {
             id: ActorId::Agent(agent_id),
@@ -119,16 +122,13 @@ impl AgentActor {
             channel_id: channel.id,
             agent_id,
             agent_controller,
-            runtime_manager: runtime_manager.clone(),
-            state_store: runtime_manager.state_store(),
+            runtime_manager,
+            state_store,
             context_provider,
             perceive_in_processors,
             emit_out_processors,
             tool_executor,
-            state: Mutex::new(AgentActorState {
-                agent_channel_state,
-                agent_state,
-            }),
+            state,
             security_context,
             processing_state,
             max_iterations: 10,
