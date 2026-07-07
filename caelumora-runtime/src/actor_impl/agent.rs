@@ -407,15 +407,21 @@ impl AgentActor {
     ) -> Result<()> {
         let agent_name = self.agent_controller.name();
 
-        let ev = Envelope::new(
-            event_security.next(self.id),
-            event_context.next(self.id, agent_name.clone()),
-            ActorEvent::ResponseStarted,
-        );
-        output
-            .send(ev)
-            .await
-            .context(format!("Actor {} failed to send response started event", self.id))?;
+        // Helper function for sending events
+        let send_event = async |av:ActorEvent| -> Result<()> {
+            let ev = Envelope::new(
+                event_security.next(self.id),
+                event_context.next(self.id, agent_name.clone()),
+                av,
+            );
+            output
+                .send(ev)
+                .await
+                .context(format!("Actor {} failed to send event", self.id))?;
+            Ok(())
+        };
+
+        send_event(ActorEvent::ResponseStarted).await?;
 
         // Do not respond if in stopped or canceled state!
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
@@ -468,15 +474,7 @@ impl AgentActor {
                         message.sender_name = agent_name.clone();
                         message.sender_id = self.id;
                         if let Some(msg) = self.respond_partial(message, &mut turn_context).await {
-                            let ev = Envelope::new(
-                                event_security.next(self.id),
-                                event_context.next(self.id, agent_name.clone()),
-                                ActorEvent::PartialMessageGenerated(msg),
-                            );
-                            output.send(ev).await.context(format!(
-                                "Actor {} failed to send partial message event",
-                                self.id
-                            ))?;
+                            send_event(ActorEvent::PartialMessageGenerated(msg)).await?;
                         }
                     }
                     MessageEvent::Complete(message) => {
@@ -485,26 +483,10 @@ impl AgentActor {
                         message.sender_id = self.id;
                         let tool_calls = message.tool_calls.clone();
                         if let Some(msg) = self.respond_complete(message, &mut turn_context).await {
-                            let ev = Envelope::new(
-                                event_security.next(self.id),
-                                event_context.next(self.id, agent_name.clone()),
-                                ActorEvent::FullResponseGenerated(vec![msg]),
-                            );
-                            output.send(ev).await.context(format!(
-                                "Actor {} failed to send full response event",
-                                self.id
-                            ))?;
+                            send_event(ActorEvent::FullResponseGenerated(vec![msg])).await?;
                         }
                         if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
-                            let ev = Envelope::new(
-                                event_security.next(self.id),
-                                event_context.next(self.id, agent_name.clone()),
-                                ActorEvent::FullResponseGenerated(vec![msg]),
-                            );
-                            output.send(ev).await.context(format!(
-                                "Actor {} failed to send full response event",
-                                self.id
-                            ))?;
+                            send_event(ActorEvent::FullResponseGenerated(vec![msg])).await?;
                             continue 'steps;
                         }
                     }
@@ -522,15 +504,7 @@ impl AgentActor {
                 .store(ProcessingState::Idle.into(), Ordering::SeqCst);
         }
 
-        let ev = Envelope::new(
-            event_security.next(self.id),
-            event_context.next(self.id, agent_name.clone()),
-            ActorEvent::FullResponseGenerated(turn_context.messages.clone()),
-        );
-        output.send(ev).await.context(format!(
-            "Actor {} failed to send final turn context event",
-            self.id
-        ))?;
+        send_event(ActorEvent::FullResponseGenerated(turn_context.messages.clone())).await?;
         Ok(())
     }
 }
