@@ -5,8 +5,7 @@ use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, Perceiv
 use crate::message::{MessageEvent, TurnContext};
 use crate::runtime::RuntimeManager;
 use crate::tool::{ToolExecutor, ToolProvider};
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::{
     Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState,
@@ -348,14 +347,14 @@ impl AgentActor {
         Ok(input)
     }
 
-    async fn handle_actor_envelopes(
+    async fn handle_actor_events(
         &self,
         res: usize,
         buffer: &mut Vec<Envelope>,
-        tx: &Sender<Envelope>
-    ) -> bool {
+        output: &Sender<Envelope>,
+    ) -> Result<bool> {
         if res == 0 {
-            return true;
+            return Ok(true);
         }
 
         debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
@@ -377,9 +376,15 @@ impl AgentActor {
         buffer.clear();
 
         if response_requested {
-            self.request_response(&last_context, &last_security, tx).await;
+            self.request_response(&last_context, &last_security, output)
+                .await
+                .context(format!(
+                    "Error when trying to respond {} {}",
+                    self.id,
+                    self.agent_controller.name()
+                ))?;
         }
-        false
+        Ok(false)
     }
 
     async fn handle_global_event(
@@ -408,8 +413,8 @@ impl AgentActor {
         &self,
         event_context: &EventContext,
         event_security: &SecurityContext,
-        tx: &Sender<Envelope>,
-    ) {
+        output: &Sender<Envelope>,
+    ) -> Result<()> {
         let agent_name = self.agent_controller.name();
 
         let ev = Envelope::new(
@@ -417,13 +422,10 @@ impl AgentActor {
             event_context.next(self.id, agent_name.clone()),
             ActorEvent::ResponseStarted,
         );
-        if let Err(e) = tx.send(ev).await {
-            warn!(
-                "Actor {} cannot send response because of an error: {}",
-                self.id, e
-            );
-            return;
-        }
+        output
+            .send(ev)
+            .await
+            .context(format!("Actor {} failed to send response started event", self.id))?;
 
         // Do not respond if in stopped or canceled state!
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
@@ -432,7 +434,7 @@ impl AgentActor {
                 "Returning for inactive agent {} {}",
                 self.id, agent_name
             );
-            return;
+            return Ok(());
         }
         self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
 
@@ -443,10 +445,7 @@ impl AgentActor {
             event_security.next(self.id),
         );
 
-        if let Err(e) = self.next_turn(&mut turn_context).await {
-            warn!("Actor {} next_turn failed: {}", self.id, e);
-            return;
-        }
+        self.next_turn(&mut turn_context).await?;
 
         let mut loop_count = 0;
         'steps: while loop_count < self.max_iterations {
@@ -461,7 +460,11 @@ impl AgentActor {
             // --- PHASE 2: PLAN ---
             let mut response = self.plan(&mut turn_context).await;
             use futures::stream::TryStreamExt;
-            while let Ok(Some(event)) = response.try_next().await {
+            while let Some(event) = response
+                .try_next()
+                .await
+                .context("Error during planning stream")?
+            {
                 // Check for cancellation
                 if ProcessingState::from(self.processing_state.load(Ordering::SeqCst))
                     == ProcessingState::Cancelling
@@ -480,13 +483,10 @@ impl AgentActor {
                                 event_context.next(self.id, agent_name.clone()),
                                 ActorEvent::PartialMessageGenerated(msg),
                             );
-                            if let Err(e) = tx.send(ev).await {
-                                warn!(
-                                    "Actor {} cannot send response because of an error: {}",
-                                    self.id, e
-                                );
-                                return;
-                            }
+                            output.send(ev).await.context(format!(
+                                "Actor {} failed to send partial message event",
+                                self.id
+                            ))?;
                         }
                     }
                     MessageEvent::Complete(message) => {
@@ -500,13 +500,10 @@ impl AgentActor {
                                 event_context.next(self.id, agent_name.clone()),
                                 ActorEvent::FullResponseGenerated(vec![msg]),
                             );
-                            if let Err(e) = tx.send(ev).await {
-                                warn!(
-                                    "Actor {} cannot send response because of an error: {}",
-                                    self.id, e
-                                );
-                                return;
-                            }
+                            output.send(ev).await.context(format!(
+                                "Actor {} failed to send full response event",
+                                self.id
+                            ))?;
                         }
                         if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
                             let ev = Envelope::new(
@@ -514,13 +511,10 @@ impl AgentActor {
                                 event_context.next(self.id, agent_name.clone()),
                                 ActorEvent::FullResponseGenerated(vec![msg]),
                             );
-                            if let Err(e) = tx.send(ev).await {
-                                warn!(
-                                    "Actor {} cannot send response because of an error: {}",
-                                    self.id, e
-                                );
-                                return;
-                            }
+                            output.send(ev).await.context(format!(
+                                "Actor {} failed to send full response event",
+                                self.id
+                            ))?;
                             continue 'steps;
                         }
                     }
@@ -543,7 +537,11 @@ impl AgentActor {
             event_context.next(self.id, agent_name.clone()),
             ActorEvent::FullResponseGenerated(turn_context.messages.clone()),
         );
-        let _ = tx.send(ev).await;
+        output.send(ev).await.context(format!(
+            "Actor {} failed to send final turn context event",
+            self.id
+        ))?;
+        Ok(())
     }
 }
 
@@ -612,7 +610,7 @@ impl Actor for AgentActor {
         loop {
             tokio::select! {
                 res = input.recv_many(&mut buffer, 100) => {
-                    if self.handle_actor_envelopes(res, &mut buffer, &output).await {
+                    if self.handle_actor_events(res, &mut buffer, &output).await? {
                         break;
                     }
                 }

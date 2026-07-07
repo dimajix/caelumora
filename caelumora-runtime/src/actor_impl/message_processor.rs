@@ -1,11 +1,11 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::message::MessageProcessor;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::message::{ActorId, Message};
 use caelumora_model::security::SecurityContext;
-use log::{debug, info, warn};
+use log::{debug, info};
 use std::mem;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
@@ -31,27 +31,29 @@ impl MessageProcessorActor {
 }
 
 impl MessageProcessorActor {
-    async fn request_response(&self, messages:&mut Vec<Message>, event_context: &EventContext, event_security: &SecurityContext, tx: &Sender<Envelope>) {
-        let mut response = self.processor.process_messages(mem::take(messages), event_security).await;
+    async fn request_response(
+        &self,
+        messages: &mut Vec<Message>,
+        event_context: &EventContext,
+        event_security: &SecurityContext,
+        tx: &Sender<Envelope>,
+    ) -> Result<()> {
+        let mut response = self
+            .processor
+            .process_messages(mem::take(messages), event_security)
+            .await;
         while let Some(event_result) = response.next().await {
-            match event_result {
-                Ok(ev) => {
-                    let ev2 = Envelope::new(
-                        event_security.next(self.id),
-                        event_context.next(self.id, self.name()),
-                        ActorEvent::from_message_event(ev)
-                    );
-                    if let Err(e) = tx.send(ev2).await {
-                        warn!("Actor {} cannot send response because of an error: {}", self.id, e);
-                        return
-                    }
-                },
-                Err(e) => {
-                    warn!("Actor {} received an error: {}", self.id, e);
-                    break;
-                }
-            }
+            let ev = event_result.context(format!("Actor {} failed to process messages", self.id))?;
+            let ev2 = Envelope::new(
+                event_security.next(self.id),
+                event_context.next(self.id, self.name()),
+                ActorEvent::from_message_event(ev),
+            );
+            tx.send(ev2)
+                .await
+                .context(format!("Actor {} failed to send response event", self.id))?;
         }
+        Ok(())
     }
 }
 
@@ -112,7 +114,8 @@ impl Actor for MessageProcessorActor {
             buffer.clear();
 
             if response_requested && !messages.is_empty() {
-                self.request_response(&mut messages, &last_context, &last_security, &output).await;
+                self.request_response(&mut messages, &last_context, &last_security, &output)
+                    .await?;
                 messages.clear();
                 response_requested = false;
             }

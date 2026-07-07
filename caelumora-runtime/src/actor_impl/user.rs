@@ -1,7 +1,6 @@
 use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
 use crate::runtime::RuntimeManager;
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelId};
@@ -11,7 +10,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserController};
 use chrono::Utc;
-use log::{debug, info, warn};
+use log::{debug, info};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex, MutexGuard};
@@ -74,40 +73,38 @@ impl UserActor {
         self.actor_rx.lock().await
     }
 
-    async fn handle_actor_envelope(&self, maybe_event: Option<Envelope>) -> bool {
-        let mut rx_closed = false;
+    async fn handle_actor_envelope(&self, maybe_event: Option<Envelope>) -> Result<bool> {
         match maybe_event {
             Some(event) => {
                 debug!("UserActor {} received actor event: {:?}", self.id(), event);
-                if let Err(e) = self.actor_tx.send(event.event).await {
-                    warn!("UserActor {} cannot forward event because of an error: {}", self.id(), e);
-                    rx_closed = true;
-                }
+                self.actor_tx
+                    .send(event.event)
+                    .await
+                    .context(format!("UserActor {} failed to forward event", self.id))?;
+                Ok(false)
             }
-            None => {
-                rx_closed = true;
-            }
+            None => Ok(true),
         }
-        rx_closed
     }
 
-    async fn handle_user_event(&self, maybe_message: Option<ActorEvent>, tx: &Sender<Envelope>) -> bool {
-        let mut user_rx_closed = false;
+    async fn handle_user_event(
+        &self,
+        maybe_message: Option<ActorEvent>,
+        tx: &Sender<Envelope>,
+    ) -> Result<bool> {
         match maybe_message {
             Some(message) => {
                 debug!("Received user message: {:?}", message);
-                let context = EventContext::new(self.session_id, self.channel_id, self.id(), self.name());
+                let context =
+                    EventContext::new(self.session_id, self.channel_id, self.id(), self.name());
                 let event = Envelope::new(self.security_context.clone(), context, message);
-                if let Err(e) = tx.send(event).await {
-                    warn!("UserActor {} cannot forward user message because of an error: {}", self.id(), e);
-                    user_rx_closed = true;
-                }
+                tx.send(event)
+                    .await
+                    .context(format!("UserActor {} failed to forward user message", self.id))?;
+                Ok(false)
             }
-            None => {
-                user_rx_closed = true;
-            }
+            None => Ok(true),
         }
-        user_rx_closed
     }
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) -> bool {
@@ -166,10 +163,10 @@ impl Actor for UserActor {
         while !rx_closed || !user_rx_closed || !global_rx_closed {
             tokio::select! {
                 maybe_event = input.recv(), if !rx_closed => {
-                    rx_closed = self.handle_actor_envelope(maybe_event).await;
+                    rx_closed = self.handle_actor_envelope(maybe_event).await?;
                 }
                 maybe_message = user_rx.recv(), if !user_rx_closed => {
-                    user_rx_closed = self.handle_user_event(maybe_message, &output).await;
+                    user_rx_closed = self.handle_user_event(maybe_message, &output).await?;
                 }
                 maybe_global = global_rx.recv(), if !global_rx_closed => {
                     global_rx_closed = self.handle_global_event(maybe_global).await;
