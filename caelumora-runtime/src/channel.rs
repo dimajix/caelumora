@@ -1,4 +1,4 @@
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, SendError};
+use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
@@ -6,9 +6,11 @@ use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
 use caelumora_model::agent::ProcessingState;
+use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{ActorId, Message};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use log::{debug, info, warn};

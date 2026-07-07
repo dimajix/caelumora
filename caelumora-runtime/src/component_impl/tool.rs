@@ -28,19 +28,19 @@ impl ToolProvider for StopToolProvider {
                 name: "stop".to_string(),
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
-                requires_approval: false,
+                requires_approval: true,
             },
             Tool {
                 name: "bye".to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
-                requires_approval: false,
+                requires_approval: true,
             },
             Tool {
                 name: "silence".to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
-                requires_approval: false,
+                requires_approval: true,
             }
         ]
     }

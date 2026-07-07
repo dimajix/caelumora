@@ -7,7 +7,7 @@ Caelumora is a multi-agent system designed for flexible, extensible, and scalabl
 The project is organized into several key modules:
 
 *   **`caelumora-model`**: Contains the core data structures and domain entities (e.g., `Agent`, `Session`, `Message`, `ComponentConfig`). It is shared across both client and server.
-*   **`caelumora-runtime`**: The heart of the system. Implements the execution logic for agents, sessions, and channels. It handles event routing, component management, and the `AgentLoop`.
+*   **`caelumora-runtime`**: The heart of the system. Implements the execution logic for agents, sessions, and channels. It handles event routing, component management, and the agent cognitive cycle.
 *   **`caelumora-rest-server`**: Provides a REST API for interacting with Caelumora, managing sessions, and participating in conversations.
 *   **`caelumora-client-api`**: Defines the traits and interfaces for client-side interactions.
 *   **`caelumora-local-client`**: Implementation of a client that runs in the same process as the runtime (useful for testing and TUI).
@@ -23,9 +23,9 @@ Caelumora uses a pluggable component-based architecture for defining agent behav
 *   **`ComponentContainer`**: Responsible for instantiating and managing the lifecycle of components based on the `ComponentConfig`.
 *   **Traits**: Components implement specific traits like `MessageProcessor`, `PerceiveInProcessor`, `PlanPreProcessor`, or `ContextProvider` to participate in different stages of the agent loop.
 
-## AgentLoop Design
+## Agent Cognitive Cycle
 
-The `AgentLoop` (implemented via `AgentLoopState`) defines the cognitive cycle of an agent. It typically follows these stages:
+The agent cognitive cycle (implemented within `AgentActor`) defines how an agent processes information and generates responses. It typically follows these stages:
 
 1.  **Perceive**: Incoming messages are processed by "perceive" components (e.g., adding to history, updating context).
 2.  **Plan**: The agent decides what to do next. This may involve interacting with an LLM, planning tool calls, or generating internal thoughts.
@@ -123,4 +123,4 @@ Provides necessary dependencies (stores, session ID, owner) for instantiating li
 *   Each **Session** can contain one or more **Channels**.
 *   Each **Channel** has multiple **Participants** (Actors).
 *   A single **Agent** can be a participant in multiple sessions/channels.
-*   Within each session, each agent maintains its own `AgentState` and `AgentLoop`.
+*   Within each session, each agent maintains its own `AgentState` and cognitive cycle within the `AgentActor`.
