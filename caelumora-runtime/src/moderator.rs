@@ -74,6 +74,25 @@ impl ModeratorActors {
             .filter(|id| !sender_ids.contains(id))
             .collect()
     }
+
+    fn route_approval_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        match &event.event {
+            ActorEvent::ToolExecutionRequested(_) => {
+                self.user_actors.iter()
+                    .map(|r| (*r.key(), event.clone()))
+                    .collect()
+            }
+            ActorEvent::ToolExecutionGranted(request) | ActorEvent::ToolExecutionDenied(request) => {
+                let agent_id = ActorId::Agent(request.agent_id);
+                if self.agent_actors.contains_key(&agent_id) {
+                    vec![(agent_id, event.clone())]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new()
+        }
+    }
 }
 
 
@@ -115,6 +134,11 @@ impl Moderator for BroadcastModerator {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
                 self.handle_full_response(event).await
+            }
+            ActorEvent::ToolExecutionRequested(_) |
+            ActorEvent::ToolExecutionGranted(_) |
+            ActorEvent::ToolExecutionDenied(_) => {
+                self.actors.route_approval_events(event)
             }
             _ => {
                 Vec::new()
@@ -173,6 +197,11 @@ impl Moderator for RandomModerator {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
                 self.handle_full_response(event).await
+            }
+            ActorEvent::ToolExecutionRequested(_) |
+            ActorEvent::ToolExecutionGranted(_) |
+            ActorEvent::ToolExecutionDenied(_) => {
+                self.actors.route_approval_events(event)
             }
             _ => {
                 Vec::new()
@@ -239,6 +268,11 @@ impl Moderator for RoundRobinModerator {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
                 self.handle_full_response(event).await
+            }
+            ActorEvent::ToolExecutionRequested(_) |
+            ActorEvent::ToolExecutionGranted(_) |
+            ActorEvent::ToolExecutionDenied(_) => {
+                self.actors.route_approval_events(event)
             }
             _ => {
                 Vec::new()

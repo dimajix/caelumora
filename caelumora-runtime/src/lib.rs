@@ -5,7 +5,6 @@ pub mod llm;
 pub mod llm_impl;
 pub mod recorder;
 pub mod event;
-pub mod approval;
 pub mod tool;
 pub mod actor;
 pub mod actor_impl;

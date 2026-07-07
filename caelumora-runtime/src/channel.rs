@@ -180,7 +180,7 @@ impl ChannelLoop {
                     }
                 }
                 maybe_global = global_rx.recv() => {
-                    self.handle_global_event(maybe_global).await;
+                    self.handle_global_event(maybe_global, &actors).await;
                 }
             }
         }
@@ -202,9 +202,25 @@ impl ChannelLoop {
         }
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, actors: &Arc<HashMap<ActorId, ActorHandle>>) {
         if let Some(global_event) = maybe_global {
             self.channel.process_global_event(&global_event).await;
+            if let GlobalEvent::ApprovalResponded(request, response) = global_event {
+                if request.channel_id == self.id {
+                    let actor_event = match response.status {
+                        ApprovalStatus::Approved => ActorEvent::ToolExecutionGranted(request),
+                        ApprovalStatus::Denied => ActorEvent::ToolExecutionDenied(request),
+                    };
+                    let security = SecurityContext {
+                        session_id: self.session_id,
+                        channel_id: self.id,
+                        ..SecurityContext::default()
+                    };
+                    let context = EventContext::new(self.session_id, self.id, ActorId::None, "system".to_string());
+                    let envelope = Envelope::new(security, context, actor_event);
+                    self.route_event(actors, envelope).await;
+                }
+            }
         }
     }
 

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use caelumora_model::agent::{
     Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState,
 };
+use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
@@ -149,18 +150,21 @@ impl AgentActor {
         }
     }
 
-    async fn store_channel_state<'a>(&self, turn_context: &mut TurnContext<'a>, stage: &str) {
+    async fn store_channel_state<'a>(&self, turn_context: &mut TurnContext<'a>, _stage: &str) {
         let agent_channel_state = &mut turn_context.agent_channel_state;
+        self.store_channel_state_direct(agent_channel_state).await;
+    }
+
+    async fn store_channel_state_direct(&self, state: &AgentChannelState) {
         if let Err(_e) = self
             .state_store
-            .put_agent_channel_state(self.agent_id, self.channel_id, agent_channel_state)
+            .put_agent_channel_state(self.agent_id, self.channel_id, state)
             .await
         {
             warn!(
-                "Cannot store channel state of agent {} after {}", self.agent_id, stage
+                "Cannot store channel state of agent {}", self.agent_id
             )
         }
-
     }
 
     async fn perceive<'a>(&self, messages: Vec<Message>, turn_context: &mut TurnContext<'a>) {
@@ -348,6 +352,50 @@ impl AgentActor {
         }
 
         debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
+
+        let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
+        if current_state == ProcessingState::WaitingForApproval {
+            let mut approval_responded = None;
+            let mut other_events = Vec::new();
+
+            for env in buffer.drain(..) {
+                match &env.event {
+                    ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) => {
+                        let state = self.state.lock().await;
+                        if state.agent_channel_state.pending_approval == Some(req.id) {
+                            approval_responded = Some(env.clone());
+                        } else {
+                            // other_events.push(env);
+                        }
+                    }
+                    _ => {
+                        other_events.push(env);
+                    }
+                }
+            }
+
+            if !other_events.is_empty() {
+                let mut state = self.state.lock().await;
+                for env in other_events {
+                    match env.event {
+                        ActorEvent::FullResponseGenerated(msgs) => {
+                            state.agent_channel_state.pending_messages.extend(msgs);
+                        }
+                        _ => {}
+                    }
+                }
+                let channel_state = state.agent_channel_state.clone();
+                drop(state);
+                self.store_channel_state_direct(&channel_state).await;
+            }
+
+            if let Some(env) = approval_responded {
+                self.resume_response(env, output).await?;
+            }
+
+            return Ok(false);
+        }
+
         let last_security = buffer.last().unwrap().security.clone();
         let last_context = buffer.last().unwrap().context.clone();
         let mut response_requested = false;
@@ -397,6 +445,60 @@ impl AgentActor {
             self.security_context.clone(),
         );
         self.perceive(mem::take(messages), &mut turn_context).await;
+    }
+
+    async fn resume_response(
+        &self,
+        response_event: Envelope,
+        output: &Sender<Envelope>,
+    ) -> Result<()> {
+        let (status, approval_id) = match &response_event.event {
+            ActorEvent::ToolExecutionGranted(req) => (ApprovalStatus::Approved, req.id),
+            ActorEvent::ToolExecutionDenied(req) => (ApprovalStatus::Denied, req.id),
+            _ => return Ok(()),
+        };
+
+        info!("Resuming response for agent {} with status {:?}", self.id, status);
+
+        let agent_name = self.agent_controller.name();
+        let mut state = self.state.lock().await;
+
+        if state.agent_channel_state.pending_approval != Some(approval_id) {
+            warn!("Received approval response for non-pending approval: {}", approval_id);
+            return Ok(());
+        }
+
+        let tool_calls = mem::take(&mut state.agent_channel_state.pending_tool_calls);
+        state.agent_channel_state.pending_approval = None;
+        state.agent_channel_state.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+
+        let event_security = response_event.security.clone();
+        let event_context = response_event.context.clone();
+
+        let mut turn_context = state.new_turn_context(
+            self.agent_id,
+            agent_name.clone(),
+            event_security.next(self.id),
+        );
+
+        if status == ApprovalStatus::Approved {
+            if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
+                let ev = Envelope::new(
+                    event_security.next(self.id),
+                    event_context.next(self.id, agent_name.clone()),
+                    ActorEvent::FullResponseGenerated(vec![msg]),
+                );
+                output.send(ev).await.context("Failed to send tool results")?;
+            }
+        }
+
+        drop(state);
+
+        // Now continue with a fresh response turn
+        self.request_response(&event_context, &event_security, output).await?;
+
+        Ok(())
     }
 
     async fn request_response(
@@ -484,6 +586,42 @@ impl AgentActor {
                         if let Some(msg) = self.respond_complete(message, &mut turn_context).await {
                             send_event(ActorEvent::FullResponseGenerated(vec![msg])).await?;
                         }
+
+                        // Check for tool approvals
+                        let tools = self.tool_executor.tools();
+                        let requires_approval = tool_calls.iter().any(|call| {
+                            tools.iter().any(|t| t.name == call.function_name && t.requires_approval)
+                        });
+
+                        if requires_approval {
+                            info!("Tool execution requires approval for agent {} {}", self.id, agent_name);
+                            let approval_id = ApprovalId::new();
+                            {
+                                turn_context.agent_channel_state.pending_tool_calls = tool_calls.clone();
+                                turn_context.agent_channel_state.pending_approval = Some(approval_id);
+                                turn_context.agent_channel_state.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
+                            }
+                            self.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
+
+                            // Reflect messages so far to history/context for integrity
+                            self.reflect(&mut turn_context).await;
+                            turn_context.messages.clear();
+
+                            // Send request event
+                            let request = ApprovalRequest {
+                                id: approval_id,
+                                session_id: event_security.session_id,
+                                channel_id: event_security.channel_id,
+                                agent_id: self.agent_id,
+                                tool_call: tool_calls[0].clone(), // Carry the first one as representative
+                            };
+                            send_event(ActorEvent::ToolExecutionRequested(request)).await?;
+
+                            // Store state and return
+                            self.store_channel_state(&mut turn_context, "suspend").await;
+                            return Ok(());
+                        }
+
                         if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
                             send_event(ActorEvent::FullResponseGenerated(vec![msg])).await?;
                             continue 'steps;
@@ -497,14 +635,24 @@ impl AgentActor {
 
         self.reflect(&mut turn_context).await;
 
+        let pending_messages = mem::take(&mut turn_context.agent_channel_state.pending_messages);
+
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
-        if current_state != ProcessingState::Sleep && current_state != ProcessingState::Cancelling {
+        if current_state != ProcessingState::Sleep && current_state != ProcessingState::Cancelling && current_state != ProcessingState::WaitingForApproval {
             self.processing_state
                 .store(ProcessingState::Idle.into(), Ordering::SeqCst);
         }
 
         send_event(ActorEvent::FullResponseGenerated(turn_context.messages.clone())).await?;
         info!("Finished generating messages for agent {} {}",self.id, agent_name);
+
+        if !pending_messages.is_empty() {
+            info!("Processing {} pending messages for agent {}", pending_messages.len(), self.id);
+            let mut messages = pending_messages;
+            self.send_messages(&mut messages, event_security).await;
+            Box::pin(self.request_response(event_context, event_security, output)).await?;
+        }
+
         Ok(())
     }
 }

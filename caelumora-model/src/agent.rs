@@ -1,6 +1,7 @@
+use crate::approval::ApprovalId;
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
-use crate::message::{ActorId, MessageContext, MessageHistory};
+use crate::message::{ActorId, Message, MessageContext, MessageHistory, ToolCall};
 use crate::meta::{Metadata, Scope};
 use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
@@ -100,7 +101,8 @@ pub enum ProcessingState {
     Active,
     Cancelling,
     Sleep,
-    Silence
+    Silence,
+    WaitingForApproval,
 }
 
 impl From<u8> for ProcessingState {
@@ -111,6 +113,7 @@ impl From<u8> for ProcessingState {
             2 => ProcessingState::Cancelling,
             3 => ProcessingState::Sleep,
             4 => ProcessingState::Silence,
+            5 => ProcessingState::WaitingForApproval,
             _ => ProcessingState::Idle,
         }
     }
@@ -124,6 +127,7 @@ impl From<ProcessingState> for u8 {
             ProcessingState::Cancelling => 2,
             ProcessingState::Sleep => 3,
             ProcessingState::Silence => 4,
+            ProcessingState::WaitingForApproval => 5,
         }
     }
 }
@@ -202,9 +206,44 @@ pub struct AgentChannelState {
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub context: MessageContext,
+    /// Pending tool calls
+    #[serde(default)]
+    pub pending_tool_calls: Vec<ToolCall>,
+    /// Pending approval ID
+    #[serde(default)]
+    pub pending_approval: Option<ApprovalId>,
+    /// Pending messages while waiting for approval
+    #[serde(default)]
+    pub pending_messages: Vec<Message>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     // Add session specific data of an individual agent from multiple channels here if needed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn test_processing_state_conversion() {
+        assert_eq!(u8::from(ProcessingState::Idle), 0);
+        assert_eq!(u8::from(ProcessingState::Active), 1);
+        assert_eq!(u8::from(ProcessingState::WaitingForApproval), 5);
+        assert_eq!(ProcessingState::from(5), ProcessingState::WaitingForApproval);
+    }
+
+    #[test]
+    fn test_agent_channel_state_serialization() {
+        let state = AgentChannelState::default();
+        state.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
+        
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"WaitingForApproval\""));
+        
+        let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
+        assert_eq!(ProcessingState::from(decoded.processing_state.load(Ordering::SeqCst)), ProcessingState::WaitingForApproval);
+    }
 }

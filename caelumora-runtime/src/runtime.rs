@@ -1,4 +1,3 @@
-use crate::approval::{ApprovalManager, DefaultApprovalManager};
 use crate::component::ComponentRegistry;
 use crate::component_impl::{context, history, tool};
 use crate::controller::ControllerManager;
@@ -21,7 +20,6 @@ pub struct RuntimeManager {
     llm_client: Arc<dyn LLMClient>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
-    approval_manager: Arc<dyn ApprovalManager>,
     controller_manager: Arc<ControllerManager>,
 }
 
@@ -35,7 +33,6 @@ impl RuntimeManager {
         let security_manager = Arc::new(DummySecurityManager::new());
 
         let event_bus = Arc::new(EventBus::new());
-        let approval_manager = Arc::new(DefaultApprovalManager::new(event_bus.clone()));
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
 
         Self {
@@ -45,7 +42,6 @@ impl RuntimeManager {
             llm_client: Arc::new(OllamaClient::default()),
             component_registry: Arc::new(component_registry),
             event_bus,
-            approval_manager,
             controller_manager,
         }
     }
@@ -56,8 +52,6 @@ impl RuntimeManager {
     }
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
-
-    pub fn approval_manager(&self) -> Arc<dyn ApprovalManager> { self.approval_manager.clone() }
 
     pub fn llm_client(&self) -> Arc<dyn LLMClient> {
         self.llm_client.clone()
@@ -76,7 +70,7 @@ impl RuntimeManager {
     }
 
     pub fn new_tool_executor(&self, tool_providers: Vec<Arc<dyn ToolProvider>>) -> Box<dyn ToolExecutor> {
-        Box::new(DefaultToolExecutor::new(self.security_manager.clone(), self.approval_manager.clone(), tool_providers))
+        Box::new(DefaultToolExecutor::new(self.security_manager.clone(), tool_providers))
     }
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
