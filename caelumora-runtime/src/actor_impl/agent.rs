@@ -421,18 +421,15 @@ impl AgentActor {
             Ok(())
         };
 
-        send_event(ActorEvent::ResponseStarted).await?;
-
         // Do not respond if in stopped or canceled state!
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
         if current_state == ProcessingState::Sleep || current_state == ProcessingState::Cancelling {
-            info!(
-                "Returning for inactive agent {} {}",
-                self.id, agent_name
-            );
+            info!("Returning for inactive agent {} {}",self.id, agent_name);
             return Ok(());
         }
         self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        send_event(ActorEvent::ResponseStarted).await?;
+        info!("Starting generating messages for agent {} {}",self.id, agent_name);
 
         let mut state = self.state.lock().await;
         let mut turn_context = state.new_turn_context(
@@ -448,6 +445,7 @@ impl AgentActor {
             // Check if we want to break out
             let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
             if current_state == ProcessingState::Silence {
+                info!("Stopping for silenced agent {} {}",self.id, agent_name);
                 break 'steps;
             }
 
@@ -465,6 +463,7 @@ impl AgentActor {
                 if ProcessingState::from(self.processing_state.load(Ordering::SeqCst))
                     == ProcessingState::Cancelling
                 {
+                    info!("Stopping for cancelled agent {} {}",self.id, agent_name);
                     break 'steps;
                 }
 
@@ -505,6 +504,7 @@ impl AgentActor {
         }
 
         send_event(ActorEvent::FullResponseGenerated(turn_context.messages.clone())).await?;
+        info!("Finished generating messages for agent {} {}",self.id, agent_name);
         Ok(())
     }
 }
