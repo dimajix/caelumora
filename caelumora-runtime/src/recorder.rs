@@ -1,7 +1,6 @@
-use std::fmt::Debug;
 use async_trait::async_trait;
-use crate::actor::{Envelope};
-
+use caelumora_model::actor::Envelope;
+use std::fmt::Debug;
 
 #[async_trait]
 pub trait Recorder: Send + Sync + Debug {

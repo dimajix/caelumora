@@ -1,7 +1,6 @@
-use crate::message::MessageEvent;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;

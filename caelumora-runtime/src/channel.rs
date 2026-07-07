@@ -1,16 +1,15 @@
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, SendError};
+use crate::actor::{Actor, ActorSender, SendError};
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::ProcessingState;
-use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{ActorId, Message};
-use caelumora_model::security::SecurityContext;
+use caelumora_model::message::Message;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use log::{debug, info, warn};
@@ -205,22 +204,6 @@ impl ChannelLoop {
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, actors: &Arc<HashMap<ActorId, ActorHandle>>) {
         if let Some(global_event) = maybe_global {
             self.channel.process_global_event(&global_event).await;
-            if let GlobalEvent::ApprovalResponded(request, response) = global_event {
-                if request.channel_id == self.id {
-                    let actor_event = match response.status {
-                        ApprovalStatus::Approved => ActorEvent::ToolExecutionGranted(request),
-                        ApprovalStatus::Denied => ActorEvent::ToolExecutionDenied(request),
-                    };
-                    let security = SecurityContext {
-                        session_id: self.session_id,
-                        channel_id: self.id,
-                        ..SecurityContext::default()
-                    };
-                    let context = EventContext::new(self.session_id, self.id, ActorId::None, "system".to_string());
-                    let envelope = Envelope::new(security, context, actor_event);
-                    self.route_event(actors, envelope).await;
-                }
-            }
         }
     }
 

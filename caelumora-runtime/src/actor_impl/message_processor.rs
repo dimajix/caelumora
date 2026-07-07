@@ -1,9 +1,10 @@
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::message::MessageProcessor;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::ProcessingState;
-use caelumora_model::message::{ActorId, Message};
+use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use log::{debug, info};
 use std::mem;

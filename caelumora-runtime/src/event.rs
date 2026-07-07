@@ -86,11 +86,6 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
-            GlobalEvent::ApprovalRequested(req) | GlobalEvent::ApprovalResponded(req, _) => {
-                topics_to_notify.push(SubscriptionTopic::Session(req.session_id));
-                topics_to_notify.push(SubscriptionTopic::Channel(req.channel_id));
-                topics_to_notify.push(SubscriptionTopic::Agent(req.agent_id));
-            }
         }
 
         for topic in topics_to_notify {

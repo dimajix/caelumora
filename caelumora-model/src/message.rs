@@ -1,46 +1,12 @@
-use crate::agent::AgentId;
-use crate::user::UserId;
+use crate::actor::ActorId;
 use chrono::{DateTime, Utc};
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use uuid::Uuid;
 
 define_id!(MessageId);
 
-
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ActorId {
-    #[default]
-    None,
-    User(UserId),
-    Agent(AgentId)
-}
-impl ActorId {
-    pub fn id(&self) -> Uuid {
-        match &self {
-            ActorId::None => {Uuid::nil()}
-            ActorId::User(id) => {id.0}
-            ActorId::Agent(id) => {id.0}
-        }
-    }
-
-    pub fn as_agent_id(&self) -> Option<AgentId> {
-        match self {
-            ActorId::Agent(id) => Some(*id),
-            _ => None,
-        }
-    }
-
-    pub fn as_user_id(&self) -> Option<UserId> {
-        match self {
-            ActorId::User(id) => Some(*id),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum MessageRole {
@@ -117,6 +83,17 @@ impl Default for Message {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum MessageEvent {
+    /// A partial piece of a message (e.g., a single sentence or a chunk of tokens)
+    Partial(Message),
+    /// A complete message that is now ready to be routed/processed
+    Complete(Message),
+    /// A signal that this agent has finished its current turn
+    EndOfTurn(Vec<Message>),
+}
+
 
 pub fn format_conversation(messages:&[Message]) -> String {
     messages.iter()
@@ -225,6 +202,7 @@ impl MessageHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     fn make_message(id: MessageId) -> Message {
         Message {

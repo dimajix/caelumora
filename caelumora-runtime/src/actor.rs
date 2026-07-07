@@ -1,156 +1,20 @@
-use crate::message::MessageEvent;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::ProcessingState;
-use caelumora_model::approval::ApprovalRequest;
-use caelumora_model::message::{ActorId, Message};
-use caelumora_model::session::{ChannelId, SessionId};
-use chrono::{DateTime, Utc};
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState, ProcessingState};
 use std::any::Any;
 use std::fmt::Debug;
+use std::mem;
 use tokio::sync::mpsc::{Receiver, Sender};
-use uuid::Uuid;
 
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_model::approval::ApprovableToolCall;
+use caelumora_model::channel::ChannelId;
+use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventContext {
-    pub session_id: SessionId,
-    pub channel_id: ChannelId,
-    pub sender_id: ActorId,
-    pub sender_name: String,
-    pub event_id: Uuid,
-    pub correlation_id: Uuid,
-    pub span_id: Uuid,
-    pub span_depth: i32,
-}
-
-impl EventContext {
-    pub fn new(session_id: SessionId, channel_id: ChannelId, sender_id:ActorId, sender_name:String) -> Self {
-        Self {
-            session_id,
-            channel_id,
-            sender_id,
-            sender_name,
-            event_id: Uuid::new_v4(),
-            correlation_id: Uuid::default(),
-            span_id: Uuid::new_v4(),
-            span_depth: 0,
-        }
-    }
-
-    pub fn next(&self, sender_id:ActorId, sender_name:String) -> Self {
-        Self {
-            session_id: self.session_id,
-            channel_id: self.channel_id,
-            sender_id,
-            sender_name,
-            event_id: Uuid::new_v4(),
-            correlation_id: self.event_id,
-            span_id: self.span_id,
-            span_depth: self.span_depth + 1,
-        }
-    }
-}
-
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ActorEvent {
-    ToolExecutionRequested(ApprovalRequest),
-    ToolExecutionGranted(ApprovalRequest),
-    ToolExecutionDenied(ApprovalRequest),
-    ResponseRequested,
-    ResponseStarted,
-    PartialMessageGenerated(Message),
-    CompleteMessageGenerated(Message),
-    FullResponseGenerated(Vec<Message>),
-    WakeupRequested,
-}
-
-impl ActorEvent {
-    pub fn from_message_event(event: MessageEvent) -> Self {
-        match event {
-            MessageEvent::Partial(msg) => {
-                ActorEvent::PartialMessageGenerated(msg)
-            }
-            MessageEvent::Complete(msg) => {
-                ActorEvent::CompleteMessageGenerated(msg)
-            }
-            MessageEvent::EndOfTurn(vec) => {
-                ActorEvent::FullResponseGenerated(vec)
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Envelope {
-    pub timestamp: DateTime<Utc>,
-    pub security: SecurityContext,
-    pub context: EventContext,
-    pub event: ActorEvent
-}
-
-
-impl Envelope {
-    pub fn new(security: SecurityContext, context: EventContext, event: ActorEvent) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security,
-            context,
-            event
-        }
-    }
-
-    pub fn forward(&self) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.clone(),
-            context: self.context.clone(),
-            event: self.event.clone(),
-        }
-    }
-    pub fn forward_with_response(&self, messages:Vec<Message>) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.clone(),
-            context: self.context.clone(),
-            event: ActorEvent::FullResponseGenerated(messages)
-        }
-    }
-    pub fn forward_with_event(&self, event:ActorEvent) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.clone(),
-            context: self.context.clone(),
-            event
-        }
-    }
-
-    pub fn respond(&self, sender_id:ActorId, sender_name:String, messages:Vec<Message>) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.next(sender_id),
-            context: self.context.next(sender_id, sender_name),
-            event: ActorEvent::FullResponseGenerated(messages)
-        }
-    }
-
-    pub fn with_event(mut self, event: ActorEvent) -> Self {
-        self.event = event;
-        self
-    }
-    pub fn with_security(mut self, security_context: SecurityContext) -> Self {
-        self.security = security_context;
-        self
-    }
-}
-
+use caelumora_model::session::SessionId;
 
 #[async_trait]
-pub trait Actor : Any + Debug + Send + Sync {
+pub trait Actor: Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn kind(&self) -> String;
     fn name(&self) -> String;
@@ -164,7 +28,7 @@ pub trait Actor : Any + Debug + Send + Sync {
     fn state(&self) -> ProcessingState;
 
     /// Wakes up the actor from a Stopped state
-    async fn wakeup(&self) -> Result<()>  {
+    async fn wakeup(&self) -> Result<()> {
         Ok(())
     }
 
@@ -172,7 +36,6 @@ pub trait Actor : Any + Debug + Send + Sync {
         Ok(())
     }
 }
-
 
 #[derive(Debug)]
 pub enum SendError {
@@ -214,3 +77,79 @@ impl ActorSender for StandardActorSender {
     }
 }
 
+
+#[derive(Debug)]
+pub struct TurnContext<'a> {
+    pub agent_id: AgentId,
+    pub agent_name: String,
+    pub agent_state: &'a mut AgentState,
+    pub agent_channel_state: &'a mut AgentChannelState,
+}
+
+impl<'a> TurnContext<'a> {
+    pub fn new(agent_id: AgentId, agent_name:String, agent_state: &'a mut AgentState, agent_channel_state: &'a mut AgentChannelState) -> Self {
+        Self {
+            agent_id,
+            agent_name,
+            agent_state,
+            agent_channel_state,
+        }
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.agent_channel_state.turn_event_context.session_id
+    }
+    pub fn channel_id(&self) -> ChannelId {
+        self.agent_channel_state.turn_event_context.channel_id
+    }
+
+    pub fn context(&self) -> Vec<Message> {
+        self.agent_channel_state.turn_context.clone()
+    }
+    pub fn messages(&self) -> Vec<Message> {
+        self.agent_channel_state.turn_messages.clone()
+    }
+
+    pub fn last_message(&self) -> Option<&Message> {
+        self.agent_channel_state.turn_messages.last()
+    }
+
+    pub fn full_context(&self) -> Vec<Message> {
+        let mut context = self.agent_channel_state.turn_context.clone();
+        context.extend_from_slice(self.agent_channel_state.turn_messages.as_slice());
+        context
+    }
+
+    pub fn set_context(&mut self, context: Vec<Message>) {
+        self.agent_channel_state.turn_context = context;
+    }
+
+    pub fn push_message(&mut self, message: Message) {
+        self.agent_channel_state.turn_messages.push(message);
+    }
+
+    pub fn take_pending_events(&mut self) -> Vec<Envelope> {
+        mem::take(&mut self.agent_channel_state.pending_events)
+    }
+
+    pub fn take_tool_calls(&mut self) -> Vec<ApprovableToolCall> {
+        mem::take(&mut self.agent_channel_state.pending_tool_calls)
+    }
+
+    pub fn security_context(&self) -> &SecurityContext {
+        &self.agent_channel_state.turn_security_context
+    }
+
+    pub async fn send_event(&self, av:ActorEvent, output: &Sender<Envelope>) -> Result<()> {
+        let ev = Envelope::new(
+            self.agent_channel_state.turn_security_context.clone(),
+            self.agent_channel_state.turn_event_context.clone(),
+            av,
+        );
+        output
+            .send(ev)
+            .await
+            .context(format!("Actor {} failed to send event", self.agent_id))?;
+        Ok(())
+    }
+}

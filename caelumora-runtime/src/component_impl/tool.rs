@@ -1,5 +1,5 @@
+use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::message::TurnContext;
 use crate::tool::ToolProvider;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -126,9 +126,7 @@ impl ToolProvider for CalculatorToolProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::TurnContext;
     use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
-    use caelumora_model::security::SecurityContext;
     use serde_json::json;
 
     #[tokio::test]
@@ -136,7 +134,7 @@ mod tests {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
+        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -160,7 +158,7 @@ mod tests {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
+        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         let params = json!({ "expression": "invalid" });
         let result = provider.execute("calculate", params, &turn_context).await;
@@ -172,7 +170,7 @@ mod tests {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state, SecurityContext::default());
+        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         let result = provider.execute("stop", json!({}), &turn_context).await.unwrap();
         assert_eq!(result["status"], "stopped");

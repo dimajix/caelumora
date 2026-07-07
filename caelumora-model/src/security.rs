@@ -1,13 +1,13 @@
+use crate::actor::ActorId;
+use crate::agent::{Agent, AgentId, Personality, PersonalityId};
 use crate::channel::ChannelId;
-use crate::message::{ActorId, ToolCall};
+use crate::message::ToolCall;
+use crate::session::Session;
 use crate::session::SessionId;
+use crate::template::{SessionTemplate, SessionTemplateId};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-
-use crate::agent::{Agent, AgentId, Personality, PersonalityId};
-use crate::session::Session;
-use crate::template::{SessionTemplate, SessionTemplateId};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ActionType<'a> {

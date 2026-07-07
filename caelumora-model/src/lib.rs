@@ -15,3 +15,4 @@ pub mod meta;
 pub mod component;
 pub mod event;
 pub mod security;
+pub mod actor;

@@ -5,10 +5,11 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use crate::actor::{Actor, ActorEvent, Envelope};
+use crate::actor::Actor;
 use crate::actor_impl::user::UserActor;
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::ProcessingState;
-use caelumora_model::message::{ActorId, Message, MessageRole};
+use caelumora_model::message::{Message, MessageRole};
 use dashmap::DashMap;
 use rand::rngs::StdRng;
 

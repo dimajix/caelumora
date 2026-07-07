@@ -1,7 +1,8 @@
-use crate::approval::ApprovalId;
+use crate::actor::{ActorId, Envelope, EventContext};
+use crate::approval::ApprovableToolCall;
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
-use crate::message::{ActorId, Message, MessageContext, MessageHistory, ToolCall};
+use crate::message::{Message, MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
@@ -9,6 +10,8 @@ use crate::store::EntityStore;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -208,13 +211,20 @@ pub struct AgentChannelState {
     pub context: MessageContext,
     /// Pending tool calls
     #[serde(default)]
-    pub pending_tool_calls: Vec<ToolCall>,
-    /// Pending approval ID
-    #[serde(default)]
-    pub pending_approval: Option<ApprovalId>,
+    pub pending_tool_calls: Vec<ApprovableToolCall>,
     /// Pending messages while waiting for approval
     #[serde(default)]
-    pub pending_messages: Vec<Message>,
+    pub pending_events: Vec<Envelope>,
+    #[serde(default)]
+    pub turn_scratch: HashMap<String, Value>,
+    #[serde(default)]
+    pub turn_context: Vec<Message>,
+    #[serde(default)]
+    pub turn_messages: Vec<Message>,
+    #[serde(default)]
+    pub turn_security_context: SecurityContext,
+    #[serde(default)]
+    pub turn_event_context: EventContext
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

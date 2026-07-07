@@ -1,20 +1,21 @@
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::actor::TurnContext;
+use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::component::{ComponentContainer, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
-use crate::message::{MessageEvent, TurnContext};
 use crate::runtime::RuntimeManager;
 use crate::tool::{ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::{
     Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState,
 };
-use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
+use caelumora_model::approval::{ApprovableToolCall, ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{ActorId, Message, MessageId, MessageRole, ToolCall, ToolResult};
+use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole, ToolCall, ToolResult};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
 use futures::stream::BoxStream;
@@ -52,6 +53,7 @@ pub struct AgentActor {
 
 #[derive(Debug)]
 struct AgentActorState {
+    agent_id: AgentId,
     agent_channel_state: AgentChannelState,
     agent_state: AgentState,
 }
@@ -59,19 +61,32 @@ struct AgentActorState {
 impl AgentActorState {
     fn new_turn_context<'a>(
         &'a mut self,
-        agent_id: AgentId,
         agent_name: String,
+        event_context: EventContext,
         security_context: SecurityContext,
     ) -> TurnContext<'a> {
+        self.agent_channel_state.turn_scratch.clear();
+        self.agent_channel_state.turn_context.clear();
+        self.agent_channel_state.turn_messages.clear();
+        self.agent_channel_state.turn_event_context = event_context;
+        self.agent_channel_state.turn_security_context = security_context;
         TurnContext {
-            scratch: Default::default(),
-            context: vec![],
-            messages: vec![],
-            agent_id,
+            agent_id: self.agent_id,
             agent_name,
             agent_state: &mut self.agent_state,
             agent_channel_state: &mut self.agent_channel_state,
-            security_context,
+        }
+    }
+
+    fn resume_turn_context<'a>(
+        &'a mut self,
+        agent_name: String,
+    ) -> TurnContext<'a> {
+        TurnContext {
+            agent_id: self.agent_id,
+            agent_name,
+            agent_state: &mut self.agent_state,
+            agent_channel_state: &mut self.agent_channel_state,
         }
     }
 }
@@ -113,6 +128,7 @@ impl AgentActor {
         let agent_state = state_store.get_agent_state(agent_id).await?;
         let processing_state = agent_channel_state.processing_state.clone();
         let state = Mutex::new(AgentActorState {
+            agent_id,
             agent_channel_state,
             agent_state,
         });
@@ -150,27 +166,28 @@ impl AgentActor {
         }
     }
 
-    async fn store_channel_state<'a>(&self, turn_context: &mut TurnContext<'a>, _stage: &str) {
-        let agent_channel_state = &mut turn_context.agent_channel_state;
-        self.store_channel_state_direct(agent_channel_state).await;
-    }
-
-    async fn store_channel_state_direct(&self, state: &AgentChannelState) {
+    async fn store_channel_state<'a>(&self, turn_context: &mut TurnContext<'a>, stage: &str) {
         if let Err(_e) = self
             .state_store
-            .put_agent_channel_state(self.agent_id, self.channel_id, state)
+            .put_agent_channel_state(self.agent_id, self.channel_id, turn_context.agent_channel_state)
             .await
         {
             warn!(
-                "Cannot store channel state of agent {}", self.agent_id
+                "Cannot store channel state of agent {} after {}", self.agent_id, stage
             )
         }
     }
 
-    async fn perceive<'a>(&self, messages: Vec<Message>, turn_context: &mut TurnContext<'a>) {
+    async fn perceive<'a>(&self, messages: Vec<Message>) {
+        let mut state = self.state.lock().await;
+        let mut turn_context = state.new_turn_context(
+            self.agent_controller.name(),
+            self.security_context.clone(),
+        );
+
         let original_messages = messages.clone();
         let perceived =
-            Self::apply_stage_processors(&self.perceive_in_processors, messages, turn_context)
+            Self::apply_stage_processors(&self.perceive_in_processors, messages, &mut turn_context)
                 .await
                 .unwrap_or_else(|e| {
                     warn!("PerceiveIn stage failed: {}", e);
@@ -178,8 +195,8 @@ impl AgentActor {
                 });
 
         let _ = perceived;
-        self.store_channel_state(turn_context, "perceive").await;
-        self.store_agent_state(turn_context, "perceive").await;
+        self.store_channel_state(&mut turn_context, "perceive").await;
+        self.store_agent_state(&mut turn_context, "perceive").await;
     }
 
     async fn respond_complete<'a>(
@@ -196,7 +213,7 @@ impl AgentActor {
         }
 
         let msg = output.remove(0);
-        turn_context.messages.push(msg.clone());
+        turn_context.push_message(msg.clone());
 
         self.store_channel_state(turn_context, "respond_complete").await;
 
@@ -206,10 +223,10 @@ impl AgentActor {
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
         turn_context.agent_channel_state
             .context
-            .extend(turn_context.messages.clone());
+            .extend(turn_context.messages());
         turn_context.agent_channel_state
             .history
-            .extend(turn_context.messages.clone());
+            .extend(turn_context.messages());
 
         self.store_channel_state(turn_context, "reflect").await;
     }
@@ -254,8 +271,7 @@ impl AgentActor {
     ) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
 
-        let mut context = turn_context.context.clone();
-        context.extend_from_slice(turn_context.messages.as_slice());
+        let mut context = turn_context.full_context();
         let tools = self.tool_executor.tools();
         llm_client
             .chat_completion(context.as_slice(), tools.as_slice())
@@ -264,30 +280,39 @@ impl AgentActor {
 
     async fn execute<'a>(
         &self,
-        tool_calls: Vec<ToolCall>,
+        tool_calls: Vec<ApprovableToolCall>,
         turn_context: &mut TurnContext<'a>,
     ) -> Option<Message> {
         let mut tool_results = Vec::new();
         for c in tool_calls {
-            match self.tool_executor.execute(&c, turn_context).await {
-                Ok(r) => {
-                    tool_results.push(r);
+            match c.status {
+                ApprovalStatus::Approved => {
+                    match self.tool_executor.execute(&c.tool_call, turn_context).await {
+                        Ok(r) => {
+                            tool_results.push(r);
+                        }
+                        Err(e) => {
+                            warn!("Tool execution failed: {}", e);
+                            tool_results.push(ToolResult {
+                                id: c.tool_call.id.clone(),
+                                tool_name: c.tool_call.function_name.clone(),
+                                content: format!("Error: {}", e),
+                            });
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Tool execution failed: {}", e);
-                    tool_results.push(ToolResult {
-                        id: c.id.clone(),
-                        tool_name: c.function_name.clone(),
-                        content: format!("Error: {}", e),
-                    });
+                ApprovalStatus::Denied => {
+
+                }
+                ApprovalStatus::Unknown => {
+
                 }
             }
         }
 
         if !tool_results.is_empty() {
             let message_id = turn_context
-                .messages
-                .last()
+                .last_message()
                 .map(|m| m.id)
                 .unwrap_or_default();
 
@@ -302,7 +327,7 @@ impl AgentActor {
                 timestamp: chrono::Utc::now(),
                 ..Message::default()
             };
-            turn_context.messages.push(tool_message.clone());
+            turn_context.push_message(tool_message.clone());
             Some(tool_message)
         } else {
             None
@@ -355,47 +380,19 @@ impl AgentActor {
 
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
         if current_state == ProcessingState::WaitingForApproval {
-            let mut approval_responded = None;
-            let mut other_events = Vec::new();
-
-            for env in buffer.drain(..) {
-                match &env.event {
-                    ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) => {
-                        let state = self.state.lock().await;
-                        if state.agent_channel_state.pending_approval == Some(req.id) {
-                            approval_responded = Some(env.clone());
-                        } else {
-                            // other_events.push(env);
-                        }
-                    }
-                    _ => {
-                        other_events.push(env);
-                    }
-                }
-            }
-
-            if !other_events.is_empty() {
-                let mut state = self.state.lock().await;
-                for env in other_events {
-                    match env.event {
-                        ActorEvent::FullResponseGenerated(msgs) => {
-                            state.agent_channel_state.pending_messages.extend(msgs);
-                        }
-                        _ => {}
-                    }
-                }
-                let channel_state = state.agent_channel_state.clone();
-                drop(state);
-                self.store_channel_state_direct(&channel_state).await;
-            }
-
-            if let Some(env) = approval_responded {
-                self.resume_response(env, output).await?;
-            }
-
-            return Ok(false);
+            self.process_approvals(buffer, output).await?;
         }
+        else {
+            self.process_messages(buffer, output).await?;
+        }
+        Ok(false)
+    }
 
+    async fn process_messages(
+        &self,
+        buffer: &mut Vec<Envelope>,
+        output: &Sender<Envelope>,
+    ) -> Result<()> {
         let last_security = buffer.last().unwrap().security.clone();
         let last_context = buffer.last().unwrap().context.clone();
         let mut response_requested = false;
@@ -403,7 +400,7 @@ impl AgentActor {
         for event in buffer.iter_mut() {
             match &mut event.event {
                 ActorEvent::FullResponseGenerated(m) => {
-                    self.send_messages(m, &last_security).await;
+                    self.perceive(mem::take(m)).await;
                 }
                 ActorEvent::ResponseRequested => {
                     response_requested = true;
@@ -422,7 +419,7 @@ impl AgentActor {
                     self.agent_controller.name()
                 ))?;
         }
-        Ok(false)
+        Ok(())
     }
 
     async fn handle_global_event(
@@ -437,66 +434,68 @@ impl AgentActor {
         }
     }
 
-    async fn send_messages(&self, messages: &mut Vec<Message>, _event_security: &SecurityContext) {
+    async fn process_approvals(
+        &self,
+        buffer: &mut Vec<Envelope>,
+        output: &Sender<Envelope>,
+    ) -> Result<()> {
+        let mut approvals_pending = false;
+
         let mut state = self.state.lock().await;
-        let mut turn_context = state.new_turn_context(
-            self.agent_id,
-            self.agent_controller.name(),
-            self.security_context.clone(),
-        );
-        self.perceive(mem::take(messages), &mut turn_context).await;
+        let mut turn_context = state.resume_turn_context(self.name());
+        for env in buffer.drain(..) {
+            match &env.event {
+                ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) => {
+                     state.agent_channel_state.pending_tool_calls.insert(req.id);
+                     approvals_pending = state.agent_channel_state.pending_tool_calls.iter().filter(|tc| tc.status == ApprovalStatus::Unknown).count() > 0;
+                }
+                ev => {
+                    state.agent_channel_state.pending_events.push(env);
+                }
+            }
+        }
+        self.store_channel_state(&mut turn_context, "perceive").await;
+
+        drop(state);
+
+        if !approvals_pending {
+            self.resume_response(output).await?;
+        }
+
+        Ok(())
     }
 
     async fn resume_response(
         &self,
-        response_event: Envelope,
         output: &Sender<Envelope>,
     ) -> Result<()> {
-        let (status, approval_id) = match &response_event.event {
-            ActorEvent::ToolExecutionGranted(req) => (ApprovalStatus::Approved, req.id),
-            ActorEvent::ToolExecutionDenied(req) => (ApprovalStatus::Denied, req.id),
-            _ => return Ok(()),
-        };
-
-        info!("Resuming response for agent {} with status {:?}", self.id, status);
+        info!("Resuming response for agent {}", self.id);
 
         let agent_name = self.agent_controller.name();
         let mut state = self.state.lock().await;
-
-        if state.agent_channel_state.pending_approval != Some(approval_id) {
-            warn!("Received approval response for non-pending approval: {}", approval_id);
-            return Ok(());
-        }
-
-        let tool_calls = mem::take(&mut state.agent_channel_state.pending_tool_calls);
-        state.agent_channel_state.pending_approval = None;
-        state.agent_channel_state.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
-        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
-
-        let event_security = response_event.security.clone();
-        let event_context = response_event.context.clone();
-
-        let mut turn_context = state.new_turn_context(
-            self.agent_id,
+        let mut turn_context = state.resume_turn_context(
             agent_name.clone(),
-            event_security.next(self.id),
         );
 
-        if status == ApprovalStatus::Approved {
-            if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
-                let ev = Envelope::new(
-                    event_security.next(self.id),
-                    event_context.next(self.id, agent_name.clone()),
-                    ActorEvent::FullResponseGenerated(vec![msg]),
-                );
-                output.send(ev).await.context("Failed to send tool results")?;
-            }
+        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+
+        let tool_calls = turn_context.take_tool_calls();
+        if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
+            turn_context.send_event(ActorEvent::FullResponseGenerated(vec![msg]), output).await?;
         }
 
+        // Resume generating the response
+        self.generate_response(&mut turn_context, output).await?;
+
+        let mut pending_events = turn_context.take_pending_events();
+        drop(turn_context);
         drop(state);
 
-        // Now continue with a fresh response turn
-        self.request_response(&event_context, &event_security, output).await?;
+        // Forward all remaining events
+        if !pending_events.is_empty() {
+            info!("Processing {} pending events for agent {}", pending_events.len(), self.id);
+            Box::pin(self.process_messages(&mut pending_events, output)).await?;
+        }
 
         Ok(())
     }
@@ -509,20 +508,6 @@ impl AgentActor {
     ) -> Result<()> {
         let agent_name = self.agent_controller.name();
 
-        // Helper function for sending events
-        let send_event = async |av:ActorEvent| -> Result<()> {
-            let ev = Envelope::new(
-                event_security.next(self.id),
-                event_context.next(self.id, agent_name.clone()),
-                av,
-            );
-            output
-                .send(ev)
-                .await
-                .context(format!("Actor {} failed to send event", self.id))?;
-            Ok(())
-        };
-
         // Do not respond if in stopped or canceled state!
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
         if current_state == ProcessingState::Sleep || current_state == ProcessingState::Cancelling {
@@ -530,17 +515,32 @@ impl AgentActor {
             return Ok(());
         }
         self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
-        send_event(ActorEvent::ResponseStarted).await?;
-        info!("Starting generating messages for agent {} {}",self.id, agent_name);
 
         let mut state = self.state.lock().await;
         let mut turn_context = state.new_turn_context(
-            self.agent_id,
             agent_name.clone(),
+            event_context.next(self.id, agent_name.clone()),
             event_security.next(self.id),
         );
 
+        info!("Starting generating messages for agent {} {}",self.id, agent_name);
+        turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
+
+        // Initialize next turn
         self.next_turn(&mut turn_context).await?;
+
+        // Generate response
+        self.generate_response(&mut turn_context, output).await?;
+
+        Ok(())
+    }
+
+    async fn generate_response<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        output: &Sender<Envelope>,
+    ) -> Result<()> {
+        let agent_name = self.agent_controller.name();
 
         let mut loop_count = 0;
         'steps: while loop_count < self.max_iterations {
@@ -550,11 +550,15 @@ impl AgentActor {
                 info!("Stopping for silenced agent {} {}",self.id, agent_name);
                 break 'steps;
             }
+            if current_state == ProcessingState::Cancelling {
+                info!("Stopping for cancelled agent {} {}",self.id, agent_name);
+                break 'steps;
+            }
 
             loop_count += 1;
 
             // --- PHASE 2: PLAN ---
-            let mut response = self.plan(&mut turn_context).await;
+            let mut response = self.plan(turn_context).await;
             use futures::stream::TryStreamExt;
             while let Some(event) = response
                 .try_next()
@@ -562,9 +566,8 @@ impl AgentActor {
                 .context("Error during planning stream")?
             {
                 // Check for cancellation
-                if ProcessingState::from(self.processing_state.load(Ordering::SeqCst))
-                    == ProcessingState::Cancelling
-                {
+                let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
+                if current_state == ProcessingState::Cancelling {
                     info!("Stopping for cancelled agent {} {}",self.id, agent_name);
                     break 'steps;
                 }
@@ -574,56 +577,55 @@ impl AgentActor {
                         let mut message = message;
                         message.sender_name = agent_name.clone();
                         message.sender_id = self.id;
-                        if let Some(msg) = self.respond_partial(message, &mut turn_context).await {
-                            send_event(ActorEvent::PartialMessageGenerated(msg)).await?;
+                        if let Some(msg) = self.respond_partial(message, turn_context).await {
+                            turn_context.send_event(ActorEvent::PartialMessageGenerated(msg), output).await?;
                         }
                     }
                     MessageEvent::Complete(message) => {
                         let mut message = message;
                         message.sender_name = agent_name.clone();
                         message.sender_id = self.id;
-                        let tool_calls = message.tool_calls.clone();
-                        if let Some(msg) = self.respond_complete(message, &mut turn_context).await {
-                            send_event(ActorEvent::FullResponseGenerated(vec![msg])).await?;
-                        }
 
                         // Check for tool approvals
                         let tools = self.tool_executor.tools();
-                        let requires_approval = tool_calls.iter().any(|call| {
-                            tools.iter().any(|t| t.name == call.function_name && t.requires_approval)
-                        });
+                        let mut requires_approval = false;
+                        let tool_calls: Vec<ApprovableToolCall> = message.tool_calls.iter().map(|tc| {
+                            let approval = tools.iter().any(|t| t.name == tc.function_name && t.requires_approval);
+                            requires_approval |= approval;
+                            ApprovableToolCall {
+                                id: ApprovalId::new(),
+                                status: if approval { ApprovalStatus::Unknown } else { ApprovalStatus::Approved },
+                                tool_call: tc.clone(),
+                            }
+                        }).collect();
+
+                        if let Some(msg) = self.respond_complete(message, turn_context).await {
+                            turn_context.send_event(ActorEvent::FullResponseGenerated(vec![msg]), output).await?;
+                        }
 
                         if requires_approval {
                             info!("Tool execution requires approval for agent {} {}", self.id, agent_name);
-                            let approval_id = ApprovalId::new();
-                            {
-                                turn_context.agent_channel_state.pending_tool_calls = tool_calls.clone();
-                                turn_context.agent_channel_state.pending_approval = Some(approval_id);
-                                turn_context.agent_channel_state.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
-                            }
+                            turn_context.agent_channel_state.pending_tool_calls = tool_calls.clone();
                             self.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
 
-                            // Reflect messages so far to history/context for integrity
-                            self.reflect(&mut turn_context).await;
-                            turn_context.messages.clear();
-
-                            // Send request event
-                            let request = ApprovalRequest {
-                                id: approval_id,
-                                session_id: event_security.session_id,
-                                channel_id: event_security.channel_id,
-                                agent_id: self.agent_id,
-                                tool_call: tool_calls[0].clone(), // Carry the first one as representative
-                            };
-                            send_event(ActorEvent::ToolExecutionRequested(request)).await?;
+                            for tc in tool_calls {
+                                let request = ApprovalRequest {
+                                    id: tc.id,
+                                    session_id: turn_context.session_id(),
+                                    channel_id: turn_context.channel_id(),
+                                    agent_id: self.agent_id,
+                                    tool_call: tc.tool_call, // Carry the first one as representative
+                                };
+                                turn_context.send_event(ActorEvent::ToolExecutionRequested(request), output).await?;
+                            }
 
                             // Store state and return
-                            self.store_channel_state(&mut turn_context, "suspend").await;
+                            self.store_channel_state(turn_context, "suspend").await;
                             return Ok(());
                         }
 
-                        if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
-                            send_event(ActorEvent::FullResponseGenerated(vec![msg])).await?;
+                        if let Some(msg) = self.execute(tool_calls, turn_context).await {
+                            turn_context.send_event(ActorEvent::FullResponseGenerated(vec![msg]), output).await?;
                             continue 'steps;
                         }
                     }
@@ -633,9 +635,7 @@ impl AgentActor {
             break;
         }
 
-        self.reflect(&mut turn_context).await;
-
-        let pending_messages = mem::take(&mut turn_context.agent_channel_state.pending_messages);
+        self.reflect(turn_context).await;
 
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
         if current_state != ProcessingState::Sleep && current_state != ProcessingState::Cancelling && current_state != ProcessingState::WaitingForApproval {
@@ -643,15 +643,8 @@ impl AgentActor {
                 .store(ProcessingState::Idle.into(), Ordering::SeqCst);
         }
 
-        send_event(ActorEvent::FullResponseGenerated(turn_context.messages.clone())).await?;
+        turn_context.send_event(ActorEvent::FullResponseGenerated(turn_context.messages()), output).await?;
         info!("Finished generating messages for agent {} {}",self.id, agent_name);
-
-        if !pending_messages.is_empty() {
-            info!("Processing {} pending messages for agent {}", pending_messages.len(), self.id);
-            let mut messages = pending_messages;
-            self.send_messages(&mut messages, event_security).await;
-            Box::pin(self.request_response(event_context, event_security, output)).await?;
-        }
 
         Ok(())
     }
@@ -742,7 +735,8 @@ mod tests {
     use super::*;
     use crate::component_impl::context::{StateContextAppender, StateContextProvider};
     use crate::component_impl::history::StateHistoryWriter;
-    use caelumora_model::message::{ActorId, MessageId};
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::message::MessageId;
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -769,7 +763,6 @@ mod tests {
             String::new(),
             &mut agent_state,
             &mut agent_channel_state,
-            SecurityContext::default(),
         );
         let processor = StateHistoryWriter {};
         let input = vec![make_message("hello")];
@@ -796,7 +789,6 @@ mod tests {
             String::new(),
             &mut agent_state,
             &mut agent_channel_state,
-            SecurityContext::default(),
         );
         let appender = StateContextAppender {};
         let provider = StateContextProvider {
@@ -816,7 +808,7 @@ mod tests {
             .current_context(&mut turn_context)
             .await
             .expect("context provider should succeed");
-        assert_eq!(turn_context.context.len(), 1);
-        assert_eq!(turn_context.context[0].id, input[0].id);
+        assert_eq!(turn_context.context().len(), 1);
+        assert_eq!(turn_context.context()[0].id, input[0].id);
     }
 }

@@ -1,4 +1,4 @@
-use crate::message::TurnContext;
+use crate::actor::TurnContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
@@ -72,7 +72,7 @@ impl DefaultToolExecutor {
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, context: &TurnContext) -> Result<ToolResult> {
-        let security = &context.security_context;
+        let security = &context.security_context();
         info!(
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
             call.function_name,
@@ -138,12 +138,10 @@ impl ToolExecutor for DefaultToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::TurnContext;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::agent::AgentState;
-    use caelumora_model::channel::ChannelId;
-    use caelumora_model::message::ActorId;
     use caelumora_model::security::DummySecurityManager;
-    use caelumora_model::security::SecurityContext;
     use serde_json::json;
 
     #[derive(Debug)]
@@ -180,13 +178,7 @@ mod tests {
 
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let security_context = SecurityContext {
-            session_id: SessionId::new(),
-            channel_id: ChannelId::new(),
-            caller_id: ActorId::Agent(AgentId::new()),
-            ..SecurityContext::default()
-        };
-        let context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut agent_channel_state, security_context);
+        let context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut agent_channel_state);
 
         let result = executor.execute(&call, &context).await.unwrap();
         assert_eq!(result.content, "{\"result\":\"ok\"}");

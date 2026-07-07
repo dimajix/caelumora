@@ -1,11 +1,12 @@
-use crate::actor::{Actor, ActorEvent, ActorSender, Envelope, EventContext, StandardActorSender};
+use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{ActorId, Message, MessageId, MessageRole};
+use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserController};

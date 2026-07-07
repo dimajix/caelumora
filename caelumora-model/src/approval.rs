@@ -23,6 +23,14 @@ pub struct ApprovalResponse {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApprovalStatus {
+    Unknown,
     Approved,
     Denied,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovableToolCall {
+    pub id: ApprovalId,
+    pub status: ApprovalStatus,
+    pub tool_call: ToolCall,
 }

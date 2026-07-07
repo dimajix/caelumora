@@ -8,7 +8,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::message::ActorId;
+use crate::actor::ActorId;
 use crate::security::SecurityAttributes;
 use crate::user::UserId;
 use std::collections::HashMap;
