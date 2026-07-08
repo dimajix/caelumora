@@ -18,8 +18,6 @@ pub struct ApprovalRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalResponse {
     pub id: ApprovalId,
-    pub session_id: SessionId,
-    pub channel_id: ChannelId,
     pub agent_id: AgentId,
 }
 

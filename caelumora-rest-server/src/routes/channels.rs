@@ -1,10 +1,12 @@
-use std::sync::Arc;
+use crate::models::{ChannelResponse, SendApprovalRequest, SendMessageRequest};
+use crate::state::AppState;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
-use uuid::Uuid;
+use caelumora_model::agent::AgentId;
+use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, SessionId};
-use crate::state::AppState;
-use crate::models::{ChannelResponse, SendMessageRequest};
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub async fn list_channels(
     State(state): State<Arc<AppState>>,
@@ -94,6 +96,31 @@ pub async fn cancel_channel(
 
     if session.cancel_channel(channel_id).await.is_ok() {
         return Ok(StatusCode::OK);
+    }
+
+    Ok(StatusCode::NOT_FOUND)
+}
+
+pub async fn send_approval(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<SendApprovalRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
+    let session = crate::routes::ensure_session(&state, session_id).await?;
+
+    if let Some(channel) = session.channel_by_id(channel_id) {
+        if let Some(user_actor) = channel.user_actor() {
+            let response = ApprovalResponse {
+                id: ApprovalId(payload.approval_id),
+                agent_id: AgentId(payload.agent_id),
+            };
+            if !user_actor.send_approval(response, payload.approved).await.is_ok() {
+                return Ok(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            return Ok(StatusCode::OK);
+        }
     }
 
     Ok(StatusCode::NOT_FOUND)

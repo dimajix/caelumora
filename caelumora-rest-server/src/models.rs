@@ -1,7 +1,7 @@
+use caelumora_model::meta::Metadata;
+use caelumora_model::session::{ChannelId, SessionId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::meta::Metadata;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
@@ -31,4 +31,11 @@ pub struct ChannelResponse {
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SendApprovalRequest {
+    pub approval_id: Uuid,
+    pub agent_id: Uuid,
+    pub approved: bool,
 }

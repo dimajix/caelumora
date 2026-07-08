@@ -1,5 +1,4 @@
 import type {
-  ApprovalResponse,
   ChannelResponse,
   CreateSessionRequest,
   Message,
@@ -84,11 +83,16 @@ export const api = {
     return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
   },
 
-  async respondToApproval(id: string, response: ApprovalResponse): Promise<void> {
-    const res = await fetch(`${API_BASE}/approvals/${id}/respond`, {
+  async respondToApproval(sessionId: string, channelId: string, approvalId: string, agentId: string, approved: boolean): Promise<void> {
+    const payload = {
+      approval_id: approvalId,
+      agent_id: agentId,
+      approved: approved
+    };
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/approvals`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(response),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed to respond to approval');
   }

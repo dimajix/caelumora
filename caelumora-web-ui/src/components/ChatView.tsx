@@ -150,10 +150,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     }
   };
 
-  const handleApproval = async (id: string, status: 'Approved' | 'Denied') => {
+  const handleApproval = async (approval: ApprovalRequest, approved: boolean) => {
     try {
-      await api.respondToApproval(id, { id, status });
-      setPendingApprovals(prev => prev.filter(a => a.id !== id));
+      await api.respondToApproval(sessionId, channelId, approval.id, approval.agent_id, approved);
+      setPendingApprovals(prev => prev.filter(a => a.id !== approval.id));
     } catch (e) {
       console.error('Failed to respond to approval', e);
     }
@@ -262,13 +262,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 </pre>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => handleApproval(approval.id, 'Approved')}
+                    onClick={() => handleApproval(approval, true)}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm py-2 rounded-md transition-colors"
                   >
                     Approve
                   </button>
                   <button
-                    onClick={() => handleApproval(approval.id, 'Denied')}
+                    onClick={() => handleApproval(approval, false)}
                     className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-md transition-colors"
                   >
                     Deny

@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::ProcessingState;
+use caelumora_model::approval::ApprovalResponse;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -67,6 +68,16 @@ impl UserActor {
         };
         self.user_tx.send(ActorEvent::CompleteMessageGenerated(msg.clone())).await?;
         self.user_tx.send(ActorEvent::FullResponseGenerated(vec![msg])).await?;
+        Ok(())
+    }
+
+    pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> anyhow::Result<()> {
+        let event = if approved {
+            ActorEvent::ToolExecutionGranted(response)
+        } else {
+            ActorEvent::ToolExecutionDenied(response)
+        };
+        self.user_tx.send(event).await?;
         Ok(())
     }
 

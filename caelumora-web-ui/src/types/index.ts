@@ -51,8 +51,8 @@ export interface ActorEvent {
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ToolExecutionRequested?: ApprovalRequest;
-  ToolExecutionGranted?: ApprovalRequest;
-  ToolExecutionDenied?: ApprovalRequest;
+  ToolExecutionGranted?: ApprovalResponse;
+  ToolExecutionDenied?: ApprovalResponse;
   ResponseRequested?: any;
   FullResponseGenerated?: Message[];
   WakeupRequested?: any;
@@ -90,5 +90,5 @@ export interface ApprovalRequest {
 
 export interface ApprovalResponse {
   id: string;
-  status: ApprovalStatus;
+  agent_id: string;
 }

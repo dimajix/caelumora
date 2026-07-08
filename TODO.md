@@ -20,6 +20,8 @@
 ## Tools
 * MCP Integration
 * Approval Workflow ("Always Approve", "Brave Mode")
+* Approval privilege (who is allowed to approve? Other approvals must be ignored)
+* Approval timeout
 * Return errors to LLM on disapproved tools
 * Return errors to LLM on disallowed tools (security says "no")
 
