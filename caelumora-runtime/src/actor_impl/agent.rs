@@ -66,11 +66,7 @@ impl AgentActorState {
         event_context: EventContext,
         security_context: SecurityContext,
     ) -> TurnContext<'a> {
-        self.agent_channel_state.turn_scratch.clear();
-        self.agent_channel_state.turn_context.clear();
-        self.agent_channel_state.turn_messages.clear();
-        self.agent_channel_state.turn_event_context = event_context;
-        self.agent_channel_state.turn_security_context = security_context;
+        self.agent_channel_state.next_turn(event_context, security_context);
         TurnContext {
             agent_id: self.agent_id,
             agent_name,
@@ -492,7 +488,7 @@ impl AgentActor {
 
         let tool_calls = turn_context.take_tool_calls();
         if let Some(msg) = self.execute(tool_calls, &mut turn_context).await {
-            turn_context.send_event(ActorEvent::FullResponseGenerated(vec![msg]), output).await?;
+            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
         }
 
         // Resume generating the response
@@ -505,7 +501,7 @@ impl AgentActor {
         // Forward all remaining events
         if !pending_events.is_empty() {
             info!("Processing {} pending events for agent {}", pending_events.len(), self.id);
-            Box::pin(self.process_messages(&mut pending_events, output)).await?;
+            self.process_messages(&mut pending_events, output).await?;
         }
 
         Ok(())
@@ -541,9 +537,7 @@ impl AgentActor {
         self.next_turn(&mut turn_context).await?;
 
         // Generate response
-        self.generate_response(&mut turn_context, output).await?;
-
-        Ok(())
+        self.generate_response(&mut turn_context, output).await
     }
 
     async fn generate_response<'a>(
@@ -611,7 +605,7 @@ impl AgentActor {
                         }).collect();
 
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::FullResponseGenerated(vec![msg]), output).await?;
+                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                         }
 
                         if requires_approval {
@@ -636,7 +630,7 @@ impl AgentActor {
                         }
 
                         if let Some(msg) = self.execute(tool_calls, turn_context).await {
-                            turn_context.send_event(ActorEvent::FullResponseGenerated(vec![msg]), output).await?;
+                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                             continue 'steps;
                         }
                     }

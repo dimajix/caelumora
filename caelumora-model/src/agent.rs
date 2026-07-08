@@ -227,6 +227,16 @@ pub struct AgentChannelState {
     pub turn_event_context: EventContext
 }
 
+impl AgentChannelState {
+    pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext,) {
+        self.turn_scratch.clear();
+        self.turn_context.clear();
+        self.turn_messages.clear();
+        self.turn_event_context = event_context;
+        self.turn_security_context = security_context;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     // Add session specific data of an individual agent from multiple channels here if needed
