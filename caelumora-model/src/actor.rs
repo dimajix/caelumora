@@ -1,5 +1,5 @@
 use crate::agent::AgentId;
-use crate::approval::ApprovalRequest;
+use crate::approval::{ApprovalRequest, ApprovalResponse};
 use crate::channel::ChannelId;
 use crate::message::{Message, MessageEvent};
 use crate::security::SecurityContext;
@@ -46,8 +46,8 @@ impl ActorId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
     ToolExecutionRequested(ApprovalRequest),
-    ToolExecutionGranted(ApprovalRequest),
-    ToolExecutionDenied(ApprovalRequest),
+    ToolExecutionGranted(ApprovalResponse),
+    ToolExecutionDenied(ApprovalResponse),
     ResponseRequested,
     ResponseStarted,
     PartialMessageGenerated(Message),

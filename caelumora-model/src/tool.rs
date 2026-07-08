@@ -61,3 +61,17 @@ pub struct Tool {
     #[serde(default)]
     pub requires_approval: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: Option<String>,
+    pub function_name: String,
+    pub arguments: String
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub id: Option<String>,
+    pub tool_name: String,
+    pub content: String,
+}

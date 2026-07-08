@@ -4,8 +4,8 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::message::ActorId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use std::sync::Arc;

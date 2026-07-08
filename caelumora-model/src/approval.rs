@@ -1,7 +1,7 @@
 use crate::agent::AgentId;
 use crate::channel::ChannelId;
-use crate::message::ToolCall;
 use crate::session::SessionId;
+use crate::tool::ToolCall;
 use serde::{Deserialize, Serialize};
 
 define_id!(ApprovalId);
@@ -18,7 +18,9 @@ pub struct ApprovalRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalResponse {
     pub id: ApprovalId,
-    pub status: ApprovalStatus,
+    pub session_id: SessionId,
+    pub channel_id: ChannelId,
+    pub agent_id: AgentId,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

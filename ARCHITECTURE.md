@@ -29,7 +29,7 @@ The agent cognitive cycle (implemented within `AgentActor`) defines how an agent
 
 1.  **Perceive**: Incoming messages are processed by "perceive" components (e.g., adding to history, updating context).
 2.  **Plan**: The agent decides what to do next. This may involve interacting with an LLM, planning tool calls, or generating internal thoughts.
-3.  **Execute**: If the plan involves tool calls, they are executed, and the results are fed back into the loop.
+3.  **Execute**: If the plan involves tool calls, the agent checks if any require manual approval. If so, the cycle is suspended (see *Human-in-the-Loop Approvals*). Otherwise, tools are executed and results are fed back into the loop.
 4.  **Emit**: The final response messages are generated and emitted to the channel.
 
 The loop is stateful, maintaining an `AgentState` which includes `MessageHistory` and `MessageContext`.
@@ -84,15 +84,15 @@ Security in Caelumora is handled through a combination of context and explicit c
 
 ## Human-in-the-Loop Approvals
 
-Caelumora supports a mechanism for manual user approval of sensitive or impactful tool executions.
+Caelumora supports a mechanism for manual user approval of sensitive or impactful tool executions. The process is asynchronous and non-blocking, allowing the agent to suspend its execution while waiting for human input.
 
-*   **`ApprovalManager`**: A trait (in `caelumora-runtime`) responsible for managing the lifecycle of approval requests. It maintains a registry of pending approvals and provides a bridge between asynchronous tool execution and user response.
-*   **Approval Process**: 
-    1.  When a `ToolExecutor` encounters a tool marked with `requires_approval: true`, it pauses execution and registers an `ApprovalRequest` with the `ApprovalManager`.
-    2.  The `ApprovalManager` publishes an `ApprovalRequested` event via the `EventBus`.
-    3.  The UI receives this event and prompts the user for "Approve" or "Deny".
-    4.  The user's response is sent back via a REST API call, which triggers the `ApprovalManager` to resolve the pending request.
-    5.  The `ToolExecutor` resumes execution once the approval is received (or returns an error if denied).
+*   **Asynchronous Approval Process**: 
+    1.  **Interruption**: When the `AgentActor` determines that a tool call requires approval, it suspends its cognitive cycle, persists its current state (including pending tool calls), and transitions to the `WaitingForApproval` state.
+    2.  **Request**: The agent emits a `ToolExecutionRequested` event. The `Moderator` routes this event to all human participants (`UserActor`s) in the channel.
+    3.  **User Response**: A user's "Approve" or "Deny" response is received via the REST API, which triggers an `ApprovalResponded` global event.
+    4.  **Routing**: The `ChannelLoop` captures the global event and routes a corresponding `ToolExecutionGranted` or `ToolExecutionDenied` event back to the specific `AgentActor`.
+    5.  **Resumption**: The `AgentActor` receives the response, restores its state, executes the tool calls (if granted), and resumes its cognitive cycle. 
+    6.  **Message Queueing**: Any messages received while the agent is in the `WaitingForApproval` state are queued and processed sequentially after the agent resumes, ensuring context integrity.
 
 ## Storage and Persistence
 

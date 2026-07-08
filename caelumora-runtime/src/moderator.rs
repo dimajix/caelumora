@@ -83,8 +83,8 @@ impl ModeratorActors {
                     .map(|r| (*r.key(), event.clone()))
                     .collect()
             }
-            ActorEvent::ToolExecutionGranted(request) | ActorEvent::ToolExecutionDenied(request) => {
-                let agent_id = ActorId::Agent(request.agent_id);
+            ActorEvent::ToolExecutionGranted(respoonse) | ActorEvent::ToolExecutionDenied(respoonse) => {
+                let agent_id = ActorId::Agent(respoonse.agent_id);
                 if self.agent_actors.contains_key(&agent_id) {
                     vec![(agent_id, event.clone())]
                 } else {

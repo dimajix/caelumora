@@ -1,4 +1,5 @@
 use crate::actor::ActorId;
+use crate::tool::{ToolCall, ToolResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
@@ -14,20 +15,6 @@ pub enum MessageRole {
     Assistant,
     System,
     Tool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: Option<String>,
-    pub function_name: String,
-    pub arguments: String
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub id: Option<String>,
-    pub tool_name: String,
-    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

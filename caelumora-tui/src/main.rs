@@ -1,3 +1,4 @@
+use caelumora_model::actor::ActorEvent;
 use caelumora_model::agent::Personality;
 use caelumora_model::agent::PersonalityId;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
@@ -8,7 +9,6 @@ use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::EntityStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantId, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::UserId;
-use caelumora_runtime::actor::ActorEvent;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;

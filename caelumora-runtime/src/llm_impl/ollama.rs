@@ -4,6 +4,7 @@ use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
+use caelumora_model::tool::ToolCall;
 use chrono::Utc;
 use futures::stream::{BoxStream, StreamExt};
 use log::{debug, warn};
@@ -177,7 +178,8 @@ impl OllamaChatMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::message::{Message, MessageRole, ToolCall};
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::ToolCall;
 
     #[test]
     fn test_ollama_chat_message_from_with_tool_calls() {
@@ -304,7 +306,7 @@ impl LLMClient for OllamaClient {
                             if let Some(msg) = body.message {
                                 if let Some(tc) = msg.tool_calls {
                                     for call in tc {
-                                        all_tool_calls.push(caelumora_model::message::ToolCall {
+                                        all_tool_calls.push(ToolCall {
                                             id: call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
                                             function_name: call.function.name,
                                             arguments: call.function.arguments.to_string(),

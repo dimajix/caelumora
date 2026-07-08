@@ -1,6 +1,6 @@
+use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::config::AppConfig;
-use caelumora_model::message::ActorId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_runtime::runtime::RuntimeManager;

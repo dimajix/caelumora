@@ -1,10 +1,10 @@
 use crate::actor::ActorId;
 use crate::agent::{Agent, AgentId, Personality, PersonalityId};
 use crate::channel::ChannelId;
-use crate::message::ToolCall;
 use crate::session::Session;
 use crate::session::SessionId;
 use crate::template::{SessionTemplate, SessionTemplateId};
+use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;

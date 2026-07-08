@@ -15,9 +15,10 @@ use caelumora_model::approval::{ApprovableToolCall, ApprovalId, ApprovalRequest,
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole, ToolCall, ToolResult};
+use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
+use caelumora_model::tool::ToolResult;
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
@@ -178,11 +179,13 @@ impl AgentActor {
         }
     }
 
-    async fn perceive<'a>(&self, messages: Vec<Message>) {
+    async fn perceive<'a>(&self, messages: Vec<Message>, event_context: &EventContext, security_context: &SecurityContext) {
+        let agent_name = self.agent_controller.name();
         let mut state = self.state.lock().await;
         let mut turn_context = state.new_turn_context(
-            self.agent_controller.name(),
-            self.security_context.clone(),
+            agent_name.clone(),
+            event_context.next(self.id, agent_name.clone()),
+            security_context.next(self.id)
         );
 
         let original_messages = messages.clone();
@@ -271,7 +274,7 @@ impl AgentActor {
     ) -> BoxStream<'static, Result<MessageEvent>> {
         let llm_client = self.runtime_manager.llm_client();
 
-        let mut context = turn_context.full_context();
+        let context = turn_context.full_context();
         let tools = self.tool_executor.tools();
         llm_client
             .chat_completion(context.as_slice(), tools.as_slice())
@@ -400,7 +403,7 @@ impl AgentActor {
         for event in buffer.iter_mut() {
             match &mut event.event {
                 ActorEvent::FullResponseGenerated(m) => {
-                    self.perceive(mem::take(m)).await;
+                    self.perceive(mem::take(m), &last_context, &last_security).await;
                 }
                 ActorEvent::ResponseRequested => {
                     response_requested = true;
@@ -446,16 +449,24 @@ impl AgentActor {
         for env in buffer.drain(..) {
             match &env.event {
                 ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) => {
-                     state.agent_channel_state.pending_tool_calls.insert(req.id);
-                     approvals_pending = state.agent_channel_state.pending_tool_calls.iter().filter(|tc| tc.status == ApprovalStatus::Unknown).count() > 0;
+                    let status = if matches!(&env.event, ActorEvent::ToolExecutionGranted(_)) {
+                        ApprovalStatus::Approved
+                    } else {
+                        ApprovalStatus::Denied
+                    };
+                    if let Some(tool_call) = turn_context.agent_channel_state.pending_tool_calls.iter_mut().find(|tc| tc.id == req.id) {
+                        tool_call.status = status;
+                    }
+                    approvals_pending = turn_context.agent_channel_state.pending_tool_calls.iter().any(|tc| tc.status == ApprovalStatus::Unknown);
                 }
-                ev => {
-                    state.agent_channel_state.pending_events.push(env);
+                _ => {
+                    turn_context.agent_channel_state.pending_events.push(env);
                 }
             }
         }
         self.store_channel_state(&mut turn_context, "perceive").await;
 
+        drop(turn_context);
         drop(state);
 
         if !approvals_pending {
