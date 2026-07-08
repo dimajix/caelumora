@@ -1,17 +1,21 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState, ProcessingState};
+use log::warn;
 use std::any::Any;
 use std::fmt::Debug;
 use std::mem;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
-use caelumora_model::approval::ApprovableToolCall;
+use caelumora_model::approval::{ApprovableToolCall, ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
+use caelumora_model::store::StateStore;
 
 #[async_trait]
 pub trait Actor: Any + Debug + Send + Sync {
@@ -81,26 +85,23 @@ impl ActorSender for StandardActorSender {
 #[derive(Debug)]
 pub struct TurnContext<'a> {
     pub agent_id: AgentId,
+    pub channel_id: ChannelId,
+    pub session_id: SessionId,
     pub agent_name: String,
-    pub agent_state: &'a mut AgentState,
-    pub agent_channel_state: &'a mut AgentChannelState,
+    agent_state: &'a mut AgentState,
+    agent_channel_state: &'a mut AgentChannelState,
 }
 
 impl<'a> TurnContext<'a> {
     pub fn new(agent_id: AgentId, agent_name:String, agent_state: &'a mut AgentState, agent_channel_state: &'a mut AgentChannelState) -> Self {
         Self {
             agent_id,
+            channel_id: agent_channel_state.turn_event_context.channel_id,
+            session_id: agent_channel_state.turn_event_context.session_id,
             agent_name,
             agent_state,
             agent_channel_state,
         }
-    }
-
-    pub fn session_id(&self) -> SessionId {
-        self.agent_channel_state.turn_event_context.session_id
-    }
-    pub fn channel_id(&self) -> ChannelId {
-        self.agent_channel_state.turn_event_context.channel_id
     }
 
     pub fn context(&self) -> Vec<Message> {
@@ -128,16 +129,69 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_messages.push(message);
     }
 
+    pub fn push_pending_event(&mut self, env: Envelope) {
+        self.agent_channel_state.pending_events.push(env);
+    }
     pub fn take_pending_events(&mut self) -> Vec<Envelope> {
         mem::take(&mut self.agent_channel_state.pending_events)
     }
 
+    pub fn set_tool_calls(&mut self, tool_calls: Vec<ApprovableToolCall>) {
+        self.agent_channel_state.pending_tool_calls = tool_calls;
+    }
+    pub fn set_tool_call_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
+        if let Some(tool_call) = self.agent_channel_state.pending_tool_calls.iter_mut().find(|tc| tc.id == id) {
+            tool_call.status = status;
+            true
+        }
+        else {
+            false
+        }
+    }
+    pub fn tool_calls(&self) -> &Vec<ApprovableToolCall> {
+        &self.agent_channel_state.pending_tool_calls
+    }
     pub fn take_tool_calls(&mut self) -> Vec<ApprovableToolCall> {
         mem::take(&mut self.agent_channel_state.pending_tool_calls)
     }
 
     pub fn security_context(&self) -> &SecurityContext {
         &self.agent_channel_state.turn_security_context
+    }
+
+    pub fn state_context(&self) -> Vec<Message> {
+        self.agent_channel_state.context.messages()
+    }
+    pub fn extend_state_context(&mut self, messages: Vec<Message>) {
+        self.agent_channel_state.context.extend(messages);
+    }
+    pub fn extend_state_history(&mut self, messages: Vec<Message>) {
+        self.agent_channel_state.history.extend(messages);
+    }
+
+    pub fn set_processing_state(&self, state: ProcessingState) {
+        self.agent_channel_state.processing_state.store(state.into(), Ordering::SeqCst);
+    }
+
+    pub async fn store_agent_state(&self, state_store: &Arc<dyn StateStore>) {
+        if let Err(_e) = state_store
+            .put_agent_state(self.agent_id, self.agent_state)
+            .await
+        {
+            warn!(
+                "Cannot store agent state of agent {}", self.agent_id
+            )
+        }
+    }
+    pub async fn store_channel_state(&self, state_store: &Arc<dyn StateStore>) {
+        if let Err(_e) = state_store
+            .put_agent_channel_state(self.agent_id, self.channel_id, self.agent_channel_state)
+            .await
+        {
+            warn!(
+                "Cannot store agent channel state of agent {}", self.agent_id
+            )
+        }
     }
 
     pub async fn send_event(&self, av:ActorEvent, output: &Sender<Envelope>) -> Result<()> {

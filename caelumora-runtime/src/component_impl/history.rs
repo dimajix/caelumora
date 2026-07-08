@@ -21,7 +21,7 @@ impl MessageProcessor for StateHistoryWriter {
     }
 
     async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>> {
-        context.agent_channel_state.history.extend(input.clone());
+        context.extend_state_history(input.clone());
         Ok(input)
     }
 }

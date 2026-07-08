@@ -32,7 +32,7 @@ impl MessageProcessor for StateContextAppender {
     }
 
     async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>> {
-        context.agent_channel_state.context.extend(input.clone());
+        context.extend_state_context(input.clone());
         Ok(input)
     }
 }
@@ -76,7 +76,7 @@ impl ContextProvider for StateContextProvider {
         }
 
         // 2. Append history/compacted messages from state
-        full_context.extend(state.agent_channel_state.context.messages());
+        full_context.extend(state.state_context());
         state.set_context(full_context);
 
         Ok(())

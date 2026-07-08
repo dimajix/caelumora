@@ -49,12 +49,12 @@ impl ToolProvider for StopToolProvider {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
-                context.agent_channel_state.processing_state.store(ProcessingState::Sleep.into(), Ordering::SeqCst);
+                context.set_processing_state(ProcessingState::Sleep);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
             "silence" => {
                 info!("Silencing agent {} {}", context.agent_id, context.agent_name);
-                context.agent_channel_state.processing_state.store(ProcessingState::Silence.into(), Ordering::SeqCst);
+                context.set_processing_state(ProcessingState::Silence);
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {

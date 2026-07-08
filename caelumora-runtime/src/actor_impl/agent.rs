@@ -22,6 +22,7 @@ use caelumora_model::tool::ToolResult;
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
+use std::os::linux::raw::stat;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -67,24 +68,24 @@ impl AgentActorState {
         security_context: SecurityContext,
     ) -> TurnContext<'a> {
         self.agent_channel_state.next_turn(event_context, security_context);
-        TurnContext {
-            agent_id: self.agent_id,
+        TurnContext::new(
+            self.agent_id,
             agent_name,
-            agent_state: &mut self.agent_state,
-            agent_channel_state: &mut self.agent_channel_state,
-        }
+            &mut self.agent_state,
+            &mut self.agent_channel_state
+        )
     }
 
     fn resume_turn_context<'a>(
         &'a mut self,
         agent_name: String,
     ) -> TurnContext<'a> {
-        TurnContext {
-            agent_id: self.agent_id,
+        TurnContext::new(
+            self.agent_id,
             agent_name,
-            agent_state: &mut self.agent_state,
-            agent_channel_state: &mut self.agent_channel_state,
-        }
+            &mut self.agent_state,
+            &mut self.agent_channel_state
+        )
     }
 }
 
@@ -150,31 +151,6 @@ impl AgentActor {
         })
     }
 
-    async fn store_agent_state<'a>(&self, turn_context: &mut TurnContext<'a>, stage: &str) {
-        let agent_state = &mut turn_context.agent_state;
-        if let Err(_e) = self
-            .state_store
-            .put_agent_state(self.agent_id, agent_state)
-            .await
-        {
-            warn!(
-                "Cannot store state of agent {} after {}", self.agent_id, stage
-            )
-        }
-    }
-
-    async fn store_channel_state<'a>(&self, turn_context: &mut TurnContext<'a>, stage: &str) {
-        if let Err(_e) = self
-            .state_store
-            .put_agent_channel_state(self.agent_id, self.channel_id, turn_context.agent_channel_state)
-            .await
-        {
-            warn!(
-                "Cannot store channel state of agent {} after {}", self.agent_id, stage
-            )
-        }
-    }
-
     async fn perceive<'a>(&self, messages: Vec<Message>, event_context: &EventContext, security_context: &SecurityContext) {
         let agent_name = self.agent_controller.name();
         let mut state = self.state.lock().await;
@@ -194,8 +170,8 @@ impl AgentActor {
                 });
 
         let _ = perceived;
-        self.store_channel_state(&mut turn_context, "perceive").await;
-        self.store_agent_state(&mut turn_context, "perceive").await;
+        turn_context.store_agent_state(&self.state_store).await;
+        turn_context.store_channel_state(&self.state_store).await;
     }
 
     async fn respond_complete<'a>(
@@ -214,20 +190,16 @@ impl AgentActor {
         let msg = output.remove(0);
         turn_context.push_message(msg.clone());
 
-        self.store_channel_state(turn_context, "respond_complete").await;
+        turn_context.store_channel_state(&self.state_store).await;
 
         Some(msg)
     }
 
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
-        turn_context.agent_channel_state
-            .context
-            .extend(turn_context.messages());
-        turn_context.agent_channel_state
-            .history
-            .extend(turn_context.messages());
+        turn_context.extend_state_context(turn_context.messages());
+        turn_context.extend_state_history(turn_context.messages());
 
-        self.store_channel_state(turn_context, "reflect").await;
+        turn_context.store_channel_state(&self.state_store).await;
     }
 
     async fn respond_partial<'a>(
@@ -301,10 +273,10 @@ impl AgentActor {
                     }
                 }
                 ApprovalStatus::Denied => {
-
+                    // TODO: Push error
                 }
                 ApprovalStatus::Unknown => {
-
+                    // TODO: warn and push error
                 }
             }
         }
@@ -450,17 +422,17 @@ impl AgentActor {
                     } else {
                         ApprovalStatus::Denied
                     };
-                    if let Some(tool_call) = turn_context.agent_channel_state.pending_tool_calls.iter_mut().find(|tc| tc.id == req.id) {
-                        tool_call.status = status;
+                    if !turn_context.set_tool_call_status(req.id, status) {
+                        warn!("Received approval for unknown approval id {}", req.id);
                     }
-                    approvals_pending = turn_context.agent_channel_state.pending_tool_calls.iter().any(|tc| tc.status == ApprovalStatus::Unknown);
+                    approvals_pending = turn_context.tool_calls().iter().any(|tc| tc.status == ApprovalStatus::Unknown);
                 }
                 _ => {
-                    turn_context.agent_channel_state.pending_events.push(env);
+                    turn_context.push_pending_event(env);
                 }
             }
         }
-        self.store_channel_state(&mut turn_context, "perceive").await;
+        turn_context.store_channel_state(&self.state_store).await;
 
         drop(turn_context);
         drop(state);
@@ -610,22 +582,22 @@ impl AgentActor {
 
                         if requires_approval {
                             info!("Tool execution requires approval for agent {} {}", self.id, agent_name);
-                            turn_context.agent_channel_state.pending_tool_calls = tool_calls.clone();
+                            turn_context.set_tool_calls(tool_calls);
                             self.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
 
-                            for tc in tool_calls {
+                            for tc in turn_context.tool_calls() {
                                 let request = ApprovalRequest {
                                     id: tc.id,
-                                    session_id: turn_context.session_id(),
-                                    channel_id: turn_context.channel_id(),
+                                    session_id: turn_context.session_id,
+                                    channel_id: turn_context.channel_id,
                                     agent_id: self.agent_id,
-                                    tool_call: tc.tool_call, // Carry the first one as representative
+                                    tool_call: tc.tool_call.clone(), // Carry the first one as representative
                                 };
                                 turn_context.send_event(ActorEvent::ToolExecutionRequested(request), output).await?;
                             }
 
                             // Store state and return
-                            self.store_channel_state(turn_context, "suspend").await;
+                            turn_context.store_channel_state(&self.state_store).await;
                             return Ok(());
                         }
 
