@@ -50,3 +50,4 @@ Before making any changes, please refer to [ARCHITECTURE.md](ARCHITECTURE.md) fo
 *   When adding new components, remember to register them in the appropriate `ComponentRegistry`.
 *   If you modify `caelumora-model`, ensure compatibility with `caelumora-runtime`.
 *   Use the `log` crate for debugging (`debug!`, `info!`, `warn!`, `error!`).
+*   When changing the REST API in `caelumora-rest-server`, ensure compatibilizy with `caelumora-web-ui`

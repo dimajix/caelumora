@@ -9,17 +9,19 @@
 * "Retry" or changing past answers
 * Creating channels
 
-## Identity Management
+## Identity & Access Management
 * User authentication
 * Agent ownership
 * Combining user permissions with agent permissions?
 
 ## State Persistence
 * Put "context" into message for auditability?
-* Maybe ComponentDescriptor should be ComponentContext?
 
 ## Tools
 * MCP Integration
+* Approval Workflow ("Always Approve", "Brave Mode")
+* Return errors to LLM on disapproved tools
+* Return errors to LLM on disallowed tools (security says "no")
 
 ## Context Management
 * Implement context compression
