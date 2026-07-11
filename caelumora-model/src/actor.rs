@@ -51,8 +51,6 @@ pub enum ActorEvent {
     ToolExecutionGranted(ApprovalResponse),
     ToolExecutionDenied(ApprovalResponse),
     ToolExecutionRequestTimedOut(ApprovalResponse),
-    ActorJoined(ActorId),
-    ActorLeft(ActorId),
     ResponseRequested,
     ResponseStarted,
     PartialMessageGenerated(Message),

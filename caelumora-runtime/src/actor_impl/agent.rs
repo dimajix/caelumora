@@ -31,7 +31,6 @@ use tokio::sync::Mutex;
 pub struct AgentActor {
     id: ActorId,
     kind: String,
-    _channel_id: caelumora_model::channel::ChannelId,
     agent_id: AgentId,
     agent_controller: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
@@ -45,7 +44,6 @@ pub struct AgentActor {
 
     // State
     state: Mutex<AgentActorState>,
-    _security_context: SecurityContext,
     processing_state: Arc<AtomicU8>,
     max_iterations: i32,
 
@@ -133,7 +131,6 @@ impl AgentActor {
         Ok(AgentActor {
             id: ActorId::Agent(agent_id),
             kind: "agent".to_string(),
-            _channel_id: channel.id,
             agent_id,
             agent_controller,
             runtime_manager,
@@ -143,7 +140,6 @@ impl AgentActor {
             emit_out_processors,
             tool_executor,
             state,
-            _security_context: security_context,
             processing_state,
             max_iterations: 10,
             run_lock: Mutex::new(()),

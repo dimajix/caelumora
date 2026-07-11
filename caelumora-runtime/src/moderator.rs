@@ -131,11 +131,6 @@ impl ModeratorActors {
                     Vec::new()
                 }
             }
-            ActorEvent::ActorJoined(_) | ActorEvent::ActorLeft(_) => {
-                self.approval_actors.iter()
-                    .map(|r| (*r.key(), event.clone()))
-                    .collect()
-            }
             _ => Vec::new()
         }
     }
@@ -184,9 +179,7 @@ impl Moderator for BroadcastModerator {
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
             ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) |
-            ActorEvent::ActorJoined(_) |
-            ActorEvent::ActorLeft(_) => {
+            ActorEvent::ToolExecutionRequestTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -250,9 +243,7 @@ impl Moderator for RandomModerator {
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
             ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) |
-            ActorEvent::ActorJoined(_) |
-            ActorEvent::ActorLeft(_) => {
+            ActorEvent::ToolExecutionRequestTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -324,9 +315,7 @@ impl Moderator for RoundRobinModerator {
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
             ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) |
-            ActorEvent::ActorJoined(_) |
-            ActorEvent::ActorLeft(_) => {
+            ActorEvent::ToolExecutionRequestTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {

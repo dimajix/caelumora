@@ -6,7 +6,7 @@ use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
@@ -67,15 +67,15 @@ impl ChannelLoop {
         let recorder = runtime_manager.new_recorder()?;
         let (event_tx, _) = broadcast::channel(100);
 
+        let channel_controller = runtime_manager.controller_manager().new_channel_controller(channel);
+
         let mut actors = HashMap::new();
-        for participant in &channel.participants {
-            let actor = Self::create_actor(&channel, participant, runtime_manager.clone()).await?;
+        for participant in &channel_controller.load().participants {
+            let actor = Self::create_actor(channel_controller.clone(), participant, runtime_manager.clone()).await?;
             let actor: Arc<dyn Actor> = Arc::from(actor);
             moderator.add_actor(actor.clone());
             actors.insert(actor.id(), actor);
         }
-
-        let channel_controller = runtime_manager.controller_manager().new_channel_controller(channel);
 
         Ok(Self {
             id,
@@ -149,14 +149,14 @@ impl ChannelLoop {
         })
     }
 
-    async fn create_actor(channel: &Channel, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
+    async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
         match participant {
             Participant::User(user) => {
-                let actor = UserActor::new(channel, user.clone(), runtime_manager.clone()).await?;
+                let actor = UserActor::new(&channel.load(), user.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let actor = AgentActor::new(channel, agent.clone(), runtime_manager.clone()).await?;
+                let actor = AgentActor::new(&channel.load(), agent.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
             },
             Participant::Approver(approver) => {
@@ -174,16 +174,6 @@ impl ChannelLoop {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
-
-        // Emit ActorJoined for each actor
-        for actor_id in actors.keys() {
-            let event = Envelope::new(
-                caelumora_model::security::SecurityContext::default(),
-                EventContext::new(self.session_id, self.id, ActorId::None, "System".to_string()),
-                ActorEvent::ActorJoined(*actor_id)
-            );
-            self.route_event(&actors, event).await;
-        }
 
         loop {
             tokio::select! {

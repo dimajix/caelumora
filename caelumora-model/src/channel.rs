@@ -4,6 +4,7 @@ use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::security::SecurityAttributes;
 use crate::session::SessionId;
+use crate::store::EntityStore;
 use crate::user::User;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
@@ -21,10 +22,11 @@ pub struct ChannelController {
     session_id: SessionId,
     channel: ArcSwap<Channel>,
     event_publisher: Arc<dyn EventPublisher>,
+    entity_store: Option<Arc<dyn EntityStore>>,
 }
 
 impl ChannelController {
-    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>) -> Self {
+    pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, entity_store: Option<Arc<dyn EntityStore>>) -> Self {
         let id = channel.id;
         let session_id = channel.session_id;
         Self {
@@ -32,6 +34,7 @@ impl ChannelController {
             session_id,
             channel: ArcSwap::from_pointee(channel),
             event_publisher,
+            entity_store,
         }
     }
 
@@ -68,11 +71,57 @@ impl ChannelController {
             GlobalEvent::ChannelUpdated(_, cid, update) if *cid == self.id => {
                 self.process_channel_update(update).await;
             }
-            GlobalEvent::AgentChannelJoined(sid, cid, aid) if *cid == self.id => {
-                // TODO: Update internal session state
+            GlobalEvent::AgentChannelJoined(_, cid, aid) if *cid == self.id => {
+                if let Some(store) = &self.entity_store {
+                    let security = crate::security::SecurityContext::default();
+                    if let Ok(agent) = store.get_agent(&security, *aid).await {
+                        let mut channel = (**self.channel.load()).clone();
+                        if !channel.participants.iter().any(|p| match p {
+                            Participant::Agent(a) => a.id == *aid,
+                            _ => false,
+                        }) {
+                            channel.participants.push(Participant::Agent(agent));
+                            self.channel.store(Arc::new(channel));
+                        }
+                    }
+                }
             }
-            GlobalEvent::AgentChannelLeft(sid, cid, aid) if *cid == self.id => {
-                // TODO: Update internal session state
+            GlobalEvent::AgentChannelLeft(_, cid, aid) if *cid == self.id => {
+                let mut channel = (**self.channel.load()).clone();
+                let initial_len = channel.participants.len();
+                channel.participants.retain(|p| match p {
+                    Participant::Agent(a) => a.id != *aid,
+                    _ => true,
+                });
+                if channel.participants.len() != initial_len {
+                    self.channel.store(Arc::new(channel));
+                }
+            }
+            GlobalEvent::UserChannelJoined(_, cid, uid) if *cid == self.id => {
+                if let Some(store) = &self.entity_store {
+                    let security = crate::security::SecurityContext::default();
+                    if let Ok(user) = store.get_user(&security, *uid).await {
+                        let mut channel = (**self.channel.load()).clone();
+                        if !channel.participants.iter().any(|p| match p {
+                            Participant::User(u) => u.id == *uid,
+                            _ => false,
+                        }) {
+                            channel.participants.push(Participant::User(user));
+                            self.channel.store(Arc::new(channel));
+                        }
+                    }
+                }
+            }
+            GlobalEvent::UserChannelLeft(_, cid, uid) if *cid == self.id => {
+                let mut channel = (**self.channel.load()).clone();
+                let initial_len = channel.participants.len();
+                channel.participants.retain(|p| match p {
+                    Participant::User(u) => u.id != *uid,
+                    _ => true,
+                });
+                if channel.participants.len() != initial_len {
+                    self.channel.store(Arc::new(channel));
+                }
             }
             _ => {}
         }

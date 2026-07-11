@@ -17,6 +17,8 @@ pub enum GlobalEvent {
     AgentDeleted(SessionId, AgentId),
     AgentChannelJoined(SessionId, ChannelId, AgentId),
     AgentChannelLeft(SessionId, ChannelId, AgentId),
+    UserChannelJoined(SessionId, ChannelId, UserId),
+    UserChannelLeft(SessionId, ChannelId, UserId),
     UserCreated(UserId),
     UserUpdated(UserId, UserUpdateEvent),
     UserDeleted(UserId),
