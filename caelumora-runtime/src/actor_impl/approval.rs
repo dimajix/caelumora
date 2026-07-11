@@ -5,9 +5,8 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
-use caelumora_model::channel::{ChannelController, ChannelId, Participant};
+use caelumora_model::channel::{ChannelController, Participant};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::session::SessionId;
 use chrono::{DateTime, Duration, Utc};
 use log::{info, warn};
 use std::collections::HashMap;
@@ -24,8 +23,8 @@ struct PendingApproval {
     responses: HashMap<ActorId, ApprovalStatus>,
     timeout: DateTime<Utc>,
     _request: ApprovalRequest,
-    session_id: SessionId,
-    channel_id: ChannelId,
+    security_context: caelumora_model::security::SecurityContext,
+    event_context: EventContext,
 }
 
 #[derive(Debug)]
@@ -54,21 +53,21 @@ impl ApproverActor {
     }
 
     async fn handle_envelope(&self, env: Envelope, output: &Sender<Envelope>) -> Result<()> {
-        match env.event {
+        match &env.event {
             ActorEvent::ToolExecutionRequested(req) => {
-                self.handle_request(env.context, req, output).await
+                self.handle_request(&env, req.clone(), output).await
             }
             ActorEvent::ToolExecutionGranted(res) => {
-                self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output).await
+                self.handle_response(env.context.sender_id, res.clone(), ApprovalStatus::Approved, output).await
             }
             ActorEvent::ToolExecutionDenied(res) => {
-                self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
+                self.handle_response(env.context.sender_id, res.clone(), ApprovalStatus::Denied, output).await
             }
             _ => Ok(()),
         }
     }
 
-    async fn handle_request(&self, context: EventContext, request: ApprovalRequest, output: &Sender<Envelope>) -> Result<()> {
+    async fn handle_request(&self, env: &Envelope, request: ApprovalRequest, output: &Sender<Envelope>) -> Result<()> {
         let new_id = ApprovalId(Uuid::new_v4());
         let timeout = Utc::now() + Duration::minutes(10); // Default timeout 10 mins
 
@@ -76,21 +75,21 @@ impl ApproverActor {
         pending_req.id = new_id;
 
         let pending = PendingApproval {
-            agent_id: context.sender_id,
+            agent_id: env.context.sender_id,
             original_approval_id: request.id,
             strategy: self.approver.strategy,
             responses: HashMap::new(),
             timeout,
             _request: pending_req.clone(),
-            session_id: request.session_id,
-            channel_id: request.channel_id,
+            security_context: env.security.clone(),
+            event_context: env.context.clone(),
         };
 
         self.pending.lock().await.insert(new_id, pending);
 
         let new_event = ActorEvent::ToolExecutionRequested(pending_req);
-        let new_context = context.next(self.id, "Approver".to_string());
-        let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), new_context, new_event);
+        let new_context = env.context.next(self.id, "Approver".to_string());
+        let envelope = Envelope::new(env.security.next(self.id), new_context, new_event);
 
         output.send(envelope).await.context("Failed to send approval request")?;
 
@@ -199,8 +198,8 @@ impl ApproverActor {
             ApprovalStatus::Unknown => return Ok(()),
         };
 
-        let context = EventContext::new(p.session_id, p.channel_id, self.id, "Approver".to_string());
-        let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, event);
+        let context = p.event_context.next(self.id, "Approver".to_string());
+        let envelope = Envelope::new(p.security_context.next(self.id), context, event);
 
         output.send(envelope).await.context("Failed to send decision")?;
         Ok(())
@@ -228,8 +227,8 @@ impl ApproverActor {
                 agent_id: p.agent_id.as_agent_id().unwrap(),
             };
             let event = ActorEvent::ToolExecutionRequestTimedOut(response);
-            let context = EventContext::new(p.session_id, p.channel_id, self.id, "Approver".to_string());
-            let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, event);
+            let context = p.event_context.next(self.id, "Approver".to_string());
+            let envelope = Envelope::new(p.security_context.next(self.id), context, event);
             output.send(envelope).await.context("Failed to send timeout")?;
         }
 
