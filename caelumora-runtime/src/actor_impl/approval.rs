@@ -1,12 +1,13 @@
 use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::runtime::RuntimeManager;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
-use caelumora_model::agent::ProcessingState;
+use caelumora_model::agent::{AgentId, ProcessingState};
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
 use caelumora_model::channel::{ChannelController, Participant};
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::security::SecurityContext;
 use chrono::{DateTime, Duration, Utc};
 use log::{info, warn};
 use std::collections::HashMap;
@@ -17,7 +18,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 struct PendingApproval {
-    agent_id: ActorId,
+    agent_id: AgentId,
     original_approval_id: ApprovalId,
     strategy: ApprovalStrategy,
     responses: HashMap<ActorId, ApprovalStatus>,
@@ -52,44 +53,58 @@ impl ApproverActor {
         channel.participants.iter().filter(|p| matches!(p, Participant::User(_))).count()
     }
 
+    async fn handle_global_event(&self, event:&GlobalEvent, output: &Sender<Envelope>) {
+        match event {
+            GlobalEvent::AgentChannelJoined(_, cid, _) | GlobalEvent::AgentChannelLeft(_, cid, _) |
+            GlobalEvent::UserChannelJoined(_, cid, _) | GlobalEvent::UserChannelLeft(_, cid, _) if *cid == self.channel.id() => {
+                if let Err(e) = self.recheck_all_pending(output).await {
+                    warn!("ApproverActor error rechecking approvals: {:?}", e);
+                }
+            }
+            _ => {}
+        }
+    }
+
     async fn handle_envelope(&self, env: Envelope, output: &Sender<Envelope>) -> Result<()> {
-        match &env.event {
+        match env.event {
             ActorEvent::ToolExecutionRequested(req) => {
-                self.handle_request(&env, req.clone(), output).await
+                self.handle_request(req, env.context, env.security, output).await
             }
             ActorEvent::ToolExecutionGranted(res) => {
-                self.handle_response(env.context.sender_id, res.clone(), ApprovalStatus::Approved, output).await
+                self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output).await
             }
             ActorEvent::ToolExecutionDenied(res) => {
-                self.handle_response(env.context.sender_id, res.clone(), ApprovalStatus::Denied, output).await
+                self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
             }
             _ => Ok(()),
         }
     }
 
-    async fn handle_request(&self, env: &Envelope, request: ApprovalRequest, output: &Sender<Envelope>) -> Result<()> {
+    async fn handle_request(&self, mut request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &Sender<Envelope>) -> Result<()> {
         let new_id = ApprovalId(Uuid::new_v4());
         let timeout = Utc::now() + Duration::minutes(10); // Default timeout 10 mins
 
-        let mut pending_req = request.clone();
-        pending_req.id = new_id;
+        let original_approval_id = request.id;
+        let agent_id = request.agent_id;
+        request.id = new_id;
 
         let pending = PendingApproval {
-            agent_id: env.context.sender_id,
-            original_approval_id: request.id,
+            agent_id,
+            original_approval_id,
             strategy: self.approver.strategy,
             responses: HashMap::new(),
             timeout,
-            _request: pending_req.clone(),
-            security_context: env.security.clone(),
-            event_context: env.context.clone(),
+            _request: request.clone(),
+            security_context: security.clone(),
+            event_context: context.clone(),
         };
 
         self.pending.lock().await.insert(new_id, pending);
 
-        let new_event = ActorEvent::ToolExecutionRequested(pending_req);
-        let new_context = env.context.next(self.id, "Approver".to_string());
-        let envelope = Envelope::new(env.security.next(self.id), new_context, new_event);
+        let new_event = ActorEvent::ToolExecutionRequested(request);
+        let new_context = context.next(self.id, "Approver".to_string());
+        let new_security = security.next(self.id);
+        let envelope = Envelope::new(new_security, new_context, new_event);
 
         output.send(envelope).await.context("Failed to send approval request")?;
 
@@ -189,7 +204,7 @@ impl ApproverActor {
     async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &Sender<Envelope>) -> Result<()> {
         let response = ApprovalResponse {
             id: p.original_approval_id,
-            agent_id: p.agent_id.as_agent_id().unwrap(),
+            agent_id: p.agent_id,
         };
 
         let event = match status {
@@ -224,7 +239,7 @@ impl ApproverActor {
         for p in timed_out {
             let response = ApprovalResponse {
                 id: p.original_approval_id,
-                agent_id: p.agent_id.as_agent_id().unwrap(),
+                agent_id: p.agent_id,
             };
             let event = ActorEvent::ToolExecutionRequestTimedOut(response);
             let context = p.event_context.next(self.id, "Approver".to_string());
@@ -296,15 +311,7 @@ impl Actor for ApproverActor {
                 maybe_global = global_rx.recv() => {
                     if let Some(event) = maybe_global {
                         self.channel.process_global_event(&event).await;
-                        match event {
-                            GlobalEvent::AgentChannelJoined(_, cid, _) | GlobalEvent::AgentChannelLeft(_, cid, _) |
-                            GlobalEvent::UserChannelJoined(_, cid, _) | GlobalEvent::UserChannelLeft(_, cid, _) if cid == self.channel.id() => {
-                                if let Err(e) = self.recheck_all_pending(&tx).await {
-                                    warn!("ApproverActor error rechecking approvals: {:?}", e);
-                                }
-                            }
-                            _ => {}
-                        }
+                        self.handle_global_event(&event, &tx).await;
                     }
                 }
                 _ = timeout_fut => {
