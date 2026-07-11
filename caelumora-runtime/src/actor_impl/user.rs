@@ -73,9 +73,9 @@ impl UserActor {
 
     pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> anyhow::Result<()> {
         let event = if approved {
-            ActorEvent::ToolExecutionGranted(response)
+            ActorEvent::ApprovalGranted(response)
         } else {
-            ActorEvent::ToolExecutionDenied(response)
+            ActorEvent::ApprovalDenied(response)
         };
         self.user_tx.send(event).await?;
         Ok(())

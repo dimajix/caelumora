@@ -85,7 +85,7 @@ impl ModeratorActors {
 
     fn route_approval_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match &event.event {
-            ActorEvent::ToolExecutionRequested(_) => {
+            ActorEvent::ApprovalRequested(_) => {
                 if matches!(event.context.sender_id, ActorId::Agent(_)) {
                     // Agent -> ApproverActor
                     self.approval_actors.iter()
@@ -100,7 +100,7 @@ impl ModeratorActors {
                     Vec::new()
                 }
             }
-            ActorEvent::ToolExecutionGranted(response) | ActorEvent::ToolExecutionDenied(response) => {
+            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) => {
                 if matches!(event.context.sender_id, ActorId::User(_)) {
                     // User -> ApproverActor
                     self.approval_actors.iter()
@@ -118,7 +118,7 @@ impl ModeratorActors {
                     Vec::new()
                 }
             }
-            ActorEvent::ToolExecutionRequestTimedOut(response) => {
+            ActorEvent::ApprovalTimedOut(response) => {
                 if matches!(event.context.sender_id, ActorId::Approver(_)) {
                     // ApproverActor -> Agent
                     let agent_id = ActorId::Agent(response.agent_id);
@@ -176,10 +176,10 @@ impl Moderator for BroadcastModerator {
             ActorEvent::FullResponseGenerated(_) => {
                 self.handle_full_response(event).await
             }
-            ActorEvent::ToolExecutionRequested(_) |
-            ActorEvent::ToolExecutionGranted(_) |
-            ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) => {
+            ActorEvent::ApprovalRequested(_) |
+            ActorEvent::ApprovalGranted(_) |
+            ActorEvent::ApprovalDenied(_) |
+            ActorEvent::ApprovalTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -240,10 +240,10 @@ impl Moderator for RandomModerator {
             ActorEvent::FullResponseGenerated(_) => {
                 self.handle_full_response(event).await
             }
-            ActorEvent::ToolExecutionRequested(_) |
-            ActorEvent::ToolExecutionGranted(_) |
-            ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) => {
+            ActorEvent::ApprovalRequested(_) |
+            ActorEvent::ApprovalGranted(_) |
+            ActorEvent::ApprovalDenied(_) |
+            ActorEvent::ApprovalTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -312,10 +312,10 @@ impl Moderator for RoundRobinModerator {
             ActorEvent::FullResponseGenerated(_) => {
                 self.handle_full_response(event).await
             }
-            ActorEvent::ToolExecutionRequested(_) |
-            ActorEvent::ToolExecutionGranted(_) |
-            ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) => {
+            ActorEvent::ApprovalRequested(_) |
+            ActorEvent::ApprovalGranted(_) |
+            ActorEvent::ApprovalDenied(_) |
+            ActorEvent::ApprovalTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {

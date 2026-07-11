@@ -67,13 +67,13 @@ impl ApproverActor {
 
     async fn handle_envelope(&self, env: Envelope, output: &Sender<Envelope>) -> Result<()> {
         match env.event {
-            ActorEvent::ToolExecutionRequested(req) => {
+            ActorEvent::ApprovalRequested(req) => {
                 self.handle_request(req, env.context, env.security, output).await
             }
-            ActorEvent::ToolExecutionGranted(res) => {
+            ActorEvent::ApprovalGranted(res) => {
                 self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output).await
             }
-            ActorEvent::ToolExecutionDenied(res) => {
+            ActorEvent::ApprovalDenied(res) => {
                 self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
             }
             _ => Ok(()),
@@ -101,7 +101,7 @@ impl ApproverActor {
 
         self.pending.lock().await.insert(new_id, pending);
 
-        let new_event = ActorEvent::ToolExecutionRequested(request);
+        let new_event = ActorEvent::ApprovalRequested(request);
         let new_context = context.next(self.id, "Approver".to_string());
         let new_security = security.next(self.id);
         let envelope = Envelope::new(new_security, new_context, new_event);
@@ -208,9 +208,9 @@ impl ApproverActor {
         };
 
         let event = match status {
-            ApprovalStatus::Approved => ActorEvent::ToolExecutionGranted(response),
-            ApprovalStatus::Denied => ActorEvent::ToolExecutionDenied(response),
-            ApprovalStatus::Timeout => ActorEvent::ToolExecutionRequestTimedOut(response),
+            ApprovalStatus::Approved => ActorEvent::ApprovalGranted(response),
+            ApprovalStatus::Denied => ActorEvent::ApprovalDenied(response),
+            ApprovalStatus::Timeout => ActorEvent::ApprovalTimedOut(response),
             ApprovalStatus::Unknown => return Ok(()),
         };
 
@@ -242,7 +242,7 @@ impl ApproverActor {
                 id: p.original_approval_id,
                 agent_id: p.agent_id,
             };
-            let event = ActorEvent::ToolExecutionRequestTimedOut(response);
+            let event = ActorEvent::ApprovalTimedOut(response);
             let context = p.event_context.next(self.id, "Approver".to_string());
             let envelope = Envelope::new(p.security_context.next(self.id), context, event);
             output.send(envelope).await.context("Failed to send timeout")?;
@@ -273,7 +273,13 @@ impl Actor for ApproverActor {
     fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
         Box::new(StandardActorSender {
             tx,
-            filter: Box::new(|_| true),
+            filter: Box::new(|event| {
+                matches!(event.event,
+                    ActorEvent::ApprovalGranted(_) |
+                    ActorEvent::ApprovalDenied(_) |
+                    ActorEvent::ApprovalRequested(_)
+                )
+            }),
         })
     }
 
@@ -337,6 +343,7 @@ mod tests {
     use caelumora_model::store::EntityStore;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::{User, UserId};
+    use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -396,19 +403,19 @@ mod tests {
             tool_call: ToolCall {
                 id: Some("call_1".to_string()),
                 function_name: "test_tool".to_string(),
-                arguments: "{}".to_string(),
+                arguments: json!("{}".to_string()),
             },
             description: "test".to_string(),
         };
 
         let context = EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string());
-        let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, ActorEvent::ToolExecutionRequested(request));
+        let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, ActorEvent::ApprovalRequested(request));
 
         tx.send(envelope).await.unwrap();
 
         // Should receive forward request
         let forward_env = output_rx.recv().await.unwrap();
-        let new_approval_id = if let ActorEvent::ToolExecutionRequested(req) = forward_env.event {
+        let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event {
             req.id
         } else {
             panic!("Expected ToolExecutionRequested");
@@ -421,12 +428,12 @@ mod tests {
             agent_id,
         };
         let context1 = EventContext::new(session_id, channel_id, user1_actor_id, "User 1".to_string());
-        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ToolExecutionGranted(response));
+        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ApprovalGranted(response));
         tx.send(env1).await.unwrap();
 
         // Decision reached (Any strategy)
         let decision_env: Envelope = output_rx.recv().await.unwrap();
-        if let ActorEvent::ToolExecutionGranted(res) = decision_env.event {
+        if let ActorEvent::ApprovalGranted(res) = decision_env.event {
             assert_eq!(res.id, approval_id);
             assert_eq!(res.agent_id, agent_id);
         } else {
@@ -501,19 +508,19 @@ mod tests {
             tool_call: ToolCall {
                 id: Some("call_1".to_string()),
                 function_name: "test_tool".to_string(),
-                arguments: "{}".to_string(),
+                arguments: json!("{}".to_string()),
             },
             description: "test".to_string(),
         };
         let req_env = Envelope::new(
             caelumora_model::security::SecurityContext::default(),
             EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()),
-            ActorEvent::ToolExecutionRequested(request)
+            ActorEvent::ApprovalRequested(request)
         );
         tx.send(req_env).await.unwrap();
 
         let forward_env = output_rx.recv().await.unwrap();
-        let new_approval_id = if let ActorEvent::ToolExecutionRequested(req) = forward_env.event {
+        let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event {
             req.id
         } else {
             panic!("Expected ToolExecutionRequested");
@@ -522,12 +529,12 @@ mod tests {
         // 3. User1 approves
         let response = ApprovalResponse { id: new_approval_id, agent_id };
         let context1 = EventContext::new(session_id, channel_id, ActorId::User(user1_id), "User 1".to_string());
-        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ToolExecutionGranted(response));
+        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ApprovalGranted(response));
         tx.send(env1).await.unwrap();
 
         // 4. Decision reached (All strategy, user count is 1)
         let decision_env = output_rx.recv().await.unwrap();
-        if let ActorEvent::ToolExecutionGranted(res) = decision_env.event {
+        if let ActorEvent::ApprovalGranted(res) = decision_env.event {
             assert_eq!(res.id, approval_id);
         } else {
             panic!("Expected ToolExecutionGranted");
@@ -586,16 +593,16 @@ mod tests {
             session_id,
             channel_id,
             agent_id,
-            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: "".to_string() },
+            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()) },
             description: "test".to_string(),
         };
-        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ToolExecutionRequested(request))).await.unwrap();
+        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ApprovalRequested(request))).await.unwrap();
 
         let forward_env = output_rx.recv().await.unwrap();
-        let new_approval_id = if let ActorEvent::ToolExecutionRequested(req) = forward_env.event { req.id } else { panic!() };
+        let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event { req.id } else { panic!() };
 
         // 2. User 1 approves
-        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::User(user1_id), "u1".to_string()), ActorEvent::ToolExecutionGranted(ApprovalResponse { id: new_approval_id, agent_id }))).await.unwrap();
+        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::User(user1_id), "u1".to_string()), ActorEvent::ApprovalGranted(ApprovalResponse { id: new_approval_id, agent_id }))).await.unwrap();
 
         // 3. User 2 leaves
         let leave_event = GlobalEvent::UserChannelLeft(session_id, channel_id, user2_id);
@@ -606,7 +613,7 @@ mod tests {
 
         // 4. Decision should be reached now
         let decision_env = output_rx.recv().await.unwrap();
-        if let ActorEvent::ToolExecutionGranted(res) = decision_env.event {
+        if let ActorEvent::ApprovalGranted(res) = decision_env.event {
             assert_eq!(res.id, approval_id);
         } else {
             panic!("Expected ToolExecutionGranted, got {:?}", decision_env.event);

@@ -47,10 +47,10 @@ impl ActorId {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
-    ToolExecutionRequested(ApprovalRequest),
-    ToolExecutionGranted(ApprovalResponse),
-    ToolExecutionDenied(ApprovalResponse),
-    ToolExecutionRequestTimedOut(ApprovalResponse),
+    ApprovalRequested(ApprovalRequest),
+    ApprovalGranted(ApprovalResponse),
+    ApprovalDenied(ApprovalResponse),
+    ApprovalTimedOut(ApprovalResponse),
     ResponseRequested,
     ResponseStarted,
     PartialMessageGenerated(Message),

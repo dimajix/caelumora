@@ -19,7 +19,17 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 
     /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: Value, context: &TurnContext) -> Result<Value>;
+    async fn execute(&self, name: &str, params: &Value, context: &TurnContext) -> Result<Value>;
+    /// Provides a textual description for a specific tool call
+    fn describe(&self,  name: &str, params: &Value) -> Result<String> {
+        let tools = self.tools();
+        if let Some(tool) = tools.iter().find(|t| t.name == name) {
+            Ok(tool.description.to_string())
+        }
+        else {
+            Err(anyhow::anyhow!("Cannot find tool {}", name))
+        }
+    }
 }
 
 
@@ -45,7 +55,8 @@ pub enum ExecutionStatus {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    async fn execute(&self, call: &ToolCall, security: &TurnContext) -> Result<ToolResult>;
+    async fn execute(&self, call: &ToolCall, context: &TurnContext) -> Result<ToolResult>;
+    fn describe(&self, call: &ToolCall) -> Result<String>;
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
 }
@@ -99,8 +110,7 @@ impl ToolExecutor for DefaultToolExecutor {
             let tools = provider.tools();
             if let Some(_tool) = tools.iter().find(|t| t.name == *tool_name) {
                 _execution.status = ExecutionStatus::Running;
-                let params = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
-                return match provider.execute(tool_name, params, context).await {
+                return match provider.execute(tool_name, &call.arguments, context).await {
                     Ok(value) => {
                         _execution.status = ExecutionStatus::Completed;
                         _execution.finished_at = Some(Utc::now());
@@ -120,6 +130,18 @@ impl ToolExecutor for DefaultToolExecutor {
             }
         }
         Err(anyhow::anyhow!("Tool not found: {}", tool_name))
+    }
+
+    fn describe(&self, call: &ToolCall) -> Result<String> {
+        let tool_name = &call.function_name;
+        for provider in &self.tool_providers {
+            let tools = provider.tools();
+            if let Some(_tool) = tools.iter().find(|t| t.name == *tool_name) {
+                return provider.describe(tool_name, &call.arguments)
+            }
+        }
+
+        Err(anyhow::anyhow!("Cannot find tool"))
     }
 
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>> {
@@ -159,7 +181,7 @@ mod tests {
                 requires_approval: self.requires_approval,
             }]
         }
-        async fn execute(&self, _name: &str, _params: Value, _context: &TurnContext) -> Result<Value> {
+        async fn execute(&self, _name: &str, _params: &Value, _context: &TurnContext) -> Result<Value> {
             Ok(json!({"result": "ok"}))
         }
     }
@@ -173,7 +195,7 @@ mod tests {
         let call = ToolCall {
             id: Some("call_1".to_string()),
             function_name: "test_tool".to_string(),
-            arguments: "{}".to_string(),
+            arguments: json!("{}".to_string()),
         };
 
         let mut agent_state = AgentState::default();

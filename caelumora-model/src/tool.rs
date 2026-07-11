@@ -1,5 +1,6 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use uuid::Uuid;
@@ -66,7 +67,7 @@ pub struct Tool {
 pub struct ToolCall {
     pub id: Option<String>,
     pub function_name: String,
-    pub arguments: String
+    pub arguments: Value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

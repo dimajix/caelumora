@@ -45,7 +45,7 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: Value, context: &TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, _params: &Value, context: &TurnContext) -> Result<Value> {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
@@ -81,9 +81,9 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: Value, _context: &TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &TurnContext) -> Result<Value> {
         if name == "echo" {
-            Ok(params)
+            Ok(params.clone())
         } else {
             Err(anyhow::anyhow!("Unknown tool: {}", name))
         }
@@ -107,7 +107,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: Value, _context: &TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &TurnContext) -> Result<Value> {
         if name == "calculate" {
             let expression = params["expression"]
                 .as_str()
@@ -147,7 +147,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute("calculate", params, &turn_context).await.unwrap();
+            let result = provider.execute("calculate", &params, &turn_context).await.unwrap();
             let val = result.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
@@ -161,7 +161,7 @@ mod tests {
         let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute("calculate", params, &turn_context).await;
+        let result = provider.execute("calculate", &params, &turn_context).await;
         assert!(result.is_err());
     }
 
@@ -172,7 +172,7 @@ mod tests {
         let mut agent_state = AgentState::default();
         let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
-        let result = provider.execute("stop", json!({}), &turn_context).await.unwrap();
+        let result = provider.execute("stop", &json!({}), &turn_context).await.unwrap();
         assert_eq!(result["status"], "stopped");
 
         let tools = provider.tools();

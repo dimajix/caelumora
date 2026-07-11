@@ -9,6 +9,7 @@ use chrono::Utc;
 use futures::stream::{BoxStream, StreamExt};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
@@ -145,7 +146,7 @@ impl OllamaChatMessage {
                         function: OllamaToolCallFunction {
                             index: i,
                             name: tc.function_name.clone(),
-                            arguments: serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null),
+                            arguments: tc.arguments.clone(),
                         },
                     })
                     .collect(),
@@ -180,6 +181,7 @@ mod tests {
     use super::*;
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::ToolCall;
+    use serde_json::json;
 
     #[test]
     fn test_ollama_chat_message_from_with_tool_calls() {
@@ -187,12 +189,12 @@ mod tests {
             ToolCall {
                 id: Some("1".to_string()),
                 function_name: "test_func_1".to_string(),
-                arguments: "{}".to_string(),
+                arguments: json!("{}".to_string()),
             },
             ToolCall {
                 id: Some("2".to_string()),
                 function_name: "test_func_2".to_string(),
-                arguments: "{\"a\": 1}".to_string(),
+                arguments: json!("{\"a\": 1}".to_string()),
             },
         ];
 
@@ -309,7 +311,7 @@ impl LLMClient for OllamaClient {
                                         all_tool_calls.push(ToolCall {
                                             id: call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
                                             function_name: call.function.name,
-                                            arguments: call.function.arguments.to_string(),
+                                            arguments: call.function.arguments,
                                         });
                                     }
                                 }

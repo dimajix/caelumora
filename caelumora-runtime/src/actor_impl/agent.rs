@@ -414,11 +414,11 @@ impl AgentActor {
         let mut turn_context = state.resume_turn_context(self.name());
         for env in buffer.drain(..) {
             match &env.event {
-                ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) | ActorEvent::ToolExecutionRequestTimedOut(req) => {
+                ActorEvent::ApprovalGranted(req) | ActorEvent::ApprovalDenied(req) | ActorEvent::ApprovalTimedOut(req) => {
                     let status = match &env.event {
-                        ActorEvent::ToolExecutionGranted(_) => ApprovalStatus::Approved,
-                        ActorEvent::ToolExecutionDenied(_) => ApprovalStatus::Denied,
-                        ActorEvent::ToolExecutionRequestTimedOut(_) => ApprovalStatus::Timeout,
+                        ActorEvent::ApprovalGranted(_) => ApprovalStatus::Approved,
+                        ActorEvent::ApprovalDenied(_) => ApprovalStatus::Denied,
+                        ActorEvent::ApprovalTimedOut(_) => ApprovalStatus::Timeout,
                         _ => unreachable!(),
                     };
                     if !turn_context.set_tool_approval_status(req.id, status) {
@@ -568,12 +568,13 @@ impl AgentActor {
                         let tool_calls: Vec<ApprovableToolCall> = message.tool_calls.iter().map(|tc| {
                             let tool = tools.iter().find(|t| t.name == tc.function_name);
                             let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
+                            let description = self.tool_executor.describe(&tc).unwrap_or("No description".to_string());
                             requires_approval |= approval;
                             ApprovableToolCall {
                                 id: ApprovalId::new(),
                                 status: if approval { ApprovalStatus::Unknown } else { ApprovalStatus::Approved },
                                 tool_call: tc.clone(),
-                                description: tool.map(|t| t.description.clone()).unwrap_or_default(),
+                                description,
                             }
                         }).collect();
 
@@ -595,7 +596,7 @@ impl AgentActor {
                                     tool_call: tc.tool_call.clone(), // Carry the first one as representative
                                     description: tc.description.clone(),
                                 };
-                                turn_context.send_event(ActorEvent::ToolExecutionRequested(request), output).await?;
+                                turn_context.send_event(ActorEvent::ApprovalRequested(request), output).await?;
                             }
 
                             // Store state and return
@@ -671,7 +672,10 @@ impl Actor for AgentActor {
         Box::new(StandardActorSender {
             tx,
             filter: Box::new(|event| {
-                !matches!(event.event, ActorEvent::PartialMessageGenerated(_))
+                !matches!(event.event,
+                    ActorEvent::PartialMessageGenerated(_) |
+                    ActorEvent::ApprovalRequested(_)
+                )
             }),
         })
     }
