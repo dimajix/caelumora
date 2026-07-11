@@ -139,7 +139,7 @@ impl<'a> TurnContext<'a> {
     pub fn set_tool_calls(&mut self, tool_calls: Vec<ApprovableToolCall>) {
         self.agent_channel_state.pending_tool_calls = tool_calls;
     }
-    pub fn set_tool_call_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
+    pub fn set_tool_approval_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
         if let Some(tool_call) = self.agent_channel_state.pending_tool_calls.iter_mut().find(|tc| tc.id == id) {
             tool_call.status = status;
             true

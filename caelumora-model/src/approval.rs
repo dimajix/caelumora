@@ -70,6 +70,7 @@ pub enum ApprovalStatus {
     Unknown,
     Approved,
     Denied,
+    Timeout,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

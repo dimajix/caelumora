@@ -1,6 +1,6 @@
 use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::runtime::RuntimeManager;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::{AgentId, ProcessingState};
@@ -210,6 +210,7 @@ impl ApproverActor {
         let event = match status {
             ApprovalStatus::Approved => ActorEvent::ToolExecutionGranted(response),
             ApprovalStatus::Denied => ActorEvent::ToolExecutionDenied(response),
+            ApprovalStatus::Timeout => ActorEvent::ToolExecutionRequestTimedOut(response),
             ApprovalStatus::Unknown => return Ok(()),
         };
 

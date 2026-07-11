@@ -273,6 +273,9 @@ impl AgentActor {
                 ApprovalStatus::Unknown => {
                     // TODO: warn and push error
                 }
+                ApprovalStatus::Timeout => {
+                    // TODO: warn and push error
+                }
             }
         }
 
@@ -415,10 +418,10 @@ impl AgentActor {
                     let status = match &env.event {
                         ActorEvent::ToolExecutionGranted(_) => ApprovalStatus::Approved,
                         ActorEvent::ToolExecutionDenied(_) => ApprovalStatus::Denied,
-                        ActorEvent::ToolExecutionRequestTimedOut(_) => ApprovalStatus::Denied,
+                        ActorEvent::ToolExecutionRequestTimedOut(_) => ApprovalStatus::Timeout,
                         _ => unreachable!(),
                     };
-                    if !turn_context.set_tool_call_status(req.id, status) {
+                    if !turn_context.set_tool_approval_status(req.id, status) {
                         warn!("Received approval for unknown approval id {}", req.id);
                     }
                     approvals_pending = turn_context.tool_calls().iter().any(|tc| tc.status == ApprovalStatus::Unknown);
