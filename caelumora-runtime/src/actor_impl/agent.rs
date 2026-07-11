@@ -688,7 +688,7 @@ impl Actor for AgentActor {
 
         info!("AgentActor {} is starting", self.id());
 
-        let agent_id = self.id.as_agent_id().unwrap();
+        let agent_id = self.agent_id;
         let mut global_rx = self
             .runtime_manager
             .event_bus()

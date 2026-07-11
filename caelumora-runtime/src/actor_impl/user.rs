@@ -10,7 +10,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::user::{User, UserController};
+use caelumora_model::user::{User, UserController, UserId};
 use chrono::Utc;
 use log::{debug, info};
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct UserActor {
     id: ActorId,
+    user_id: UserId,
     session_id: SessionId,
     channel_id: ChannelId,
     security_context: SecurityContext,
@@ -36,6 +37,7 @@ impl UserActor {
     pub async fn new(channel: &Channel, mut user:User, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         user.security.session_id = channel.session_id;
         user.security.channel_id = channel.id;
+        let user_id = user.id;
         let security_context = user.security.clone();
         let user_controller = runtime_manager.controller_manager().new_user_controller(user);
 
@@ -43,7 +45,8 @@ impl UserActor {
         let (atx,arx) = mpsc::channel(100);
 
         Ok(Self {
-            id: ActorId::User(user_controller.id()),
+            id: ActorId::User(user_id),
+            user_id,
             session_id: channel.session_id,
             channel_id: channel.id,
             security_context,
@@ -162,7 +165,7 @@ impl Actor for UserActor {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
         
-        let user_id = self.id.as_user_id().unwrap();
+        let user_id = self.user_id;
         let mut global_rx = self.runtime_manager.event_bus().subscribe(vec![
             crate::event::SubscriptionTopic::User(user_id),
             crate::event::SubscriptionTopic::Channel(self.channel_id),
