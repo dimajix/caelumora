@@ -63,13 +63,23 @@ impl ChannelTemplate {
         let mut participants = Vec::new();
 
         for name in &self.participants {
-            let participant = session_participants.iter().find(|p| {
-                match p {
-                    Participant::User(u) => u.username == *name,
-                    Participant::Agent(a) => a.metadata.name == *name,
-                }
-            }).cloned().ok_or_else(|| anyhow::anyhow!("Participant {} not found in session", name))?;
+            let participant = if name == "approval" {
+                Participant::Approval(Uuid::new_v4())
+            } else {
+                session_participants.iter().find(|p| {
+                    match p {
+                        Participant::User(u) => u.username == *name,
+                        Participant::Agent(a) => a.metadata.name == *name,
+                        Participant::Approval(_) => false,
+                    }
+                }).cloned().ok_or_else(|| anyhow::anyhow!("Participant {} not found in session", name))?
+            };
             participants.push(participant);
+        }
+
+        // Ensure Approval actor is present
+        if !participants.iter().any(|p| matches!(p, Participant::Approval(_))) {
+            participants.push(Participant::Approval(Uuid::new_v4()));
         }
 
         let security_attributes = SecurityAttributes {
@@ -146,6 +156,7 @@ pub enum ParticipantTemplate {
         scope: ScopeTemplate,
         personality_id: PersonalityId,
     },
+    Approval,
 }
 
 impl ParticipantTemplate {
@@ -184,6 +195,9 @@ impl ParticipantTemplate {
                 };
                 Participant::Agent(agent)
             },
+            ParticipantTemplate::Approval => {
+                Participant::Approval(Uuid::new_v4())
+            }
         };
         Ok(participant)
     }

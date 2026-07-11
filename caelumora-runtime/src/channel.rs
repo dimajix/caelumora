@@ -1,5 +1,6 @@
 use crate::actor::{Actor, ActorSender, SendError};
 use crate::actor_impl::agent::AgentActor;
+use crate::actor_impl::approval::ApprovalActor;
 use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
@@ -157,6 +158,10 @@ impl ChannelLoop {
             Participant::Agent(agent) => {
                 let actor = AgentActor::new(channel, agent.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
+            },
+            Participant::Approval(id) => {
+                let user_count = channel.participants.iter().filter(|p| matches!(p, Participant::User(_))).count();
+                Ok(Box::new(ApprovalActor::new(*id, user_count)))
             }
         }
     }
@@ -201,7 +206,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, actors: &Arc<HashMap<ActorId, ActorHandle>>) {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, _actors: &Arc<HashMap<ActorId, ActorHandle>>) {
         if let Some(global_event) = maybe_global {
             self.channel.process_global_event(&global_event).await;
         }

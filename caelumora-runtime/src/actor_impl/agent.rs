@@ -22,7 +22,6 @@ use caelumora_model::tool::ToolResult;
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
-use std::os::linux::raw::stat;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -32,7 +31,7 @@ use tokio::sync::Mutex;
 pub struct AgentActor {
     id: ActorId,
     kind: String,
-    channel_id: caelumora_model::session::ChannelId,
+    _channel_id: caelumora_model::channel::ChannelId,
     agent_id: AgentId,
     agent_controller: Arc<AgentController>,
     runtime_manager: Arc<RuntimeManager>,
@@ -46,7 +45,7 @@ pub struct AgentActor {
 
     // State
     state: Mutex<AgentActorState>,
-    security_context: SecurityContext,
+    _security_context: SecurityContext,
     processing_state: Arc<AtomicU8>,
     max_iterations: i32,
 
@@ -134,7 +133,7 @@ impl AgentActor {
         Ok(AgentActor {
             id: ActorId::Agent(agent_id),
             kind: "agent".to_string(),
-            channel_id: channel.id,
+            _channel_id: channel.id,
             agent_id,
             agent_controller,
             runtime_manager,
@@ -144,7 +143,7 @@ impl AgentActor {
             emit_out_processors,
             tool_executor,
             state,
-            security_context,
+            _security_context: security_context,
             processing_state,
             max_iterations: 10,
             run_lock: Mutex::new(()),
@@ -416,11 +415,12 @@ impl AgentActor {
         let mut turn_context = state.resume_turn_context(self.name());
         for env in buffer.drain(..) {
             match &env.event {
-                ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) => {
-                    let status = if matches!(&env.event, ActorEvent::ToolExecutionGranted(_)) {
-                        ApprovalStatus::Approved
-                    } else {
-                        ApprovalStatus::Denied
+                ActorEvent::ToolExecutionGranted(req) | ActorEvent::ToolExecutionDenied(req) | ActorEvent::ToolExecutionRequestTimedOut(req) => {
+                    let status = match &env.event {
+                        ActorEvent::ToolExecutionGranted(_) => ApprovalStatus::Approved,
+                        ActorEvent::ToolExecutionDenied(_) => ApprovalStatus::Denied,
+                        ActorEvent::ToolExecutionRequestTimedOut(_) => ApprovalStatus::Denied,
+                        _ => unreachable!(),
                     };
                     if !turn_context.set_tool_call_status(req.id, status) {
                         warn!("Received approval for unknown approval id {}", req.id);
@@ -567,12 +567,14 @@ impl AgentActor {
                         let tools = self.tool_executor.tools();
                         let mut requires_approval = false;
                         let tool_calls: Vec<ApprovableToolCall> = message.tool_calls.iter().map(|tc| {
-                            let approval = tools.iter().any(|t| t.name == tc.function_name && t.requires_approval);
+                            let tool = tools.iter().find(|t| t.name == tc.function_name);
+                            let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
                             requires_approval |= approval;
                             ApprovableToolCall {
                                 id: ApprovalId::new(),
                                 status: if approval { ApprovalStatus::Unknown } else { ApprovalStatus::Approved },
                                 tool_call: tc.clone(),
+                                description: tool.map(|t| t.description.clone()).unwrap_or_default(),
                             }
                         }).collect();
 
@@ -592,6 +594,7 @@ impl AgentActor {
                                     channel_id: turn_context.channel_id,
                                     agent_id: self.agent_id,
                                     tool_call: tc.tool_call.clone(), // Carry the first one as representative
+                                    description: tc.description.clone(),
                                 };
                                 turn_context.send_event(ActorEvent::ToolExecutionRequested(request), output).await?;
                             }

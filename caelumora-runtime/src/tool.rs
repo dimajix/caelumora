@@ -138,6 +138,7 @@ impl ToolExecutor for DefaultToolExecutor {
 mod tests {
     use super::*;
     use crate::actor::TurnContext;
+    use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::agent::AgentState;
     use caelumora_model::security::DummySecurityManager;
@@ -177,7 +178,9 @@ mod tests {
 
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut agent_channel_state);
+        let agent_id = AgentId::new();
+        agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
+        let context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_state, &mut agent_channel_state);
 
         let result = executor.execute(&call, &context).await.unwrap();
         assert_eq!(result.content, "{\"result\":\"ok\"}");

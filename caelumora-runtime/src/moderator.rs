@@ -6,6 +6,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::actor::Actor;
+use crate::actor_impl::approval::ApprovalActor;
 use crate::actor_impl::user::UserActor;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::ProcessingState;
@@ -25,6 +26,7 @@ pub trait Moderator : Send + Sync + Debug {
 struct ModeratorActors {
     agent_actors: DashMap<ActorId, Arc<dyn Actor>>,
     user_actors: DashMap<ActorId, Arc<dyn Actor>>,
+    approval_actors: DashMap<ActorId, Arc<dyn Actor>>,
 }
 
 impl ModeratorActors {
@@ -32,6 +34,7 @@ impl ModeratorActors {
         Self {
             agent_actors: DashMap::new(),
             user_actors: DashMap::new(),
+            approval_actors: DashMap::new(),
         }
     }
 
@@ -39,6 +42,9 @@ impl ModeratorActors {
         let any_actor:&dyn Any = actor.as_ref();
         if any_actor.downcast_ref::<UserActor>().is_some() {
             self.user_actors.insert(actor.id(), actor);
+        }
+        else if any_actor.downcast_ref::<ApprovalActor>().is_some() {
+            self.approval_actors.insert(actor.id(), actor);
         }
         else {
             self.agent_actors.insert(actor.id(), actor);
@@ -48,6 +54,7 @@ impl ModeratorActors {
     fn remove_actor(&mut self, actor: Arc<dyn Actor>) {
         self.agent_actors.remove(&actor.id());
         self.user_actors.remove(&actor.id());
+        self.approval_actors.remove(&actor.id());
     }
 
     fn forward_routes(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
@@ -79,14 +86,47 @@ impl ModeratorActors {
     fn route_approval_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match &event.event {
             ActorEvent::ToolExecutionRequested(_) => {
-                self.user_actors.iter()
-                    .map(|r| (*r.key(), event.clone()))
-                    .collect()
+                if matches!(event.context.sender_id, ActorId::Agent(_)) {
+                    // Agent -> ApprovalActor
+                    self.approval_actors.iter()
+                        .map(|r| (*r.key(), event.clone()))
+                        .collect()
+                } else if matches!(event.context.sender_id, ActorId::Approval(_)) {
+                    // ApprovalActor -> Users
+                    self.user_actors.iter()
+                        .map(|r| (*r.key(), event.clone()))
+                        .collect()
+                } else {
+                    Vec::new()
+                }
             }
-            ActorEvent::ToolExecutionGranted(respoonse) | ActorEvent::ToolExecutionDenied(respoonse) => {
-                let agent_id = ActorId::Agent(respoonse.agent_id);
-                if self.agent_actors.contains_key(&agent_id) {
-                    vec![(agent_id, event.clone())]
+            ActorEvent::ToolExecutionGranted(response) | ActorEvent::ToolExecutionDenied(response) => {
+                if matches!(event.context.sender_id, ActorId::User(_)) {
+                    // User -> ApprovalActor
+                    self.approval_actors.iter()
+                        .map(|r| (*r.key(), event.clone()))
+                        .collect()
+                } else if matches!(event.context.sender_id, ActorId::Approval(_)) {
+                    // ApprovalActor -> Agent
+                    let agent_id = ActorId::Agent(response.agent_id);
+                    if self.agent_actors.contains_key(&agent_id) {
+                        vec![(agent_id, event.clone())]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            }
+            ActorEvent::ToolExecutionRequestTimedOut(response) => {
+                if matches!(event.context.sender_id, ActorId::Approval(_)) {
+                    // ApprovalActor -> Agent
+                    let agent_id = ActorId::Agent(response.agent_id);
+                    if self.agent_actors.contains_key(&agent_id) {
+                        vec![(agent_id, event.clone())]
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     Vec::new()
                 }
@@ -138,7 +178,8 @@ impl Moderator for BroadcastModerator {
             }
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
-            ActorEvent::ToolExecutionDenied(_) => {
+            ActorEvent::ToolExecutionDenied(_) |
+            ActorEvent::ToolExecutionRequestTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -201,7 +242,8 @@ impl Moderator for RandomModerator {
             }
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
-            ActorEvent::ToolExecutionDenied(_) => {
+            ActorEvent::ToolExecutionDenied(_) |
+            ActorEvent::ToolExecutionRequestTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -272,7 +314,8 @@ impl Moderator for RoundRobinModerator {
             }
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
-            ActorEvent::ToolExecutionDenied(_) => {
+            ActorEvent::ToolExecutionDenied(_) |
+            ActorEvent::ToolExecutionRequestTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {

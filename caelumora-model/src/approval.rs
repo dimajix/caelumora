@@ -6,6 +6,14 @@ use serde::{Deserialize, Serialize};
 
 define_id!(ApprovalId);
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ApprovalStrategy {
+    Any,
+    Majority,
+    All,
+    DenyOnFirst,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub id: ApprovalId,
@@ -13,6 +21,7 @@ pub struct ApprovalRequest {
     pub channel_id: ChannelId,
     pub agent_id: AgentId,
     pub tool_call: ToolCall,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,4 +42,5 @@ pub struct ApprovableToolCall {
     pub id: ApprovalId,
     pub status: ApprovalStatus,
     pub tool_call: ToolCall,
+    pub description: String,
 }

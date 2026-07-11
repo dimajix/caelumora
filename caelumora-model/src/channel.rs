@@ -123,4 +123,5 @@ impl ChannelState {
 pub enum Participant {
     User(User),
     Agent(Agent),
+    Approval(Uuid),
 }

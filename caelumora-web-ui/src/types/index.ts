@@ -86,6 +86,7 @@ export interface ApprovalRequest {
   channel_id: string;
   agent_id: string;
   tool_call: ToolCall;
+  description: string;
 }
 
 export interface ApprovalResponse {
