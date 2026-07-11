@@ -1,4 +1,5 @@
 use crate::agent::Agent;
+use crate::approval::Approver;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::security::SecurityAttributes;
@@ -123,5 +124,5 @@ impl ChannelState {
 pub enum Participant {
     User(User),
     Agent(Agent),
-    Approval(Uuid),
+    Approver(Approver),
 }

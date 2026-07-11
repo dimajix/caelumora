@@ -1,4 +1,5 @@
 use crate::agent::{AgentId, PersonalityId};
+use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::channel::{Channel, Participant};
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
@@ -64,22 +65,28 @@ impl ChannelTemplate {
 
         for name in &self.participants {
             let participant = if name == "approval" {
-                Participant::Approval(Uuid::new_v4())
+                Participant::Approver(Approver {
+                    id: ApproverId(Uuid::new_v4()),
+                    strategy: ApprovalStrategy::Any,
+                })
             } else {
                 session_participants.iter().find(|p| {
                     match p {
                         Participant::User(u) => u.username == *name,
                         Participant::Agent(a) => a.metadata.name == *name,
-                        Participant::Approval(_) => false,
+                        Participant::Approver(_) => false,
                     }
                 }).cloned().ok_or_else(|| anyhow::anyhow!("Participant {} not found in session", name))?
             };
             participants.push(participant);
         }
 
-        // Ensure Approval actor is present
-        if !participants.iter().any(|p| matches!(p, Participant::Approval(_))) {
-            participants.push(Participant::Approval(Uuid::new_v4()));
+        // Ensure Approver actor is present
+        if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
+            participants.push(Participant::Approver(Approver {
+                id: ApproverId(Uuid::new_v4()),
+                strategy: ApprovalStrategy::Any,
+            }));
         }
 
         let security_attributes = SecurityAttributes {
@@ -156,7 +163,7 @@ pub enum ParticipantTemplate {
         scope: ScopeTemplate,
         personality_id: PersonalityId,
     },
-    Approval,
+    Approver,
 }
 
 impl ParticipantTemplate {
@@ -195,8 +202,11 @@ impl ParticipantTemplate {
                 };
                 Participant::Agent(agent)
             },
-            ParticipantTemplate::Approval => {
-                Participant::Approval(Uuid::new_v4())
+            ParticipantTemplate::Approver => {
+                Participant::Approver(Approver {
+                    id: ApproverId(Uuid::new_v4()),
+                    strategy: ApprovalStrategy::Any,
+                })
             }
         };
         Ok(participant)

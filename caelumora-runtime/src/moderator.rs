@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::actor::Actor;
-use crate::actor_impl::approval::ApprovalActor;
+use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::ProcessingState;
@@ -43,7 +43,7 @@ impl ModeratorActors {
         if any_actor.downcast_ref::<UserActor>().is_some() {
             self.user_actors.insert(actor.id(), actor);
         }
-        else if any_actor.downcast_ref::<ApprovalActor>().is_some() {
+        else if any_actor.downcast_ref::<ApproverActor>().is_some() {
             self.approval_actors.insert(actor.id(), actor);
         }
         else {
@@ -87,12 +87,12 @@ impl ModeratorActors {
         match &event.event {
             ActorEvent::ToolExecutionRequested(_) => {
                 if matches!(event.context.sender_id, ActorId::Agent(_)) {
-                    // Agent -> ApprovalActor
+                    // Agent -> ApproverActor
                     self.approval_actors.iter()
                         .map(|r| (*r.key(), event.clone()))
                         .collect()
-                } else if matches!(event.context.sender_id, ActorId::Approval(_)) {
-                    // ApprovalActor -> Users
+                } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    // ApproverActor -> Users
                     self.user_actors.iter()
                         .map(|r| (*r.key(), event.clone()))
                         .collect()
@@ -102,12 +102,12 @@ impl ModeratorActors {
             }
             ActorEvent::ToolExecutionGranted(response) | ActorEvent::ToolExecutionDenied(response) => {
                 if matches!(event.context.sender_id, ActorId::User(_)) {
-                    // User -> ApprovalActor
+                    // User -> ApproverActor
                     self.approval_actors.iter()
                         .map(|r| (*r.key(), event.clone()))
                         .collect()
-                } else if matches!(event.context.sender_id, ActorId::Approval(_)) {
-                    // ApprovalActor -> Agent
+                } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    // ApproverActor -> Agent
                     let agent_id = ActorId::Agent(response.agent_id);
                     if self.agent_actors.contains_key(&agent_id) {
                         vec![(agent_id, event.clone())]
@@ -119,8 +119,8 @@ impl ModeratorActors {
                 }
             }
             ActorEvent::ToolExecutionRequestTimedOut(response) => {
-                if matches!(event.context.sender_id, ActorId::Approval(_)) {
-                    // ApprovalActor -> Agent
+                if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    // ApproverActor -> Agent
                     let agent_id = ActorId::Agent(response.agent_id);
                     if self.agent_actors.contains_key(&agent_id) {
                         vec![(agent_id, event.clone())]
@@ -130,6 +130,11 @@ impl ModeratorActors {
                 } else {
                     Vec::new()
                 }
+            }
+            ActorEvent::ActorJoined(_) | ActorEvent::ActorLeft(_) => {
+                self.approval_actors.iter()
+                    .map(|r| (*r.key(), event.clone()))
+                    .collect()
             }
             _ => Vec::new()
         }
@@ -179,7 +184,9 @@ impl Moderator for BroadcastModerator {
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
             ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) => {
+            ActorEvent::ToolExecutionRequestTimedOut(_) |
+            ActorEvent::ActorJoined(_) |
+            ActorEvent::ActorLeft(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -243,7 +250,9 @@ impl Moderator for RandomModerator {
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
             ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) => {
+            ActorEvent::ToolExecutionRequestTimedOut(_) |
+            ActorEvent::ActorJoined(_) |
+            ActorEvent::ActorLeft(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {
@@ -315,7 +324,9 @@ impl Moderator for RoundRobinModerator {
             ActorEvent::ToolExecutionRequested(_) |
             ActorEvent::ToolExecutionGranted(_) |
             ActorEvent::ToolExecutionDenied(_) |
-            ActorEvent::ToolExecutionRequestTimedOut(_) => {
+            ActorEvent::ToolExecutionRequestTimedOut(_) |
+            ActorEvent::ActorJoined(_) |
+            ActorEvent::ActorLeft(_) => {
                 self.actors.route_approval_events(event)
             }
             _ => {

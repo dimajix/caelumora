@@ -1,12 +1,12 @@
 use crate::actor::{Actor, ActorSender, SendError};
 use crate::actor_impl::agent::AgentActor;
-use crate::actor_impl::approval::ApprovalActor;
+use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::ProcessingState;
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
@@ -159,9 +159,8 @@ impl ChannelLoop {
                 let actor = AgentActor::new(channel, agent.clone(), runtime_manager.clone()).await?;
                 Ok(Box::new(actor))
             },
-            Participant::Approval(id) => {
-                let user_count = channel.participants.iter().filter(|p| matches!(p, Participant::User(_))).count();
-                Ok(Box::new(ApprovalActor::new(*id, user_count)))
+            Participant::Approver(approver) => {
+                Ok(Box::new(ApproverActor::new(channel, approver.clone(), runtime_manager)))
             }
         }
     }
@@ -175,6 +174,16 @@ impl ChannelLoop {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
+
+        // Emit ActorJoined for each actor
+        for actor_id in actors.keys() {
+            let event = Envelope::new(
+                caelumora_model::security::SecurityContext::default(),
+                EventContext::new(self.session_id, self.id, ActorId::None, "System".to_string()),
+                ActorEvent::ActorJoined(*actor_id)
+            );
+            self.route_event(&actors, event).await;
+        }
 
         loop {
             tokio::select! {

@@ -16,7 +16,7 @@ pub enum ActorId {
     None,
     User(UserId),
     Agent(AgentId),
-    Approval(Uuid),
+    Approver(Uuid),
 }
 impl ActorId {
     pub fn id(&self) -> Uuid {
@@ -24,7 +24,7 @@ impl ActorId {
             ActorId::None => {Uuid::nil()}
             ActorId::User(id) => {id.0}
             ActorId::Agent(id) => {id.0}
-            ActorId::Approval(id) => {*id}
+            ActorId::Approver(id) => {*id}
         }
     }
 
@@ -51,6 +51,8 @@ pub enum ActorEvent {
     ToolExecutionGranted(ApprovalResponse),
     ToolExecutionDenied(ApprovalResponse),
     ToolExecutionRequestTimedOut(ApprovalResponse),
+    ActorJoined(ActorId),
+    ActorLeft(ActorId),
     ResponseRequested,
     ResponseStarted,
     PartialMessageGenerated(Message),

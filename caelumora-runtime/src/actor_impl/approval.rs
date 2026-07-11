@@ -1,12 +1,16 @@
 use crate::actor::{Actor, ActorSender, StandardActorSender};
+use crate::runtime::RuntimeManager;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::ProcessingState;
-use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy};
+use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
+use caelumora_model::channel::{Channel, ChannelId, Participant};
+use caelumora_model::session::SessionId;
 use chrono::{DateTime, Duration, Utc};
 use log::{info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -19,22 +23,35 @@ struct PendingApproval {
     responses: HashMap<ActorId, ApprovalStatus>,
     timeout: DateTime<Utc>,
     _request: ApprovalRequest,
-    session_id: caelumora_model::session::SessionId,
-    channel_id: caelumora_model::channel::ChannelId,
+    session_id: SessionId,
+    channel_id: ChannelId,
 }
 
 #[derive(Debug)]
-pub struct ApprovalActor {
+pub struct ApproverActor {
     id: ActorId,
-    user_count: usize,
+    channel_id: ChannelId,
+    approver: Approver,
+    runtime_manager: Arc<RuntimeManager>,
+    user_ids: Mutex<HashSet<ActorId>>,
     pending: Mutex<HashMap<ApprovalId, PendingApproval>>,
 }
 
-impl ApprovalActor {
-    pub fn new(id: Uuid, user_count: usize) -> Self {
+impl ApproverActor {
+    pub fn new(channel: &Channel, approver: Approver, runtime_manager: Arc<RuntimeManager>) -> Self {
+        let mut user_ids = HashSet::new();
+        for participant in &channel.participants {
+            if let Participant::User(user) = participant {
+                user_ids.insert(ActorId::User(user.id));
+            }
+        }
+
         Self {
-            id: ActorId::Approval(id),
-            user_count,
+            id: ActorId::Approver(approver.id.0),
+            channel_id: channel.id,
+            approver,
+            runtime_manager,
+            user_ids: Mutex::new(user_ids),
             pending: Mutex::new(HashMap::new()),
         }
     }
@@ -50,6 +67,19 @@ impl ApprovalActor {
             ActorEvent::ToolExecutionDenied(res) => {
                 self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
             }
+            ActorEvent::ActorJoined(actor_id) => {
+                if let ActorId::User(_) = actor_id {
+                    self.user_ids.lock().await.insert(actor_id);
+                }
+                Ok(())
+            }
+            ActorEvent::ActorLeft(actor_id) => {
+                if let ActorId::User(_) = actor_id {
+                    self.user_ids.lock().await.remove(&actor_id);
+                    self.recheck_all_pending(output).await?;
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -64,7 +94,7 @@ impl ApprovalActor {
         let pending = PendingApproval {
             agent_id: context.sender_id,
             original_approval_id: request.id,
-            strategy: ApprovalStrategy::Any, // TODO: Get strategy from somewhere?
+            strategy: self.approver.strategy,
             responses: HashMap::new(),
             timeout,
             _request: pending_req.clone(),
@@ -75,7 +105,7 @@ impl ApprovalActor {
         self.pending.lock().await.insert(new_id, pending);
 
         let new_event = ActorEvent::ToolExecutionRequested(pending_req);
-        let new_context = context.next(self.id, "Approval".to_string());
+        let new_context = context.next(self.id, "Approver".to_string());
         let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), new_context, new_event);
 
         output.send(envelope).await.context("Failed to send approval request")?;
@@ -90,7 +120,8 @@ impl ApprovalActor {
         if let Some(p) = pending.get_mut(&response.id) {
             p.responses.insert(user_id, status);
             
-            if let Some(decision) = self.check_strategy(p) {
+            let user_ids = self.user_ids.lock().await;
+            if let Some(decision) = self.check_strategy(p, user_ids.len()) {
                 to_remove = Some((response.id, decision));
             }
         }
@@ -103,7 +134,31 @@ impl ApprovalActor {
         Ok(())
     }
 
-    fn check_strategy(&self, p: &PendingApproval) -> Option<ApprovalStatus> {
+    async fn recheck_all_pending(&self, output: &Sender<Envelope>) -> Result<()> {
+        let mut pending = self.pending.lock().await;
+        let mut to_remove = Vec::new();
+
+        {
+            let user_ids = self.user_ids.lock().await;
+            let user_count = user_ids.len();
+
+            for (id, p) in pending.iter() {
+                if let Some(decision) = self.check_strategy(p, user_count) {
+                    to_remove.push((*id, decision));
+                }
+            }
+        }
+
+        for (id, decision) in to_remove {
+            if let Some(p) = pending.remove(&id) {
+                self.send_decision(p, decision, output).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_strategy(&self, p: &PendingApproval, user_count: usize) -> Option<ApprovalStatus> {
         let approved_count = p.responses.values().filter(|&&s| s == ApprovalStatus::Approved).count();
         let denied_count = p.responses.values().filter(|&&s| s == ApprovalStatus::Denied).count();
         let total_responses = p.responses.len();
@@ -112,23 +167,23 @@ impl ApprovalActor {
             ApprovalStrategy::Any => {
                 if approved_count > 0 {
                     Some(ApprovalStatus::Approved)
-                } else if total_responses >= self.user_count && denied_count == self.user_count {
+                } else if total_responses >= user_count && denied_count == user_count {
                     Some(ApprovalStatus::Denied)
                 } else {
                     None
                 }
             }
             ApprovalStrategy::Majority => {
-                if approved_count > self.user_count / 2 {
+                if approved_count > user_count / 2 {
                     Some(ApprovalStatus::Approved)
-                } else if denied_count >= (self.user_count + 1) / 2 {
+                } else if denied_count >= (user_count + 1) / 2 {
                     Some(ApprovalStatus::Denied)
                 } else {
                     None
                 }
             }
             ApprovalStrategy::All => {
-                if approved_count == self.user_count {
+                if approved_count >= user_count && user_count > 0 {
                     Some(ApprovalStatus::Approved)
                 } else if denied_count > 0 {
                     Some(ApprovalStatus::Denied)
@@ -139,7 +194,7 @@ impl ApprovalActor {
             ApprovalStrategy::DenyOnFirst => {
                 if denied_count > 0 {
                     Some(ApprovalStatus::Denied)
-                } else if approved_count == self.user_count {
+                } else if approved_count >= user_count && user_count > 0 {
                     Some(ApprovalStatus::Approved)
                 } else {
                     None
@@ -160,7 +215,7 @@ impl ApprovalActor {
             ApprovalStatus::Unknown => return Ok(()),
         };
 
-        let context = EventContext::new(p.session_id, p.channel_id, self.id, "Approval".to_string());
+        let context = EventContext::new(p.session_id, p.channel_id, self.id, "Approver".to_string());
         let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, event);
 
         output.send(envelope).await.context("Failed to send decision")?;
@@ -189,7 +244,7 @@ impl ApprovalActor {
                 agent_id: p.agent_id.as_agent_id().unwrap(),
             };
             let event = ActorEvent::ToolExecutionRequestTimedOut(response);
-            let context = EventContext::new(p.session_id, p.channel_id, self.id, "Approval".to_string());
+            let context = EventContext::new(p.session_id, p.channel_id, self.id, "Approver".to_string());
             let envelope = Envelope::new(caelumora_model::security::SecurityContext::default(), context, event);
             output.send(envelope).await.context("Failed to send timeout")?;
         }
@@ -199,17 +254,17 @@ impl ApprovalActor {
 }
 
 #[async_trait]
-impl Actor for ApprovalActor {
+impl Actor for ApproverActor {
     fn id(&self) -> ActorId {
         self.id
     }
 
     fn kind(&self) -> String {
-        "approval".to_string()
+        "approver".to_string()
     }
 
     fn name(&self) -> String {
-        "Approval".to_string()
+        "Approver".to_string()
     }
 
     fn state(&self) -> ProcessingState {
@@ -224,7 +279,7 @@ impl Actor for ApprovalActor {
     }
 
     async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()> {
-        info!("ApprovalActor {:?} started", self.id);
+        info!("ApproverActor {:?} started", self.id);
         loop {
             let next_timeout = {
                 let pending = self.pending.lock().await;
@@ -247,7 +302,7 @@ impl Actor for ApprovalActor {
                     match maybe_env {
                         Some(env) => {
                             if let Err(e) = self.handle_envelope(env, &tx).await {
-                                warn!("ApprovalActor error handling envelope: {:?}", e);
+                                warn!("ApproverActor error handling envelope: {:?}", e);
                             }
                         }
                         None => break,
@@ -255,12 +310,12 @@ impl Actor for ApprovalActor {
                 }
                 _ = timeout_fut => {
                     if let Err(e) = self.handle_timeouts(&tx).await {
-                        warn!("ApprovalActor error handling timeouts: {:?}", e);
+                        warn!("ApproverActor error handling timeouts: {:?}", e);
                     }
                 }
             }
         }
-        info!("ApprovalActor {:?} finished", self.id);
+        info!("ApproverActor {:?} finished", self.id);
         Ok(())
     }
 }
@@ -269,16 +324,51 @@ impl Actor for ApprovalActor {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::channel::ChannelId;
+    use caelumora_model::approval::{Approver, ApproverId};
+    use caelumora_model::channel::{Channel, ChannelId, Participant};
     use caelumora_model::session::SessionId;
     use caelumora_model::tool::ToolCall;
+    use caelumora_model::user::{User, UserId};
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_approval_actor_any_strategy() {
-        let actor_id = Uuid::new_v4();
-        let actor = ApprovalActor::new(actor_id, 2);
+        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
+        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
+
+        let agent_id = AgentId::new();
+        let session_id = SessionId::new();
+        let channel_id = ChannelId::new();
+        let approval_id = ApprovalId::new();
+
+        let user1_id = UserId(Uuid::new_v4());
+        let user1 = User {
+            id: user1_id,
+            username: "user1".to_string(),
+            email: "user1@example.com".to_string(),
+            roles: vec![],
+            security: caelumora_model::security::SecurityContext::default(),
+        };
+
+        let approver = Approver {
+            id: ApproverId(Uuid::new_v4()),
+            strategy: ApprovalStrategy::Any,
+        };
+
+        let channel = Channel {
+            id: channel_id,
+            session_id,
+            name: "test".to_string(),
+            moderator: "broadcast".to_string(),
+            participants: vec![
+                Participant::User(user1),
+                Participant::Approver(approver.clone()),
+            ],
+            security_attributes: caelumora_model::security::SecurityAttributes::default(),
+        };
+
+        let actor = ApproverActor::new(&channel, approver, runtime_manager);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
@@ -288,11 +378,6 @@ mod tests {
             let a: &dyn Actor = actor_clone.as_ref();
             a.run(rx, output_tx).await.unwrap();
         });
-
-        let agent_id = AgentId::new();
-        let session_id = SessionId::new();
-        let channel_id = ChannelId::new();
-        let approval_id = ApprovalId::new();
 
         let request = ApprovalRequest {
             id: approval_id,
@@ -321,12 +406,12 @@ mod tests {
         };
 
         // Send approval from user 1
-        let user1_id = ActorId::User(caelumora_model::user::UserId(Uuid::new_v4()));
+        let user1_actor_id = ActorId::User(user1_id);
         let response = ApprovalResponse {
             id: new_approval_id,
             agent_id,
         };
-        let context1 = EventContext::new(session_id, channel_id, user1_id, "User 1".to_string());
+        let context1 = EventContext::new(session_id, channel_id, user1_actor_id, "User 1".to_string());
         let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ToolExecutionGranted(response));
         tx.send(env1).await.unwrap();
 
@@ -335,6 +420,167 @@ mod tests {
         if let ActorEvent::ToolExecutionGranted(res) = decision_env.event {
             assert_eq!(res.id, approval_id);
             assert_eq!(res.agent_id, agent_id);
+        } else {
+            panic!("Expected ToolExecutionGranted, got {:?}", decision_env.event);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_approval_actor_dynamic_membership() {
+        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
+        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
+
+        let session_id = SessionId::new();
+        let channel_id = ChannelId::new();
+
+        let approver = Approver {
+            id: ApproverId(Uuid::new_v4()),
+            strategy: ApprovalStrategy::All,
+        };
+
+        let channel = Channel {
+            id: channel_id,
+            session_id,
+            name: "test".to_string(),
+            moderator: "broadcast".to_string(),
+            participants: vec![
+                Participant::Approver(approver.clone()),
+            ],
+            security_attributes: caelumora_model::security::SecurityAttributes::default(),
+        };
+
+        let actor = ApproverActor::new(&channel, approver, runtime_manager);
+        let (tx, rx) = mpsc::channel(100);
+        let (output_tx, mut output_rx) = mpsc::channel(100);
+
+        let actor_arc = Arc::new(actor);
+        let actor_clone = actor_arc.clone();
+        tokio::spawn(async move {
+            let a: &dyn Actor = actor_clone.as_ref();
+            a.run(rx, output_tx).await.unwrap();
+        });
+
+        // 1. Join user1
+        let user1_id = UserId(Uuid::new_v4());
+        let user1_actor_id = ActorId::User(user1_id);
+        let join_env = Envelope::new(
+            caelumora_model::security::SecurityContext::default(),
+            EventContext::new(session_id, channel_id, ActorId::None, "System".to_string()),
+            ActorEvent::ActorJoined(user1_actor_id)
+        );
+        tx.send(join_env).await.unwrap();
+
+        // 2. Request approval
+        let agent_id = AgentId::new();
+        let approval_id = ApprovalId::new();
+        let request = ApprovalRequest {
+            id: approval_id,
+            session_id,
+            channel_id,
+            agent_id,
+            tool_call: ToolCall {
+                id: Some("call_1".to_string()),
+                function_name: "test_tool".to_string(),
+                arguments: "{}".to_string(),
+            },
+            description: "test".to_string(),
+        };
+        let req_env = Envelope::new(
+            caelumora_model::security::SecurityContext::default(),
+            EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()),
+            ActorEvent::ToolExecutionRequested(request)
+        );
+        tx.send(req_env).await.unwrap();
+
+        let forward_env = output_rx.recv().await.unwrap();
+        let new_approval_id = if let ActorEvent::ToolExecutionRequested(req) = forward_env.event {
+            req.id
+        } else {
+            panic!("Expected ToolExecutionRequested");
+        };
+
+        // 3. User1 approves
+        let response = ApprovalResponse { id: new_approval_id, agent_id };
+        let context1 = EventContext::new(session_id, channel_id, user1_actor_id, "User 1".to_string());
+        let env1 = Envelope::new(caelumora_model::security::SecurityContext::default(), context1, ActorEvent::ToolExecutionGranted(response));
+        tx.send(env1).await.unwrap();
+
+        // 4. Decision reached (All strategy, user count is 1)
+        let decision_env = output_rx.recv().await.unwrap();
+        if let ActorEvent::ToolExecutionGranted(res) = decision_env.event {
+            assert_eq!(res.id, approval_id);
+        } else {
+            panic!("Expected ToolExecutionGranted");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_approval_actor_leave_decision() {
+        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
+        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
+
+        let session_id = SessionId::new();
+        let channel_id = ChannelId::new();
+
+        let approver = Approver {
+            id: ApproverId(Uuid::new_v4()),
+            strategy: ApprovalStrategy::All,
+        };
+
+        let user1_id = ActorId::User(UserId(Uuid::new_v4()));
+        let user2_id = ActorId::User(UserId(Uuid::new_v4()));
+
+        let channel = Channel {
+            id: channel_id,
+            session_id,
+            name: "test".to_string(),
+            moderator: "broadcast".to_string(),
+            participants: vec![
+                Participant::Approver(approver.clone()),
+                Participant::User(User { id: user1_id.as_user_id().unwrap(), username: "u1".to_string(), email: "".to_string(), roles: vec![], security: Default::default() }),
+                Participant::User(User { id: user2_id.as_user_id().unwrap(), username: "u2".to_string(), email: "".to_string(), roles: vec![], security: Default::default() }),
+            ],
+            security_attributes: caelumora_model::security::SecurityAttributes::default(),
+        };
+
+        let actor = ApproverActor::new(&channel, approver, runtime_manager);
+        let (tx, rx) = mpsc::channel(100);
+        let (output_tx, mut output_rx) = mpsc::channel(100);
+
+        let actor_arc = Arc::new(actor);
+        let actor_clone = actor_arc.clone();
+        tokio::spawn(async move {
+            let a: &dyn Actor = actor_clone.as_ref();
+            a.run(rx, output_tx).await.unwrap();
+        });
+
+        // 1. Request approval
+        let agent_id = AgentId::new();
+        let approval_id = ApprovalId::new();
+        let request = ApprovalRequest {
+            id: approval_id,
+            session_id,
+            channel_id,
+            agent_id,
+            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: "".to_string() },
+            description: "test".to_string(),
+        };
+        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ToolExecutionRequested(request))).await.unwrap();
+
+        let forward_env = output_rx.recv().await.unwrap();
+        let new_approval_id = if let ActorEvent::ToolExecutionRequested(req) = forward_env.event { req.id } else { panic!() };
+
+        // 2. User 1 approves
+        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, user1_id, "u1".to_string()), ActorEvent::ToolExecutionGranted(ApprovalResponse { id: new_approval_id, agent_id }))).await.unwrap();
+
+        // 3. User 2 leaves
+        let leave_env = Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::None, "System".to_string()), ActorEvent::ActorLeft(user2_id));
+        tx.send(leave_env).await.unwrap();
+
+        // 4. Decision should be reached now
+        let decision_env = output_rx.recv().await.unwrap();
+        if let ActorEvent::ToolExecutionGranted(res) = decision_env.event {
+            assert_eq!(res.id, approval_id);
         } else {
             panic!("Expected ToolExecutionGranted");
         }
