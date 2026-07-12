@@ -3,7 +3,7 @@ use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::component::{ComponentContainer, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
-use crate::runtime::RuntimeManager;
+use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -33,7 +33,7 @@ pub struct AgentActor {
     kind: String,
     agent_id: AgentId,
     agent_controller: Arc<AgentController>,
-    runtime_manager: Arc<RuntimeManager>,
+    actor_runtime: ActorRuntime,
     state_store: Arc<dyn StateStore>,
 
     // Components
@@ -90,33 +90,33 @@ impl AgentActor {
     pub async fn new(
         channel: &Channel,
         mut agent: Agent,
-        runtime_manager: Arc<RuntimeManager>,
+        actor_runtime: ActorRuntime,
     ) -> Result<Self> {
         agent.security_context.session_id = channel.session_id;
         agent.security_context.channel_id = channel.id;
         let security_context = agent.security_context.clone();
-        let personality = runtime_manager
+        let personality = actor_runtime
             .entity_store()
             .get_personality(&security_context, agent.personality_id)
             .await?;
         let agent_id = agent.id;
-        let agent_controller = runtime_manager
+        let agent_controller = actor_runtime
             .controller_manager()
             .new_agent_controller(channel.session_id, agent)
             .await;
 
         let components = ComponentContainer::from_config(
             &personality.components,
-            runtime_manager.component_registry().as_ref(),
+            actor_runtime.component_registry().as_ref(),
         )?;
         let context_provider = components.get_all::<dyn ContextProvider>(None)?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
-        let tool_executor = runtime_manager
+        let tool_executor = actor_runtime
             .new_tool_executor(tool_providers.into_iter().map(|p| p.facet).collect());
 
-        let state_store = runtime_manager.state_store();
+        let state_store = actor_runtime.state_store();
         let agent_channel_state = state_store
             .get_agent_channel_state(agent_id, channel.id)
             .await?;
@@ -133,7 +133,7 @@ impl AgentActor {
             kind: "agent".to_string(),
             agent_id,
             agent_controller,
-            runtime_manager,
+            actor_runtime,
             state_store,
             context_provider,
             perceive_in_processors,
@@ -235,7 +235,7 @@ impl AgentActor {
         &self,
         turn_context: &mut TurnContext<'a>,
     ) -> BoxStream<'static, Result<MessageEvent>> {
-        let llm_client = self.runtime_manager.llm_client();
+        let llm_client = self.actor_runtime.llm_client();
 
         let context = turn_context.full_context();
         let tools = self.tool_executor.tools();
@@ -690,7 +690,7 @@ impl Actor for AgentActor {
 
         let agent_id = self.agent_id;
         let mut global_rx = self
-            .runtime_manager
+            .actor_runtime
             .event_bus()
             .subscribe_agent(agent_id);
         let mut buffer = Vec::new();

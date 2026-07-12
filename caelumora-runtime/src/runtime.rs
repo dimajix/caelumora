@@ -23,30 +23,18 @@ pub struct RuntimeManager {
     controller_manager: Arc<ControllerManager>,
 }
 
-impl RuntimeManager {
-    pub fn new(state_store: Arc<dyn StateStore>, entity_store: Arc<dyn EntityStore>) -> Self {
-        let mut component_registry = ComponentRegistry::new();
-        history::register(&mut component_registry);
-        context::register(&mut component_registry);
-        tool::register(&mut component_registry);
+#[derive(Debug, Clone)]
+pub struct ActorRuntime {
+    security_manager: Arc<dyn SecurityManager>,
+    state_store: Arc<dyn StateStore>,
+    entity_store: Arc<dyn EntityStore>,
+    llm_client: Arc<dyn LLMClient>,
+    component_registry: Arc<ComponentRegistry>,
+    event_bus: Arc<EventBus>,
+    controller_manager: Arc<ControllerManager>,
+}
 
-        let security_manager = Arc::new(DummySecurityManager::new());
-
-        let event_bus = Arc::new(EventBus::new());
-        let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
-
-        Self {
-            security_manager,
-            state_store,
-            entity_store,
-            llm_client: Arc::new(OllamaClient::default()),
-            component_registry: Arc::new(component_registry),
-            event_bus,
-            controller_manager,
-        }
-    }
-
-
+impl ActorRuntime {
     pub fn event_bus(&self) -> Arc<EventBus> {
         self.event_bus.clone()
     }
@@ -71,6 +59,60 @@ impl RuntimeManager {
 
     pub fn new_tool_executor(&self, tool_providers: Vec<Arc<dyn ToolProvider>>) -> Box<dyn ToolExecutor> {
         Box::new(DefaultToolExecutor::new(self.security_manager.clone(), tool_providers))
+    }
+}
+
+impl RuntimeManager {
+    pub fn new(state_store: Arc<dyn StateStore>, entity_store: Arc<dyn EntityStore>) -> Self {
+        let mut component_registry = ComponentRegistry::new();
+        history::register(&mut component_registry);
+        context::register(&mut component_registry);
+        tool::register(&mut component_registry);
+
+        let security_manager = Arc::new(DummySecurityManager::new());
+
+        let event_bus = Arc::new(EventBus::new());
+        let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
+
+        Self {
+            security_manager,
+            state_store,
+            entity_store,
+            llm_client: Arc::new(OllamaClient::default()),
+            component_registry: Arc::new(component_registry),
+            event_bus,
+            controller_manager,
+        }
+    }
+
+    pub fn new_actor_runtime(&self) -> ActorRuntime {
+        ActorRuntime {
+            security_manager: self.security_manager.clone(),
+            state_store: self.state_store.clone(),
+            entity_store: self.entity_store.clone(),
+            llm_client: self.llm_client.clone(),
+            component_registry: self.component_registry.clone(),
+            event_bus: self.event_bus.clone(),
+            controller_manager: self.controller_manager.clone(),
+        }
+    }
+
+    pub fn event_bus(&self) -> Arc<EventBus> {
+        self.event_bus.clone()
+    }
+
+    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
+
+    pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
+
+    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.entity_store.clone() }
+
+    pub fn component_registry(&self) -> Arc<ComponentRegistry> {
+        self.component_registry.clone()
+    }
+
+    pub fn controller_manager(&self) -> Arc<ControllerManager> {
+        self.controller_manager.clone()
     }
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {

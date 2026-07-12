@@ -150,17 +150,18 @@ impl ChannelLoop {
     }
 
     async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
+        let actor_runtime = runtime_manager.new_actor_runtime();
         match participant {
             Participant::User(user) => {
-                let actor = UserActor::new(&channel.load(), user.clone(), runtime_manager.clone()).await?;
+                let actor = UserActor::new(&channel.load(), user.clone(), actor_runtime).await?;
                 Ok(Box::new(actor))
             },
             Participant::Agent(agent) => {
-                let actor = AgentActor::new(&channel.load(), agent.clone(), runtime_manager.clone()).await?;
+                let actor = AgentActor::new(&channel.load(), agent.clone(), actor_runtime).await?;
                 Ok(Box::new(actor))
             },
             Participant::Approver(approver) => {
-                Ok(Box::new(ApproverActor::new(channel, approver.clone(), runtime_manager)))
+                Ok(Box::new(ApproverActor::new(channel, approver.clone(), actor_runtime)))
             }
         }
     }

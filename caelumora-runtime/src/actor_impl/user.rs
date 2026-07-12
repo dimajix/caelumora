@@ -1,5 +1,5 @@
 use crate::actor::{Actor, ActorSender, StandardActorSender};
-use crate::runtime::RuntimeManager;
+use crate::runtime::ActorRuntime;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
@@ -26,7 +26,7 @@ pub struct UserActor {
     channel_id: ChannelId,
     security_context: SecurityContext,
     user: Arc<UserController>,
-    runtime_manager: Arc<RuntimeManager>,
+    actor_runtime: ActorRuntime,
     user_rx: Mutex<Receiver<ActorEvent>>,
     user_tx: Sender<ActorEvent>,
     actor_rx: Mutex<Receiver<ActorEvent>>,
@@ -34,12 +34,12 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub async fn new(channel: &Channel, mut user:User, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+    pub async fn new(channel: &Channel, mut user:User, actor_runtime: ActorRuntime) -> Result<Self> {
         user.security.session_id = channel.session_id;
         user.security.channel_id = channel.id;
         let user_id = user.id;
         let security_context = user.security.clone();
-        let user_controller = runtime_manager.controller_manager().new_user_controller(user);
+        let user_controller = actor_runtime.controller_manager().new_user_controller(user);
 
         let (utx,urx) = mpsc::channel(100);
         let (atx,arx) = mpsc::channel(100);
@@ -51,7 +51,7 @@ impl UserActor {
             channel_id: channel.id,
             security_context,
             user: user_controller,
-            runtime_manager,
+            actor_runtime,
             user_rx: Mutex::new(urx),
             user_tx: utx,
             actor_rx: Mutex::new(arx),
@@ -166,7 +166,7 @@ impl Actor for UserActor {
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
         
         let user_id = self.user_id;
-        let mut global_rx = self.runtime_manager.event_bus().subscribe(vec![
+        let mut global_rx = self.actor_runtime.event_bus().subscribe(vec![
             crate::event::SubscriptionTopic::User(user_id),
             crate::event::SubscriptionTopic::Channel(self.channel_id),
         ]);

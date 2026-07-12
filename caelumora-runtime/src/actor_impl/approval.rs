@@ -1,5 +1,5 @@
 use crate::actor::{Actor, ActorSender, StandardActorSender};
-use crate::runtime::RuntimeManager;
+use crate::runtime::ActorRuntime;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
@@ -32,17 +32,17 @@ struct PendingApproval {
 pub struct ApproverActor {
     id: ActorId,
     approver: Approver,
-    runtime_manager: Arc<RuntimeManager>,
+    actor_runtime: ActorRuntime,
     channel: Arc<ChannelController>,
     pending: Mutex<HashMap<ApprovalId, PendingApproval>>,
 }
 
 impl ApproverActor {
-    pub fn new(channel: Arc<ChannelController>, approver: Approver, runtime_manager: Arc<RuntimeManager>) -> Self {
+    pub fn new(channel: Arc<ChannelController>, approver: Approver, actor_runtime: ActorRuntime) -> Self {
         Self {
             id: ActorId::Approver(approver.id.0),
             approver,
-            runtime_manager,
+            actor_runtime,
             channel,
             pending: Mutex::new(HashMap::new()),
         }
@@ -285,7 +285,7 @@ impl Actor for ApproverActor {
 
     async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
-        let mut global_rx = self.runtime_manager.event_bus().subscribe_channel(self.channel.id());
+        let mut global_rx = self.actor_runtime.event_bus().subscribe_channel(self.channel.id());
 
         loop {
             let next_timeout = {
@@ -336,6 +336,7 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::RuntimeManager;
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::{Approver, ApproverId};
     use caelumora_model::channel::{Channel, ChannelId, Participant};
@@ -384,7 +385,8 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor = ApproverActor::new(channel_controller, approver, runtime_manager);
+        let actor_runtime = runtime_manager.new_actor_runtime();
+        let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
@@ -466,7 +468,8 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor = ApproverActor::new(channel_controller, approver, runtime_manager.clone());
+        let actor_runtime = runtime_manager.new_actor_runtime();
+        let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
@@ -574,7 +577,8 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor = ApproverActor::new(channel_controller, approver, runtime_manager.clone());
+        let actor_runtime = runtime_manager.new_actor_runtime();
+        let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
