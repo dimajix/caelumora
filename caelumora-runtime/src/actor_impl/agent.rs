@@ -337,24 +337,18 @@ impl AgentActor {
     async fn handle_actor_events<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
-        res: usize,
         buffer: &mut Vec<Envelope>,
         output: &Sender<Envelope>,
-    ) -> Result<bool> {
-        if res == 0 {
-            return Ok(true);
-        }
-
+    ) -> Result<()> {
         debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
 
         let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
         if current_state == ProcessingState::WaitingForApproval {
-            self.process_approvals(turn_context, buffer, output).await?;
+            self.process_approvals(turn_context, buffer, output).await
         }
         else {
-            self.process_messages(turn_context, buffer, output).await?;
+            self.process_messages(turn_context, buffer, output).await
         }
-        Ok(false)
     }
 
     async fn process_messages<'a>(
@@ -646,10 +640,11 @@ impl Actor for AgentActor {
         loop {
             tokio::select! {
                 res = input.recv_many(&mut buffer, 100) => {
-                    let mut turn_context = state.turn_context();
-                    if self.handle_actor_events(&mut turn_context, res, &mut buffer, &output).await? {
+                    if res == 0 {
                         break;
                     }
+                    let mut turn_context = state.turn_context();
+                    self.handle_actor_events(&mut turn_context, &mut buffer, &output).await?;
                 }
                 maybe_global = global_rx.recv() => {
                     self.handle_global_event(maybe_global, &output).await;
