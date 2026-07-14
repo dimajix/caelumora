@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::approval::{ApprovableToolCall, ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::Message;
@@ -102,6 +102,10 @@ impl<'a> TurnContext<'a> {
             agent_state,
             agent_channel_state,
         }
+    }
+
+    pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
+        self.agent_channel_state.next_turn(event_context, security_context);
     }
 
     pub fn context(&self) -> Vec<Message> {

@@ -228,7 +228,7 @@ pub struct AgentChannelState {
 }
 
 impl AgentChannelState {
-    pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext,) {
+    pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
         self.turn_scratch.clear();
         self.turn_context.clear();
         self.turn_messages.clear();
