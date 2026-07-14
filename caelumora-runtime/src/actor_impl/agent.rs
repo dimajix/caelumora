@@ -7,9 +7,9 @@ use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
 use caelumora_model::agent::{
-    Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState,
+    Agent, AgentChannelState, AgentController, AgentId, AgentState,
 };
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::Channel;
@@ -44,7 +44,7 @@ pub struct AgentActor {
 
     // State
     state: Mutex<AgentActorState>,
-    processing_state: Arc<AtomicU8>,
+    processing_state: Arc<ProcessingStateHolder>,
     max_iterations: i32,
 }
 
@@ -351,8 +351,8 @@ impl AgentActor {
     ) -> Result<()> {
         debug!("AgentActor {} received actor events: {:?}", self.id(), buffer);
 
-        let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
-        if current_state == ProcessingState::WaitingForApproval {
+        let current_state = self.processing_state.load();
+        if current_state == ActorState::WaitingForApproval {
             self.process_approvals(turn_context, buffer, output).await
         }
         else {
@@ -441,12 +441,19 @@ impl AgentActor {
 
         // Try to execute tools
         if let Some(msg) = self.execute_tools(turn_context).await {
-            // TODO: Only make transition if we were in "Awaiting Approval" state
-            self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
-            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+            let state = self.processing_state.transition(|c| {
+                match c {
+                    ActorState::WaitingForApproval => Some(ActorState::Active),
+                    _ => None
+                }
+            });
 
-            // Resume generating the response
-            self.generate_response(turn_context, output).await?;
+            if state == ActorState::Active {
+                turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+
+                // Resume generating the response
+                self.generate_response(turn_context, output).await?;
+            }
             Ok(true)
         }
         else {
@@ -464,12 +471,12 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
 
         // Do not respond if in stopped or canceled state!
-        let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
-        if current_state == ProcessingState::Sleep || current_state == ProcessingState::Cancelling {
+        let current_state = self.processing_state.load();
+        if current_state == ActorState::Sleep || current_state == ActorState::Cancelling {
             info!("Returning for inactive agent {} {}",self.id, agent_name);
             return Ok(());
         }
-        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        self.processing_state.store(ActorState::Active);
 
         turn_context.next_turn(
             event_context.next(self.id, agent_name.clone()),
@@ -509,21 +516,27 @@ impl AgentActor {
 
         //info!("Tool execution requires approval for agent {} {}", self.id, agent_name);
         if !tool_calls.is_empty() {
-            turn_context.set_tool_calls(tool_calls);
-            // TODO: Only transition of in "Active" state
-            self.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
+            let state = self.processing_state.transition(|c| {
+                match c {
+                    ActorState::Active => Some(ActorState::WaitingForApproval),
+                    _ => None
+                }
+            });
 
-            for tc in turn_context.tool_calls() {
-                if tc.status == ApprovalStatus::Pending {
-                    let request = ApprovalRequest {
-                        id: tc.id,
-                        session_id: turn_context.session_id,
-                        channel_id: turn_context.channel_id,
-                        agent_id: self.agent_id,
-                        tool_call: tc.tool_call.clone(), // Carry the first one as representative
-                        description: tc.description.clone(),
-                    };
-                    turn_context.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+            if state == ActorState::WaitingForApproval {
+                turn_context.set_tool_calls(tool_calls);
+                for tc in turn_context.tool_calls() {
+                    if tc.status == ApprovalStatus::Pending {
+                        let request = ApprovalRequest {
+                            id: tc.id,
+                            session_id: turn_context.session_id,
+                            channel_id: turn_context.channel_id,
+                            agent_id: self.agent_id,
+                            tool_call: tc.tool_call.clone(), // Carry the first one as representative
+                            description: tc.description.clone(),
+                        };
+                        turn_context.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+                    }
                 }
             }
         }
@@ -541,14 +554,16 @@ impl AgentActor {
         let mut loop_count = 0;
         'steps: while loop_count < self.max_iterations {
             // Check if we want to break out
-            let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
-            if current_state == ProcessingState::Silence {
-                info!("Stopping for silenced agent {} {}",self.id, agent_name);
-                break 'steps;
-            }
-            if current_state == ProcessingState::Cancelling {
-                info!("Stopping for cancelled agent {} {}",self.id, agent_name);
-                break 'steps;
+            match self.processing_state.load() {
+                ActorState::Silence => {
+                    info!("Stopping for silenced agent {} {}", self.id, agent_name);
+                    break 'steps;
+                }
+                ActorState::Cancelling => {
+                    info!("Stopping for cancelled agent {} {}", self.id, agent_name);
+                    break 'steps;
+                }
+                _ => {}
             }
 
             loop_count += 1;
@@ -562,8 +577,8 @@ impl AgentActor {
                 .context("Error during planning stream")?
             {
                 // Check for cancellation
-                let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
-                if current_state == ProcessingState::Cancelling {
+                let current_state = self.processing_state.load();
+                if current_state == ActorState::Cancelling {
                     info!("Stopping for cancelled agent {} {}",self.id, agent_name);
                     break 'steps;
                 }
@@ -607,12 +622,14 @@ impl AgentActor {
 
         self.reflect(turn_context).await;
 
-        let current_state = ProcessingState::from(self.processing_state.load(Ordering::SeqCst));
-        if current_state != ProcessingState::Sleep && current_state != ProcessingState::Cancelling && current_state != ProcessingState::WaitingForApproval {
-            self.processing_state
-                .store(ProcessingState::Idle.into(), Ordering::SeqCst);
-        }
+        self.processing_state.transition(|state| {
+            match state {
+                ActorState::Active => Some(ActorState::Idle),
+                _ => None,
+            }
+        });
 
+        // TODO: Do not send response when cancelled?
         turn_context.send_event(ActorEvent::FullResponseGenerated(turn_context.messages()), output).await?;
         info!("Finished generating messages for agent {} {}",self.id, agent_name);
 
@@ -682,8 +699,8 @@ impl Actor for AgentActor {
         Ok(())
     }
 
-    fn state(&self) -> ProcessingState {
-        ProcessingState::from(self.processing_state.load(Ordering::SeqCst))
+    fn state(&self) -> ActorState {
+        self.processing_state.load()
     }
 
     async fn wakeup(&self) -> Result<()> {
@@ -692,8 +709,7 @@ impl Actor for AgentActor {
             self.id,
             self.agent_controller.name()
         );
-        self.processing_state
-            .store(ProcessingState::Idle.into(), Ordering::SeqCst);
+        self.processing_state.store(ActorState::Idle);
         Ok(())
     }
 
@@ -703,8 +719,7 @@ impl Actor for AgentActor {
             self.id,
             self.agent_controller.name()
         );
-        self.processing_state
-            .store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
+        self.processing_state.store(ActorState::Cancelling);
         Ok(())
     }
 }

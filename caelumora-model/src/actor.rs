@@ -8,6 +8,8 @@ use crate::user::UserId;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -176,5 +178,149 @@ impl Envelope {
     pub fn with_security(mut self, security_context: SecurityContext) -> Self {
         self.security = security_context;
         self
+    }
+}
+
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActorState {
+    #[default]
+    Idle,
+    Active,
+    Cancelling,
+    Sleep,
+    Silence,
+    WaitingForApproval,
+}
+
+impl From<u8> for ActorState {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => ActorState::Idle,
+            1 => ActorState::Active,
+            2 => ActorState::Cancelling,
+            3 => ActorState::Sleep,
+            4 => ActorState::Silence,
+            5 => ActorState::WaitingForApproval,
+            _ => ActorState::Idle,
+        }
+    }
+}
+
+impl From<ActorState> for u8 {
+    fn from(s: ActorState) -> Self {
+        match s {
+            ActorState::Idle => 0,
+            ActorState::Active => 1,
+            ActorState::Cancelling => 2,
+            ActorState::Sleep => 3,
+            ActorState::Silence => 4,
+            ActorState::WaitingForApproval => 5,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ProcessingStateHolder {
+    state: AtomicU8
+}
+
+impl ProcessingStateHolder {
+    pub fn new(state: ActorState) -> Self {
+        Self {
+            state: AtomicU8::new(state as u8)
+        }
+    }
+
+    pub fn load(&self) -> ActorState {
+        ActorState::from(self.state.load(Ordering::SeqCst))
+    }
+
+    pub fn store(&self, state: ActorState) {
+        self.state.store(state.into(), Ordering::SeqCst);
+    }
+
+    /// The core "CAS Loop" logic.
+    /// This takes a closure that decides the next state based on the current one.
+    pub fn transition<F>(&self, decision_logic: F) -> ActorState
+    where
+        F: Fn(ActorState) -> Option<ActorState>,
+    {
+        let mut current_raw = self.state.load(Ordering::SeqCst);
+        loop {
+            let current_state = ActorState::from(current_raw);
+
+            // 1. Execute the decision logic provided by the caller
+            // We return Option: Some(new_state) to transition, None to do nothing.
+            let next_state = match decision_logic(current_state) {
+                Some(s) => s,
+                None => return current_state, // No transition needed
+            };
+
+            // 2. Try to atomicaly swap the value.
+            // compare_exchange checks if the value is still 'current_raw'.
+            // If yes, it sets it to 'next_state' and returns Ok.
+            // If no, it returns Err(actual_value_now_in_memory).
+            match self.state.compare_exchange(
+                current_raw,
+                next_state as u8,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    // Success! The state transitioned without interference.
+                    return next_state;
+                }
+                Err(actual_new_value) => {
+                    // Failure! Someone else changed the state.
+                    // Update our 'current_raw' and retry the loop with the new reality.
+                    current_raw = actual_new_value;
+                }
+            }
+        }
+    }}
+
+
+// We use this helper to bridge u8 <-> ProcessingState during Serde operations
+pub mod processing_state_serde {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+    use std::sync::atomic::Ordering;
+
+    // Serialization: Arc<ProcessingStateHolder> -> ProcessingState (String/Enum)
+    pub fn serialize<S>(val: &Arc<ProcessingStateHolder>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let state = ActorState::from(val.state.load(Ordering::SeqCst));
+        state.serialize(serializer)
+    }
+
+    // Deserialization: ProcessingState (String/Enum) -> Arc<AtomicU8>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<ProcessingStateHolder>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let state: ActorState = Deserialize::deserialize(deserializer)?;
+        Ok(Arc::new(ProcessingStateHolder::new(state)))
+    }
+}
+
+pub fn default_processing_state() -> Arc<ProcessingStateHolder> {
+    Arc::new(ProcessingStateHolder::new(ActorState::Idle))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actor::ActorState;
+
+    #[test]
+    fn test_processing_state_conversion() {
+        assert_eq!(u8::from(ActorState::Idle), 0);
+        assert_eq!(u8::from(ActorState::Active), 1);
+        assert_eq!(u8::from(ActorState::WaitingForApproval), 5);
+        assert_eq!(ActorState::from(5), ActorState::WaitingForApproval);
     }
 }

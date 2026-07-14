@@ -6,8 +6,7 @@ use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
 use anyhow::{anyhow, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
-use caelumora_model::agent::ProcessingState;
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::Message;
@@ -87,7 +86,7 @@ impl ChannelLoop {
             recorder: Mutex::new(recorder),
             state,
             state_store,
-            processing_state: Arc::new(AtomicU8::new(ProcessingState::Idle.into())),
+            processing_state: Arc::new(AtomicU8::new(ActorState::Idle.into())),
             event_tx,
             max_route_decisions: 100,
             run_lock: Mutex::new(())
@@ -114,14 +113,14 @@ impl ChannelLoop {
     }
 
     pub async fn cancel(&self) -> Result<()> {
-        self.processing_state.store(ProcessingState::Cancelling.into(), Ordering::SeqCst);
+        self.processing_state.store(ActorState::Cancelling.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.cancel().await?;
         }
         Ok(())
     }
     pub async fn wakeup(&self) -> Result<()> {
-        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
+        self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.wakeup().await?;
         }
@@ -252,7 +251,7 @@ impl ChannelLoop {
         //    }
         //}
 
-        let is_cancelling = ProcessingState::from(self.processing_state.load(Ordering::SeqCst)) == ProcessingState::Cancelling;
+        let is_cancelling = ActorState::from(self.processing_state.load(Ordering::SeqCst)) == ActorState::Cancelling;
         if !is_cancelling {
             self.route_event_impl(actors, event.clone()).await;
         }

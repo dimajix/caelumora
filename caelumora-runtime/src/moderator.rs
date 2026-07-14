@@ -8,8 +8,7 @@ use std::sync::Arc;
 use crate::actor::Actor;
 use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
-use caelumora_model::agent::ProcessingState;
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::{Message, MessageRole};
 use dashmap::DashMap;
 use rand::rngs::StdRng;
@@ -77,7 +76,7 @@ impl ModeratorActors {
     fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorId> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         self.agent_actors.iter()
-            .filter(|r| r.value().state() != ProcessingState::Sleep)
+            .filter(|r| r.value().state() != ActorState::Sleep)
             .map(|r| *r.key())
             .filter(|id| !sender_ids.contains(id))
             .collect()

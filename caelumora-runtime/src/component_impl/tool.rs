@@ -3,12 +3,11 @@ use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::ToolProvider;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::ProcessingState;
+use caelumora_model::actor::ActorState;
 use caelumora_model::tool::{Tool, ToolParameters};
 use log::info;
 use serde_json::Value;
 use std::fmt::Debug;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub const ECHO_TOOL_PROVIDER_KIND: &str = "echo_tool";
@@ -49,12 +48,12 @@ impl ToolProvider for StopToolProvider {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
-                context.set_processing_state(ProcessingState::Sleep);
+                context.set_processing_state(ActorState::Sleep);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
             "silence" => {
                 info!("Silencing agent {} {}", context.agent_id, context.agent_name);
-                context.set_processing_state(ProcessingState::Silence);
+                context.set_processing_state(ActorState::Silence);
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {

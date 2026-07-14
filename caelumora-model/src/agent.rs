@@ -1,4 +1,4 @@
-use crate::actor::{ActorId, Envelope, EventContext};
+use crate::actor::{ActorId, Envelope, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{Message, MessageContext, MessageHistory};
@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -97,72 +96,6 @@ pub struct Personality {
     pub components: ComponentConfig,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProcessingState {
-    #[default]
-    Idle,
-    Active,
-    Cancelling,
-    Sleep,
-    Silence,
-    WaitingForApproval,
-}
-
-impl From<u8> for ProcessingState {
-    fn from(v: u8) -> Self {
-        match v {
-            0 => ProcessingState::Idle,
-            1 => ProcessingState::Active,
-            2 => ProcessingState::Cancelling,
-            3 => ProcessingState::Sleep,
-            4 => ProcessingState::Silence,
-            5 => ProcessingState::WaitingForApproval,
-            _ => ProcessingState::Idle,
-        }
-    }
-}
-
-impl From<ProcessingState> for u8 {
-    fn from(s: ProcessingState) -> Self {
-        match s {
-            ProcessingState::Idle => 0,
-            ProcessingState::Active => 1,
-            ProcessingState::Cancelling => 2,
-            ProcessingState::Sleep => 3,
-            ProcessingState::Silence => 4,
-            ProcessingState::WaitingForApproval => 5,
-        }
-    }
-}
-
-// We use this helper to bridge u8 <-> ProcessingState during Serde operations
-mod processing_state_serde {
-    use super::*;
-    use std::sync::atomic::Ordering;
-
-    // Serialization: Arc<AtomicU8> -> ProcessingState (String/Enum)
-    pub fn serialize<S>(val: &Arc<AtomicU8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let state = ProcessingState::from(val.load(Ordering::SeqCst));
-        state.serialize(serializer)
-    }
-
-    // Deserialization: ProcessingState (String/Enum) -> Arc<AtomicU8>
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<AtomicU8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let state: ProcessingState = Deserialize::deserialize(deserializer)?;
-        Ok(Arc::new(AtomicU8::new(u8::from(state))))
-    }
-}
-
-fn default_processing_state() -> Arc<AtomicU8> {
-    Arc::new(AtomicU8::new(ProcessingState::Idle as u8))
-}
-
 
 define_id!(AgentId);
 
@@ -200,11 +133,11 @@ impl Agent {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentChannelState {
     #[serde(
-        default = "default_processing_state",
-        serialize_with = "processing_state_serde::serialize",
-        deserialize_with = "processing_state_serde::deserialize"
+        default = "crate::actor::default_processing_state",
+        serialize_with = "crate::actor::processing_state_serde::serialize",
+        deserialize_with = "crate::actor::processing_state_serde::deserialize"
     )]
-    pub processing_state: Arc<AtomicU8>,
+    pub processing_state: Arc<ProcessingStateHolder>,
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
@@ -245,25 +178,17 @@ pub struct AgentState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
-
-    #[test]
-    fn test_processing_state_conversion() {
-        assert_eq!(u8::from(ProcessingState::Idle), 0);
-        assert_eq!(u8::from(ProcessingState::Active), 1);
-        assert_eq!(u8::from(ProcessingState::WaitingForApproval), 5);
-        assert_eq!(ProcessingState::from(5), ProcessingState::WaitingForApproval);
-    }
+    use crate::actor::ActorState;
 
     #[test]
     fn test_agent_channel_state_serialization() {
         let state = AgentChannelState::default();
-        state.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
+        state.processing_state.store(ActorState::WaitingForApproval.into());
         
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"WaitingForApproval\""));
         
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
-        assert_eq!(ProcessingState::from(decoded.processing_state.load(Ordering::SeqCst)), ProcessingState::WaitingForApproval);
+        assert_eq!(ActorState::from(decoded.processing_state.load()), ActorState::WaitingForApproval);
     }
 }

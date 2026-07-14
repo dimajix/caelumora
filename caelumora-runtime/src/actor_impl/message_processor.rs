@@ -2,8 +2,7 @@ use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::message::MessageProcessor;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
-use caelumora_model::agent::ProcessingState;
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use log::{debug, info};
@@ -70,8 +69,8 @@ impl Actor for MessageProcessorActor {
         self.processor.name()
     }
 
-    fn state(&self) -> ProcessingState {
-        ProcessingState::Idle
+    fn state(&self) -> ActorState {
+        ActorState::Idle
     }
 
     async fn wakeup(&self) -> Result<()> {

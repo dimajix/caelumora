@@ -2,8 +2,8 @@ use crate::actor::{Actor, ActorSender, StandardActorSender};
 use crate::runtime::ActorRuntime;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
-use caelumora_model::agent::{AgentId, ProcessingState};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
 use caelumora_model::channel::{ChannelController, Participant};
 use caelumora_model::event::GlobalEvent;
@@ -24,7 +24,7 @@ struct PendingApproval {
     responses: HashMap<ActorId, ApprovalStatus>,
     timeout: DateTime<Utc>,
     _request: ApprovalRequest,
-    security_context: caelumora_model::security::SecurityContext,
+    security_context: SecurityContext,
     event_context: EventContext,
 }
 
@@ -266,8 +266,8 @@ impl Actor for ApproverActor {
         "Approver".to_string()
     }
 
-    fn state(&self) -> ProcessingState {
-        ProcessingState::Idle
+    fn state(&self) -> ActorState {
+        ActorState::Idle
     }
 
     fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {

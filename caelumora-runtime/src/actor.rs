@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentState, ProcessingState};
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use log::warn;
 use std::any::Any;
 use std::fmt::Debug;
@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::Message;
@@ -30,7 +30,7 @@ pub trait Actor: Any + Debug + Send + Sync {
     async fn run(&self, rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()>;
 
     /// Returns the current processing state of the actor
-    fn state(&self) -> ProcessingState;
+    fn state(&self) -> ActorState;
 
     /// Wakes up the actor from a Stopped state
     async fn wakeup(&self) -> Result<()> {
@@ -177,8 +177,8 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.history.extend(messages);
     }
 
-    pub fn set_processing_state(&self, state: ProcessingState) {
-        self.agent_channel_state.processing_state.store(state.into(), Ordering::SeqCst);
+    pub fn set_processing_state(&self, state: ActorState) {
+        self.agent_channel_state.processing_state.store(state);
     }
 
     pub async fn store_agent_state(&self, state_store: &Arc<dyn StateStore>) {
