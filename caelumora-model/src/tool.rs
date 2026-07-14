@@ -1,3 +1,4 @@
+use crate::approval::{ApprovalId, ApprovalStatus};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -75,4 +76,13 @@ pub struct ToolResult {
     pub id: Option<String>,
     pub tool_name: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallState {
+    pub id: ApprovalId,
+    pub status: ApprovalStatus,
+    pub tool_call: ToolCall,
+    pub description: String,
+    pub result: Option<String>
 }

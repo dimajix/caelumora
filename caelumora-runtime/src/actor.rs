@@ -10,12 +10,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
-use caelumora_model::approval::{ApprovableToolCall, ApprovalId, ApprovalStatus};
+use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StateStore;
+use caelumora_model::tool::ToolCallState;
 
 #[async_trait]
 pub trait Actor: Any + Debug + Send + Sync {
@@ -140,11 +141,11 @@ impl<'a> TurnContext<'a> {
         mem::take(&mut self.agent_channel_state.pending_events)
     }
 
-    pub fn set_tool_calls(&mut self, tool_calls: Vec<ApprovableToolCall>) {
-        self.agent_channel_state.pending_tool_calls = tool_calls;
+    pub fn set_tool_calls(&mut self, tool_calls: Vec<ToolCallState>) {
+        self.agent_channel_state.tool_calls = tool_calls;
     }
     pub fn set_tool_approval_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
-        if let Some(tool_call) = self.agent_channel_state.pending_tool_calls.iter_mut().find(|tc| tc.id == id) {
+        if let Some(tool_call) = self.agent_channel_state.tool_calls.iter_mut().find(|tc| tc.id == id) {
             tool_call.status = status;
             true
         }
@@ -152,11 +153,14 @@ impl<'a> TurnContext<'a> {
             false
         }
     }
-    pub fn tool_calls(&self) -> &Vec<ApprovableToolCall> {
-        &self.agent_channel_state.pending_tool_calls
+    pub fn tool_calls(&self) -> &Vec<ToolCallState> {
+        &self.agent_channel_state.tool_calls
     }
-    pub fn take_tool_calls(&mut self) -> Vec<ApprovableToolCall> {
-        mem::take(&mut self.agent_channel_state.pending_tool_calls)
+    pub fn take_tool_calls(&mut self) -> Vec<ToolCallState> {
+        mem::take(&mut self.agent_channel_state.tool_calls)
+    }
+    pub fn has_tool_calls(&self) -> bool {
+        !self.agent_channel_state.tool_calls.is_empty()
     }
 
     pub fn security_context(&self) -> &SecurityContext {

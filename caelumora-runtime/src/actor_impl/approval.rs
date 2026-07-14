@@ -211,7 +211,7 @@ impl ApproverActor {
             ApprovalStatus::Approved => ActorEvent::ApprovalGranted(response),
             ApprovalStatus::Denied => ActorEvent::ApprovalDenied(response),
             ApprovalStatus::Timeout => ActorEvent::ApprovalTimedOut(response),
-            ApprovalStatus::Unknown => return Ok(()),
+            ApprovalStatus::Pending => return Ok(()),
         };
 
         let context = p.event_context.next(self.id, "Approver".to_string());

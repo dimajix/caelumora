@@ -11,14 +11,14 @@ use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext};
 use caelumora_model::agent::{
     Agent, AgentChannelState, AgentController, AgentId, AgentState, ProcessingState,
 };
-use caelumora_model::approval::{ApprovableToolCall, ApprovalId, ApprovalRequest, ApprovalStatus};
+use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::ToolResult;
+use caelumora_model::tool::{ToolCall, ToolCallState, ToolResult};
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
@@ -229,49 +229,58 @@ impl AgentActor {
             .await
     }
 
-    async fn execute<'a>(
+    async fn execute_tools<'a>(
         &self,
-        tool_calls: &Vec<ApprovableToolCall>,
         turn_context: &mut TurnContext<'a>,
     ) -> Option<Message> {
-        let mut tool_results = Vec::new();
-        for c in tool_calls {
-            match c.status {
-                ApprovalStatus::Approved => {
-                    match self.tool_executor.execute(&c.tool_call, turn_context).await {
-                        Ok(r) => {
-                            tool_results.push(r);
-                        }
-                        Err(e) => {
-                            warn!("Tool execution failed: {}", e);
-                            tool_results.push(ToolResult {
-                                id: c.tool_call.id.clone(),
-                                tool_name: c.tool_call.function_name.clone(),
-                                content: format!("Error: {}", e),
-                            });
+        let mut tool_calls = turn_context.take_tool_calls();
+        let mut complete = true;
+        for c in & mut tool_calls {
+            // TODO: Check for cancellation!
+
+            // Try to execute tool if no result is available so far...
+            if c.result.is_none() {
+                match c.status {
+                    ApprovalStatus::Approved => {
+                        match self.tool_executor.execute(&c.tool_call, turn_context).await {
+                            Ok(r) => {
+                                c.result = Some(r.content);
+                            }
+                            Err(e) => {
+                                warn!("Tool execution failed: {}", e);
+                                c.result = Some(format!("Error: {}", e));
+                            }
                         }
                     }
+                    ApprovalStatus::Denied => {
+                        // TODO: Push error
+                    }
+                    ApprovalStatus::Timeout => {
+                        // TODO: warn and push error
+                    }
+                    ApprovalStatus::Pending => {
+                        complete = false;
+                    }
                 }
-                ApprovalStatus::Denied => {
-                    // TODO: Push error
-                }
-                ApprovalStatus::Unknown => {
-                    // TODO: warn and push error
-                }
-                ApprovalStatus::Timeout => {
-                    // TODO: warn and push error
-                }
+                // TODO: Persist results
             }
-
-            // TODO: Persist results
         }
+        turn_context.set_tool_calls(tool_calls);
 
-        if !tool_results.is_empty() {
+        if complete {
             let message_id = turn_context
                 .last_message()
                 .map(|m| m.id)
                 .unwrap_or_default();
 
+            let mut tool_results = Vec::new();
+            for c in turn_context.take_tool_calls() {
+                tool_results.push( ToolResult {
+                    id: c.tool_call.id,
+                    tool_name: c.tool_call.function_name,
+                    content: c.result.unwrap(),
+                })
+            }
             let tool_message = Message {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
@@ -299,7 +308,7 @@ impl AgentActor {
         T: MessageProcessor + ?Sized + Send + Sync,
     {
         for stage_processor in processors {
-            let current = std::mem::take(&mut input);
+            let current = mem::take(&mut input);
             match stage_processor
                 .facet
                 .process_messages(current, context)
@@ -389,8 +398,6 @@ impl AgentActor {
         buffer: &mut Vec<Envelope>,
         output: &Sender<Envelope>,
     ) -> Result<()> {
-        let mut approvals_pending = false;
-
         for env in buffer.drain(..) {
             match &env.event {
                 ActorEvent::ApprovalGranted(req) | ActorEvent::ApprovalDenied(req) | ActorEvent::ApprovalTimedOut(req) => {
@@ -403,7 +410,6 @@ impl AgentActor {
                     if !turn_context.set_tool_approval_status(req.id, status) {
                         warn!("Received approval for unknown approval id {}", req.id);
                     }
-                    approvals_pending = turn_context.tool_calls().iter().any(|tc| tc.status == ApprovalStatus::Unknown);
                 }
                 _ => {
                     turn_context.push_pending_event(env);
@@ -411,9 +417,9 @@ impl AgentActor {
             }
         }
         turn_context.store_channel_state(&self.state_store).await;
-        if !approvals_pending {
-            self.resume_response(turn_context, output).await?;
+        let tools_finished = self.resume_response(turn_context, output).await?;
 
+        if tools_finished {
             // TODO: Move to a different place!
             // Forward all remaining events
             let mut pending_events = turn_context.take_pending_events();
@@ -430,18 +436,22 @@ impl AgentActor {
         &self,
         turn_context: &mut TurnContext<'a>,
         output: &Sender<Envelope>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         info!("Resuming response for agent {}", self.id);
 
-        self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
-
-        let tool_calls = turn_context.take_tool_calls();
-        if let Some(msg) = self.execute(&tool_calls, turn_context).await {
+        // Try to execute tools
+        if let Some(msg) = self.execute_tools(turn_context).await {
+            // TODO: Only make transition if we were in "Awaiting Approval" state
+            self.processing_state.store(ProcessingState::Active.into(), Ordering::SeqCst);
             turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-        }
 
-        // Resume generating the response
-        self.generate_response(turn_context, output).await
+            // Resume generating the response
+            self.generate_response(turn_context, output).await?;
+            Ok(true)
+        }
+        else {
+            Ok(false)
+        }
     }
 
     async fn request_response<'a>(
@@ -474,6 +484,51 @@ impl AgentActor {
 
         // Generate response
         self.generate_response(turn_context, output).await
+    }
+
+    async fn request_approvals<'a>(
+        &self,
+        tool_calls: &Vec<ToolCall>,
+        turn_context: &mut TurnContext<'a>,
+        output: &Sender<Envelope>,
+    ) -> Result<()> {
+        // Check for tool approvals
+        let tools = self.tool_executor.tools();
+        let tool_calls: Vec<ToolCallState> = tool_calls.iter().map(|tc| {
+            let tool = tools.iter().find(|t| t.name == tc.function_name);
+            let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
+            let description = self.tool_executor.describe(&tc).unwrap_or("No description".to_string());
+            ToolCallState {
+                id: ApprovalId::new(),
+                status: if approval { ApprovalStatus::Pending } else { ApprovalStatus::Approved },
+                tool_call: tc.clone(),
+                description,
+                result: None
+            }
+        }).collect();
+
+        //info!("Tool execution requires approval for agent {} {}", self.id, agent_name);
+        if !tool_calls.is_empty() {
+            turn_context.set_tool_calls(tool_calls);
+            // TODO: Only transition of in "Active" state
+            self.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
+
+            for tc in turn_context.tool_calls() {
+                if tc.status == ApprovalStatus::Pending {
+                    let request = ApprovalRequest {
+                        id: tc.id,
+                        session_id: turn_context.session_id,
+                        channel_id: turn_context.channel_id,
+                        agent_id: self.agent_id,
+                        tool_call: tc.tool_call.clone(), // Carry the first one as representative
+                        description: tc.description.clone(),
+                    };
+                    turn_context.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn generate_response<'a>(
@@ -526,52 +581,22 @@ impl AgentActor {
                         message.sender_id = self.id;
 
                         // Check for tool approvals
-                        let tools = self.tool_executor.tools();
-                        let mut requires_approval = false;
-                        let tool_calls: Vec<ApprovableToolCall> = message.tool_calls.iter().map(|tc| {
-                            let tool = tools.iter().find(|t| t.name == tc.function_name);
-                            let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
-                            let description = self.tool_executor.describe(&tc).unwrap_or("No description".to_string());
-                            requires_approval |= approval;
-                            ApprovableToolCall {
-                                id: ApprovalId::new(),
-                                status: if approval { ApprovalStatus::Unknown } else { ApprovalStatus::Approved },
-                                tool_call: tc.clone(),
-                                description,
-                            }
-                        }).collect();
+                        self.request_approvals(&message.tool_calls, turn_context, output).await?;
 
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
                             turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                         }
 
-                        if requires_approval {
-                            info!("Tool execution requires approval for agent {} {}", self.id, agent_name);
-                            turn_context.set_tool_calls(tool_calls);
-                            self.processing_state.store(ProcessingState::WaitingForApproval.into(), Ordering::SeqCst);
-
-                            for tc in turn_context.tool_calls() {
-                                if tc.status == ApprovalStatus::Unknown {
-                                    let request = ApprovalRequest {
-                                        id: tc.id,
-                                        session_id: turn_context.session_id,
-                                        channel_id: turn_context.channel_id,
-                                        agent_id: self.agent_id,
-                                        tool_call: tc.tool_call.clone(), // Carry the first one as representative
-                                        description: tc.description.clone(),
-                                    };
-                                    turn_context.send_event(ActorEvent::ApprovalRequested(request), output).await?;
-                                }
+                        // Try to execute tools
+                        if turn_context.has_tool_calls() {
+                            if let Some(msg) = self.execute_tools(turn_context).await {
+                                turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                                continue 'steps;
+                            } else {
+                                // Store state and return
+                                turn_context.store_channel_state(&self.state_store).await;
+                                return Ok(());
                             }
-
-                            // Store state and return
-                            turn_context.store_channel_state(&self.state_store).await;
-                            return Ok(());
-                        }
-
-                        if let Some(msg) = self.execute(&tool_calls, turn_context).await {
-                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-                            continue 'steps;
                         }
                     }
                     MessageEvent::EndOfTurn(_) => {}
@@ -645,6 +670,7 @@ impl Actor for AgentActor {
                     }
                     let mut turn_context = state.turn_context();
                     self.handle_actor_events(&mut turn_context, &mut buffer, &output).await?;
+                    // TODO: Persist state here!
                 }
                 maybe_global = global_rx.recv() => {
                     self.handle_global_event(maybe_global, &output).await;

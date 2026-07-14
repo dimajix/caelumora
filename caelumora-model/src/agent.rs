@@ -1,5 +1,4 @@
 use crate::actor::{ActorId, Envelope, EventContext};
-use crate::approval::ApprovableToolCall;
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{Message, MessageContext, MessageHistory};
@@ -7,6 +6,7 @@ use crate::meta::{Metadata, Scope};
 use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
 use crate::store::EntityStore;
+use crate::tool::ToolCallState;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
@@ -211,7 +211,7 @@ pub struct AgentChannelState {
     pub context: MessageContext,
     /// Pending tool calls
     #[serde(default)]
-    pub pending_tool_calls: Vec<ApprovableToolCall>,
+    pub tool_calls: Vec<ToolCallState>,
     /// Pending messages while waiting for approval
     #[serde(default)]
     pub pending_events: Vec<Envelope>,
