@@ -106,14 +106,24 @@ impl<'a> TurnContext<'a> {
     }
 
     pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
-        self.agent_channel_state.next_turn(event_context, security_context);
+        self.agent_channel_state.turn_scratch.clear();
+        self.agent_channel_state.turn_context.clear();
+        self.agent_channel_state.turn_messages.clear();
+        self.agent_channel_state.turn_event_context = event_context;
+        self.agent_channel_state.turn_security_context = security_context;
     }
 
-    pub fn context(&self) -> Vec<Message> {
-        self.agent_channel_state.turn_context.clone()
+    pub fn finish_turn(&mut self) {
+        self.agent_channel_state.turn_scratch.clear();
+        self.agent_channel_state.turn_context.clear();
+        self.agent_channel_state.turn_messages.clear();
     }
-    pub fn messages(&self) -> Vec<Message> {
-        self.agent_channel_state.turn_messages.clone()
+
+    pub fn context(&self) -> &Vec<Message> {
+        &self.agent_channel_state.turn_context
+    }
+    pub fn messages(&self) -> &Vec<Message> {
+        &self.agent_channel_state.turn_messages
     }
 
     pub fn last_message(&self) -> Option<&Message> {

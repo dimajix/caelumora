@@ -150,8 +150,6 @@ impl AgentActor {
                 });
 
         let _ = perceived;
-        turn_context.store_agent_state(&self.state_store).await;
-        turn_context.store_channel_state(&self.state_store).await;
     }
 
     async fn respond_complete<'a>(
@@ -170,16 +168,12 @@ impl AgentActor {
         let msg = output.remove(0);
         turn_context.push_message(msg.clone());
 
-        turn_context.store_channel_state(&self.state_store).await;
-
         Some(msg)
     }
 
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
-        turn_context.extend_state_context(turn_context.messages());
-        turn_context.extend_state_history(turn_context.messages());
-
-        turn_context.store_channel_state(&self.state_store).await;
+        turn_context.extend_state_context(turn_context.messages().clone());
+        turn_context.extend_state_history(turn_context.messages().clone());
     }
 
     async fn respond_partial<'a>(
@@ -353,11 +347,16 @@ impl AgentActor {
 
         let current_state = self.processing_state.load();
         if current_state == ActorState::WaitingForApproval {
-            self.process_approvals(turn_context, buffer, output).await
+            self.process_approvals(turn_context, buffer, output).await?
         }
         else {
-            self.process_messages(turn_context, buffer, output).await
+            self.process_messages(turn_context, buffer, output).await?
         }
+
+        turn_context.store_agent_state(&self.state_store).await;
+        turn_context.store_channel_state(&self.state_store).await;
+
+        Ok(())
     }
 
     async fn process_messages<'a>(
@@ -416,9 +415,8 @@ impl AgentActor {
                 }
             }
         }
-        turn_context.store_channel_state(&self.state_store).await;
-        let tools_finished = self.resume_response(turn_context, output).await?;
 
+        let tools_finished = self.resume_response(turn_context, output).await?;
         if tools_finished {
             // TODO: Move to a different place!
             // Forward all remaining events
@@ -471,6 +469,7 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
 
         // Do not respond if in stopped or canceled state!
+        // TODO: Use state transition
         let current_state = self.processing_state.load();
         if current_state == ActorState::Sleep || current_state == ActorState::Cancelling {
             info!("Returning for inactive agent {} {}",self.id, agent_name);
@@ -608,8 +607,6 @@ impl AgentActor {
                                 turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                                 continue 'steps;
                             } else {
-                                // Store state and return
-                                turn_context.store_channel_state(&self.state_store).await;
                                 return Ok(());
                             }
                         }
@@ -630,7 +627,8 @@ impl AgentActor {
         });
 
         // TODO: Do not send response when cancelled?
-        turn_context.send_event(ActorEvent::FullResponseGenerated(turn_context.messages()), output).await?;
+        turn_context.send_event(ActorEvent::FullResponseGenerated(turn_context.messages().clone()), output).await?;
+        turn_context.finish_turn();
         info!("Finished generating messages for agent {} {}",self.id, agent_name);
 
         Ok(())
@@ -726,7 +724,6 @@ impl Actor for AgentActor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::component_impl::context::{StateContextAppender, StateContextProvider};
     use crate::component_impl::history::StateHistoryWriter;
     use caelumora_model::actor::ActorId;
