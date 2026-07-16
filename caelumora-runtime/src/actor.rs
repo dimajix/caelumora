@@ -109,13 +109,6 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_messages.push(message);
     }
 
-    pub fn push_pending_event(&mut self, env: Envelope) {
-        self.agent_channel_state.pending_events.push(env);
-    }
-    pub fn take_pending_events(&mut self) -> Vec<Envelope> {
-        mem::take(&mut self.agent_channel_state.pending_events)
-    }
-
     pub fn set_tool_calls(&mut self, tool_calls: Vec<ToolCallState>) {
         self.agent_channel_state.tool_calls = tool_calls;
     }

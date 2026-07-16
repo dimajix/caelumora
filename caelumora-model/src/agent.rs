@@ -1,4 +1,4 @@
-use crate::actor::{ActorId, Envelope, EventContext, ProcessingStateHolder};
+use crate::actor::{ActorId, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{Message, MessageContext, MessageHistory};
@@ -145,9 +145,6 @@ pub struct AgentChannelState {
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
-    /// Pending messages while waiting for approval
-    #[serde(default)]
-    pub pending_events: Vec<Envelope>,
     #[serde(default)]
     pub turn_scratch: HashMap<String, Value>,
     #[serde(default)]
