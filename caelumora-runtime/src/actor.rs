@@ -5,10 +5,9 @@ use log::warn;
 use std::any::Any;
 use std::fmt::Debug;
 use std::mem;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
 
+use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
@@ -24,61 +23,27 @@ pub trait Actor: Any + Debug + Send + Sync {
     fn kind(&self) -> String;
     fn name(&self) -> String;
 
-    /// Returns an ActorSender and a Receiver, which handles filtering and queue management
-    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender>;
+    /// Returns the predicate that declares which events this actor wants to receive.
+    /// The ChannelLoop wraps the actor's input sender in a `FilteringEventSender` using
+    /// this predicate, so events that don't match are silently dropped at dispatch time.
+    fn event_filter(&self) -> fn(&Envelope) -> bool;
 
-    async fn run(&self, rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()>;
+    async fn run(
+        &self,
+        rx: Box<dyn EventReceiver>,
+        tx: Box<dyn EventSender>,
+    ) -> Result<()>;
 
-    /// Returns the current processing state of the actor
+    /// Returns the current processing state of the actor.
     fn state(&self) -> ActorState;
 
-    /// Wakes up the actor from a Stopped state
+    /// Wakes up the actor from a Sleep state.
     async fn wakeup(&self) -> Result<()> {
         Ok(())
     }
 
     async fn cancel(&self) -> Result<()> {
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub enum SendError {
-    Full,
-    Closed,
-    Filtered,
-    Other(String),
-}
-
-impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for SendError {
-    fn from(e: tokio::sync::mpsc::error::TrySendError<Envelope>) -> Self {
-        match e {
-            tokio::sync::mpsc::error::TrySendError::Full(_) => SendError::Full,
-            tokio::sync::mpsc::error::TrySendError::Closed(_) => SendError::Closed,
-        }
-    }
-}
-
-pub trait ActorSender: Send + Sync {
-    /// Tries to send an event to the actor.
-    /// This method implements filtering and potentially queue compression/eviction.
-    fn try_send(&self, event: Envelope) -> Result<(), SendError>;
-}
-
-pub struct StandardActorSender {
-    pub tx: Sender<Envelope>,
-    pub filter: Box<dyn Fn(&Envelope) -> bool + Send + Sync>,
-}
-
-impl ActorSender for StandardActorSender {
-    fn try_send(&self, event: Envelope) -> Result<(), SendError> {
-        // 1. Filtering logic
-        if !(self.filter)(&event) {
-            return Err(SendError::Filtered);
-        }
-
-        // 2. Queue management logic
-        self.tx.try_send(event).map_err(SendError::from)
     }
 }
 
@@ -212,7 +177,7 @@ impl<'a> TurnContext<'a> {
         }
     }
 
-    pub async fn send_event(&self, av:ActorEvent, output: &Sender<Envelope>) -> Result<()> {
+    pub async fn send_event(&self, av: ActorEvent, output: &dyn EventSender) -> Result<()> {
         let ev = Envelope::new(
             self.agent_channel_state.turn_security_context.clone(),
             self.agent_channel_state.turn_event_context.clone(),

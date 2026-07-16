@@ -1,10 +1,12 @@
-use crate::actor::{Actor, ActorSender, SendError};
+use crate::actor::Actor;
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
+use crate::transport::{EventSender, SendError};
+use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
@@ -25,7 +27,7 @@ use tokio::task::{AbortHandle, JoinSet};
 struct ActorHandle {
     id: ActorId,
     abort_handle: AbortHandle,
-    actor_sender: Box<dyn ActorSender>,
+    sender: Box<dyn EventSender>,
 }
 
 #[derive(Debug)]
@@ -221,23 +223,29 @@ impl ChannelLoop {
         Ok(actors)
     }
 
-    fn spawn_actor(&self, actor: Arc<dyn Actor>, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
+    fn spawn_actor(&self, actor: Arc<dyn Actor>, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
         let id = actor.id();
-        let (tx, actor_input) = mpsc::channel(100);
-        let actor_sender = actor.new_sender(tx);
+        let filter = actor.event_filter();
+        let (tx, rx) = mpsc::channel(100);
+
+        let actor_rx = Box::new(InMemoryEventReceiver::new(rx));
+        let actor_tx = Box::new(InMemoryEventSender::new(actor_output));
+
         let abort_handle = join_set.spawn(async move {
-            let result = actor.run(actor_input, actor_output).await;
+            let result = actor.run(actor_rx, actor_tx).await;
             if let Err(e) = result {
                 warn!("Failed to spawn actor {}: {}", actor.id(), e)
             }
             id
         });
 
-        ActorHandle {
-            id,
-            abort_handle,
-            actor_sender,
-        }
+        // Wrap the actor's input sender with its declared filter predicate.
+        let filtered_sender = Box::new(FilteringEventSender::new(
+            Box::new(InMemoryEventSender::new(tx)),
+            filter,
+        ));
+
+        ActorHandle { id, abort_handle, sender: filtered_sender }
     }
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
@@ -310,10 +318,10 @@ impl ChannelLoop {
             if let Some(actor) = actors.get(&target_id) {
                 debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
                 self.record_send_event(&target_event).await;
-                if let Err(e) = actor.actor_sender.try_send(target_event) {
+                if let Err(e) = actor.sender.try_send(target_event) {
                     match e {
                         SendError::Full => warn!("Queue full for actor {}", target_id),
-                        SendError::Filtered => {}, // Normal behavior
+                        SendError::Filtered => {}, // Normal: FilteringEventSender drops unmatched events
                         _ => warn!("Could not forward event {} from={} to={}: {:?}", event_desc, sender_id, target_id, e)
                     }
                 }

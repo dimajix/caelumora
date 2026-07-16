@@ -1,5 +1,6 @@
-use crate::actor::{Actor, ActorSender, StandardActorSender};
+use crate::actor::Actor;
 use crate::runtime::ActorRuntime;
+use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
@@ -12,7 +13,6 @@ use chrono::{DateTime, Duration, Utc};
 use log::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -53,7 +53,7 @@ impl ApproverActor {
         channel.participants.iter().filter(|p| matches!(p, Participant::User(_))).count()
     }
 
-    async fn handle_global_event(&self, event:&GlobalEvent, output: &Sender<Envelope>) {
+    async fn handle_global_event(&self, event:&GlobalEvent, output: &dyn EventSender) {
         match event {
             GlobalEvent::AgentChannelJoined(_, cid, _) | GlobalEvent::AgentChannelLeft(_, cid, _) |
             GlobalEvent::UserChannelJoined(_, cid, _) | GlobalEvent::UserChannelLeft(_, cid, _) if *cid == self.channel.id() => {
@@ -65,7 +65,7 @@ impl ApproverActor {
         }
     }
 
-    async fn handle_envelope(&self, env: Envelope, output: &Sender<Envelope>) -> Result<()> {
+    async fn handle_envelope(&self, env: Envelope, output: &dyn EventSender) -> Result<()> {
         match env.event {
             ActorEvent::ApprovalRequested(req) => {
                 self.handle_request(req, env.context, env.security, output).await
@@ -80,7 +80,7 @@ impl ApproverActor {
         }
     }
 
-    async fn handle_request(&self, mut request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &Sender<Envelope>) -> Result<()> {
+    async fn handle_request(&self, mut request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &dyn EventSender) -> Result<()> {
         let new_id = ApprovalId(Uuid::new_v4());
         let timeout = Utc::now() + Duration::minutes(10); // Default timeout 10 mins
 
@@ -111,7 +111,7 @@ impl ApproverActor {
         Ok(())
     }
 
-    async fn handle_response(&self, user_id: ActorId, response: ApprovalResponse, status: ApprovalStatus, output: &Sender<Envelope>) -> Result<()> {
+    async fn handle_response(&self, user_id: ActorId, response: ApprovalResponse, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
         let mut pending = self.pending.lock().await;
         let mut to_remove = None;
 
@@ -133,7 +133,7 @@ impl ApproverActor {
         Ok(())
     }
 
-    async fn recheck_all_pending(&self, output: &Sender<Envelope>) -> Result<()> {
+    async fn recheck_all_pending(&self, output: &dyn EventSender) -> Result<()> {
         let mut pending = self.pending.lock().await;
         let mut to_remove = Vec::new();
 
@@ -201,7 +201,7 @@ impl ApproverActor {
         }
     }
 
-    async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &Sender<Envelope>) -> Result<()> {
+    async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
         let response = ApprovalResponse {
             id: p.original_approval_id,
             agent_id: p.agent_id,
@@ -221,7 +221,7 @@ impl ApproverActor {
         Ok(())
     }
 
-    async fn handle_timeouts(&self, output: &Sender<Envelope>) -> Result<()> {
+    async fn handle_timeouts(&self, output: &dyn EventSender) -> Result<()> {
         let now = Utc::now();
         let mut timed_out = Vec::new();
 
@@ -270,20 +270,18 @@ impl Actor for ApproverActor {
         ActorState::Idle
     }
 
-    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
-        Box::new(StandardActorSender {
-            tx,
-            filter: Box::new(|event| {
-                matches!(event.event,
-                    ActorEvent::ApprovalGranted(_) |
-                    ActorEvent::ApprovalDenied(_) |
-                    ActorEvent::ApprovalRequested(_)
-                )
-            }),
-        })
+    fn event_filter(&self) -> fn(&Envelope) -> bool {
+        |event| {
+            matches!(
+                event.event,
+                ActorEvent::ApprovalGranted(_)
+                    | ActorEvent::ApprovalDenied(_)
+                    | ActorEvent::ApprovalRequested(_)
+            )
+        }
     }
 
-    async fn run(&self, mut rx: Receiver<Envelope>, tx: Sender<Envelope>) -> Result<()> {
+    async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
         let mut global_rx = self.actor_runtime.event_bus().subscribe_channel(self.channel.id());
 
@@ -308,7 +306,7 @@ impl Actor for ApproverActor {
                 maybe_env = rx.recv() => {
                     match maybe_env {
                         Some(env) => {
-                            if let Err(e) = self.handle_envelope(env, &tx).await {
+                            if let Err(e) = self.handle_envelope(env, &*tx).await {
                                 warn!("ApproverActor error handling envelope: {:?}", e);
                             }
                         }
@@ -318,11 +316,11 @@ impl Actor for ApproverActor {
                 maybe_global = global_rx.recv() => {
                     if let Some(event) = maybe_global {
                         self.channel.process_global_event(&event).await;
-                        self.handle_global_event(&event, &tx).await;
+                        self.handle_global_event(&event, &*tx).await;
                     }
                 }
                 _ = timeout_fut => {
-                    if let Err(e) = self.handle_timeouts(&tx).await {
+                    if let Err(e) = self.handle_timeouts(&*tx).await {
                         warn!("ApproverActor error handling timeouts: {:?}", e);
                     }
                 }
@@ -337,6 +335,7 @@ impl Actor for ApproverActor {
 mod tests {
     use super::*;
     use crate::runtime::RuntimeManager;
+    use crate::transport_impl::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::{Approver, ApproverId};
     use caelumora_model::channel::{Channel, ChannelId, Participant};
@@ -394,7 +393,9 @@ mod tests {
         let actor_clone = actor_arc.clone();
         tokio::spawn(async move {
             let a: &dyn Actor = actor_clone.as_ref();
-            a.run(rx, output_tx).await.unwrap();
+            let receiver = Box::new(InMemoryEventReceiver::new(rx));
+            let sender = Box::new(InMemoryEventSender::new(output_tx));
+            a.run(receiver, sender).await.unwrap();
         });
 
         let request = ApprovalRequest {
@@ -477,7 +478,9 @@ mod tests {
         let actor_clone = actor_arc.clone();
         tokio::spawn(async move {
             let a: &dyn Actor = actor_clone.as_ref();
-            a.run(rx, output_tx).await.unwrap();
+            let receiver = Box::new(InMemoryEventReceiver::new(rx));
+            let sender = Box::new(InMemoryEventSender::new(output_tx));
+            a.run(receiver, sender).await.unwrap();
         });
 
         // Give some time for the actor to start and subscribe
@@ -586,7 +589,9 @@ mod tests {
         let actor_clone = actor_arc.clone();
         tokio::spawn(async move {
             let a: &dyn Actor = actor_clone.as_ref();
-            a.run(rx, output_tx).await.unwrap();
+            let receiver = Box::new(InMemoryEventReceiver::new(rx));
+            let sender = Box::new(InMemoryEventSender::new(output_tx));
+            a.run(receiver, sender).await.unwrap();
         });
 
         // 1. Request approval

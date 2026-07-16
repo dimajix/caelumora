@@ -1,5 +1,6 @@
-use crate::actor::{Actor, ActorSender, StandardActorSender};
+use crate::actor::Actor;
 use crate::runtime::ActorRuntime;
+use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
@@ -104,7 +105,7 @@ impl UserActor {
     async fn handle_user_event(
         &self,
         maybe_message: Option<ActorEvent>,
-        tx: &Sender<Envelope>,
+        tx: &dyn EventSender,
     ) -> Result<bool> {
         match maybe_message {
             Some(message) => {
@@ -153,17 +154,18 @@ impl Actor for UserActor {
         ActorState::Idle
     }
 
-    fn new_sender(&self, tx: Sender<Envelope>) -> Box<dyn ActorSender> {
-        Box::new(StandardActorSender {
-            tx,
-            filter: Box::new(|_| true),
-        })
+    fn event_filter(&self) -> fn(&Envelope) -> bool {
+        |_| true
     }
 
-    async fn run(&self, mut input: Receiver<Envelope>, output: Sender<Envelope>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        mut rx: Box<dyn EventReceiver>,
+        tx: Box<dyn EventSender>,
+    ) -> anyhow::Result<()> {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
-        
+
         let user_id = self.user_id;
         let mut global_rx = self.actor_runtime.event_bus().subscribe(vec![
             crate::event::SubscriptionTopic::User(user_id),
@@ -176,11 +178,11 @@ impl Actor for UserActor {
         info!("UserActor {} is starting", self.id());
         while !rx_closed || !user_rx_closed || !global_rx_closed {
             tokio::select! {
-                maybe_event = input.recv(), if !rx_closed => {
+                maybe_event = rx.recv(), if !rx_closed => {
                     rx_closed = self.handle_actor_envelope(maybe_event).await?;
                 }
                 maybe_message = user_rx.recv(), if !user_rx_closed => {
-                    user_rx_closed = self.handle_user_event(maybe_message, &output).await?;
+                    user_rx_closed = self.handle_user_event(maybe_message, &*tx).await?;
                 }
                 maybe_global = global_rx.recv(), if !global_rx_closed => {
                     global_rx_closed = self.handle_global_event(maybe_global).await;
