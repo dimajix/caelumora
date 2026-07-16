@@ -44,16 +44,16 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, context: &TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, _params: &Value, context: &mut TurnContext) -> Result<Value> {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
-                context.set_processing_state(ActorState::Sleep);
+                context.request_state(ActorState::Sleep);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
             "silence" => {
                 info!("Silencing agent {} {}", context.agent_id, context.agent_name);
-                context.set_processing_state(ActorState::Silence);
+                context.request_state(ActorState::Silence);
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {
@@ -80,7 +80,7 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> Result<Value> {
         if name == "echo" {
             Ok(params.clone())
         } else {
@@ -106,7 +106,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> Result<Value> {
         if name == "calculate" {
             let expression = params["expression"]
                 .as_str()
@@ -133,7 +133,7 @@ mod tests {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -146,7 +146,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute("calculate", &params, &turn_context).await.unwrap();
+            let result = provider.execute("calculate", &params, &mut turn_context).await.unwrap();
             let val = result.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
@@ -157,10 +157,10 @@ mod tests {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute("calculate", &params, &turn_context).await;
+        let result = provider.execute("calculate", &params, &mut turn_context).await;
         assert!(result.is_err());
     }
 
@@ -169,9 +169,9 @@ mod tests {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
-        let turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
-        let result = provider.execute("stop", &json!({}), &turn_context).await.unwrap();
+        let result = provider.execute("stop", &json!({}), &mut turn_context).await.unwrap();
         assert_eq!(result["status"], "stopped");
 
         let tools = provider.tools();

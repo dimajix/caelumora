@@ -1,4 +1,4 @@
-use crate::actor::{ActorId, EventContext, ProcessingStateHolder};
+use crate::actor::{ActorId, ActorState, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{Message, MessageContext, MessageHistory};
@@ -145,6 +145,11 @@ pub struct AgentChannelState {
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
+    /// Set by a tool (e.g. stop/bye/silence) or by the run loop itself (on a
+    /// detected cancellation) to override what state `Reflecting` lands on
+    /// instead of the default `Idle`. Consumed once, at the end of the turn.
+    #[serde(default)]
+    pub requested_state: Option<ActorState>,
     #[serde(default)]
     pub turn_scratch: HashMap<String, Value>,
     #[serde(default)]

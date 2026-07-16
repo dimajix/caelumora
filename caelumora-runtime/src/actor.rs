@@ -74,6 +74,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_scratch.clear();
         self.agent_channel_state.turn_context.clear();
         self.agent_channel_state.turn_messages.clear();
+        self.agent_channel_state.requested_state = None;
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -145,8 +146,23 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.history.extend(messages);
     }
 
-    pub fn set_processing_state(&self, state: ActorState) {
-        self.agent_channel_state.processing_state.store(state);
+    /// Records what state the turn should land on once `Reflecting` finishes,
+    /// overriding the default `Idle`. This does not touch the live `ActorState`
+    /// atomic directly — only the run loop does that; this is purely a same-turn
+    /// handoff (survives across separate `TurnContext` borrows because it lives
+    /// in `AgentChannelState`, not in `TurnContext` itself).
+    pub fn request_state(&mut self, state: ActorState) {
+        self.agent_channel_state.requested_state = Some(state);
+    }
+
+    /// Peek at a previously requested end-of-turn state without consuming it.
+    pub fn requested_state(&self) -> Option<ActorState> {
+        self.agent_channel_state.requested_state
+    }
+
+    /// Consume the requested end-of-turn state. Used once, by `Reflecting`.
+    pub fn take_requested_state(&mut self) -> Option<ActorState> {
+        self.agent_channel_state.requested_state.take()
     }
 
     pub async fn store_agent_state(&self, state_store: &Arc<dyn StateStore>) {
