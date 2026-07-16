@@ -22,8 +22,9 @@ use caelumora_model::tool::{ToolCall, ToolCallState, ToolResult};
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 #[derive(Debug)]
 pub struct AgentActor {
@@ -43,6 +44,7 @@ pub struct AgentActor {
     // State
     state: Mutex<AgentActorState>,
     processing_state: Arc<ProcessingStateHolder>,
+    loop_count: AtomicI32,
     max_iterations: i32,
 }
 
@@ -119,6 +121,7 @@ impl AgentActor {
             tool_executor,
             state,
             processing_state,
+            loop_count: AtomicI32::new(0),
             max_iterations: 10,
         })
     }
@@ -333,8 +336,77 @@ impl AgentActor {
         }
     }
 
+    /// Wait for the next event while parked in a non-approval "listening" state
+    /// (Idle, Sleep, Silence, Cancelling). Behavior is identical across all four:
+    /// a `ResponseRequested` only starts a turn when the actor is actually Idle,
+    /// everything else just updates local context without changing state.
+    async fn wait_for_event<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        tokio::select! {
+            maybe_event = rx.recv() => {
+                match maybe_event {
+                    Some(event) => {
+                        self.handle_incoming_event(turn_context, event, output).await?;
+                        rx.commit().await?;
+                        Ok(Some(self.processing_state.load()))
+                    }
+                    None => Ok(None),
+                }
+            }
+            maybe_global = global_rx.recv() => {
+                self.handle_global_event(maybe_global, output).await;
+                Ok(Some(self.processing_state.load()))
+            }
+        }
+    }
+
+    async fn handle_idle<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        self.wait_for_event(turn_context, rx, global_rx, output).await
+    }
+
+    async fn handle_sleep<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        self.wait_for_event(turn_context, rx, global_rx, output).await
+    }
+
+    async fn handle_silence<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        self.wait_for_event(turn_context, rx, global_rx, output).await
+    }
+
+    async fn handle_cancelling<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        self.wait_for_event(turn_context, rx, global_rx, output).await
+    }
+
     /// Handle a single incoming event in the normal (non-approval) flow.
-    async fn handle_actor_event<'a>(
+    async fn handle_incoming_event<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
         event: Envelope,
@@ -361,13 +433,69 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Handle a single approval event while in WaitingForApproval state.
-    async fn handle_approval_event<'a>(
+    /// Starts a new turn if the actor is currently Idle, transitioning to Planning.
+    /// The run loop picks up planning on its next iteration.
+    async fn request_response<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
-        event: Envelope,
+        event_context: &EventContext,
+        event_security: &SecurityContext,
         output: &dyn EventSender,
     ) -> Result<()> {
+        let agent_name = self.agent_controller.name();
+
+        let activated = self.processing_state.transition(|s| match s {
+            ActorState::Idle => Some(ActorState::Planning),
+            _ => None,
+        });
+        if activated != ActorState::Planning {
+            info!("Returning for inactive agent {} {}", self.id, agent_name);
+            return Ok(());
+        }
+
+        self.loop_count.store(0, Ordering::SeqCst);
+
+        turn_context.next_turn(
+            event_context.next(self.id, agent_name.clone()),
+            event_security.next(self.id),
+        );
+
+        info!("Starting generating messages for agent {} {}", self.id, agent_name);
+        turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
+
+        // Initialize next turn
+        self.next_turn(turn_context).await
+    }
+
+    /// Handle a single approval event while in WaitingForApproval state.
+    /// Records the decision and hands off to ExecutingTools; the run loop
+    /// dispatches the actual tool execution on its next iteration.
+    async fn handle_waiting_for_approval<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        tokio::select! {
+            maybe_event = rx.recv_matching(is_approval_event) => {
+                match maybe_event {
+                    Some(event) => {
+                        self.handle_approval_event(turn_context, event);
+                        rx.commit().await?;
+                        Ok(Some(self.processing_state.load()))
+                    }
+                    None => Ok(None),
+                }
+            }
+            maybe_global = global_rx.recv() => {
+                self.handle_global_event(maybe_global, output).await;
+                Ok(Some(self.processing_state.load()))
+            }
+        }
+    }
+
+    fn handle_approval_event<'a>(&self, turn_context: &mut TurnContext<'a>, event: Envelope) {
         debug!("AgentActor {} processing approval event: {:?}", self.id(), event);
 
         let (req, status) = match &event.event {
@@ -381,64 +509,16 @@ impl AgentActor {
             warn!("Received approval for unknown approval id {}", req.id);
         }
 
-        self.resume_response(turn_context, output).await
-    }
-
-    async fn resume_response<'a>(
-        &self,
-        turn_context: &mut TurnContext<'a>,
-        output: &dyn EventSender,
-    ) -> Result<()> {
-        info!("Resuming response for agent {}", self.id);
-
-        if let Some(msg) = self.execute_tools(turn_context).await {
-            let state = self.processing_state.transition(|c| match c {
-                ActorState::WaitingForApproval => Some(ActorState::Active),
-                _ => None,
-            });
-
-            if state == ActorState::Active {
-                turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-                self.generate_response(turn_context, output).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn request_response<'a>(
-        &self,
-        turn_context: &mut TurnContext<'a>,
-        event_context: &EventContext,
-        event_security: &SecurityContext,
-        output: &dyn EventSender,
-    ) -> Result<()> {
-        let agent_name = self.agent_controller.name();
-
-        let activated = self.processing_state.transition(|s| match s {
-            ActorState::Idle => Some(ActorState::Active),
+        self.processing_state.transition(|c| match c {
+            ActorState::WaitingForApproval => Some(ActorState::ExecutingTools),
             _ => None,
         });
-        if activated != ActorState::Active {
-            info!("Returning for inactive agent {} {}", self.id, agent_name);
-            return Ok(());
-        }
-
-        turn_context.next_turn(
-            event_context.next(self.id, agent_name.clone()),
-            event_security.next(self.id),
-        );
-
-        info!("Starting generating messages for agent {} {}", self.id, agent_name);
-        turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
-
-        // Initialize next turn
-        self.next_turn(turn_context).await?;
-
-        // Generate response
-        self.generate_response(turn_context, output).await
     }
 
+    /// Registers tool calls for approval and requests approval for the ones that
+    /// need it. Only actually pauses the turn (WaitingForApproval) when at least
+    /// one call requires a decision; auto-approved-only calls fall straight
+    /// through to ExecutingTools.
     async fn request_approvals<'a>(
         &self,
         tool_calls: &Vec<ToolCall>,
@@ -459,14 +539,23 @@ impl AgentActor {
             }
         }).collect();
 
-        if !tool_calls.is_empty() {
+        if tool_calls.is_empty() {
+            return Ok(());
+        }
+
+        turn_context.set_tool_calls(tool_calls);
+
+        let needs_approval = turn_context
+            .tool_calls()
+            .iter()
+            .any(|tc| tc.status == ApprovalStatus::Pending);
+        if needs_approval {
             let state = self.processing_state.transition(|c| match c {
-                ActorState::Active => Some(ActorState::WaitingForApproval),
+                ActorState::Planning => Some(ActorState::WaitingForApproval),
                 _ => None,
             });
 
             if state == ActorState::WaitingForApproval {
-                turn_context.set_tool_calls(tool_calls);
                 for tc in turn_context.tool_calls() {
                     if tc.status == ApprovalStatus::Pending {
                         let request = ApprovalRequest {
@@ -486,81 +575,116 @@ impl AgentActor {
         Ok(())
     }
 
-    async fn generate_response<'a>(
+    /// Calls the LLM and streams its response for a single planning step. Loops
+    /// back to itself (via the run loop, after a trip through ExecutingTools) as
+    /// long as the model keeps making tool calls, up to `max_iterations`.
+    async fn handle_planning<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
         output: &dyn EventSender,
-    ) -> Result<()> {
+    ) -> Result<Option<ActorState>> {
         let agent_name = self.agent_controller.name();
 
-        let mut loop_count = 0;
-        'steps: while loop_count < self.max_iterations {
-            match self.processing_state.load() {
-                ActorState::Silence => {
-                    info!("Stopping for silenced agent {} {}", self.id, agent_name);
-                    break 'steps;
-                }
-                ActorState::Cancelling => {
-                    info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-                    break 'steps;
-                }
-                _ => {}
+        match self.processing_state.load() {
+            ActorState::Silence => {
+                info!("Stopping for silenced agent {} {}", self.id, agent_name);
+                return Ok(Some(ActorState::Reflecting));
             }
-
-            loop_count += 1;
-
-            // --- PHASE 2: PLAN ---
-            let mut response = self.plan(turn_context).await;
-            use futures::stream::TryStreamExt;
-            while let Some(event) = response
-                .try_next()
-                .await
-                .context("Error during planning stream")?
-            {
-                if self.processing_state.load() == ActorState::Cancelling {
-                    info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-                    break 'steps;
-                }
-
-                match event {
-                    MessageEvent::Partial(mut message) => {
-                        message.sender_name = agent_name.clone();
-                        message.sender_id = self.id;
-                        if let Some(msg) = self.respond_partial(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::PartialMessageGenerated(msg), output).await?;
-                        }
-                    }
-                    MessageEvent::Complete(mut message) => {
-                        message.sender_name = agent_name.clone();
-                        message.sender_id = self.id;
-
-                        // Check for tool approvals
-                        self.request_approvals(&message.tool_calls, turn_context, output).await?;
-
-                        if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-                        }
-
-                        // Try to execute tools
-                        if turn_context.has_tool_calls() {
-                            if let Some(msg) = self.execute_tools(turn_context).await {
-                                turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-                                continue 'steps;
-                            } else {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    MessageEvent::EndOfTurn(_) => {}
-                }
+            ActorState::Sleep => {
+                info!("Stopping for sleeping agent {} {}", self.id, agent_name);
+                return Ok(Some(ActorState::Reflecting));
             }
-            break;
+            ActorState::Cancelling => {
+                info!("Stopping for cancelled agent {} {}", self.id, agent_name);
+                return Ok(Some(ActorState::Reflecting));
+            }
+            _ => {}
         }
 
+        if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
+            return Ok(Some(ActorState::Reflecting));
+        }
+        self.loop_count.fetch_add(1, Ordering::SeqCst);
+
+        // --- PHASE 2: PLAN ---
+        let mut response = self.plan(turn_context).await;
+        use futures::stream::TryStreamExt;
+        while let Some(event) = response
+            .try_next()
+            .await
+            .context("Error during planning stream")?
+        {
+            if self.processing_state.load() == ActorState::Cancelling {
+                info!("Stopping for cancelled agent {} {}", self.id, agent_name);
+                return Ok(Some(ActorState::Reflecting));
+            }
+
+            match event {
+                MessageEvent::Partial(mut message) => {
+                    message.sender_name = agent_name.clone();
+                    message.sender_id = self.id;
+                    if let Some(msg) = self.respond_partial(message, turn_context).await {
+                        turn_context.send_event(ActorEvent::PartialMessageGenerated(msg), output).await?;
+                    }
+                }
+                MessageEvent::Complete(mut message) => {
+                    message.sender_name = agent_name.clone();
+                    message.sender_id = self.id;
+
+                    // Check for tool approvals
+                    self.request_approvals(&message.tool_calls, turn_context, output).await?;
+
+                    if let Some(msg) = self.respond_complete(message, turn_context).await {
+                        turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                    }
+
+                    if turn_context.has_tool_calls() {
+                        return Ok(Some(ActorState::ExecutingTools));
+                    }
+                }
+                MessageEvent::EndOfTurn(_) => {}
+            }
+        }
+
+        Ok(Some(ActorState::Reflecting))
+    }
+
+    /// Runs any tool calls that are ready (Approved, or newly-approved on resume
+    /// from WaitingForApproval). Loops back to Planning once all calls for this
+    /// step have results, or parks in WaitingForApproval if some are still Pending.
+    async fn handle_executing_tools<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        if let Some(tool_message) = self.execute_tools(turn_context).await {
+            turn_context.send_event(ActorEvent::CompleteMessageGenerated(tool_message), output).await?;
+            let next = self.processing_state.transition(|c| match c {
+                ActorState::ExecutingTools => Some(ActorState::Planning),
+                _ => None,
+            });
+            Ok(Some(next))
+        } else {
+            let next = self.processing_state.transition(|c| match c {
+                ActorState::ExecutingTools => Some(ActorState::WaitingForApproval),
+                _ => None,
+            });
+            Ok(Some(next))
+        }
+    }
+
+    /// Persists context/history and closes out the turn, then returns to Idle
+    /// (unless a concurrent Sleep/Silence/Cancelling took precedence).
+    async fn handle_reflecting<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        let agent_name = self.agent_controller.name();
         self.reflect(turn_context).await;
 
-        self.processing_state.transition(|state| match state {
-            ActorState::Active => Some(ActorState::Idle),
+        let next = self.processing_state.transition(|state| match state {
+            ActorState::Planning => Some(ActorState::Idle),
             _ => None,
         });
 
@@ -572,7 +696,7 @@ impl AgentActor {
         turn_context.finish_turn();
         info!("Finished generating messages for agent {} {}", self.id, agent_name);
 
-        Ok(())
+        Ok(Some(next))
     }
 }
 
@@ -629,43 +753,35 @@ impl Actor for AgentActor {
 
         loop {
             let current_state = self.processing_state.load();
+            let mut turn_context = state.turn_context();
 
-            if current_state == ActorState::WaitingForApproval {
-                tokio::select! {
-                    maybe_event = rx.recv_matching(is_approval_event) => {
-                        match maybe_event {
-                            Some(event) => {
-                                let mut turn_context = state.turn_context();
-                                self.handle_approval_event(&mut turn_context, event, &*tx).await?;
-                                turn_context.store_agent_state(&self.state_store).await;
-                                turn_context.store_channel_state(&self.state_store).await;
-                                rx.commit().await?;
-                            }
-                            None => break,
-                        }
-                    }
-                    maybe_global = global_rx.recv() => {
-                        self.handle_global_event(maybe_global, &*tx).await;
-                    }
+            let next_state = match current_state {
+                ActorState::Idle => {
+                    self.handle_idle(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
                 }
-            } else {
-                tokio::select! {
-                    maybe_event = rx.recv() => {
-                        match maybe_event {
-                            Some(event) => {
-                                let mut turn_context = state.turn_context();
-                                self.handle_actor_event(&mut turn_context, event, &*tx).await?;
-                                turn_context.store_agent_state(&self.state_store).await;
-                                turn_context.store_channel_state(&self.state_store).await;
-                                rx.commit().await?;
-                            }
-                            None => break,
-                        }
-                    }
-                    maybe_global = global_rx.recv() => {
-                        self.handle_global_event(maybe_global, &*tx).await;
-                    }
+                ActorState::WaitingForApproval => {
+                    self.handle_waiting_for_approval(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
                 }
+                ActorState::Sleep => {
+                    self.handle_sleep(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
+                }
+                ActorState::Silence => {
+                    self.handle_silence(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
+                }
+                ActorState::Cancelling => {
+                    self.handle_cancelling(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
+                }
+                ActorState::Planning => self.handle_planning(&mut turn_context, &*tx).await?,
+                ActorState::ExecutingTools => self.handle_executing_tools(&mut turn_context, &*tx).await?,
+                ActorState::Reflecting => self.handle_reflecting(&mut turn_context, &*tx).await?,
+                ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
+            };
+
+            turn_context.store_agent_state(&self.state_store).await;
+            turn_context.store_channel_state(&self.state_store).await;
+
+            if next_state.is_none() {
+                break;
             }
         }
 

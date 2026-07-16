@@ -186,7 +186,15 @@ impl Envelope {
 pub enum ActorState {
     #[default]
     Idle,
+    /// Kept only because `ChannelLoop` reuses this enum for its own, unrelated
+    /// cancel/wakeup tri-state. `AgentActor` never assigns this to itself anymore.
     Active,
+    /// Calling the LLM and streaming its response.
+    Planning,
+    /// Running approved tool calls.
+    ExecutingTools,
+    /// Persisting context/history and closing out the turn.
+    Reflecting,
     Cancelling,
     Sleep,
     Silence,
@@ -202,6 +210,9 @@ impl From<u8> for ActorState {
             3 => ActorState::Sleep,
             4 => ActorState::Silence,
             5 => ActorState::WaitingForApproval,
+            6 => ActorState::Planning,
+            7 => ActorState::ExecutingTools,
+            8 => ActorState::Reflecting,
             _ => ActorState::Idle,
         }
     }
@@ -216,6 +227,9 @@ impl From<ActorState> for u8 {
             ActorState::Sleep => 3,
             ActorState::Silence => 4,
             ActorState::WaitingForApproval => 5,
+            ActorState::Planning => 6,
+            ActorState::ExecutingTools => 7,
+            ActorState::Reflecting => 8,
         }
     }
 }
@@ -228,7 +242,7 @@ pub struct ProcessingStateHolder {
 impl ProcessingStateHolder {
     pub fn new(state: ActorState) -> Self {
         Self {
-            state: AtomicU8::new(state as u8)
+            state: AtomicU8::new(state.into())
         }
     }
 
@@ -263,7 +277,7 @@ impl ProcessingStateHolder {
             // If no, it returns Err(actual_value_now_in_memory).
             match self.state.compare_exchange(
                 current_raw,
-                next_state as u8,
+                next_state.into(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
@@ -322,5 +336,11 @@ mod tests {
         assert_eq!(u8::from(ActorState::Active), 1);
         assert_eq!(u8::from(ActorState::WaitingForApproval), 5);
         assert_eq!(ActorState::from(5), ActorState::WaitingForApproval);
+        assert_eq!(u8::from(ActorState::Planning), 6);
+        assert_eq!(u8::from(ActorState::ExecutingTools), 7);
+        assert_eq!(u8::from(ActorState::Reflecting), 8);
+        assert_eq!(ActorState::from(6), ActorState::Planning);
+        assert_eq!(ActorState::from(7), ActorState::ExecutingTools);
+        assert_eq!(ActorState::from(8), ActorState::Reflecting);
     }
 }
