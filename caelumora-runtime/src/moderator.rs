@@ -15,9 +15,24 @@ use rand::rngs::StdRng;
 
 #[async_trait]
 pub trait Moderator : Send + Sync + Debug {
-    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)>;
+    async fn route(&mut self, event: &Envelope) -> RouteDecision;
     fn add_actor(&mut self, actor: Arc<dyn Actor>) -> ();
     fn remove_actor(&mut self, actor: Arc<dyn Actor>) -> ();
+}
+
+pub struct RouteDecision {
+    pub forwards: Vec<(ActorId, Envelope)>,
+    /// Whether this event should also be broadcast to external subscribers (e.g. the UI).
+    /// Only approval events set this explicitly, since they're the only ones relayed through
+    /// multiple internal hops (Agent -> Approver -> User) where the intermediate hop must stay
+    /// internal; everything else defaults to `true`.
+    pub broadcast: bool,
+}
+
+impl From<Vec<(ActorId, Envelope)>> for RouteDecision {
+    fn from(forwards: Vec<(ActorId, Envelope)>) -> Self {
+        Self { forwards, broadcast: true }
+    }
 }
 
 
@@ -82,55 +97,60 @@ impl ModeratorActors {
             .collect()
     }
 
-    fn route_approval_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    fn route_approval_events(&self, event: &Envelope) -> RouteDecision {
         match &event.event {
             ActorEvent::ApprovalRequested(_) => {
                 if matches!(event.context.sender_id, ActorId::Agent(_)) {
-                    // Agent -> ApproverActor
-                    self.approval_actors.iter()
+                    // Agent -> ApproverActor: internal plumbing, not shown to users yet.
+                    let forwards = self.approval_actors.iter()
                         .map(|r| (*r.key(), event.clone()))
-                        .collect()
+                        .collect();
+                    RouteDecision { forwards, broadcast: false }
                 } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
-                    // ApproverActor -> Users
-                    self.user_actors.iter()
+                    // ApproverActor -> Users: the request users actually act on.
+                    let forwards = self.user_actors.iter()
                         .map(|r| (*r.key(), event.clone()))
-                        .collect()
+                        .collect();
+                    RouteDecision { forwards, broadcast: true }
                 } else {
-                    Vec::new()
+                    RouteDecision { forwards: Vec::new(), broadcast: false }
                 }
             }
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) => {
                 if matches!(event.context.sender_id, ActorId::User(_)) {
-                    // User -> ApproverActor
-                    self.approval_actors.iter()
+                    // User -> ApproverActor: lets other observers see the decision too.
+                    let forwards = self.approval_actors.iter()
                         .map(|r| (*r.key(), event.clone()))
-                        .collect()
+                        .collect();
+                    RouteDecision { forwards, broadcast: true }
                 } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
-                    // ApproverActor -> Agent
+                    // ApproverActor -> Agent: internal plumbing informing the agent.
                     let agent_id = ActorId::Agent(response.agent_id);
-                    if self.agent_actors.contains_key(&agent_id) {
+                    let forwards = if self.agent_actors.contains_key(&agent_id) {
                         vec![(agent_id, event.clone())]
                     } else {
                         Vec::new()
-                    }
+                    };
+                    RouteDecision { forwards, broadcast: false }
                 } else {
-                    Vec::new()
+                    RouteDecision { forwards: Vec::new(), broadcast: false }
                 }
             }
             ActorEvent::ApprovalTimedOut(response) => {
                 if matches!(event.context.sender_id, ActorId::Approver(_)) {
-                    // ApproverActor -> Agent
+                    // ApproverActor -> Agent: internal plumbing informing the agent.
                     let agent_id = ActorId::Agent(response.agent_id);
-                    if self.agent_actors.contains_key(&agent_id) {
+                    let forwards = if self.agent_actors.contains_key(&agent_id) {
                         vec![(agent_id, event.clone())]
                     } else {
                         Vec::new()
-                    }
+                    };
+                    RouteDecision { forwards, broadcast: false }
                 } else {
-                    Vec::new()
+                    RouteDecision { forwards: Vec::new(), broadcast: false }
                 }
             }
-            _ => Vec::new()
+            _ => RouteDecision { forwards: Vec::new(), broadcast: false }
         }
     }
 }
@@ -170,10 +190,10 @@ impl BroadcastModerator {
 }
 #[async_trait]
 impl Moderator for BroadcastModerator {
-    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn route(&mut self, event: &Envelope) -> RouteDecision {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
-                self.handle_full_response(event).await
+                self.handle_full_response(event).await.into()
             }
             ActorEvent::ApprovalRequested(_) |
             ActorEvent::ApprovalGranted(_) |
@@ -182,7 +202,7 @@ impl Moderator for BroadcastModerator {
                 self.actors.route_approval_events(event)
             }
             _ => {
-                Vec::new()
+                Vec::new().into()
             }
         }
     }
@@ -234,10 +254,10 @@ impl RandomModerator {
 }
 #[async_trait]
 impl Moderator for RandomModerator {
-    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn route(&mut self, event: &Envelope) -> RouteDecision {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
-                self.handle_full_response(event).await
+                self.handle_full_response(event).await.into()
             }
             ActorEvent::ApprovalRequested(_) |
             ActorEvent::ApprovalGranted(_) |
@@ -246,7 +266,7 @@ impl Moderator for RandomModerator {
                 self.actors.route_approval_events(event)
             }
             _ => {
-                Vec::new()
+                Vec::new().into()
             }
         }
     }
@@ -306,10 +326,10 @@ impl RoundRobinModerator {
 
 #[async_trait]
 impl Moderator for RoundRobinModerator {
-    async fn route(&mut self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    async fn route(&mut self, event: &Envelope) -> RouteDecision {
         match event.event {
             ActorEvent::FullResponseGenerated(_) => {
-                self.handle_full_response(event).await
+                self.handle_full_response(event).await.into()
             }
             ActorEvent::ApprovalRequested(_) |
             ActorEvent::ApprovalGranted(_) |
@@ -318,7 +338,7 @@ impl Moderator for RoundRobinModerator {
                 self.actors.route_approval_events(event)
             }
             _ => {
-                Vec::new()
+                Vec::new().into()
             }
         }
     }
@@ -356,4 +376,66 @@ fn replace_role(messages:&Vec<Message>, role:MessageRole) -> Vec<Message> {
     let mut result = messages.clone();
     result.iter_mut().for_each(|m| { m.role = role.clone() });
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::actor::EventContext;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
+    use caelumora_model::security::SecurityContext;
+    use caelumora_model::tool::ToolCall;
+    use caelumora_model::user::UserId;
+    use uuid::Uuid;
+
+    fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
+        let context = EventContext::new(Default::default(), Default::default(), sender_id, "test".to_string());
+        Envelope::new(SecurityContext::default(), context, event)
+    }
+
+    fn approval_request() -> ApprovalRequest {
+        ApprovalRequest {
+            id: Default::default(),
+            session_id: Default::default(),
+            channel_id: Default::default(),
+            agent_id: AgentId::new(),
+            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}) },
+            description: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn approval_requested_from_agent_is_internal_only() {
+        let actors = ModeratorActors::new();
+        let event = envelope(ActorId::Agent(AgentId::new()), ActorEvent::ApprovalRequested(approval_request()));
+        let decision = actors.route_approval_events(&event);
+        assert!(!decision.broadcast);
+    }
+
+    #[test]
+    fn approval_requested_from_approver_is_broadcast() {
+        let actors = ModeratorActors::new();
+        let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::ApprovalRequested(approval_request()));
+        let decision = actors.route_approval_events(&event);
+        assert!(decision.broadcast);
+    }
+
+    #[test]
+    fn approval_granted_from_user_is_broadcast() {
+        let actors = ModeratorActors::new();
+        let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
+        let event = envelope(ActorId::User(UserId::new()), ActorEvent::ApprovalGranted(response));
+        let decision = actors.route_approval_events(&event);
+        assert!(decision.broadcast);
+    }
+
+    #[test]
+    fn approval_granted_from_approver_is_internal_only() {
+        let actors = ModeratorActors::new();
+        let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
+        let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::ApprovalGranted(response));
+        let decision = actors.route_approval_events(&event);
+        assert!(!decision.broadcast);
+    }
 }

@@ -260,27 +260,31 @@ impl ChannelLoop {
         //}
 
         let is_cancelling = ActorState::from(self.processing_state.load(Ordering::SeqCst)) == ActorState::Cancelling;
-        if !is_cancelling {
-            self.route_event_impl(actors, event.clone()).await;
-        }
+        let broadcast = if !is_cancelling {
+            self.route_event_impl(actors, event.clone()).await
+        } else {
+            true // cancellation only suppresses internal routing, not external visibility
+        };
 
-        let _ = self.event_tx.send(event);
+        if broadcast {
+            let _ = self.event_tx.send(event);
+        }
     }
 
-    async fn route_event_impl(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
+    async fn route_event_impl(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) -> bool {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
-            return
+            return true
         }
 
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
         let mut moderator = self.moderator.lock().await;
-        let routes = moderator.route(&event).await;
+        let decision = moderator.route(&event).await;
         drop(moderator);
 
         // First, route all messages to all agents...
-        for route in routes {
+        for route in decision.forwards {
             let target_id = route.0;
 
             // Do not propagate message to sender again
@@ -308,6 +312,8 @@ impl ChannelLoop {
                 }
             }
         }
+
+        decision.broadcast
     }
 
     async fn append_history(&self, envelope: &Envelope) {
