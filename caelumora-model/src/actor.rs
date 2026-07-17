@@ -179,6 +179,30 @@ impl Envelope {
         self.security = security_context;
         self
     }
+
+    /// Short, human-readable summary of this envelope's event, used for logging.
+    pub fn describe(&self) -> String {
+        let ctx = &self.context;
+        match &self.event {
+            ActorEvent::PartialMessageGenerated(m) => {
+                format!("Partial(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+            }
+            ActorEvent::CompleteMessageGenerated(m) => {
+                format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+            }
+            ActorEvent::FullResponseGenerated(v) => {
+                let default_message = Message::default();
+                let m = v.last().unwrap_or(&default_message);
+                format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+            }
+            ActorEvent::ResponseRequested => {
+                format!("ResponseRequested(sender_id={}, sender_name={}", ctx.sender_id, ctx.sender_name)
+            }
+            _ => {
+                format!("{:?}", self.event)
+            }
+        }
+    }
 }
 
 

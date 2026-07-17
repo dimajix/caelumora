@@ -273,7 +273,6 @@ impl ChannelLoop {
             return
         }
 
-        let default_message = Message::default();
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
         let mut moderator = self.moderator.lock().await;
@@ -291,25 +290,7 @@ impl ChannelLoop {
 
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
-            let ctx = &target_event.context;
-            let event_desc = match &target_event.event {
-                ActorEvent::PartialMessageGenerated(m) => {
-                    format!("Partial(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
-                }
-                ActorEvent::CompleteMessageGenerated(m) => {
-                    format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
-                }
-                ActorEvent::FullResponseGenerated(v) => {
-                    let m = v.last().unwrap_or(&default_message);
-                    format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
-                }
-                ActorEvent::ResponseRequested => {
-                    format!("ResponseRequested(sender_id={}, sender_name={}", ctx.sender_id, ctx.sender_name)
-                }
-                _ => {
-                    format!("{:?}", target_event.event)
-                }
-            };
+            let event_desc = target_event.describe();
             target_event.context.channel_id = self.id;
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = span_id;
