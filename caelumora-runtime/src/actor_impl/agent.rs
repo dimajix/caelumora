@@ -273,10 +273,10 @@ impl AgentActor {
                         }
                     }
                     ApprovalStatus::Denied => {
-                        // TODO: Push error
+                        c.result = Some("Tool execution denied".to_string());
                     }
                     ApprovalStatus::Timeout => {
-                        // TODO: warn and push error
+                        c.result = Some("Tool execution timed out".to_string());
                     }
                     ApprovalStatus::Pending => {
                         complete = false;
