@@ -20,7 +20,7 @@ export interface ChannelResponse {
 export interface ToolCall {
   id?: string;
   function_name: string;
-  arguments: string;
+  arguments: unknown;
 }
 
 export interface ToolResult {
@@ -50,9 +50,9 @@ export interface ActorEvent {
   ResponseStarted?: any;
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
-  ToolExecutionRequested?: ApprovalRequest;
-  ToolExecutionGranted?: ApprovalResponse;
-  ToolExecutionDenied?: ApprovalResponse;
+  ApprovalRequested?: ApprovalRequest;
+  ApprovalGranted?: ApprovalResponse;
+  ApprovalDenied?: ApprovalResponse;
   ResponseRequested?: any;
   FullResponseGenerated?: Message[];
   WakeupRequested?: any;

@@ -97,9 +97,13 @@ impl AgentActor {
             .new_tool_executor(tool_providers.into_iter().map(|p| p.facet).collect());
 
         let state_store = actor_runtime.state_store();
-        let agent_channel_state = state_store
+        let mut agent_channel_state = state_store
             .get_agent_channel_state(agent_id, channel.id)
             .await?;
+        agent_channel_state.turn_event_context.session_id = channel.session_id;
+        agent_channel_state.turn_event_context.channel_id = channel.id;
+        agent_channel_state.turn_event_context.sender_id = ActorId::Agent(agent_id);
+        agent_channel_state.turn_event_context.sender_name = agent_controller.name();
         let agent_state = state_store.get_agent_state(agent_id).await?;
         let processing_state = agent_channel_state.processing_state.clone();
         let state = Mutex::new(AgentActorState {

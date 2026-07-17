@@ -21,6 +21,10 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function formatArguments(args: unknown): string {
+  return typeof args === 'string' ? args : JSON.stringify(args);
+}
+
 interface ChatViewProps {
   sessionId: string;
   channelId: string;
@@ -67,13 +71,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             return [...prev, newMsg];
           });
           setStreamingMessage(null);
-        } else if (actorEvent.ToolExecutionRequested) {
-          setPendingApprovals(prev => [...prev, actorEvent.ToolExecutionRequested!]);
-        } else if (actorEvent.ToolExecutionGranted) {
-          const res = actorEvent.ToolExecutionGranted;
+        } else if (actorEvent.ApprovalRequested) {
+          setPendingApprovals(prev => [...prev, actorEvent.ApprovalRequested!]);
+        } else if (actorEvent.ApprovalGranted) {
+          const res = actorEvent.ApprovalGranted;
           setPendingApprovals(prev => prev.filter(req => req.id !== res!.id));
-        } else if (actorEvent.ToolExecutionDenied) {
-          const res = actorEvent.ToolExecutionDenied;
+        } else if (actorEvent.ApprovalDenied) {
+          const res = actorEvent.ApprovalDenied;
           setPendingApprovals(prev => prev.filter(req => req.id !== res!.id));
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
@@ -216,7 +220,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                         <div className="p-2">
                            <div className="flex items-start gap-2 mb-1">
                              <Terminal size={12} className="mt-0.5 opacity-50" />
-                             <code className="text-[11px] font-mono break-all">{call.arguments}</code>
+                             <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
                            </div>
                            {result && (
                              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
@@ -258,7 +262,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                    <div className="text-[10px] text-gray-400">ID: {approval.id}</div>
                 </div>
                 <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded mb-4 overflow-x-auto">
-                  {approval.tool_call.arguments}
+                  {formatArguments(approval.tool_call.arguments)}
                 </pre>
                 <div className="flex gap-2">
                   <button
