@@ -63,7 +63,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
-        .route("/sessions/{id}/channels/{cid}/events", get(events::join_channel))
+        .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
         .route("/events", get(events::global_events))
         .with_state(state)
 }

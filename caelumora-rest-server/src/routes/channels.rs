@@ -1,11 +1,17 @@
 use crate::models::{ChannelResponse, SendApprovalRequest, SendMessageRequest};
 use crate::state::AppState;
+use axum::response::sse::Event;
+use axum::response::Sse;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, SessionId};
+use futures::Stream;
+use futures::StreamExt;
+use std::convert::Infallible;
 use std::sync::Arc;
+use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 pub async fn list_channels(
@@ -60,6 +66,38 @@ pub async fn get_channel_messages(
     let messages = channel.history().await;
 
     Ok(Json(messages))
+}
+
+pub async fn join_channel(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
+    let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
+
+    let session_loop = crate::routes::ensure_session(&state, session_id).await?;
+    let channel = session_loop.channel_by_id(channel_id)
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    let receiver = channel.subscribe();
+    let stream = BroadcastStream::new(receiver);
+
+    let sse_stream = stream.map(|res| {
+        match res {
+            Ok(envelope) => {
+                let event_json = serde_json::to_string(&envelope).unwrap_or_default();
+                Ok(Event::default().data(event_json))
+            }
+            Err(e) => {
+                tracing::error!("SSE stream error: {}", e);
+                // In SSE, we can just skip or send a comment. Here we just continue or the stream might close.
+                // For now, we return a default event or just map it.
+                Ok(Event::default().comment("stream error"))
+            }
+        }
+    });
+
+    Ok(Sse::new(sse_stream))
 }
 
 pub async fn send_message(
