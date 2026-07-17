@@ -196,8 +196,10 @@ pub enum ActorState {
     /// Persisting context/history and closing out the turn.
     Reflecting,
     Cancelling,
-    Sleep,
-    Silence,
+    /// Fall asleep, do not generate new messages
+    Sleeping,
+    /// Stop current turn
+    Stopping,
     WaitingForApproval,
 }
 
@@ -207,8 +209,8 @@ impl From<u8> for ActorState {
             0 => ActorState::Idle,
             1 => ActorState::Active,
             2 => ActorState::Cancelling,
-            3 => ActorState::Sleep,
-            4 => ActorState::Silence,
+            3 => ActorState::Sleeping,
+            4 => ActorState::Stopping,
             5 => ActorState::WaitingForApproval,
             6 => ActorState::Planning,
             7 => ActorState::ExecutingTools,
@@ -224,8 +226,8 @@ impl From<ActorState> for u8 {
             ActorState::Idle => 0,
             ActorState::Active => 1,
             ActorState::Cancelling => 2,
-            ActorState::Sleep => 3,
-            ActorState::Silence => 4,
+            ActorState::Sleeping => 3,
+            ActorState::Stopping => 4,
             ActorState::WaitingForApproval => 5,
             ActorState::Planning => 6,
             ActorState::ExecutingTools => 7,

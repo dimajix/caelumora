@@ -170,11 +170,6 @@ impl AgentActor {
         Some(msg)
     }
 
-    async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
-        turn_context.extend_state_context(turn_context.messages().clone());
-        turn_context.extend_state_history(turn_context.messages().clone());
-    }
-
     async fn respond_partial<'a>(
         &self,
         message: Message,
@@ -205,6 +200,34 @@ impl AgentActor {
                 },
             }
         }
+
+        Ok(())
+    }
+
+    /// Starts a new turn, transitioning to Planning. Dispatch already guarantees
+    /// we're Idle, so the only thing worth checking is a cancel() that raced in
+    /// while we were still parked in Idle waiting for this event.
+    async fn request_response<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        event_context: &EventContext,
+        event_security: &SecurityContext,
+        output: &dyn EventSender,
+    ) -> Result<()> {
+        let agent_name = self.agent_controller.name();
+
+        self.loop_count.store(0, Ordering::SeqCst);
+
+        turn_context.next_turn(
+            event_context.next(self.id, agent_name.clone()),
+            event_security.next(self.id),
+        );
+
+        info!("Starting generating messages for agent {} {}", self.id, agent_name);
+        turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
+
+        // Initialize next turn
+        self.next_turn(turn_context).await?;
 
         Ok(())
     }
@@ -255,7 +278,6 @@ impl AgentActor {
                         complete = false;
                     }
                 }
-                // TODO: Persist results
             }
         }
         turn_context.set_tool_calls(tool_calls);
@@ -290,6 +312,11 @@ impl AgentActor {
         } else {
             None
         }
+    }
+
+    async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
+        turn_context.extend_state_context(turn_context.messages().clone());
+        turn_context.extend_state_history(turn_context.messages().clone());
     }
 
     async fn apply_stage_processors<'a, T>(
@@ -350,79 +377,29 @@ impl AgentActor {
             maybe_event = rx.recv() => {
                 match maybe_event {
                     Some(event) => {
-                        let next = self.handle_incoming_event(turn_context, event, output).await?;
+                        let next = match event.event {
+                            ActorEvent::FullResponseGenerated(messages) => {
+                                self.perceive(turn_context, messages, &event.context, &event.security).await;
+                                Some(ActorState::Idle)
+                            }
+                            ActorEvent::ResponseRequested => {
+                                self.request_response(turn_context, &event.context, &event.security, output).await?;
+                                Some(ActorState::Planning)
+                            }
+                            _ => Some(ActorState::Idle),
+                        };
                         rx.commit().await?;
-                        Ok(Some(next))
+                        Ok(next)
                     }
-                    None => Ok(None),
+                    // Channel is closed
+                    None => Ok(None)
                 }
             }
             maybe_global = global_rx.recv() => {
                 self.handle_global_event(maybe_global, output).await;
-                Ok(Some(self.processing_state.load()))
+                Ok(Some(ActorState::Idle))
             }
         }
-    }
-
-    /// Handle a single incoming event in the normal (non-approval) flow.
-    async fn handle_incoming_event<'a>(
-        &self,
-        turn_context: &mut TurnContext<'a>,
-        event: Envelope,
-        output: &dyn EventSender,
-    ) -> Result<ActorState> {
-        debug!("AgentActor {} received actor event: {:?}", self.id(), event);
-
-        match event.event {
-            ActorEvent::FullResponseGenerated(messages) => {
-                self.perceive(turn_context, messages, &event.context, &event.security).await;
-                // Reflects a concurrent cancel() that may have arrived while we perceived.
-                Ok(self.processing_state.load())
-            }
-            ActorEvent::ResponseRequested => {
-                self.request_response(turn_context, &event.context, &event.security, output)
-                    .await
-                    .context(format!(
-                        "Error when trying to respond {} {}",
-                        self.id,
-                        self.agent_controller.name()
-                    ))
-            }
-            _ => Ok(self.processing_state.load()),
-        }
-    }
-
-    /// Starts a new turn, transitioning to Planning. Dispatch already guarantees
-    /// we're Idle, so the only thing worth checking is a cancel() that raced in
-    /// while we were still parked in Idle waiting for this event.
-    async fn request_response<'a>(
-        &self,
-        turn_context: &mut TurnContext<'a>,
-        event_context: &EventContext,
-        event_security: &SecurityContext,
-        output: &dyn EventSender,
-    ) -> Result<ActorState> {
-        let agent_name = self.agent_controller.name();
-
-        if self.processing_state.load() == ActorState::Cancelling {
-            info!("Not starting a turn for cancelled agent {} {}", self.id, agent_name);
-            return Ok(ActorState::Cancelling);
-        }
-
-        self.loop_count.store(0, Ordering::SeqCst);
-
-        turn_context.next_turn(
-            event_context.next(self.id, agent_name.clone()),
-            event_security.next(self.id),
-        );
-
-        info!("Starting generating messages for agent {} {}", self.id, agent_name);
-        turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
-
-        // Initialize next turn
-        self.next_turn(turn_context).await?;
-
-        Ok(ActorState::Planning)
     }
 
     /// `Sleep` differs from `Idle` in that it deliberately does *not* react to
@@ -443,27 +420,43 @@ impl AgentActor {
                             self.perceive(turn_context, messages, &event.context, &event.security).await;
                         }
                         rx.commit().await?;
+                        Ok(Some(ActorState::Sleeping))
                     }
-                    None => {},
+                    // Channel is closed
+                    None => Ok(None)
                 }
             }
             maybe_global = global_rx.recv() => {
                 self.handle_global_event(maybe_global, output).await;
+                Ok(Some(ActorState::Sleeping))
             }
         }
-        Ok(None)
     }
 
     /// `Silence` and `Cancelling` are momentary: the run loop dispatches to them
     /// once (so the reason is observable for a beat), and they immediately fall
     /// through to `Idle` without consuming any event.
-    fn handle_silence(&self) -> Result<ActorState> {
+    fn handle_stopping(&self) -> Result<ActorState> {
         info!("Agent {} {} is no longer silenced", self.id, self.agent_controller.name());
-        Ok(ActorState::Idle)
+        Ok(ActorState::Reflecting)
     }
 
-    fn handle_cancelling(&self) -> Result<ActorState> {
+    async fn handle_cancelling<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        output: &dyn EventSender,
+    ) -> Result<ActorState> {
+        self.reflect(turn_context).await;
+
+        turn_context.send_event(
+            ActorEvent::FullResponseGenerated(turn_context.messages().clone()),
+            output,
+        ).await?;
+        turn_context.finish_turn();
+
         info!("Agent {} {} finished cancelling", self.id, self.agent_controller.name());
+
+        // TODO: Maybe it should be sleeping?
         Ok(ActorState::Idle)
     }
 
@@ -477,43 +470,41 @@ impl AgentActor {
         global_rx: &mut mpsc::Receiver<GlobalEvent>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
+        let is_approval_event = |env: &Envelope| {
+            matches!(
+                env.event,
+                ActorEvent::ApprovalGranted(_)
+                    | ActorEvent::ApprovalDenied(_)
+                    | ActorEvent::ApprovalTimedOut(_)
+            )
+        };
+
         tokio::select! {
             maybe_event = rx.recv_matching(is_approval_event) => {
                 match maybe_event {
                     Some(event) => {
-                        self.handle_approval_event(turn_context, event);
-                        rx.commit().await?;
-                        // Final, synchronous check - nothing async happens between this
-                        // load() and the return, so it can't race with a concurrent cancel().
-                        let next = if self.processing_state.load() == ActorState::Cancelling {
-                            ActorState::Cancelling
-                        } else {
-                            ActorState::ExecutingTools
+                        let (req, status) = match &event.event {
+                            ActorEvent::ApprovalGranted(r) => (r, ApprovalStatus::Approved),
+                            ActorEvent::ApprovalDenied(r) => (r, ApprovalStatus::Denied),
+                            ActorEvent::ApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
+                            _ => unreachable!("handle_approval_event called with non-approval event"),
                         };
-                        Ok(Some(next))
+
+                        if !turn_context.set_tool_approval_status(req.id, status) {
+                            warn!("Received approval for unknown approval id {}", req.id);
+                        }
+
+                        rx.commit().await?;
+                        Ok(Some(ActorState::ExecutingTools))
                     }
+                    // Channel is closed
                     None => Ok(None),
                 }
             }
             maybe_global = global_rx.recv() => {
                 self.handle_global_event(maybe_global, output).await;
-                Ok(None)
+                Ok(Some(ActorState::WaitingForApproval))
             }
-        }
-    }
-
-    fn handle_approval_event<'a>(&self, turn_context: &mut TurnContext<'a>, event: Envelope) {
-        debug!("AgentActor {} processing approval event: {:?}", self.id(), event);
-
-        let (req, status) = match &event.event {
-            ActorEvent::ApprovalGranted(r) => (r, ApprovalStatus::Approved),
-            ActorEvent::ApprovalDenied(r) => (r, ApprovalStatus::Denied),
-            ActorEvent::ApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
-            _ => unreachable!("handle_approval_event called with non-approval event"),
-        };
-
-        if !turn_context.set_tool_approval_status(req.id, status) {
-            warn!("Received approval for unknown approval id {}", req.id);
         }
     }
 
@@ -576,21 +567,6 @@ impl AgentActor {
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
 
-        // A stop/bye/silence tool already ran during a prior ExecutingTools step
-        // and left its intent here - honor it instead of planning another step.
-        // TODO: That is strange! We should probably return the requested state!
-        if turn_context.requested_state().is_some() {
-            return Ok(ActorState::Reflecting);
-        }
-        // An external cancel() may have arrived while we were away from Planning
-        // (e.g. during ExecutingTools, which doesn't check for it). Normalize it
-        // into requested_state so Reflecting can still find it after we return.
-        if self.processing_state.load() == ActorState::Cancelling {
-            info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-            turn_context.request_state(ActorState::Cancelling);
-            return Ok(ActorState::Reflecting);
-        }
-
         if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
             return Ok(ActorState::Reflecting);
         }
@@ -606,8 +582,7 @@ impl AgentActor {
         {
             if self.processing_state.load() == ActorState::Cancelling {
                 info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-                turn_context.request_state(ActorState::Cancelling);
-                return Ok(ActorState::Reflecting);
+                return Ok(ActorState::Cancelling);
             }
 
             match event {
@@ -629,13 +604,6 @@ impl AgentActor {
                         turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                     }
 
-                    // Final, synchronous check before either return below - nothing
-                    // async happens after this load(), so it can't race with cancel().
-                    if self.processing_state.load() == ActorState::Cancelling {
-                        info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-                        turn_context.request_state(ActorState::Cancelling);
-                        return Ok(ActorState::Reflecting);
-                    }
                     if turn_context.has_tool_calls() {
                         return Ok(ActorState::ExecutingTools);
                     }
@@ -659,7 +627,16 @@ impl AgentActor {
     ) -> Result<ActorState> {
         if let Some(tool_message) = self.execute_tools(turn_context).await {
             turn_context.send_event(ActorEvent::CompleteMessageGenerated(tool_message), output).await?;
-            Ok(ActorState::Planning)
+
+            // Handle "Silent" requested state
+            if turn_context.requested_state() == Some(ActorState::Stopping) {
+                // "Stopping" is a one-time state, so we remove it
+                turn_context.take_requested_state();
+                Ok(ActorState::Stopping)
+            }
+            else {
+                Ok(ActorState::Planning)
+            }
         } else {
             Ok(ActorState::WaitingForApproval)
         }
@@ -676,7 +653,6 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
         self.reflect(turn_context).await;
 
-        // TODO: Do not send response when cancelled?
         turn_context.send_event(
             ActorEvent::FullResponseGenerated(turn_context.messages().clone()),
             output,
@@ -689,14 +665,6 @@ impl AgentActor {
     }
 }
 
-fn is_approval_event(env: &Envelope) -> bool {
-    matches!(
-        env.event,
-        ActorEvent::ApprovalGranted(_)
-            | ActorEvent::ApprovalDenied(_)
-            | ActorEvent::ApprovalTimedOut(_)
-    )
-}
 
 #[async_trait]
 impl Actor for AgentActor {
@@ -726,7 +694,7 @@ impl Actor for AgentActor {
     async fn run(
         &self,
         mut rx: Box<dyn EventReceiver>,
-        tx: Box<dyn EventSender>,
+        output: Box<dyn EventSender>,
     ) -> Result<()> {
         let mut state = self
             .state
@@ -749,19 +717,19 @@ impl Actor for AgentActor {
             // Every other state always produces a next state.
             let next_state = match current_state {
                 ActorState::Idle => {
-                    self.handle_idle(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
+                    self.handle_idle(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
                 ActorState::WaitingForApproval => {
-                    self.handle_waiting_for_approval(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
+                    self.handle_waiting_for_approval(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
-                ActorState::Sleep => {
-                    self.handle_sleep(&mut turn_context, &mut rx, &mut global_rx, &*tx).await?
+                ActorState::Sleeping => {
+                    self.handle_sleep(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
-                ActorState::Silence => Some(self.handle_silence()?),
-                ActorState::Cancelling => Some(self.handle_cancelling()?),
-                ActorState::Planning => Some(self.handle_planning(&mut turn_context, &*tx).await?),
-                ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*tx).await?),
-                ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*tx).await?),
+                ActorState::Stopping => Some(self.handle_stopping()?),
+                ActorState::Cancelling => Some(self.handle_cancelling(&mut turn_context, &*output).await?),
+                ActorState::Planning => Some(self.handle_planning(&mut turn_context, &*output).await?),
+                ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*output).await?),
+                ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*output).await?),
                 ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
             };
 
@@ -769,7 +737,14 @@ impl Actor for AgentActor {
             turn_context.store_channel_state(&self.state_store).await;
 
             match next_state {
-                Some(next) => self.processing_state.store(next),
+                Some(next) => {
+                    // If state has been switched to "Cancelling", but "current_state" was not
+                    // "Cancelling", then ignore "next_state"
+                    if current_state == ActorState::Cancelling || self.processing_state.load() != ActorState::Cancelling {
+                        self.processing_state.store(next)
+                    }
+                },
+                // Channel is closed, actor wants to quit
                 None => break,
             }
         }
@@ -791,7 +766,7 @@ impl Actor for AgentActor {
         // Only a sleeping agent should be woken; forcing Idle from any other
         // state (e.g. mid-Planning) would corrupt an in-flight turn.
         self.processing_state.transition(|s| match s {
-            ActorState::Sleep => Some(ActorState::Idle),
+            ActorState::Sleeping => Some(ActorState::Idle),
             _ => None,
         });
         Ok(())

@@ -48,12 +48,12 @@ impl ToolProvider for StopToolProvider {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
-                context.request_state(ActorState::Sleep);
+                context.request_state(ActorState::Sleeping);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
             "silence" => {
                 info!("Silencing agent {} {}", context.agent_id, context.agent_name);
-                context.request_state(ActorState::Silence);
+                context.request_state(ActorState::Stopping);
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {
