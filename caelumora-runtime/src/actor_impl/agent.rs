@@ -437,7 +437,7 @@ impl AgentActor {
     /// once (so the reason is observable for a beat), and they immediately fall
     /// through to `Idle` without consuming any event.
     fn handle_stopping(&self) -> Result<ActorState> {
-        info!("Agent {} {} is no longer silenced", self.id, self.agent_controller.name());
+        info!("Agent {} {} stopped, not reflecting", self.id, self.agent_controller.name());
         Ok(ActorState::Reflecting)
     }
 
@@ -448,15 +448,17 @@ impl AgentActor {
     ) -> Result<ActorState> {
         self.reflect(turn_context).await;
 
-        turn_context.send_event(
-            ActorEvent::FullResponseGenerated(turn_context.messages().clone()),
-            output,
-        ).await?;
+        // Send final message
+        if !turn_context.messages().is_empty() {
+            turn_context.send_event(
+                ActorEvent::FullResponseGenerated(turn_context.messages().clone()),
+                output,
+            ).await?;
+        }
         turn_context.finish_turn();
 
         info!("Agent {} {} finished cancelling", self.id, self.agent_controller.name());
 
-        // TODO: Maybe it should be sleeping?
         Ok(ActorState::Idle)
     }
 
@@ -568,6 +570,7 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
 
         if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
+            info!("Too many iterations, stop planning agent {} {}", self.id, agent_name);
             return Ok(ActorState::Reflecting);
         }
         self.loop_count.fetch_add(1, Ordering::SeqCst);
@@ -660,7 +663,7 @@ impl AgentActor {
         turn_context.finish_turn();
         info!("Finished generating messages for agent {} {}", self.id, agent_name);
 
-        // TODO: That is strange! requested_state should be handled in "run" loop!
+        // Use requested state
         Ok(turn_context.take_requested_state().unwrap_or(ActorState::Idle))
     }
 }
@@ -778,7 +781,10 @@ impl Actor for AgentActor {
             self.id,
             self.agent_controller.name()
         );
-        self.processing_state.store(ActorState::Cancelling);
+        self.processing_state.transition(|s| match s {
+            ActorState::WaitingForApproval | ActorState::Active | ActorState::ExecutingTools | ActorState::Planning => Some(ActorState::Cancelling),
+            _ => None,
+        });
         Ok(())
     }
 }
