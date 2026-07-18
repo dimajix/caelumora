@@ -5,7 +5,7 @@ use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
 use crate::runtime::RuntimeManager;
-use crate::transport::{EventSender, SendError};
+use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -305,8 +305,8 @@ impl ChannelLoop {
                 self.record_send_event(&target_event).await;
                 if let Err(e) = actor.sender.try_send(target_event) {
                     match e {
-                        SendError::Full => warn!("Queue full for actor {}", target_id),
-                        SendError::Filtered => {}, // Normal: FilteringEventSender drops unmatched events
+                        TransportError::Full => warn!("Queue full for actor {}", target_id),
+                        TransportError::Filtered => {}, // Normal: FilteringEventSender drops unmatched events
                         _ => warn!("Could not forward event {} from={} to={}: {:?}", event_desc, sender_id, target_id, e)
                     }
                 }

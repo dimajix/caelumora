@@ -1,7 +1,6 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::tool::ToolProvider;
-use anyhow::{anyhow, Result};
+use crate::tool::{ToolError, ToolExecResult, ToolProvider};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
 use caelumora_model::tool::{Tool, ToolParameters};
@@ -44,7 +43,7 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, context: &mut TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, _params: &Value, context: &mut TurnContext) -> ToolExecResult<Value> {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
@@ -57,7 +56,7 @@ impl ToolProvider for StopToolProvider {
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {
-                Err(anyhow!("Unknown tool {}", name))
+                Err(ToolError::UnknownTool(name.to_string()))
             }
         }
     }
@@ -80,11 +79,11 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolExecResult<Value> {
         if name == "echo" {
             Ok(params.clone())
         } else {
-            Err(anyhow::anyhow!("Unknown tool: {}", name))
+            Err(ToolError::UnknownTool(name.to_string()))
         }
     }
 }
@@ -106,18 +105,18 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolExecResult<Value> {
         if name == "calculate" {
             let expression = params["expression"]
                 .as_str()
-                .ok_or_else(|| anyhow::anyhow!("Missing 'expression' parameter"))?;
-            
+                .ok_or_else(|| ToolError::InvalidParameter("Missing 'expression' parameter".to_string()))?;
+
             let result = meval::eval_str(expression)
-                .map_err(|e| anyhow::anyhow!("Failed to evaluate expression: {}", e))?;
-            
-            Ok(serde_json::to_value(result)?)
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e)))?;
+
+            serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))
         } else {
-            Err(anyhow::anyhow!("Unknown tool: {}", name))
+            Err(ToolError::UnknownTool(name.to_string()))
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::actor::TurnContext;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -114,7 +114,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let prompt = descriptor.params.get("prompt")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-                .ok_or_else(|| anyhow::anyhow!("Component '{}' requires 'prompt' parameter", descriptor.id))?;
+                .ok_or_else(|| ComponentError::InvalidConfig(format!("Component '{}' requires 'prompt' parameter", descriptor.id)))?;
 
             let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn SystemPromptProvider>(Arc::new(StaticSystemPromptProvider {

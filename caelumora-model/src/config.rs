@@ -2,14 +2,25 @@ use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
 use crate::secret_impl::file::FileSecretProvider;
 use crate::security::SecurityManager;
-use crate::store::{EntityStore, StateStore};
+use crate::store::{EntityStore, StateStore, StoreError};
 use crate::store_impl::json::JsonFileStore;
 use crate::store_impl::memory::MemoryStore;
-use anyhow::Result;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("failed to read config file: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to parse config: {0}")]
+    Parse(#[from] serde_yaml::Error),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+pub type ConfigResult<T> = Result<T, ConfigError>;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct JsonConfig {
@@ -55,13 +66,13 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn load(path: impl AsRef<Path>) -> ConfigResult<Self> {
         let content = fs::read_to_string(path)?;
         let config: AppConfig = serde_yaml::from_str(&content)?;
         Ok(config)
     }
 
-    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<dyn EntityStore>> {
+    pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn EntityStore>> {
         let store : Arc<dyn EntityStore> = match &self.persistence {
             None => Arc::new(MemoryStore::new()),
             Some(persistence) => {
@@ -76,7 +87,7 @@ impl AppConfig {
         Ok(store)
     }
 
-    pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<dyn StateStore>> {
+    pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn StateStore>> {
         let store : Arc<dyn StateStore> = match &self.persistence {
             None => Arc::new(MemoryStore::new()),
             Some(persistence) => {
@@ -91,7 +102,7 @@ impl AppConfig {
         Ok(store)
     }
 
-    pub fn create_secret_manager(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<SecretManager>> {
+    pub fn create_secret_manager(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<SecretManager>> {
         let provider_configs: Vec<SecretProviderConfig> = match &self.secrets {
             Some(secrets) => secrets.providers.clone(),
             None => vec![

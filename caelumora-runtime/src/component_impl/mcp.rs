@@ -1,9 +1,8 @@
 use crate::actor::TurnContext;
-use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::tool::ToolProvider;
-use anyhow::{anyhow, Result};
+use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
+use crate::tool::{ToolError, ToolExecResult, ToolProvider};
 use async_trait::async_trait;
-use caelumora_model::secret::SecretManager;
+use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolParameters};
 use log::warn;
@@ -18,6 +17,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub const MCP_TOOL_PROVIDER_KIND: &str = "mcp_tool";
+
+#[derive(Debug, thiserror::Error)]
+pub enum McpError {
+    #[error("failed to connect to MCP server at '{0}': {1}")]
+    Connect(String, String),
+    #[error("failed to list tools from MCP server at '{0}': {1}")]
+    ListTools(String, String),
+    #[error("MCP operation timed out: {0}")]
+    Timeout(String),
+    #[error("MCP tool call failed: {0}")]
+    ToolCallFailed(String),
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+}
+
+pub type McpResult<T> = Result<T, McpError>;
 
 fn default_timeout_secs() -> u64 {
     10
@@ -64,9 +79,9 @@ impl McpToolProvider {
         format!("{}__", self.descriptor_id)
     }
 
-    fn strip_prefix<'a>(&self, name: &'a str) -> Result<&'a str> {
+    fn strip_prefix<'a>(&self, name: &'a str) -> ToolExecResult<&'a str> {
         name.strip_prefix(self.prefix().as_str())
-            .ok_or_else(|| anyhow!("Unknown tool: {}", name))
+            .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
     }
 }
 
@@ -74,7 +89,7 @@ async fn resolve_auth_header(
     auth: &Option<McpAuthConfig>,
     secret_manager: &SecretManager,
     security_context: &SecurityContext,
-) -> Result<Option<String>> {
+) -> McpResult<Option<String>> {
     match auth {
         None => Ok(None),
         Some(McpAuthConfig::Bearer { secret }) => {
@@ -84,7 +99,7 @@ async fn resolve_auth_header(
     }
 }
 
-async fn connect(url: &str, auth_header: Option<String>) -> Result<RunningService<RoleClient, ()>> {
+async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningService<RoleClient, ()>> {
     let mut transport_config = StreamableHttpClientTransportConfig::with_uri(url.to_string());
     if let Some(token) = auth_header {
         transport_config = transport_config.auth_header(token);
@@ -93,16 +108,16 @@ async fn connect(url: &str, auth_header: Option<String>) -> Result<RunningServic
     let service = ()
         .serve(transport)
         .await
-        .map_err(|e| anyhow!("Failed to connect to MCP server at '{}': {}", url, e))?;
+        .map_err(|e| McpError::Connect(url.to_string(), e.to_string()))?;
     Ok(service)
 }
 
-async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<String>) -> Result<Vec<Tool>> {
+async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<String>) -> McpResult<Vec<Tool>> {
     let service = connect(url, auth_header).await?;
     let remote_tools = service
         .list_all_tools()
         .await
-        .map_err(|e| anyhow!("Failed to list tools from MCP server at '{}': {}", url, e));
+        .map_err(|e| McpError::ListTools(url.to_string(), e.to_string()));
     let _ = service.cancel().await;
     let remote_tools = remote_tools?;
 
@@ -171,7 +186,7 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
     }
 }
 
-fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) -> Result<Value> {
+fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) -> McpResult<Value> {
     let text: String = result
         .content
         .iter()
@@ -185,7 +200,7 @@ fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) ->
         } else {
             serde_json::to_string(&result.content).unwrap_or_default()
         };
-        return Err(anyhow!("MCP tool '{}' returned an error: {}", name, message));
+        return Err(McpError::ToolCallFailed(format!("MCP tool '{}' returned an error: {}", name, message)));
     }
 
     if let Some(structured) = result.structured_content {
@@ -205,25 +220,30 @@ impl ToolProvider for McpToolProvider {
         self.cached_tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> Result<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolExecResult<Value> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = context.security_context().clone();
-        let auth_header = resolve_auth_header(&self.config.auth, &self.secret_manager, &security_context).await?;
 
-        let service = connect(&self.config.url, auth_header).await?;
-        let arguments = params.as_object().cloned();
-        let call = service.call_tool(CallToolRequestParam {
-            name: remote_name.clone().into(),
-            arguments,
-        });
+        let call_result: McpResult<Value> = async {
+            let auth_header = resolve_auth_header(&self.config.auth, &self.secret_manager, &security_context).await?;
 
-        let result = tokio::time::timeout(Duration::from_secs(self.config.timeout_secs), call).await;
-        let _ = service.cancel().await;
+            let service = connect(&self.config.url, auth_header).await?;
+            let arguments = params.as_object().cloned();
+            let call = service.call_tool(CallToolRequestParam {
+                name: remote_name.clone().into(),
+                arguments,
+            });
 
-        let result = result.map_err(|_| anyhow!("MCP tool call to '{}' timed out", name))?
-            .map_err(|e| anyhow!("MCP tool call to '{}' failed: {}", name, e))?;
+            let result = tokio::time::timeout(Duration::from_secs(self.config.timeout_secs), call).await;
+            let _ = service.cancel().await;
 
-        call_tool_result_to_value(name, result)
+            let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
+                .map_err(|e| McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, e)))?;
+
+            call_tool_result_to_value(name, result)
+        }.await;
+
+        call_result.map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }
 }
 
@@ -232,7 +252,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         MCP_TOOL_PROVIDER_KIND,
         Box::new(|descriptor, context| {
             let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
-                .map_err(|e| anyhow!("Invalid '{}' config for component '{}': {}", MCP_TOOL_PROVIDER_KIND, descriptor.id, e))?;
+                .map_err(|e| ComponentError::InvalidConfig(format!("Invalid '{}' config for component '{}': {}", MCP_TOOL_PROVIDER_KIND, descriptor.id, e)))?;
 
             let secret_manager = context.secret_manager.clone();
             let security_context = context.security_context.clone();
@@ -242,7 +262,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             // Requires a multi-threaded tokio runtime (both binaries use the
             // #[tokio::main] default); a #[tokio::test] exercising this path
             // needs `flavor = "multi_thread"` or this panics.
-            let discovery_result: Result<Vec<Tool>> = tokio::task::block_in_place(|| {
+            let discovery_result: McpResult<Vec<Tool>> = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let discover = async {
                         let auth_header =
@@ -251,7 +271,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                     };
                     match tokio::time::timeout(Duration::from_secs(discovery_config.timeout_secs), discover).await {
                         Ok(result) => result,
-                        Err(_) => Err(anyhow!("Timed out discovering tools from MCP server at '{}'", discovery_config.url)),
+                        Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", discovery_config.url))),
                     }
                 })
             });

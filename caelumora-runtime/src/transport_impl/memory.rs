@@ -1,5 +1,4 @@
-use crate::transport::{EventReceiver, EventSender, SendError};
-use anyhow::Result;
+use crate::transport::{EventReceiver, EventSender, TransportError, TransportResult};
 use async_trait::async_trait;
 use caelumora_model::actor::Envelope;
 use std::collections::VecDeque;
@@ -90,7 +89,7 @@ impl EventReceiver for InMemoryEventReceiver {
         std::mem::take(&mut self.buffer).into_iter().collect()
     }
 
-    async fn commit(&mut self) -> Result<()> {
+    async fn commit(&mut self) -> TransportResult<()> {
         self.uncommitted.clear();
         Ok(())
     }
@@ -108,20 +107,20 @@ impl InMemoryEventSender {
 
 #[async_trait]
 impl EventSender for InMemoryEventSender {
-    async fn send(&self, event: Envelope) -> Result<()> {
+    async fn send(&self, event: Envelope) -> TransportResult<()> {
         self.tx
             .send(event)
             .await
-            .map_err(|e| anyhow::anyhow!("EventSender: channel closed: {}", e))
+            .map_err(|e| TransportError::Backend(format!("channel closed: {}", e)))
     }
 
-    fn try_send(&self, event: Envelope) -> Result<(), SendError> {
-        self.tx.try_send(event).map_err(SendError::from)
+    fn try_send(&self, event: Envelope) -> TransportResult<()> {
+        self.tx.try_send(event).map_err(TransportError::from)
     }
 }
 
 /// Decorator that applies a filter predicate before forwarding to an inner `EventSender`.
-/// Filtered events are silently dropped on `send()` and return `SendError::Filtered` on `try_send()`.
+/// Filtered events are silently dropped on `send()` and return `TransportError::Filtered` on `try_send()`.
 /// Implements `EventSender`, so it can be composed with another `FilteringEventSender`.
 pub struct FilteringEventSender {
     inner: Box<dyn EventSender>,
@@ -136,7 +135,7 @@ impl FilteringEventSender {
 
 #[async_trait]
 impl EventSender for FilteringEventSender {
-    async fn send(&self, event: Envelope) -> Result<()> {
+    async fn send(&self, event: Envelope) -> TransportResult<()> {
         if (self.filter)(&event) {
             self.inner.send(event).await
         } else {
@@ -144,11 +143,11 @@ impl EventSender for FilteringEventSender {
         }
     }
 
-    fn try_send(&self, event: Envelope) -> Result<(), SendError> {
+    fn try_send(&self, event: Envelope) -> TransportResult<()> {
         if (self.filter)(&event) {
             self.inner.try_send(event)
         } else {
-            Err(SendError::Filtered)
+            Err(TransportError::Filtered)
         }
     }
 }

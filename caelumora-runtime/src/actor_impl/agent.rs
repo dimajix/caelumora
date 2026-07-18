@@ -240,7 +240,7 @@ impl AgentActor {
     async fn plan<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
-    ) -> BoxStream<'static, Result<MessageEvent>> {
+    ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
         let llm_client = self.actor_runtime.llm_client();
 
         let context = turn_context.full_context();

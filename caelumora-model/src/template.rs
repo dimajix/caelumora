@@ -11,8 +11,21 @@ use uuid::Uuid;
 
 use crate::actor::ActorId;
 use crate::security::SecurityAttributes;
+use crate::store::StoreError;
 use crate::user::UserId;
 use std::collections::HashMap;
+
+#[derive(Debug, thiserror::Error)]
+pub enum TemplateError {
+    #[error("participant '{0}' not found in session")]
+    ParticipantNotFound(String),
+    #[error("mapping for '{0}' not found")]
+    MappingNotFound(String),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+pub type TemplateResult<T> = Result<T, TemplateError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParticipantId {
@@ -60,7 +73,7 @@ fn default_moderator() -> String {
 }
 
 impl ChannelTemplate {
-    pub async fn instantiate(&self, context: &SessionContext, session_participants: &[Participant]) -> anyhow::Result<Channel> {
+    pub async fn instantiate(&self, context: &SessionContext, session_participants: &[Participant]) -> TemplateResult<Channel> {
         let mut participants = Vec::new();
 
         for name in &self.participants {
@@ -76,7 +89,7 @@ impl ChannelTemplate {
                         Participant::Agent(a) => a.metadata.name == *name,
                         Participant::Approver(_) => false,
                     }
-                }).cloned().ok_or_else(|| anyhow::anyhow!("Participant {} not found in session", name))?
+                }).cloned().ok_or_else(|| TemplateError::ParticipantNotFound(name.clone()))?
             };
             participants.push(participant);
         }
@@ -118,7 +131,7 @@ pub struct SessionTemplate {
 }
 
 impl SessionTemplate {
-    pub async fn instantiate(&self, name:String, context:&SessionContext, mapping: HashMap<String, ParticipantId>) -> anyhow::Result<Session> {
+    pub async fn instantiate(&self, name:String, context:&SessionContext, mapping: HashMap<String, ParticipantId>) -> TemplateResult<Session> {
         let now = Utc::now();
 
         let mut participants = Vec::new();
@@ -167,7 +180,7 @@ pub enum ParticipantTemplate {
 }
 
 impl ParticipantTemplate {
-    pub async fn instantiate(&self, context:&SessionContext, mapping: &HashMap<String, ParticipantId>) -> anyhow::Result<Participant> {
+    pub async fn instantiate(&self, context:&SessionContext, mapping: &HashMap<String, ParticipantId>) -> TemplateResult<Participant> {
         let participant = match self {
             ParticipantTemplate::User { name } => {
                 let id = mapping.get(name).and_then(|id| {
@@ -176,7 +189,7 @@ impl ParticipantTemplate {
                     } else {
                         None
                     }
-                }).ok_or_else(|| anyhow::anyhow!("UserId for {} not found in mapping", name))?;
+                }).ok_or_else(|| TemplateError::MappingNotFound(name.clone()))?;
                 let user = context.entity_store.get_user(&context.security, id).await?;
                 Participant::User(user)
             },

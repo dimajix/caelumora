@@ -1,19 +1,25 @@
 use async_trait::async_trait;
 use caelumora_model::actor::Envelope;
 
-#[derive(Debug)]
-pub enum SendError {
+#[derive(Debug, thiserror::Error)]
+pub enum TransportError {
+    #[error("channel full")]
     Full,
+    #[error("channel closed")]
     Closed,
+    #[error("event filtered")]
     Filtered,
-    Other(String),
+    #[error("transport backend: {0}")]
+    Backend(String),
 }
 
-impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for SendError {
+pub type TransportResult<T> = Result<T, TransportError>;
+
+impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for TransportError {
     fn from(e: tokio::sync::mpsc::error::TrySendError<Envelope>) -> Self {
         match e {
-            tokio::sync::mpsc::error::TrySendError::Full(_) => SendError::Full,
-            tokio::sync::mpsc::error::TrySendError::Closed(_) => SendError::Closed,
+            tokio::sync::mpsc::error::TrySendError::Full(_) => TransportError::Full,
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => TransportError::Closed,
         }
     }
 }
@@ -23,10 +29,10 @@ impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for SendError {
 #[async_trait]
 pub trait EventSender: Send + Sync {
     /// Send an event, waiting for capacity if the underlying transport is full.
-    async fn send(&self, event: Envelope) -> anyhow::Result<()>;
+    async fn send(&self, event: Envelope) -> TransportResult<()>;
 
     /// Non-blocking send attempt.
-    fn try_send(&self, event: Envelope) -> anyhow::Result<(), SendError>;
+    fn try_send(&self, event: Envelope) -> TransportResult<()>;
 }
 
 /// Transport-agnostic inbound receiver with selective extraction and Kafka-style commit.
@@ -50,5 +56,5 @@ pub trait EventReceiver: Send {
 
     /// Commit all events delivered since the last commit.
     /// In-memory transport: no-op. Persistent transports: advance offset / send ack.
-    async fn commit(&mut self) -> anyhow::Result<()>;
+    async fn commit(&mut self) -> TransportResult<()>;
 }

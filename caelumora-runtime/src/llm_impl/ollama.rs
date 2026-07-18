@@ -1,5 +1,4 @@
-use crate::llm::LLMClient;
-use anyhow::Result;
+use crate::llm::{LLMClient, LLMResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -269,7 +268,7 @@ impl LLMClient for OllamaClient {
         &self,
         context: &[Message],
         tools: &[caelumora_model::tool::Tool],
-    ) -> BoxStream<'static, Result<MessageEvent>> {
+    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
         let message_ids: Vec<_> = context.iter().map(|m| m.id).collect();
         let prev_id = context.iter().map(|m| m.id).last().unwrap_or(MessageId::default());

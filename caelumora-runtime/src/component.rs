@@ -1,11 +1,28 @@
 use crate::runtime::ActorRuntime;
-use anyhow::{anyhow, Result};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ComponentError {
+    #[error("unsupported component kind: {0}")]
+    UnsupportedKind(String),
+    #[error("duplicate component id: {0}")]
+    DuplicateId(String),
+    #[error("component '{component}' depends on unknown component '{dependency}'")]
+    UnknownDependency { component: String, dependency: String },
+    #[error("cycle detected in component graph")]
+    CycleDetected,
+    #[error("unknown component node '{0}'")]
+    NodeNotFound(String),
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
+}
+
+pub type ComponentResult<T> = Result<T, ComponentError>;
 
 
 #[derive(Debug, Clone)]
@@ -37,7 +54,7 @@ impl ComponentFacets {
     }
 }
 
-pub type ComponentFactory = Box<dyn Fn(&ComponentDescriptor, &ComponentContext) -> Result<ComponentFacets> + Send + Sync>;
+pub type ComponentFactory = Box<dyn Fn(&ComponentDescriptor, &ComponentContext) -> ComponentResult<ComponentFacets> + Send + Sync>;
 
 #[derive(Default)]
 pub struct ComponentRegistry {
@@ -61,9 +78,9 @@ impl ComponentRegistry {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> Result<ComponentFacets> {
+    fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
         let Some(factory) = self.factories.get(&node.kind) else {
-            return Err(anyhow!("Unsupported component kind: {}", node.kind));
+            return Err(ComponentError::UnsupportedKind(node.kind.clone()));
         };
         factory(node, context)
     }
@@ -99,7 +116,7 @@ impl ComponentContainer {
         config: &ComponentConfig,
         actor_runtime: &ActorRuntime,
         security_context: SecurityContext,
-    ) -> Result<Self> {
+    ) -> ComponentResult<Self> {
         let registry = actor_runtime.component_registry();
         let secret_manager = actor_runtime.secret_manager();
 
@@ -109,7 +126,7 @@ impl ComponentContainer {
 
         for node in &config.component_nodes {
             if config_by_id.insert(node.id.clone(), node).is_some() {
-                return Err(anyhow!("Duplicate component id: {}", node.id));
+                return Err(ComponentError::DuplicateId(node.id.clone()));
             }
             indegree.insert(node.id.clone(), 0);
             outgoing.entry(node.id.clone()).or_default();
@@ -118,7 +135,7 @@ impl ComponentContainer {
         for node in &config.component_nodes {
             for dep in &node.deps {
                 if !config_by_id.contains_key(dep) {
-                    return Err(anyhow!("Component '{}' depends on unknown component '{}'", node.id, dep));
+                    return Err(ComponentError::UnknownDependency { component: node.id.clone(), dependency: dep.clone() });
                 }
                 *indegree.get_mut(&node.id).unwrap() += 1;
                 outgoing.entry(dep.clone()).or_default().push(node.id.clone());
@@ -145,7 +162,7 @@ impl ComponentContainer {
         }
 
         if ordered.len() != config.component_nodes.len() {
-            return Err(anyhow!("Cycle detected in component graph"));
+            return Err(ComponentError::CycleDetected);
         }
 
         let mut nodes: HashMap<String, ComponentNode> = HashMap::new();
@@ -154,7 +171,7 @@ impl ComponentContainer {
 
             let mut dep_facets = HashMap::new();
             for dep_id in &node_config.deps {
-                let dep_node = nodes.get(dep_id).ok_or_else(|| anyhow!("Dependency '{}' not found for component '{}'", dep_id, id))?;
+                let dep_node = nodes.get(dep_id).ok_or_else(|| ComponentError::UnknownDependency { component: id.clone(), dependency: dep_id.clone() })?;
                 dep_facets.insert(dep_id.clone(), dep_node.facets.clone());
             }
 
@@ -189,13 +206,13 @@ impl ComponentContainer {
     fn nodes(
         &self,
         tag: &str,
-    ) -> Result<Vec<&ComponentNode>> {
+    ) -> ComponentResult<Vec<&ComponentNode>> {
         let mut nodes = Vec::new();
         for id in &self.node_order {
             let node = self
                 .nodes
                 .get(id)
-                .ok_or_else(|| anyhow!("Unknown component node '{}'", id))?;
+                .ok_or_else(|| ComponentError::NodeNotFound(id.clone()))?;
             if node.tags.iter().any(|t| t == tag) {
                 nodes.push(node);
             }
@@ -204,7 +221,7 @@ impl ComponentContainer {
     }
 
 
-    pub fn get_all<T>(&self, tag: Option<&str>) -> Result<Vec<ComponentImpl<T>>>
+    pub fn get_all<T>(&self, tag: Option<&str>) -> ComponentResult<Vec<ComponentImpl<T>>>
     where
         T: ?Sized + Send + Sync + 'static,
     {
@@ -216,9 +233,9 @@ impl ComponentContainer {
                 .map(|id| {
                     self.nodes
                         .get(id)
-                        .ok_or_else(|| anyhow!("Unknown component node '{}'", id))
+                        .ok_or_else(|| ComponentError::NodeNotFound(id.clone()))
                 })
-                .collect::<Result<Vec<_>>>()?,
+                .collect::<ComponentResult<Vec<_>>>()?,
         };
 
         Ok(nodes
