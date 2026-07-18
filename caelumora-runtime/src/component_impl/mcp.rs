@@ -1,0 +1,365 @@
+use crate::actor::TurnContext;
+use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::tool::ToolProvider;
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use caelumora_model::secret::SecretManager;
+use caelumora_model::security::SecurityContext;
+use caelumora_model::tool::{Tool, ToolParameters};
+use log::warn;
+use rmcp::model::CallToolRequestParam;
+use rmcp::service::RunningService;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::StreamableHttpClientTransport;
+use rmcp::{RoleClient, ServiceExt};
+use serde::Deserialize;
+use serde_json::Value;
+use std::sync::Arc;
+use std::time::Duration;
+
+pub const MCP_TOOL_PROVIDER_KIND: &str = "mcp_tool";
+
+fn default_timeout_secs() -> u64 {
+    10
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpAuthConfig {
+    Bearer { secret: String },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpToolConfig {
+    pub url: String,
+    #[serde(default)]
+    pub auth: Option<McpAuthConfig>,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Whether calls to this MCP server's tools require human approval.
+    #[serde(default)]
+    pub requires_approval: bool,
+}
+
+/// Exposes the tools of a single remote MCP server (reached over the
+/// Streamable HTTP transport) as a `ToolProvider`.
+///
+/// Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid
+/// collisions with built-in tools or other MCP servers, since
+/// `DefaultToolExecutor` dispatches by first matching name across all
+/// providers. No connection is held open between calls: the tool list is
+/// discovered once at construction and cached, and `execute()` opens a fresh
+/// connection per call (the Streamable HTTP transport supports stateless
+/// operation), which keeps this provider free of any stale-connection state.
+#[derive(Debug)]
+pub struct McpToolProvider {
+    descriptor_id: String,
+    config: McpToolConfig,
+    cached_tools: Vec<Tool>,
+    secret_manager: Arc<SecretManager>,
+}
+
+impl McpToolProvider {
+    fn prefix(&self) -> String {
+        format!("{}__", self.descriptor_id)
+    }
+
+    fn strip_prefix<'a>(&self, name: &'a str) -> Result<&'a str> {
+        name.strip_prefix(self.prefix().as_str())
+            .ok_or_else(|| anyhow!("Unknown tool: {}", name))
+    }
+}
+
+async fn resolve_auth_header(
+    auth: &Option<McpAuthConfig>,
+    secret_manager: &SecretManager,
+    security_context: &SecurityContext,
+) -> Result<Option<String>> {
+    match auth {
+        None => Ok(None),
+        Some(McpAuthConfig::Bearer { secret }) => {
+            let token = secret_manager.resolve(security_context, secret).await?;
+            Ok(Some(token))
+        }
+    }
+}
+
+async fn connect(url: &str, auth_header: Option<String>) -> Result<RunningService<RoleClient, ()>> {
+    let mut transport_config = StreamableHttpClientTransportConfig::with_uri(url.to_string());
+    if let Some(token) = auth_header {
+        transport_config = transport_config.auth_header(token);
+    }
+    let transport = StreamableHttpClientTransport::from_config(transport_config);
+    let service = ()
+        .serve(transport)
+        .await
+        .map_err(|e| anyhow!("Failed to connect to MCP server at '{}': {}", url, e))?;
+    Ok(service)
+}
+
+async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<String>) -> Result<Vec<Tool>> {
+    let service = connect(url, auth_header).await?;
+    let remote_tools = service
+        .list_all_tools()
+        .await
+        .map_err(|e| anyhow!("Failed to list tools from MCP server at '{}': {}", url, e));
+    let _ = service.cancel().await;
+    let remote_tools = remote_tools?;
+
+    Ok(remote_tools
+        .into_iter()
+        .map(|t| {
+            let description = t.description.map(|d| d.to_string()).unwrap_or_default();
+            let schema = Value::Object((*t.input_schema).clone());
+            Tool {
+                name: format!("{}__{}", descriptor_id, t.name),
+                description,
+                parameters: schema_to_tool_parameters(&schema),
+                requires_approval: false,
+            }
+        })
+        .collect())
+}
+
+/// Best-effort conversion of a JSON-Schema fragment (as used by MCP tool
+/// `input_schema`s) into `ToolParameters`. Recognizes object/string/number/
+/// array/boolean structurally; anything else (enums, oneOf, tuples, ...)
+/// falls back to a string parameter with a description hint, since
+/// `ToolParameters` does not model full JSON Schema.
+fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
+    let Some(obj) = schema.as_object() else {
+        return ToolParameters::string("Unrecognized parameter schema");
+    };
+
+    let description = obj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    match obj.get("type").and_then(|v| v.as_str()) {
+        Some("object") => {
+            let properties = obj
+                .get("properties")
+                .and_then(|v| v.as_object())
+                .map(|props| {
+                    props
+                        .iter()
+                        .map(|(k, v)| (k.clone(), schema_to_tool_parameters(v)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let required = obj
+                .get("required")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            ToolParameters::Object { properties, required }
+        }
+        Some("array") => {
+            let items = obj
+                .get("items")
+                .map(schema_to_tool_parameters)
+                .unwrap_or_else(|| ToolParameters::string("Array item"));
+            ToolParameters::Array {
+                items: Box::new(items),
+                description,
+            }
+        }
+        Some("string") => ToolParameters::String { description },
+        Some("number") | Some("integer") => ToolParameters::Number { description },
+        Some("boolean") => ToolParameters::Boolean { description },
+        _ => ToolParameters::String {
+            description: Some(description.unwrap_or_else(|| "Unrecognized parameter schema".to_string())),
+        },
+    }
+}
+
+fn call_tool_result_to_value(name: &str, result: rmcp::model::CallToolResult) -> Result<Value> {
+    let text: String = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if result.is_error == Some(true) {
+        let message = if !text.is_empty() {
+            text
+        } else {
+            serde_json::to_string(&result.content).unwrap_or_default()
+        };
+        return Err(anyhow!("MCP tool '{}' returned an error: {}", name, message));
+    }
+
+    if let Some(structured) = result.structured_content {
+        return Ok(structured);
+    }
+
+    if !text.is_empty() {
+        Ok(Value::String(text))
+    } else {
+        Ok(serde_json::to_value(&result.content).unwrap_or(Value::Null))
+    }
+}
+
+#[async_trait]
+impl ToolProvider for McpToolProvider {
+    fn tools(&self) -> Vec<Tool> {
+        self.cached_tools.clone()
+    }
+
+    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> Result<Value> {
+        let remote_name = self.strip_prefix(name)?.to_string();
+        let security_context = context.security_context().clone();
+        let auth_header = resolve_auth_header(&self.config.auth, &self.secret_manager, &security_context).await?;
+
+        let service = connect(&self.config.url, auth_header).await?;
+        let arguments = params.as_object().cloned();
+        let call = service.call_tool(CallToolRequestParam {
+            name: remote_name.clone().into(),
+            arguments,
+        });
+
+        let result = tokio::time::timeout(Duration::from_secs(self.config.timeout_secs), call).await;
+        let _ = service.cancel().await;
+
+        let result = result.map_err(|_| anyhow!("MCP tool call to '{}' timed out", name))?
+            .map_err(|e| anyhow!("MCP tool call to '{}' failed: {}", name, e))?;
+
+        call_tool_result_to_value(name, result)
+    }
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        MCP_TOOL_PROVIDER_KIND,
+        Box::new(|descriptor, context| {
+            let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
+                .map_err(|e| anyhow!("Invalid '{}' config for component '{}': {}", MCP_TOOL_PROVIDER_KIND, descriptor.id, e))?;
+
+            let secret_manager = context.secret_manager.clone();
+            let security_context = context.security_context.clone();
+            let descriptor_id = descriptor.id.clone();
+            let discovery_config = config.clone();
+
+            // Requires a multi-threaded tokio runtime (both binaries use the
+            // #[tokio::main] default); a #[tokio::test] exercising this path
+            // needs `flavor = "multi_thread"` or this panics.
+            let discovery_result: Result<Vec<Tool>> = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let discover = async {
+                        let auth_header =
+                            resolve_auth_header(&discovery_config.auth, &secret_manager, &security_context).await?;
+                        discover_tools(&descriptor_id, &discovery_config.url, auth_header).await
+                    };
+                    match tokio::time::timeout(Duration::from_secs(discovery_config.timeout_secs), discover).await {
+                        Ok(result) => result,
+                        Err(_) => Err(anyhow!("Timed out discovering tools from MCP server at '{}'", discovery_config.url)),
+                    }
+                })
+            });
+
+            let cached_tools = match discovery_result {
+                Ok(tools) => tools,
+                Err(e) => {
+                    warn!(
+                        "MCP tool component '{}' failed to connect/discover tools ({}); starting with no tools available",
+                        descriptor.id, e
+                    );
+                    Vec::new()
+                }
+            };
+
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider {
+                descriptor_id: descriptor.id.clone(),
+                config,
+                cached_tools,
+                secret_manager,
+            }));
+            Ok(facets)
+        }),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::security::DummySecurityManager;
+    use serde_json::json;
+
+    #[test]
+    fn parses_bearer_auth_config() {
+        let value = json!({
+            "url": "http://127.0.0.1:1234/mcp",
+            "auth": { "type": "bearer", "secret": "MY_TOKEN" },
+            "timeout_secs": 5
+        });
+        let config: McpToolConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.url, "http://127.0.0.1:1234/mcp");
+        assert_eq!(config.timeout_secs, 5);
+        match config.auth {
+            Some(McpAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
+            _ => panic!("Expected Bearer auth"),
+        }
+    }
+
+    #[test]
+    fn parses_config_without_auth_using_defaults() {
+        let value = json!({ "url": "http://127.0.0.1:1234/mcp" });
+        let config: McpToolConfig = serde_json::from_value(value).unwrap();
+        assert!(config.auth.is_none());
+        assert_eq!(config.timeout_secs, 10);
+        assert!(!config.requires_approval);
+    }
+
+    #[test]
+    fn namespacing_round_trips_through_prefix_stripping() {
+        let provider = McpToolProvider {
+            descriptor_id: "github-mcp".to_string(),
+            config: McpToolConfig {
+                url: "http://example.invalid/mcp".to_string(),
+                auth: None,
+                timeout_secs: 10,
+                requires_approval: false,
+            },
+            cached_tools: vec![],
+            secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
+        };
+
+        assert_eq!(provider.prefix(), "github-mcp__");
+        let stripped = provider.strip_prefix("github-mcp__search").unwrap();
+        assert_eq!(stripped, "search");
+        assert!(provider.strip_prefix("unrelated_tool").is_err());
+    }
+
+    #[test]
+    fn schema_conversion_recognizes_basic_types() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query" },
+                "limit": { "type": "number" },
+                "verbose": { "type": "boolean" },
+                "tags": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["query"]
+        });
+
+        let params = schema_to_tool_parameters(&schema);
+        match params {
+            ToolParameters::Object { properties, required } => {
+                assert_eq!(required, vec!["query".to_string()]);
+                assert!(matches!(properties.get("query"), Some(ToolParameters::String { .. })));
+                assert!(matches!(properties.get("limit"), Some(ToolParameters::Number { .. })));
+                assert!(matches!(properties.get("verbose"), Some(ToolParameters::Boolean { .. })));
+                assert!(matches!(properties.get("tags"), Some(ToolParameters::Array { .. })));
+            }
+            _ => panic!("Expected Object"),
+        }
+    }
+
+    #[test]
+    fn schema_conversion_falls_back_to_string_for_unrecognized_schema() {
+        let schema = json!({ "oneOf": [{ "type": "string" }, { "type": "number" }] });
+        let params = schema_to_tool_parameters(&schema);
+        assert!(matches!(params, ToolParameters::String { .. }));
+    }
+}

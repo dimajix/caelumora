@@ -16,3 +16,5 @@ pub mod component;
 pub mod event;
 pub mod security;
 pub mod actor;
+pub mod secret;
+pub mod secret_impl;

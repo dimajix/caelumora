@@ -26,6 +26,15 @@ pub enum ToolParameters {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+    Array {
+        items: Box<ToolParameters>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    Boolean {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
 }
 
 impl ToolParameters {
@@ -37,6 +46,19 @@ impl ToolParameters {
 
     pub fn number(description: impl Into<String>) -> Self {
         Self::Number {
+            description: Some(description.into()),
+        }
+    }
+
+    pub fn boolean(description: impl Into<String>) -> Self {
+        Self::Boolean {
+            description: Some(description.into()),
+        }
+    }
+
+    pub fn array(items: ToolParameters, description: impl Into<String>) -> Self {
+        Self::Array {
+            items: Box::new(items),
             description: Some(description.into()),
         }
     }
@@ -85,4 +107,32 @@ pub struct ToolCallState {
     pub tool_call: ToolCall,
     pub description: String,
     pub result: Option<String>
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boolean_and_array_round_trip_through_json() {
+        let params = ToolParameters::object(
+            vec![
+                ("enabled", ToolParameters::boolean("Whether the feature is enabled")),
+                ("tags", ToolParameters::array(ToolParameters::string("A tag"), "List of tags")),
+            ],
+            vec!["enabled"],
+        );
+
+        let json = serde_json::to_value(&params).unwrap();
+        let round_tripped: ToolParameters = serde_json::from_value(json).unwrap();
+        assert_eq!(params, round_tripped);
+
+        match round_tripped {
+            ToolParameters::Object { properties, .. } => {
+                assert!(matches!(properties.get("enabled"), Some(ToolParameters::Boolean { .. })));
+                assert!(matches!(properties.get("tags"), Some(ToolParameters::Array { .. })));
+            }
+            _ => panic!("Expected Object"),
+        }
+    }
 }

@@ -339,6 +339,8 @@ mod tests {
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::{Approver, ApproverId};
     use caelumora_model::channel::{Channel, ChannelId, Participant};
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::EntityStore;
     use caelumora_model::tool::ToolCall;
@@ -347,10 +349,14 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
+    fn test_secret_manager() -> Arc<SecretManager> {
+        Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())))
+    }
+
     #[tokio::test]
     async fn test_approval_actor_any_strategy() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
+        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()));
 
         let agent_id = AgentId::new();
         let session_id = SessionId::new();
@@ -447,7 +453,7 @@ mod tests {
     #[tokio::test]
     async fn test_approval_actor_dynamic_membership() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
+        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()));
 
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();
@@ -550,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn test_approval_actor_leave_decision() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
-        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone()));
+        let runtime_manager = Arc::new(RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()));
 
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();

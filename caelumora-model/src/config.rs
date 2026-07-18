@@ -1,12 +1,15 @@
+use crate::secret::SecretManager;
+use crate::secret_impl::env::EnvSecretProvider;
+use crate::secret_impl::file::FileSecretProvider;
+use crate::security::SecurityManager;
+use crate::store::{EntityStore, StateStore};
+use crate::store_impl::json::JsonFileStore;
+use crate::store_impl::memory::MemoryStore;
+use anyhow::Result;
+use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use anyhow::{Result};
-use crate::security::{SecurityManager};
-use serde::Deserialize;
-use crate::store::{StateStore, EntityStore};
-use crate::store_impl::json::JsonFileStore;
-use crate::store_impl::memory::MemoryStore;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct JsonConfig {
@@ -28,9 +31,27 @@ pub struct PersistenceConfig {
     pub state_store: Option<PersistenceBackend>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct FileSecretProviderConfig {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SecretProviderConfig {
+    File(FileSecretProviderConfig),
+    Env,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SecretsConfig {
+    pub providers: Vec<SecretProviderConfig>,
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
+    pub secrets: Option<SecretsConfig>,
 }
 
 impl AppConfig {
@@ -68,6 +89,28 @@ impl AppConfig {
             }
         };
         Ok(store)
+    }
+
+    pub fn create_secret_manager(&self, security_manager: Arc<dyn SecurityManager>) -> Result<Arc<SecretManager>> {
+        let provider_configs: Vec<SecretProviderConfig> = match &self.secrets {
+            Some(secrets) => secrets.providers.clone(),
+            None => vec![
+                SecretProviderConfig::File(FileSecretProviderConfig { path: PathBuf::from("local/secrets.json") }),
+                SecretProviderConfig::Env,
+            ],
+        };
+
+        let providers = provider_configs
+            .into_iter()
+            .map(|config| match config {
+                SecretProviderConfig::File(file) => {
+                    Arc::new(FileSecretProvider::new(file.path)) as Arc<dyn crate::secret::SecretProvider>
+                }
+                SecretProviderConfig::Env => Arc::new(EnvSecretProvider::new()) as Arc<dyn crate::secret::SecretProvider>,
+            })
+            .collect();
+
+        Ok(Arc::new(SecretManager::new(providers, security_manager)))
     }
 }
 
@@ -121,5 +164,42 @@ persistence: {}
         assert!(config.persistence.is_some());
         let p = config.persistence.unwrap();
         assert!(p.state_store.is_none());
+    }
+
+    #[test]
+    fn test_load_config_secrets() {
+        let yaml = r#"
+secrets:
+  providers:
+    - type: file
+      path: "local/secrets.json"
+    - type: env
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let secrets = config.secrets.expect("secrets config present");
+        assert_eq!(secrets.providers.len(), 2);
+        match &secrets.providers[0] {
+            SecretProviderConfig::File(file) => assert_eq!(file.path, PathBuf::from("local/secrets.json")),
+            _ => panic!("Expected File provider first"),
+        }
+        assert!(matches!(secrets.providers[1], SecretProviderConfig::Env));
+    }
+
+    #[tokio::test]
+    async fn test_create_secret_manager_defaults_fall_through_to_env() {
+        // With no `secrets` config, the default provider chain is
+        // [File("local/secrets.json"), Env]. Since that file does not exist
+        // in the test working directory, a lookup should fall through to
+        // the env provider.
+        std::env::set_var("CAELUMORA_TEST_CONFIG_SECRET", "value-from-env");
+        let config = AppConfig::default();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let manager = config.create_secret_manager(security_manager).unwrap();
+        let value = manager
+            .resolve(&crate::security::SecurityContext::default(), "CAELUMORA_TEST_CONFIG_SECRET")
+            .await
+            .unwrap();
+        assert_eq!(value, "value-from-env");
+        std::env::remove_var("CAELUMORA_TEST_CONFIG_SECRET");
     }
 }

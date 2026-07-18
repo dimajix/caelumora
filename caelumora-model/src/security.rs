@@ -29,6 +29,7 @@ pub enum ActionType<'a> {
     UpdateSession(&'a Session),
     ListSessions,
     CallTool(&'a ToolCall),
+    ReadSecret(&'a str),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

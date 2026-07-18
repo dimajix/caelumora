@@ -23,6 +23,20 @@ Caelumora uses a pluggable component-based architecture for defining agent behav
 *   **`ComponentContainer`**: Responsible for instantiating and managing the lifecycle of components based on the `ComponentConfig`.
 *   **Traits**: Components implement specific traits like `MessageProcessor`, `PerceiveInProcessor`, `PlanPreProcessor`, or `ContextProvider` to participate in different stages of the agent loop.
 
+### Tool Components
+
+Agents gain capabilities through components implementing `ToolProvider` (one component can expose multiple `Tool`s). Built-in providers include `echo_tool`, `calculator_tool`, and `stop_tool`. An `mcp_tool` component exposes the tools of a remote MCP (Model Context Protocol) server, reached over the Streamable HTTP transport:
+
+```json
+{ "id": "github-mcp", "kind": "mcp_tool", "params": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } }
+```
+
+Multiple `mcp_tool` instances (one per server) can coexist; each server's tools are exposed namespaced as `"{component_id}__{remote_tool_name}"` to avoid name collisions. The tool list is discovered once when the component is built and cached; a server that is unreachable at that point does not fail the whole agent — it simply starts with no tools available. `auth.secret` names a secret resolved through the secret-provider chain (see below), never a literal credential.
+
+## Secret Management
+
+Component configuration (such as an `mcp_tool`'s `auth.secret`) may need to reference credentials without embedding them directly in persisted config. `SecretProvider` (`caelumora-model`) is a pluggable source of secrets; a `SecretManager` holds an ordered list of providers and tries them in turn, returning the first match. Built-in providers are `FileSecretProvider` (a flat JSON key/value file, re-read on every lookup so secrets can rotate without a restart) and `EnvSecretProvider` (process environment variables). `AppConfig`'s `secrets` section configures the provider chain; the default, if unspecified, is `[File("local/secrets.json"), Env]`. Every `SecretManager::resolve` call is gated through the `SecurityManager` (`ActionType::ReadSecret`) before any provider is consulted, consistent with how `EntityStore`/`StateStore` gate access on a `SecurityContext`.
+
 ## Agent Cognitive Cycle
 
 The agent cognitive cycle (implemented within `AgentActor`) defines how an agent processes information and generates responses. It typically follows these stages:

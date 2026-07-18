@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
+use caelumora_model::secret::SecretManager;
+use caelumora_model::security::SecurityContext;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -8,6 +10,8 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct ComponentContext {
     pub deps: HashMap<String, ComponentFacets>,
+    pub security_context: SecurityContext,
+    pub secret_manager: Arc<SecretManager>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -93,6 +97,8 @@ impl ComponentContainer {
     pub fn from_config(
         config: &ComponentConfig,
         registry: &ComponentRegistry,
+        security_context: SecurityContext,
+        secret_manager: Arc<SecretManager>,
     ) -> Result<Self> {
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
@@ -150,7 +156,9 @@ impl ComponentContainer {
             }
 
             let context = ComponentContext {
-                deps: dep_facets
+                deps: dep_facets,
+                security_context: security_context.clone(),
+                secret_manager: secret_manager.clone(),
             };
 
             let facets = registry.build(node_config, &context)?;

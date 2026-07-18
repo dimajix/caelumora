@@ -53,6 +53,15 @@ enum OllamaFunctionParameters {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+    Array {
+        items: Box<OllamaFunctionParameters>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    Boolean {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
 }
 
 impl From<caelumora_model::tool::ToolParameters> for OllamaFunctionParameters {
@@ -73,6 +82,15 @@ impl From<caelumora_model::tool::ToolParameters> for OllamaFunctionParameters {
             }
             caelumora_model::tool::ToolParameters::Number { description } => {
                 OllamaFunctionParameters::Number { description }
+            }
+            caelumora_model::tool::ToolParameters::Array { items, description } => {
+                OllamaFunctionParameters::Array {
+                    items: Box::new(OllamaFunctionParameters::from(*items)),
+                    description,
+                }
+            }
+            caelumora_model::tool::ToolParameters::Boolean { description } => {
+                OllamaFunctionParameters::Boolean { description }
             }
         }
     }
