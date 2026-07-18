@@ -87,9 +87,8 @@ impl AgentActor {
 
         let components = ComponentContainer::from_config(
             &personality.components,
-            actor_runtime.component_registry().as_ref(),
+            &actor_runtime,
             security_context.clone(),
-            actor_runtime.secret_manager(),
         )?;
         let context_provider = components.get_all::<dyn ContextProvider>(None)?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;

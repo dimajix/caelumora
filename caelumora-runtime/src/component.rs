@@ -1,3 +1,4 @@
+use crate::runtime::ActorRuntime;
 use anyhow::{anyhow, Result};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
@@ -96,10 +97,12 @@ pub struct ComponentContainer {
 impl ComponentContainer {
     pub fn from_config(
         config: &ComponentConfig,
-        registry: &ComponentRegistry,
+        actor_runtime: &ActorRuntime,
         security_context: SecurityContext,
-        secret_manager: Arc<SecretManager>,
     ) -> Result<Self> {
+        let registry = actor_runtime.component_registry();
+        let secret_manager = actor_runtime.secret_manager();
+
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
         let mut config_by_id: HashMap<String, &ComponentDescriptor> = HashMap::new();

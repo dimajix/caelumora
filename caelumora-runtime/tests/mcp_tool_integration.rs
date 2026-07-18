@@ -4,8 +4,10 @@ use std::sync::Arc;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
-use caelumora_runtime::component::{ComponentContainer, ComponentRegistry};
+use caelumora_model::store_impl::memory::MemoryStore;
+use caelumora_runtime::component::ComponentContainer;
 use caelumora_runtime::component_impl::mcp;
+use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::tool::ToolProvider;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -64,8 +66,10 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 }
 
 fn build_container(url: &str) -> ComponentContainer {
-    let mut registry = ComponentRegistry::new();
-    mcp::register(&mut registry);
+    let store = Arc::new(MemoryStore::new());
+    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager);
+    let actor_runtime = runtime_manager.new_actor_runtime();
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -78,8 +82,7 @@ fn build_container(url: &str) -> ComponentContainer {
         }],
     };
 
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    ComponentContainer::from_config(&config, &registry, SecurityContext::default(), secret_manager).unwrap()
+    ComponentContainer::from_config(&config, &actor_runtime, SecurityContext::default()).unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
