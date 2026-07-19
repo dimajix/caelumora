@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
 use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::tool::{Tool, ToolCall, ToolResult};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub enum ToolError {
     PermissionDenied(String),
 }
 
-pub type ToolExecResult<T> = Result<T, ToolError>;
+pub type ToolResult<T> = Result<T, ToolError>;
 
 #[async_trait]
 pub trait ToolProvider: Send + Sync + Debug {
@@ -32,9 +32,9 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 
     /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolExecResult<Value>;
+    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value>;
     /// Provides a textual description for a specific tool call
-    fn describe(&self,  name: &str, _params: &Value) -> ToolExecResult<String> {
+    fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
         let tools = self.tools();
         if let Some(tool) = tools.iter().find(|t| t.name == name) {
             Ok(tool.description.to_string())
@@ -68,8 +68,8 @@ pub enum ExecutionStatus {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolExecResult<ToolResult>;
-    fn describe(&self, call: &ToolCall) -> ToolExecResult<String>;
+    async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolResult<ToolCallResult>;
+    fn describe(&self, call: &ToolCall) -> ToolResult<String>;
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
 }
@@ -94,7 +94,7 @@ impl DefaultToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolExecResult<ToolResult> {
+    async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolResult<ToolCallResult> {
         let security = &context.security_context();
         info!(
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
@@ -127,7 +127,7 @@ impl ToolExecutor for DefaultToolExecutor {
                     Ok(value) => {
                         _execution.status = ExecutionStatus::Completed;
                         _execution.finished_at = Some(Utc::now());
-                        Ok(ToolResult {
+                        Ok(ToolCallResult {
                             id: call.id.clone(),
                             tool_name: call.function_name.clone(),
                             content: value.to_string(),
@@ -145,7 +145,7 @@ impl ToolExecutor for DefaultToolExecutor {
         Err(ToolError::UnknownTool(tool_name.clone()))
     }
 
-    fn describe(&self, call: &ToolCall) -> ToolExecResult<String> {
+    fn describe(&self, call: &ToolCall) -> ToolResult<String> {
         let tool_name = &call.function_name;
         for provider in &self.tool_providers {
             let tools = provider.tools();
@@ -194,7 +194,7 @@ mod tests {
                 requires_approval: self.requires_approval,
             }]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _context: &mut TurnContext) -> ToolExecResult<Value> {
+        async fn execute(&self, _name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
             Ok(json!({"result": "ok"}))
         }
     }

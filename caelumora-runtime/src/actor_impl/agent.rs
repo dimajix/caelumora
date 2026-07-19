@@ -18,7 +18,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::{ToolCall, ToolCallState, ToolResult};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
@@ -295,7 +295,7 @@ impl AgentActor {
 
             let mut tool_results = Vec::new();
             for c in turn_context.take_tool_calls() {
-                tool_results.push(ToolResult {
+                tool_results.push(ToolCallResult {
                     id: c.tool_call.id,
                     tool_name: c.tool_call.function_name,
                     content: c.result.unwrap(),

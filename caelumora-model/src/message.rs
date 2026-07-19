@@ -1,5 +1,5 @@
 use crate::actor::ActorId;
-use crate::tool::{ToolCall, ToolResult};
+use crate::tool::{ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
@@ -21,6 +21,7 @@ pub enum MessageRole {
 pub struct Message {
     pub id: MessageId,
     pub prev_id: MessageId,
+    pub timestamp: DateTime<Utc>,
     pub sender_id: ActorId,
     pub sender_name: String,
     pub role: MessageRole,
@@ -31,8 +32,7 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_results: Vec<ToolResult>,
-    pub timestamp: DateTime<Utc>,
+    pub tool_results: Vec<ToolCallResult>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
     // Usage statistics

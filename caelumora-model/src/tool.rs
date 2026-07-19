@@ -94,7 +94,7 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
+pub struct ToolCallResult {
     pub id: Option<String>,
     pub tool_name: String,
     pub content: String,

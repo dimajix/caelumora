@@ -1,6 +1,6 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
-use crate::tool::{ToolError, ToolExecResult, ToolProvider};
+use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
@@ -79,7 +79,7 @@ impl McpToolProvider {
         format!("{}__", self.descriptor_id)
     }
 
-    fn strip_prefix<'a>(&self, name: &'a str) -> ToolExecResult<&'a str> {
+    fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
         name.strip_prefix(self.prefix().as_str())
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
     }
@@ -220,7 +220,7 @@ impl ToolProvider for McpToolProvider {
         self.cached_tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolExecResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = context.security_context().clone();
 

@@ -1,6 +1,6 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::tool::{ToolError, ToolExecResult, ToolProvider};
+use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
 use caelumora_model::tool::{Tool, ToolParameters};
@@ -43,7 +43,7 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, context: &mut TurnContext) -> ToolExecResult<Value> {
+    async fn execute(&self, name: &str, _params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
@@ -79,7 +79,7 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolExecResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
         if name == "echo" {
             Ok(params.clone())
         } else {
@@ -105,7 +105,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolExecResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
         if name == "calculate" {
             let expression = params["expression"]
                 .as_str()
