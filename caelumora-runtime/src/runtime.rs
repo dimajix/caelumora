@@ -11,6 +11,7 @@ use crate::moderator_impl::round_robin::RoundRobinModerator;
 use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
+use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityManager};
 use caelumora_model::store::{EntityStore, StateStore};
@@ -71,19 +72,26 @@ impl ActorRuntime {
 }
 
 impl RuntimeManager {
-    pub fn new(state_store: Arc<dyn StateStore>, entity_store: Arc<dyn EntityStore>, secret_manager: Arc<SecretManager>) -> Self {
+    pub fn new(
+        state_store: Arc<dyn StateStore>,
+        entity_store: Arc<dyn EntityStore>,
+        secret_manager: Arc<SecretManager>,
+        shared_components: &ComponentConfig,
+    ) -> Result<Self> {
         let mut component_registry = ComponentRegistry::new();
         history::register(&mut component_registry);
         context::register(&mut component_registry);
         tool::register(&mut component_registry);
         mcp::register(&mut component_registry);
 
+        component_registry.configure(&shared_components.component_nodes)?;
+
         let security_manager = Arc::new(DummySecurityManager::new());
 
         let event_bus = Arc::new(EventBus::new());
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
 
-        Self {
+        Ok(Self {
             security_manager,
             state_store,
             entity_store,
@@ -92,7 +100,7 @@ impl RuntimeManager {
             component_registry: Arc::new(component_registry),
             event_bus,
             controller_manager,
-        }
+        })
     }
 
     pub fn new_actor_runtime(&self) -> ActorRuntime {

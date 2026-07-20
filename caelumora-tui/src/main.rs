@@ -260,7 +260,12 @@ async fn main() -> anyhow::Result<()> {
     let entity_store = config.create_entity_store(security_manager.clone())?;
     let secret_manager = config.create_secret_manager(security_manager.clone())?;
 
-    let runtime = Arc::new(RuntimeManager::new(state_store.clone(), entity_store.clone(), secret_manager));
+    let runtime = Arc::new(RuntimeManager::new(
+        state_store.clone(),
+        entity_store.clone(),
+        secret_manager,
+        &config.components.clone().unwrap_or_default(),
+    )?);
     let template = setup_templates(&entity_store).await?;
 
     let session_id = SessionId(Uuid::new_v4());

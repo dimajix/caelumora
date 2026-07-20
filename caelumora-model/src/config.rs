@@ -1,3 +1,4 @@
+use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
 use crate::secret_impl::file::FileSecretProvider;
@@ -63,6 +64,7 @@ pub struct SecretsConfig {
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
     pub secrets: Option<SecretsConfig>,
+    pub components: Option<ComponentConfig>,
 }
 
 impl AppConfig {

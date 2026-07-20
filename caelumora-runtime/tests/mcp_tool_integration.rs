@@ -68,7 +68,7 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 fn build_container(url: &str) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager);
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, &ComponentConfig::default()).unwrap();
     let actor_runtime = runtime_manager.new_actor_runtime();
 
     let config = ComponentConfig {
@@ -113,6 +113,56 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
         .await
         .unwrap();
     assert_eq!(result, json!("hello mcp"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shared_component_via_ref_reuses_config_but_builds_independently_per_container() {
+    let (addr, _server) = start_test_server().await;
+    let url = format!("http://{}/mcp", addr);
+
+    let store = Arc::new(MemoryStore::new());
+    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+    let shared_components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "shared-echo".to_string(),
+            kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
+            params: json!({ "url": url }),
+            deps: vec![],
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailOpen,
+        }],
+    };
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, &shared_components).unwrap();
+    let actor_runtime = runtime_manager.new_actor_runtime();
+
+    let ref_config = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            id: "github-tool".to_string(),
+            kind: caelumora_runtime::component::PRECONFIGURED_REF_KIND.to_string(),
+            params: json!({ "id": "shared-echo" }),
+            deps: vec![],
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailOpen,
+        }],
+    };
+
+    // Two independent containers (simulating two personalities, each with its own
+    // SecurityContext) both referencing the same shared component config by id.
+    let container_a = ComponentContainer::from_config(&ref_config, &actor_runtime, SecurityContext::default()).unwrap();
+    let container_b = ComponentContainer::from_config(&ref_config, &actor_runtime, SecurityContext::default()).unwrap();
+
+    let provider_a = container_a.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
+    let provider_b = container_b.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
+
+    // Each container builds its own instance (using its own ComponentContext), rather than
+    // sharing a single instance built once under a synthetic system context.
+    assert!(!Arc::ptr_eq(&provider_a, &provider_b));
+
+    for provider in [&provider_a, &provider_b] {
+        let tools = provider.tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "shared-echo__echo");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
