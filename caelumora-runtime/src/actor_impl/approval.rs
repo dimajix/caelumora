@@ -339,7 +339,6 @@ mod tests {
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::{Approver, ApproverId};
     use caelumora_model::channel::{Channel, ChannelId, Participant};
-    use caelumora_model::component::ComponentConfig;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
@@ -358,7 +357,7 @@ mod tests {
     async fn test_approval_actor_any_strategy() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), &ComponentConfig::default()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()).unwrap(),
         );
 
         let agent_id = AgentId::new();
@@ -457,7 +456,7 @@ mod tests {
     async fn test_approval_actor_dynamic_membership() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), &ComponentConfig::default()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()).unwrap(),
         );
 
         let session_id = SessionId::new();
@@ -562,7 +561,7 @@ mod tests {
     async fn test_approval_actor_leave_decision() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), &ComponentConfig::default()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()).unwrap(),
         );
 
         let session_id = SessionId::new();

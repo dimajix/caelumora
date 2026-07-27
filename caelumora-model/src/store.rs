@@ -3,6 +3,7 @@ use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
+use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId, SessionState};
@@ -59,6 +60,12 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
+
+    // Preconfigured components (referenceable elsewhere via `kind: "ref"`)
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor>;
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>>;
+    async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;
+    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
 }
 
 #[async_trait]

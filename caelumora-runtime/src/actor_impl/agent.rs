@@ -89,7 +89,8 @@ impl AgentActor {
             &personality.components,
             &actor_runtime,
             security_context.clone(),
-        )?;
+        )
+        .await?;
         let context_provider = components.get_all::<dyn ContextProvider>(None)?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;

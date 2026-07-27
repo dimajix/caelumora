@@ -1,5 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
+use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
@@ -20,6 +21,7 @@ pub struct MemoryStore {
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     session_states: RwLock<HashMap<SessionId, SessionState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
+    components: RwLock<HashMap<String, ComponentDescriptor>>,
 }
 
 impl MemoryStore {
@@ -256,6 +258,29 @@ impl EntityStore for MemoryStore {
             v.insert(value.id, value.clone());
             Ok(())
         })?
+    }
+
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
+        let _ = ctx; // Placeholder for security check
+        let values = self.read_lock(&self.components, |v| v.clone())?;
+        require_entity(values.get(id).cloned(), "component", id.to_string())
+    }
+
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
+        let _ = ctx; // Placeholder for security check
+        self.read_lock(&self.components, |v| v.values().cloned().collect())
+    }
+
+    async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
+        let _ = ctx; // Placeholder for security check
+        self.write_lock(&self.components, |v| {
+            v.insert(value.id.clone(), value.clone());
+        })
+    }
+
+    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
+        let _ = ctx; // Placeholder for security check
+        self.write_lock(&self.components, |v| v.remove(id).is_some())
     }
 }
 

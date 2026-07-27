@@ -264,7 +264,6 @@ async fn main() -> anyhow::Result<()> {
         state_store.clone(),
         entity_store.clone(),
         secret_manager,
-        &config.components.clone().unwrap_or_default(),
     )?);
     let template = setup_templates(&entity_store).await?;
 

@@ -2,6 +2,7 @@ use crate::runtime::ActorRuntime;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::store::EntityStore;
 use serde::Deserialize;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
@@ -57,7 +58,7 @@ impl ComponentFacets {
 
 pub type ComponentFactory = Box<dyn Fn(&ComponentDescriptor, &ComponentContext) -> ComponentResult<ComponentFacets> + Send + Sync>;
 
-/// Reserved `kind` that resolves to a preconfigured component (see `ComponentRegistry::configure`)
+/// Reserved `kind` that resolves to a preconfigured component stored in the `EntityStore`
 /// instead of invoking a factory. `params` must deserialize to `{ "id": "<preconfigured id>" }`.
 pub const PRECONFIGURED_REF_KIND: &str = "ref";
 
@@ -66,63 +67,59 @@ struct PreconfiguredRef {
     id: String,
 }
 
-#[derive(Default)]
 pub struct ComponentRegistry {
     factories: HashMap<String, ComponentFactory>,
-    preconfigured: HashMap<String, ComponentDescriptor>,
+    entity_store: Arc<dyn EntityStore>,
 }
 
 impl std::fmt::Debug for ComponentRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComponentRegistry")
             .field("factory_count", &self.factories.len())
-            .field("preconfigured_count", &self.preconfigured.len())
             .finish()
     }
 }
 
 impl ComponentRegistry {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(entity_store: Arc<dyn EntityStore>) -> Self {
+        Self {
+            factories: HashMap::new(),
+            entity_store,
+        }
     }
 
     pub fn register(&mut self, kind: &str, factory: ComponentFactory) {
         self.factories.insert(kind.to_string(), factory);
     }
 
-    /// Registers descriptors that can be referenced elsewhere via `kind: "ref"`. Descriptors are
-    /// *not* built here — each `ref` is built fresh, on demand, inside `build()`, using the
-    /// ComponentContext of whichever component graph is referencing it. This ensures things like
-    /// secret resolution run under the actual caller's ComponentContext rather than a synthetic
-    /// one, at the cost of not sharing a single instance across references (e.g. a preconfigured
-    /// `mcp_tool` re-runs discovery for every personality that references it).
-    pub fn configure(&mut self, descriptors: &[ComponentDescriptor]) -> ComponentResult<()> {
-        for descriptor in descriptors {
+    /// Builds a component node. `kind: "ref"` nodes are resolved by fetching the preconfigured
+    /// descriptor from the EntityStore, fresh on every call, using the ComponentContext of
+    /// whichever component graph is referencing it. This ensures things like secret resolution
+    /// run under the actual caller's ComponentContext rather than a synthetic one, at the cost of
+    /// not sharing a single instance across references (e.g. a preconfigured `mcp_tool` re-runs
+    /// discovery for every personality that references it).
+    async fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
+        if node.kind == PRECONFIGURED_REF_KIND {
+            let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
+                .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            let descriptor = self
+                .entity_store
+                .get_component(&context.security_context, &target.id)
+                .await
+                .map_err(|e| ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e)))?;
             if descriptor.kind == PRECONFIGURED_REF_KIND {
                 return Err(ComponentError::InvalidConfig(format!(
                     "preconfigured component '{}' cannot itself be a ref",
                     descriptor.id
                 )));
             }
-            if self.preconfigured.contains_key(&descriptor.id) {
-                return Err(ComponentError::DuplicateId(descriptor.id.clone()));
-            }
-            self.preconfigured.insert(descriptor.id.clone(), descriptor.clone());
+            return self.dispatch(&descriptor, context);
         }
-        Ok(())
+
+        self.dispatch(node, context)
     }
 
-    fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
-        if node.kind == PRECONFIGURED_REF_KIND {
-            let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
-                .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-            let descriptor = self
-                .preconfigured
-                .get(&target.id)
-                .ok_or_else(|| ComponentError::InvalidConfig(format!("no preconfigured component '{}'", target.id)))?;
-            return self.build(descriptor, context);
-        }
-
+    fn dispatch(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
         let Some(factory) = self.factories.get(&node.kind) else {
             return Err(ComponentError::UnsupportedKind(node.kind.clone()));
         };
@@ -156,7 +153,7 @@ pub struct ComponentContainer {
 }
 
 impl ComponentContainer {
-    pub fn from_config(
+    pub async fn from_config(
         config: &ComponentConfig,
         actor_runtime: &ActorRuntime,
         security_context: SecurityContext,
@@ -225,7 +222,7 @@ impl ComponentContainer {
                 secret_manager: secret_manager.clone(),
             };
 
-            let facets = registry.build(node_config, &context)?;
+            let facets = registry.build(node_config, &context).await?;
             nodes.insert(
                 id.clone(),
                 ComponentNode {
@@ -300,6 +297,7 @@ mod tests {
     use super::*;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::session::SessionId;
+    use caelumora_model::store_impl::memory::MemoryStore;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -336,14 +334,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn ref_kind_builds_fresh_using_the_callers_context_each_time() {
+    #[tokio::test]
+    async fn ref_kind_builds_fresh_using_the_callers_context_each_time() {
         let build_count = Arc::new(AtomicUsize::new(0));
         let counted = build_count.clone();
         let seen_sessions: Arc<Mutex<Vec<SessionId>>> = Arc::new(Mutex::new(Vec::new()));
         let recorded = seen_sessions.clone();
 
-        let mut registry = ComponentRegistry::new();
+        let store = Arc::new(MemoryStore::new());
+        store
+            .put_component(&SecurityContext::default(), &descriptor("shared-marker", "counter", json!({})))
+            .await
+            .unwrap();
+
+        let mut registry = ComponentRegistry::new(store);
         registry.register(
             "counter",
             Box::new(move |_node, context| {
@@ -355,45 +359,42 @@ mod tests {
             }),
         );
 
-        registry.configure(&[descriptor("shared-marker", "counter", json!({}))]).unwrap();
-
         let ref_a = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "shared-marker" }));
         let ref_b = descriptor("ref-b", PRECONFIGURED_REF_KIND, json!({ "id": "shared-marker" }));
 
         let session_a = SessionId::new();
         let session_b = SessionId::new();
-        let facets_a = registry.build(&ref_a, &context_with_session(session_a)).unwrap();
-        let facets_b = registry.build(&ref_b, &context_with_session(session_b)).unwrap();
+        let facets_a = registry.build(&ref_a, &context_with_session(session_a)).await.unwrap();
+        let facets_b = registry.build(&ref_b, &context_with_session(session_b)).await.unwrap();
 
         assert_eq!(build_count.load(Ordering::SeqCst), 2, "each ref must build fresh, not reuse a cached instance");
         assert_eq!(*seen_sessions.lock().unwrap(), vec![session_a, session_b], "the factory must see the caller's own context, not a synthetic one");
         assert!(!Arc::ptr_eq(&facets_a.get::<dyn Marker>().unwrap(), &facets_b.get::<dyn Marker>().unwrap()));
     }
 
-    #[test]
-    fn ref_kind_errors_on_unknown_id() {
-        let registry = ComponentRegistry::new();
+    #[tokio::test]
+    async fn ref_kind_errors_on_unknown_id() {
+        let store = Arc::new(MemoryStore::new());
+        let registry = ComponentRegistry::new(store);
         let node = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "does-not-exist" }));
-        let result = registry.build(&node, &test_context());
+        let result = registry.build(&node, &test_context()).await;
         assert!(matches!(result, Err(ComponentError::InvalidConfig(_))));
     }
 
-    #[test]
-    fn configure_rejects_duplicate_ids() {
-        let mut registry = ComponentRegistry::new();
-        registry.register("counter", Box::new(|_node, _context| Ok(ComponentFacets::empty())));
+    #[tokio::test]
+    async fn ref_kind_rejects_a_preconfigured_descriptor_that_is_itself_a_ref() {
+        let store = Arc::new(MemoryStore::new());
+        store
+            .put_component(
+                &SecurityContext::default(),
+                &descriptor("a", PRECONFIGURED_REF_KIND, json!({ "id": "b" })),
+            )
+            .await
+            .unwrap();
 
-        let result = registry.configure(&[
-            descriptor("dup", "counter", json!({})),
-            descriptor("dup", "counter", json!({})),
-        ]);
-        assert!(matches!(result, Err(ComponentError::DuplicateId(id)) if id == "dup"));
-    }
-
-    #[test]
-    fn configure_rejects_ref_kind_as_a_preconfigured_descriptor() {
-        let mut registry = ComponentRegistry::new();
-        let result = registry.configure(&[descriptor("a", PRECONFIGURED_REF_KIND, json!({ "id": "b" }))]);
+        let registry = ComponentRegistry::new(store);
+        let node = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "a" }));
+        let result = registry.build(&node, &test_context()).await;
         assert!(matches!(result, Err(ComponentError::InvalidConfig(_))));
     }
 }

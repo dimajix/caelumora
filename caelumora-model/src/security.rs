@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::agent::{Agent, AgentId, Personality, PersonalityId};
 use crate::channel::ChannelId;
+use crate::component::ComponentDescriptor;
 use crate::session::Session;
 use crate::session::SessionId;
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -30,6 +31,10 @@ pub enum ActionType<'a> {
     ListSessions,
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
+    GetComponent(&'a str),
+    ListComponents,
+    PutComponent(&'a ComponentDescriptor),
+    DeleteComponent(&'a str),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

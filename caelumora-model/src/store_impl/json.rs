@@ -1,5 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{ChannelId, ChannelState};
+use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityManager;
 use crate::session::{Session, SessionId, SessionState};
@@ -46,6 +47,7 @@ impl JsonFileStore {
             self.agent_channel_states_dir(),
             self.session_states_dir(),
             self.channel_states_dir(),
+            self.components_dir(),
         ];
 
         for dir in dirs {
@@ -90,6 +92,10 @@ impl JsonFileStore {
         self.root.join("runtime").join("channel_state")
     }
 
+    fn components_dir(&self) -> PathBuf {
+        self.root.join("templates").join("components")
+    }
+
     fn personality_path(&self, id: PersonalityId) -> PathBuf {
         self.personality_dir().join(format!("{id}.json"))
     }
@@ -127,6 +133,11 @@ impl JsonFileStore {
 
     fn channel_state_path(&self, id: ChannelId) -> PathBuf {
         self.channel_states_dir().join(format!("{id}.json"))
+    }
+
+    fn component_path(&self, id: &str) -> PathBuf {
+        self.components_dir()
+            .join(format!("{}.json", sanitize_file_component(id)))
     }
 }
 
@@ -507,6 +518,49 @@ impl EntityStore for JsonFileStore {
                 value,
             },
         )
+    }
+
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
+        if !self.security_manager.check(ctx, ActionType::GetComponent(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        let path = self.component_path(id);
+        info!("Reading component from {}", path.display());
+        let loaded = read_json_opt::<Persisted<ComponentDescriptor>>(&path)?.map(|p| p.value);
+        require_entity(loaded, "component", id.to_string())
+    }
+
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
+        if !self.security_manager.check(ctx, ActionType::ListComponents).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        Ok(read_all_from_dir::<Persisted<ComponentDescriptor>>(&self.components_dir())?
+            .into_iter()
+            .map(|p| p.value)
+            .collect())
+    }
+
+    async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
+        if !self.security_manager.check(ctx, ActionType::PutComponent(value)).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        let path = self.component_path(&value.id);
+        info!("Writing component to {}", path.display());
+        write_json_atomic(
+            &path,
+            &Persisted {
+                schema_version: 1,
+                persisted_at: Utc::now(),
+                value,
+            },
+        )
+    }
+
+    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
+        if !self.security_manager.check(ctx, ActionType::DeleteComponent(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
+        delete_if_exists(&self.component_path(id))
     }
 }
 

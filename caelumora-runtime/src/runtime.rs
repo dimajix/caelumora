@@ -11,7 +11,6 @@ use crate::moderator_impl::round_robin::RoundRobinModerator;
 use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
-use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityManager};
 use caelumora_model::store::{EntityStore, StateStore};
@@ -76,15 +75,12 @@ impl RuntimeManager {
         state_store: Arc<dyn StateStore>,
         entity_store: Arc<dyn EntityStore>,
         secret_manager: Arc<SecretManager>,
-        shared_components: &ComponentConfig,
     ) -> Result<Self> {
-        let mut component_registry = ComponentRegistry::new();
+        let mut component_registry = ComponentRegistry::new(entity_store.clone());
         history::register(&mut component_registry);
         context::register(&mut component_registry);
         tool::register(&mut component_registry);
         mcp::register(&mut component_registry);
-
-        component_registry.configure(&shared_components.component_nodes)?;
 
         let security_manager = Arc::new(DummySecurityManager::new());
 

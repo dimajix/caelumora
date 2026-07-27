@@ -59,7 +59,6 @@ async fn main() -> anyhow::Result<()> {
         state_store.clone(),
         entity_store.clone(),
         secret_manager,
-        &config.components.clone().unwrap_or_default(),
     )?);
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 

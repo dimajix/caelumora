@@ -4,6 +4,7 @@ use std::sync::Arc;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{DummySecurityManager, SecurityContext};
+use caelumora_model::store::EntityStore;
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_runtime::component::ComponentContainer;
 use caelumora_runtime::component_impl::mcp;
@@ -65,10 +66,10 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     (addr, handle)
 }
 
-fn build_container(url: &str) -> ComponentContainer {
+async fn build_container(url: &str) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, &ComponentConfig::default()).unwrap();
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager).unwrap();
     let actor_runtime = runtime_manager.new_actor_runtime();
 
     let config = ComponentConfig {
@@ -82,7 +83,7 @@ fn build_container(url: &str) -> ComponentContainer {
         }],
     };
 
-    ComponentContainer::from_config(&config, &actor_runtime, SecurityContext::default()).unwrap()
+    ComponentContainer::from_config(&config, &actor_runtime, SecurityContext::default()).await.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -90,7 +91,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(&url);
+    let container = build_container(&url).await;
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     let provider = providers[0].facet.clone();
@@ -122,17 +123,25 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let shared_components = ComponentConfig {
-        component_nodes: vec![ComponentDescriptor {
-            id: "shared-echo".to_string(),
-            kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
-            params: json!({ "url": url }),
-            deps: vec![],
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailOpen,
-        }],
-    };
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, &shared_components).unwrap();
+
+    // Preconfigured components now live in the EntityStore rather than in application-level
+    // config, so seed it directly.
+    store
+        .put_component(
+            &SecurityContext::default(),
+            &ComponentDescriptor {
+                id: "shared-echo".to_string(),
+                kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
+                params: json!({ "url": url }),
+                deps: vec![],
+                tags: vec![],
+                fail_policy: ComponentFailPolicy::FailOpen,
+            },
+        )
+        .await
+        .unwrap();
+
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager).unwrap();
     let actor_runtime = runtime_manager.new_actor_runtime();
 
     let ref_config = ComponentConfig {
@@ -148,8 +157,8 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     // Two independent containers (simulating two personalities, each with its own
     // SecurityContext) both referencing the same shared component config by id.
-    let container_a = ComponentContainer::from_config(&ref_config, &actor_runtime, SecurityContext::default()).unwrap();
-    let container_b = ComponentContainer::from_config(&ref_config, &actor_runtime, SecurityContext::default()).unwrap();
+    let container_a = ComponentContainer::from_config(&ref_config, &actor_runtime, SecurityContext::default()).await.unwrap();
+    let container_b = ComponentContainer::from_config(&ref_config, &actor_runtime, SecurityContext::default()).await.unwrap();
 
     let provider_a = container_a.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
     let provider_b = container_b.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
@@ -170,7 +179,7 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     // Port 1 is reserved and nothing will ever listen there, guaranteeing a
     // connection failure without depending on OS-specific "closed port"
     // behavior.
-    let container = build_container("http://127.0.0.1:1/mcp");
+    let container = build_container("http://127.0.0.1:1/mcp").await;
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].facet.tools().len(), 0);
