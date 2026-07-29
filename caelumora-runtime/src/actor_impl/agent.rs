@@ -16,7 +16,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanId, PlanState, PlanStep};
+use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolParameters};
@@ -194,7 +194,7 @@ impl AgentActor {
             state,
             processing_state,
             loop_count: AtomicI32::new(0),
-            max_iterations: 15,
+            max_iterations: 25,
             enable_extended_planning: personality.enable_extended_planning,
         })
     }
@@ -431,6 +431,65 @@ impl AgentActor {
             }],
             timestamp: chrono::Utc::now(),
             ..Message::default()
+        }
+    }
+
+    fn plan_step_message(step_number: usize, total_steps: usize, step: &PlanStep) -> Message {
+        Message {
+            id: MessageId(uuid::Uuid::new_v4()),
+            sender_id: ActorId::None,
+            sender_name: "system".to_string(),
+            role: MessageRole::System,
+            content: Some(format!(
+                "Step {} of {}: {}\n\nWork on this step now, using any tools you need. \
+                 When you are finished, describe the outcome.",
+                step_number, total_steps, step.description
+            )),
+            timestamp: chrono::Utc::now(),
+            ..Message::default()
+        }
+    }
+
+    fn plan_finalize_message(plan: &Plan) -> Message {
+        let recap = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| format!("{}. {}", i + 1, s.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Message {
+            id: MessageId(uuid::Uuid::new_v4()),
+            sender_id: ActorId::None,
+            sender_name: "system".to_string(),
+            role: MessageRole::System,
+            content: Some(format!(
+                "You have completed every step of the plan:\n{}\n\nNow provide your final, \
+                 complete answer to the user's original request, incorporating what you learned.",
+                recap
+            )),
+            timestamp: chrono::Utc::now(),
+            ..Message::default()
+        }
+    }
+
+    /// Pushes the instruction for `next_step_index` and sets progress to
+    /// `Step(next_step_index)`, or - if there is no such step - pushes the
+    /// finalize instruction and sets progress to `Finalizing`. Handles the
+    /// empty-plan edge case (next_step_index == 0 immediately finalizes).
+    /// Called once at approval time (next_step_index == 0) and once each
+    /// time a step converges in `handle_planning`.
+    fn advance_plan(turn_context: &mut TurnContext, next_step_index: usize) {
+        let Some(plan) = turn_context.plan().map(|p| p.plan.clone()) else { return };
+        match plan.steps.get(next_step_index) {
+            Some(step) => {
+                turn_context.push_message(Self::plan_step_message(next_step_index + 1, plan.steps.len(), step));
+                turn_context.set_plan_progress(PlanProgress::Step(next_step_index));
+            }
+            None => {
+                turn_context.push_message(Self::plan_finalize_message(&plan));
+                turn_context.set_plan_progress(PlanProgress::Finalizing);
+            }
         }
     }
 
@@ -687,6 +746,7 @@ impl AgentActor {
                                 tool_call_id,
                                 "Plan approved by the user. Proceed with execution.",
                             ));
+                            Self::advance_plan(turn_context, 0);
                             ActorState::Planning
                         } else {
                             turn_context.take_plan();
@@ -784,6 +844,7 @@ impl AgentActor {
                             status: ApprovalStatus::Pending,
                             tool_call_id: plan_call.id,
                             plan: plan.clone(),
+                            progress: PlanProgress::Step(0),
                         });
                         let request = PlanApprovalRequest {
                             id: approval_id,
@@ -931,12 +992,27 @@ impl AgentActor {
                     let has_tool_calls = !message.tool_calls.is_empty();
 
                     if executing_plan && !has_tool_calls {
-                        // The model is done calling tools - this is the real,
-                        // final response. Clear the plan and emit it through
-                        // the unchanged, final-answer events.
-                        turn_context.take_plan();
-                        if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                        match turn_context.plan().map(|p| p.progress) {
+                            Some(PlanProgress::Finalizing) => {
+                                // The dedicated synthesis call converged -
+                                // this is the real, final response.
+                                turn_context.take_plan();
+                                if let Some(msg) = self.respond_complete(message, turn_context).await {
+                                    turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                                }
+                            }
+                            Some(PlanProgress::Step(idx)) => {
+                                // This step converged - not final. Its result
+                                // is already part of context (respond_complete
+                                // pushes it); move on to the next step, or to
+                                // finalization if this was the last one.
+                                if let Some(msg) = self.respond_complete(message, turn_context).await {
+                                    turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
+                                }
+                                Self::advance_plan(turn_context, idx + 1);
+                                return Ok(ActorState::Planning);
+                            }
+                            None => unreachable!("executing_plan implies a plan is present"),
                         }
                     } else {
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
@@ -1290,5 +1366,61 @@ mod tests {
         assert_eq!(message.tool_results[0].id, Some("call_42".to_string()));
         assert_eq!(message.tool_results[0].tool_name, CREATE_PLAN_TOOL_NAME);
         assert_eq!(message.tool_results[0].content, "Plan approved by the user. Proceed with execution.");
+    }
+
+    fn make_plan_state(steps: Vec<&str>) -> PlanState {
+        PlanState {
+            id: ApprovalId::new(),
+            status: ApprovalStatus::Approved,
+            tool_call_id: Some("call_1".to_string()),
+            progress: PlanProgress::Step(0),
+            plan: Plan {
+                id: PlanId::new(),
+                summary: "do the thing".to_string(),
+                steps: steps.into_iter().map(|d| PlanStep { description: d.to_string() }).collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn advance_plan_moves_to_the_next_step_when_one_remains() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        turn_context.set_plan(make_plan_state(vec!["first", "second"]));
+
+        AgentActor::advance_plan(&mut turn_context, 1);
+
+        assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Step(1));
+        let last = turn_context.messages().last().expect("a step message should have been pushed");
+        assert_eq!(last.role, MessageRole::System);
+        assert!(last.content.as_ref().unwrap().contains("second"));
+    }
+
+    #[test]
+    fn advance_plan_finalizes_once_steps_are_exhausted() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        turn_context.set_plan(make_plan_state(vec!["first", "second"]));
+
+        AgentActor::advance_plan(&mut turn_context, 2);
+
+        assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Finalizing);
+        let last = turn_context.messages().last().expect("a finalize message should have been pushed");
+        assert_eq!(last.role, MessageRole::System);
+        assert!(last.content.as_ref().unwrap().contains("completed every step"));
+    }
+
+    #[test]
+    fn advance_plan_finalizes_immediately_for_an_empty_plan() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        turn_context.set_plan(make_plan_state(vec![]));
+
+        AgentActor::advance_plan(&mut turn_context, 0);
+
+        assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Finalizing);
     }
 }

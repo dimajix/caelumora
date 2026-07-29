@@ -12,7 +12,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::Message;
-use caelumora_model::plan::PlanState;
+use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StateStore;
@@ -159,6 +159,11 @@ impl<'a> TurnContext<'a> {
             .map(|p| p.status == ApprovalStatus::Approved)
             .unwrap_or(false)
     }
+    pub fn set_plan_progress(&mut self, progress: PlanProgress) {
+        if let Some(plan) = self.agent_channel_state.plan.as_mut() {
+            plan.progress = progress;
+        }
+    }
 
     pub fn security_context(&self) -> &SecurityContext {
         &self.agent_channel_state.turn_security_context
@@ -241,6 +246,7 @@ mod tests {
                 id,
                 status,
                 tool_call_id: Some("call_1".to_string()),
+                progress: PlanProgress::Step(0),
                 plan: Plan {
                     id: PlanId::new(),
                     summary: "do the thing".to_string(),
