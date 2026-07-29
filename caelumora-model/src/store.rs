@@ -107,7 +107,6 @@ pub mod tests {
                 description: "Helpful assistant".to_string(),
             },
             components: crate::component::ComponentConfig::default(),
-            enable_extended_planning: false,
         }
     }
 

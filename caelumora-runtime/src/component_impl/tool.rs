@@ -1,10 +1,13 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
-use caelumora_model::tool::{Tool, ToolParameters};
+use caelumora_model::plan::{Plan, PlanId, PlanStep};
+use caelumora_model::tool::{Phase, Tool, ToolCall, ToolParameters};
 use log::info;
+use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -12,6 +15,95 @@ use std::sync::Arc;
 pub const ECHO_TOOL_PROVIDER_KIND: &str = "echo_tool";
 pub const CALCULATOR_TOOL_PROVIDER_KIND: &str = "calculator_tool";
 pub const STOP_TOOL_PROVIDER_KIND: &str = "stop_tool";
+pub const CREATE_PLAN_TOOL_PROVIDER_KIND: &str = "create_plan_tool";
+
+pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
+
+/// Ephemeral system message appended (only to the LLM prompt, never
+/// persisted) while the agent is in `Phase::Deliberate`, nudging it towards
+/// `create_plan` for anything non-trivial.
+pub const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
+research or multiple steps to complete. If it does, gather any information you need using \
+the available tools, then call `create_plan` once with a short summary and an ordered list \
+of the steps you will take to fulfill the request. The plan will be shown to the user for \
+approval before you execute it. For simple requests that need no research and no multiple \
+steps, skip `create_plan` entirely and just answer directly.";
+
+/// The `create_plan` pseudo-tool: only ever offered during `Phase::Deliberate`
+/// (see its `phases` field), and intercepted directly by `AgentActor`'s
+/// unified LLM-phase handler before it would otherwise reach
+/// `ToolExecutor::execute` - proposing a plan pauses the turn for a
+/// dedicated, structurally distinct approval flow (`PlanApprovalRequest`,
+/// carrying the parsed `Plan`), not a generic tool-call result. `execute()`
+/// here should therefore never actually run; it exists only so `create_plan`
+/// participates in tool discovery/description like any other tool.
+#[derive(Debug)]
+pub struct CreatePlanToolProvider;
+
+#[derive(Deserialize)]
+struct CreatePlanArgs {
+    summary: String,
+    steps: Vec<CreatePlanStepArg>,
+}
+
+#[derive(Deserialize)]
+struct CreatePlanStepArg {
+    description: String,
+}
+
+pub fn parse_plan(call: &ToolCall) -> Result<Plan> {
+    let args: CreatePlanArgs = serde_json::from_value(call.arguments.clone())
+        .context("Failed to parse create_plan arguments")?;
+
+    Ok(Plan {
+        id: PlanId::new(),
+        summary: args.summary,
+        steps: args
+            .steps
+            .into_iter()
+            .map(|s| PlanStep { description: s.description })
+            .collect(),
+    })
+}
+
+#[async_trait]
+impl ToolProvider for CreatePlanToolProvider {
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
+            name: CREATE_PLAN_TOOL_NAME.to_string(),
+            description: "Submit your structured multi-step plan for the user's request. Call \
+                this once you have gathered enough information (using other tools if needed) to \
+                describe how you will address the request. For simple requests that need no \
+                research or multiple steps, just answer directly instead of calling this."
+                .to_string(),
+            parameters: ToolParameters::object(
+                [
+                    ("summary", ToolParameters::string("One-sentence summary of the overall approach")),
+                    (
+                        "steps",
+                        ToolParameters::array(
+                            ToolParameters::object(
+                                [("description", ToolParameters::string("What this step will do"))],
+                                ["description"],
+                            ),
+                            "Ordered list of steps",
+                        ),
+                    ),
+                ],
+                ["summary", "steps"],
+            ),
+            requires_approval: false,
+            phases: Some(vec![Phase::Deliberate]),
+        }]
+    }
+
+    async fn execute(&self, name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
+        Err(ToolError::ExecutionFailed(format!(
+            "'{}' must be intercepted by the agent's planning phase, not dispatched through ToolExecutor",
+            name
+        )))
+    }
+}
 
 #[derive(Debug)]
 pub struct StopToolProvider;
@@ -27,18 +119,21 @@ impl ToolProvider for StopToolProvider {
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
+                phases: None,
             },
             Tool {
                 name: "bye".to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
+                phases: None,
             },
             Tool {
                 name: "silence".to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
                 requires_approval: true,
+                phases: None,
             }
         ]
     }
@@ -76,6 +171,7 @@ impl ToolProvider for EchoToolProvider {
                 vec!["message"],
             ),
             requires_approval: false,
+            phases: None,
         }]
     }
 
@@ -102,6 +198,7 @@ impl ToolProvider for CalculatorToolProvider {
                 vec!["expression"],
             ),
             requires_approval: false,
+            phases: None,
         }]
     }
 
@@ -179,6 +276,64 @@ mod tests {
         assert_eq!(tools[1].name, "bye");
         assert_eq!(tools[2].name, "silence");
     }
+
+    #[test]
+    fn create_plan_tool_is_only_offered_while_deliberating() {
+        let tool = CreatePlanToolProvider.tools().remove(0);
+        assert_eq!(tool.name, CREATE_PLAN_TOOL_NAME);
+        assert_eq!(tool.phases, Some(vec![Phase::Deliberate]));
+    }
+
+    #[test]
+    fn create_plan_tool_is_never_marked_as_requiring_approval() {
+        // create_plan is intercepted directly by the agent's unified planning
+        // handler and must never reach the tool-call approval pipeline.
+        assert!(!CreatePlanToolProvider.tools().remove(0).requires_approval);
+    }
+
+    #[tokio::test]
+    async fn create_plan_tool_execute_is_never_meant_to_be_dispatched() {
+        let provider = CreatePlanToolProvider;
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), &mut turn_context).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_plan_extracts_summary_and_steps() {
+        let call = ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
+            arguments: json!({
+                "summary": "Investigate and fix the bug",
+                "steps": [
+                    { "description": "Reproduce the issue" },
+                    { "description": "Find the root cause" },
+                    { "description": "Apply and verify the fix" },
+                ]
+            }),
+        };
+
+        let plan = parse_plan(&call).expect("valid create_plan arguments should parse");
+        assert_eq!(plan.summary, "Investigate and fix the bug");
+        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.steps[0].description, "Reproduce the issue");
+        assert_eq!(plan.steps[2].description, "Apply and verify the fix");
+    }
+
+    #[test]
+    fn parse_plan_rejects_malformed_arguments() {
+        let call = ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
+            arguments: json!({ "summary": "missing steps field" }),
+        };
+
+        assert!(parse_plan(&call).is_err());
+    }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -203,6 +358,14 @@ pub fn register(registry: &mut ComponentRegistry) {
         Box::new(|_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider));
+            Ok(facets)
+        }),
+    );
+    registry.register(
+        CREATE_PLAN_TOOL_PROVIDER_KIND,
+        Box::new(|_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(CreatePlanToolProvider));
             Ok(facets)
         }),
     );

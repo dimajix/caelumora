@@ -352,7 +352,6 @@ mod tests {
                 ..Metadata::default()
             },
             components: crate::component::ComponentConfig::default(),
-            enable_extended_planning: false,
         }
     }
 

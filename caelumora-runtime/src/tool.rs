@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
 use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult};
+use caelumora_model::tool::{Phase, Tool, ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,16 @@ pub trait ToolExecutor: Send + Sync + Debug {
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
+
+    /// The subset of `tools()` eligible for the given phase - a tool with
+    /// `phases: None` is offered in every phase; `Some(ps)` restricts it to
+    /// exactly those phases (e.g. `create_plan` only during `Phase::Deliberate`).
+    fn tools_for_phase(&self, phase: Phase) -> Vec<Tool> {
+        self.tools()
+            .into_iter()
+            .filter(|t| t.phases.as_ref().is_none_or(|ps| ps.contains(&phase)))
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -192,11 +202,47 @@ mod tests {
                 description: "desc".to_string(),
                 parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
                 requires_approval: self.requires_approval,
+                phases: None,
             }]
         }
         async fn execute(&self, _name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
             Ok(json!({"result": "ok"}))
         }
+    }
+
+    #[derive(Debug)]
+    struct PhaseScopedToolProvider;
+
+    #[async_trait]
+    impl ToolProvider for PhaseScopedToolProvider {
+        fn tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                name: "deliberate_only_tool".to_string(),
+                description: "desc".to_string(),
+                parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+                requires_approval: false,
+                phases: Some(vec![Phase::Deliberate]),
+            }]
+        }
+        async fn execute(&self, _name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
+            Ok(json!({"result": "ok"}))
+        }
+    }
+
+    #[test]
+    fn tools_for_phase_filters_by_declared_phases() {
+        let security_manager = Arc::new(DummySecurityManager::new());
+        let unscoped = Arc::new(MockToolProvider { requires_approval: false });
+        let scoped = Arc::new(PhaseScopedToolProvider);
+        let executor = DefaultToolExecutor::new(security_manager, vec![unscoped, scoped]);
+
+        let deliberate_tools = executor.tools_for_phase(Phase::Deliberate);
+        assert!(deliberate_tools.iter().any(|t| t.name == "test_tool"));
+        assert!(deliberate_tools.iter().any(|t| t.name == "deliberate_only_tool"));
+
+        let act_tools = executor.tools_for_phase(Phase::Act);
+        assert!(act_tools.iter().any(|t| t.name == "test_tool"));
+        assert!(!act_tools.iter().any(|t| t.name == "deliberate_only_tool"));
     }
 
     #[tokio::test]

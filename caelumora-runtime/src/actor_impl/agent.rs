@@ -2,6 +2,7 @@ use crate::actor::{Actor, TurnContext};
 use crate::component::{ComponentContainer, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
+use crate::component_impl::tool::{parse_plan, CREATE_PLAN_TOOL_NAME, PLANNING_SYSTEM_PROMPT};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
@@ -16,13 +17,12 @@ use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanId, PlanProgress, PlanState, PlanStep};
+use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolParameters};
+use caelumora_model::tool::{Phase, ToolCall, ToolCallResult, ToolCallState};
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
-use serde::Deserialize;
 use std::mem;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -49,69 +49,6 @@ pub struct AgentActor {
     loop_count: AtomicI32,
     max_iterations: i32,
     enable_extended_planning: bool,
-}
-
-const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
-
-const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
-research or multiple steps to complete. If it does, gather any information you need using \
-the available tools, then call `create_plan` once with a short summary and an ordered list \
-of the steps you will take to fulfill the request. The plan will be shown to the user for \
-approval before you execute it. For simple requests that need no research and no multiple \
-steps, skip `create_plan` entirely and just answer directly.";
-
-fn create_plan_tool() -> Tool {
-    Tool {
-        name: CREATE_PLAN_TOOL_NAME.to_string(),
-        description: "Submit your structured multi-step plan for the user's request. Call \
-            this once you have gathered enough information (using other tools if needed) to \
-            describe how you will address the request. For simple requests that need no \
-            research or multiple steps, just answer directly instead of calling this."
-            .to_string(),
-        parameters: ToolParameters::object(
-            [
-                ("summary", ToolParameters::string("One-sentence summary of the overall approach")),
-                (
-                    "steps",
-                    ToolParameters::array(
-                        ToolParameters::object(
-                            [("description", ToolParameters::string("What this step will do"))],
-                            ["description"],
-                        ),
-                        "Ordered list of steps",
-                    ),
-                ),
-            ],
-            ["summary", "steps"],
-        ),
-        requires_approval: false,
-    }
-}
-
-#[derive(Deserialize)]
-struct CreatePlanArgs {
-    summary: String,
-    steps: Vec<CreatePlanStepArg>,
-}
-
-#[derive(Deserialize)]
-struct CreatePlanStepArg {
-    description: String,
-}
-
-fn parse_plan(call: &ToolCall) -> Result<Plan> {
-    let args: CreatePlanArgs = serde_json::from_value(call.arguments.clone())
-        .context("Failed to parse create_plan arguments")?;
-
-    Ok(Plan {
-        id: PlanId::new(),
-        summary: args.summary,
-        steps: args
-            .steps
-            .into_iter()
-            .map(|s| PlanStep { description: s.description })
-            .collect(),
-    })
 }
 
 #[derive(Debug)]
@@ -163,6 +100,14 @@ impl AgentActor {
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
         let tool_executor = actor_runtime
             .new_tool_executor(tool_providers.into_iter().map(|p| p.facet).collect());
+        // Extended planning is opt-in per personality by wiring the
+        // create_plan_tool component into its ComponentConfig - its presence
+        // (not a separate flag) is the single source of truth for whether
+        // this agent starts turns in Deliberating rather than Planning.
+        let enable_extended_planning = tool_executor
+            .tools()
+            .iter()
+            .any(|t| t.name == CREATE_PLAN_TOOL_NAME);
 
         let state_store = actor_runtime.state_store();
         let mut agent_channel_state = state_store
@@ -195,7 +140,7 @@ impl AgentActor {
             processing_state,
             loop_count: AtomicI32::new(0),
             max_iterations: 25,
-            enable_extended_planning: personality.enable_extended_planning,
+            enable_extended_planning,
         })
     }
 
@@ -305,40 +250,29 @@ impl AgentActor {
         Ok(())
     }
 
-    async fn plan<'a>(
+    /// Calls the LLM for one step of `phase`. `Phase::Deliberate` appends an
+    /// ephemeral (not persisted) planning-mode system message, and tool
+    /// availability is whatever `tools_for_phase` grants that phase (e.g.
+    /// `create_plan` only shows up here).
+    async fn call_llm<'a>(
         &self,
-        turn_context: &mut TurnContext<'a>,
-    ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
-        let llm_client = self.actor_runtime.llm_client();
-
-        let context = turn_context.full_context();
-        let tools = self.tool_executor.tools();
-        llm_client
-            .chat_completion(context.as_slice(), tools.as_slice())
-            .await
-    }
-
-    /// Like `plan()`, but for the deliberation step: appends an ephemeral
-    /// (not persisted) planning-mode system message and offers the `create_plan`
-    /// pseudo-tool alongside the agent's real tools.
-    async fn deliberate<'a>(
-        &self,
+        phase: Phase,
         turn_context: &mut TurnContext<'a>,
     ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
         let llm_client = self.actor_runtime.llm_client();
 
         let mut context = turn_context.full_context();
-        context.push(Message {
-            role: MessageRole::System,
-            content: Some(PLANNING_SYSTEM_PROMPT.to_string()),
-            sender_id: self.id,
-            sender_name: self.agent_controller.name(),
-            ..Message::default()
-        });
+        if phase == Phase::Deliberate {
+            context.push(Message {
+                role: MessageRole::System,
+                content: Some(PLANNING_SYSTEM_PROMPT.to_string()),
+                sender_id: self.id,
+                sender_name: self.agent_controller.name(),
+                ..Message::default()
+            });
+        }
 
-        let mut tools = self.tool_executor.tools();
-        tools.push(create_plan_tool());
-
+        let tools = self.tool_executor.tools_for_phase(phase);
         llm_client
             .chat_completion(context.as_slice(), tools.as_slice())
             .await
@@ -395,6 +329,11 @@ impl AgentActor {
                     content: c.result.unwrap(),
                 })
             }
+            // A tool result is only ever "final" (shown as the real answer)
+            // when it came from the ordinary single-shot tool loop with no
+            // plan in play at all - mirrors the same internal/final rule
+            // applied to the assistant message that triggered it.
+            let internal = turn_context.phase() == Phase::Deliberate || turn_context.is_executing_approved_plan();
             let tool_message = Message {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
@@ -404,6 +343,7 @@ impl AgentActor {
                 tool_results,
                 content: None,
                 timestamp: chrono::Utc::now(),
+                internal,
                 ..Message::default()
             };
             turn_context.push_message(tool_message.clone());
@@ -430,6 +370,7 @@ impl AgentActor {
                 content: content.to_string(),
             }],
             timestamp: chrono::Utc::now(),
+            internal: true,
             ..Message::default()
         }
     }
@@ -446,6 +387,7 @@ impl AgentActor {
                 step_number, total_steps, step.description
             )),
             timestamp: chrono::Utc::now(),
+            internal: true,
             ..Message::default()
         }
     }
@@ -469,6 +411,7 @@ impl AgentActor {
                 recap
             )),
             timestamp: chrono::Utc::now(),
+            internal: true,
             ..Message::default()
         }
     }
@@ -493,9 +436,19 @@ impl AgentActor {
         }
     }
 
+    /// `context` (this agent's own future-turn LLM input) keeps every message
+    /// accumulated this turn, including internal deliberation/plan-execution
+    /// scaffolding - it needs the full detail to stay coherent. `history`
+    /// (the audit/user-facing trail - see `ChannelLoop::append_history` and
+    /// `channel.history()`) only keeps genuinely final messages.
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
-        turn_context.extend_state_context(turn_context.messages().clone());
-        turn_context.extend_state_history(turn_context.messages().clone());
+        let messages = turn_context.messages().clone();
+        turn_context.extend_state_context(messages.clone());
+        turn_context.extend_state_history(messages.into_iter().filter(|m| !m.internal).collect());
+    }
+
+    fn final_messages(turn_context: &TurnContext) -> Vec<Message> {
+        turn_context.messages().iter().filter(|m| !m.internal).cloned().collect()
     }
 
     async fn apply_stage_processors<'a, T>(
@@ -632,9 +585,10 @@ impl AgentActor {
         self.reflect(turn_context).await;
 
         // Send final message
-        if !turn_context.messages().is_empty() {
+        let final_messages = Self::final_messages(turn_context);
+        if !final_messages.is_empty() {
             turn_context.send_event(
-                ActorEvent::FullResponseGenerated(turn_context.messages().clone()),
+                ActorEvent::FullResponseGenerated(final_messages),
                 output,
             ).await?;
         }
@@ -773,118 +727,6 @@ impl AgentActor {
         }
     }
 
-    /// Analyzes the request, calling the LLM (and any real research tools it
-    /// chooses) until it either proposes a plan via `create_plan` or answers
-    /// directly (trivial requests, or after a rejected plan). Shares the
-    /// same iteration budget as `handle_planning` via `loop_count`.
-    async fn handle_deliberating<'a>(
-        &self,
-        turn_context: &mut TurnContext<'a>,
-        output: &dyn EventSender,
-    ) -> Result<ActorState> {
-        let agent_name = self.agent_controller.name();
-
-        if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
-            info!("Too many iterations, stop deliberating agent {} {}", self.id, agent_name);
-            return Ok(ActorState::Reflecting);
-        }
-        self.loop_count.fetch_add(1, Ordering::SeqCst);
-
-        let mut response = self.deliberate(turn_context).await;
-        use futures::stream::TryStreamExt;
-        while let Some(event) = response
-            .try_next()
-            .await
-            .context("Error during deliberation stream")?
-        {
-            if self.processing_state.load() == ActorState::Cancelling {
-                info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-                return Ok(ActorState::Cancelling);
-            }
-
-            match event {
-                MessageEvent::Partial(mut message) => {
-                    message.sender_name = agent_name.clone();
-                    message.sender_id = self.id;
-                    if let Some(msg) = self.respond_partial(message, turn_context).await {
-                        turn_context.send_event(ActorEvent::IntermediatePartialGenerated(msg), output).await?;
-                    }
-                }
-                MessageEvent::Complete(mut message) => {
-                    message.sender_name = agent_name.clone();
-                    message.sender_id = self.id;
-
-                    let plan_call = message
-                        .tool_calls
-                        .iter()
-                        .find(|tc| tc.function_name == CREATE_PLAN_TOOL_NAME)
-                        .cloned();
-
-                    if let Some(plan_call) = plan_call {
-                        if message.tool_calls.len() > 1 {
-                            warn!(
-                                "Agent {} called create_plan alongside other tool calls; discarding the others",
-                                self.id
-                            );
-                        }
-                        let plan = parse_plan(&plan_call)?;
-                        // Keep the create_plan call itself in the pushed message
-                        // (rather than stripping it) - its arguments ARE the
-                        // plan, so leaving it in context is how the model still
-                        // knows the plan's steps once execution begins.
-                        message.tool_calls = vec![plan_call.clone()];
-
-                        if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
-                        }
-
-                        let approval_id = ApprovalId::new();
-                        turn_context.set_plan(PlanState {
-                            id: approval_id,
-                            status: ApprovalStatus::Pending,
-                            tool_call_id: plan_call.id,
-                            plan: plan.clone(),
-                            progress: PlanProgress::Step(0),
-                        });
-                        let request = PlanApprovalRequest {
-                            id: approval_id,
-                            session_id: turn_context.session_id,
-                            channel_id: turn_context.channel_id,
-                            agent_id: self.agent_id,
-                            plan,
-                        };
-                        turn_context.send_event(ActorEvent::PlanApprovalRequested(request), output).await?;
-                        return Ok(ActorState::WaitingForPlanApproval);
-                    }
-
-                    // Real (research) tool calls - reuse the existing approval
-                    // pipeline verbatim.
-                    self.request_approvals(&message.tool_calls, turn_context, output).await?;
-                    let has_tool_calls = !message.tool_calls.is_empty();
-
-                    if has_tool_calls {
-                        if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
-                        }
-                        if turn_context.has_tool_calls() {
-                            return Ok(ActorState::ExecutingTools);
-                        }
-                    } else {
-                        // No plan proposed, no tools called - a trivial
-                        // request answered directly. This IS the real
-                        // response, so it uses the unchanged final-answer event.
-                        if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-                        }
-                    }
-                }
-                MessageEvent::EndOfTurn(_) => {}
-            }
-        }
-
-        Ok(ActorState::Reflecting)
-    }
-
     /// Registers tool calls for approval and requests approval for the ones that
     /// need it. Purely records data on `turn_context` - it never touches
     /// `processing_state`; `handle_planning`'s return value (always
@@ -934,36 +776,48 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Calls the LLM and streams its response for a single planning step. Loops
-    /// back to itself (via the run loop, after a trip through ExecutingTools) as
-    /// long as the model keeps making tool calls, up to `max_iterations`.
-    async fn handle_planning<'a>(
+    /// Calls the LLM and streams its response for a single step of `phase`,
+    /// shared by both `ActorState::Deliberating` (`Phase::Deliberate`) and
+    /// `ActorState::Planning` (`Phase::Act`). Loops back to itself (via the
+    /// run loop, after a trip through `ExecutingTools`) as long as the model
+    /// keeps making tool calls, up to `max_iterations`.
+    ///
+    /// A message is "final" (shown to the user, kept in `history`) exactly
+    /// when none of the following hold: the model is still deliberating and
+    /// produced tool calls or a plan proposal (`phase == Deliberate` with
+    /// tool calls), or it's mid-execution of an already-approved plan
+    /// (`executing_plan`, and not yet at the last, synthesizing step).
+    /// Anything else is internal - `IntermediatePartialGenerated`/
+    /// `IntermediateMessageGenerated` instead of the `Partial`/`Complete`
+    /// variants, and excluded from `history` in `reflect()`.
+    async fn handle_llm_phase<'a>(
         &self,
+        phase: Phase,
         turn_context: &mut TurnContext<'a>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
 
         if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
-            info!("Too many iterations, stop planning agent {} {}", self.id, agent_name);
+            info!("Too many iterations, stopping agent {} {} in {:?}", self.id, agent_name, phase);
             return Ok(ActorState::Reflecting);
         }
         self.loop_count.fetch_add(1, Ordering::SeqCst);
+        turn_context.set_phase(phase);
 
         // If a plan is in play, it has already been approved by the time we
-        // ever reach this state (see handle_waiting_for_plan_approval) - this
+        // ever reach Phase::Act (see handle_waiting_for_plan_approval) - this
         // is now the execution loop for that plan, and its messages must be
         // distinguishable from a genuine final response until the model
         // stops calling tools.
         let executing_plan = turn_context.is_executing_approved_plan();
 
-        // --- PHASE 2: PLAN ---
-        let mut response = self.plan(turn_context).await;
+        let mut response = self.call_llm(phase, turn_context).await;
         use futures::stream::TryStreamExt;
         while let Some(event) = response
             .try_next()
             .await
-            .context("Error during planning stream")?
+            .with_context(|| format!("Error during {:?} stream", phase))?
         {
             if self.processing_state.load() == ActorState::Cancelling {
                 info!("Stopping for cancelled agent {} {}", self.id, agent_name);
@@ -974,8 +828,9 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
+                    message.internal = executing_plan || phase == Phase::Deliberate;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
-                        let event = if executing_plan {
+                        let event = if msg.internal {
                             ActorEvent::IntermediatePartialGenerated(msg)
                         } else {
                             ActorEvent::PartialMessageGenerated(msg)
@@ -987,7 +842,52 @@ impl AgentActor {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
 
-                    // Check for tool approvals
+                    if phase == Phase::Deliberate {
+                        let plan_call = message
+                            .tool_calls
+                            .iter()
+                            .find(|tc| tc.function_name == CREATE_PLAN_TOOL_NAME)
+                            .cloned();
+
+                        if let Some(plan_call) = plan_call {
+                            if message.tool_calls.len() > 1 {
+                                warn!(
+                                    "Agent {} called create_plan alongside other tool calls; discarding the others",
+                                    self.id
+                                );
+                            }
+                            let plan = parse_plan(&plan_call)?;
+                            // Keep the create_plan call itself in the pushed message
+                            // (rather than stripping it) - its arguments ARE the
+                            // plan, so leaving it in context is how the model still
+                            // knows the plan's steps once execution begins.
+                            message.tool_calls = vec![plan_call.clone()];
+                            message.internal = true;
+
+                            if let Some(msg) = self.respond_complete(message, turn_context).await {
+                                turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
+                            }
+
+                            let approval_id = ApprovalId::new();
+                            turn_context.set_plan(PlanState {
+                                id: approval_id,
+                                status: ApprovalStatus::Pending,
+                                tool_call_id: plan_call.id,
+                                plan: plan.clone(),
+                                progress: PlanProgress::Step(0),
+                            });
+                            let request = PlanApprovalRequest {
+                                id: approval_id,
+                                session_id: turn_context.session_id,
+                                channel_id: turn_context.channel_id,
+                                agent_id: self.agent_id,
+                                plan,
+                            };
+                            turn_context.send_event(ActorEvent::PlanApprovalRequested(request), output).await?;
+                            return Ok(ActorState::WaitingForPlanApproval);
+                        }
+                    }
+
                     self.request_approvals(&message.tool_calls, turn_context, output).await?;
                     let has_tool_calls = !message.tool_calls.is_empty();
 
@@ -997,6 +897,7 @@ impl AgentActor {
                                 // The dedicated synthesis call converged -
                                 // this is the real, final response.
                                 turn_context.take_plan();
+                                message.internal = false;
                                 if let Some(msg) = self.respond_complete(message, turn_context).await {
                                     turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                                 }
@@ -1006,6 +907,7 @@ impl AgentActor {
                                 // is already part of context (respond_complete
                                 // pushes it); move on to the next step, or to
                                 // finalization if this was the last one.
+                                message.internal = true;
                                 if let Some(msg) = self.respond_complete(message, turn_context).await {
                                     turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
                                 }
@@ -1015,8 +917,14 @@ impl AgentActor {
                             None => unreachable!("executing_plan implies a plan is present"),
                         }
                     } else {
+                        // Covers: the ordinary single-shot tool loop (no plan
+                        // in play at all - always final, regardless of tool
+                        // calls); mid-plan research tool calls (internal);
+                        // and a trivial direct answer while deliberating (no
+                        // plan, no tool calls - final).
+                        message.internal = executing_plan || (phase == Phase::Deliberate && has_tool_calls);
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
-                            let event = if executing_plan {
+                            let event = if msg.internal {
                                 ActorEvent::IntermediateMessageGenerated(msg)
                             } else {
                                 ActorEvent::CompleteMessageGenerated(msg)
@@ -1047,7 +955,12 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         if let Some(tool_message) = self.execute_tools(turn_context).await {
-            turn_context.send_event(ActorEvent::CompleteMessageGenerated(tool_message), output).await?;
+            let event = if tool_message.internal {
+                ActorEvent::IntermediateMessageGenerated(tool_message)
+            } else {
+                ActorEvent::CompleteMessageGenerated(tool_message)
+            };
+            turn_context.send_event(event, output).await?;
 
             // Handle "Silent" requested state
             if turn_context.requested_state() == Some(ActorState::Stopping) {
@@ -1055,20 +968,20 @@ impl AgentActor {
                 turn_context.take_requested_state();
                 Ok(ActorState::Stopping)
             }
+            else if turn_context.is_executing_approved_plan() {
+                // An approved plan's steps now need executing.
+                Ok(ActorState::Planning)
+            }
             else {
-                // A plan not yet Approved means we're still researching ahead
-                // of proposing/re-proposing it - go back to Deliberating.
-                // No plan, or an already-Approved plan being executed, both
-                // fall through to Planning (today's exact behavior when no
-                // plan is in play).
-                let still_deliberating = turn_context
-                    .plan()
-                    .map(|p| p.status != ApprovalStatus::Approved)
-                    .unwrap_or(false);
-                if still_deliberating {
-                    Ok(ActorState::Deliberating)
-                } else {
-                    Ok(ActorState::Planning)
+                // No plan is in play (it was never proposed, or got rejected
+                // and cleared) - resume whichever phase actually led into
+                // this ExecutingTools cycle, tracked explicitly on
+                // turn_context rather than inferred from plan state (which
+                // can't distinguish "still deliberating, no plan proposed
+                // yet" from "no plan at all").
+                match turn_context.phase() {
+                    Phase::Deliberate => Ok(ActorState::Deliberating),
+                    Phase::Act => Ok(ActorState::Planning),
                 }
             }
         } else {
@@ -1088,7 +1001,7 @@ impl AgentActor {
         self.reflect(turn_context).await;
 
         turn_context.send_event(
-            ActorEvent::FullResponseGenerated(turn_context.messages().clone()),
+            ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
             output,
         ).await?;
         turn_context.finish_turn();
@@ -1167,8 +1080,8 @@ impl Actor for AgentActor {
                 }
                 ActorState::Stopping => Some(self.handle_stopping()?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut turn_context, &*output).await?),
-                ActorState::Deliberating => Some(self.handle_deliberating(&mut turn_context, &*output).await?),
-                ActorState::Planning => Some(self.handle_planning(&mut turn_context, &*output).await?),
+                ActorState::Deliberating => Some(self.handle_llm_phase(Phase::Deliberate, &mut turn_context, &*output).await?),
+                ActorState::Planning => Some(self.handle_llm_phase(Phase::Act, &mut turn_context, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*output).await?),
                 ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
@@ -1235,6 +1148,7 @@ mod tests {
     use crate::component_impl::history::StateHistoryWriter;
     use crate::component_impl::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
+    use caelumora_model::plan::PlanId;
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -1311,47 +1225,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_plan_extracts_summary_and_steps() {
-        let call = ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
-            arguments: serde_json::json!({
-                "summary": "Investigate and fix the bug",
-                "steps": [
-                    { "description": "Reproduce the issue" },
-                    { "description": "Find the root cause" },
-                    { "description": "Apply and verify the fix" },
-                ]
-            }),
-        };
-
-        let plan = parse_plan(&call).expect("valid create_plan arguments should parse");
-        assert_eq!(plan.summary, "Investigate and fix the bug");
-        assert_eq!(plan.steps.len(), 3);
-        assert_eq!(plan.steps[0].description, "Reproduce the issue");
-        assert_eq!(plan.steps[2].description, "Apply and verify the fix");
-    }
-
-    #[test]
-    fn parse_plan_rejects_malformed_arguments() {
-        let call = ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
-            arguments: serde_json::json!({ "summary": "missing steps field" }),
-        };
-
-        assert!(parse_plan(&call).is_err());
-    }
-
-    #[test]
-    fn create_plan_tool_is_never_marked_as_requiring_approval() {
-        // create_plan is intercepted directly in handle_deliberating and must
-        // never reach the tool-call approval pipeline.
-        assert!(!create_plan_tool().requires_approval);
-        assert_eq!(create_plan_tool().name, CREATE_PLAN_TOOL_NAME);
-    }
-
-    #[test]
     fn plan_decision_message_reports_the_decision_against_the_original_tool_call_id() {
         let agent_id = AgentId::new();
         let message = AgentActor::plan_decision_message(
@@ -1366,6 +1239,7 @@ mod tests {
         assert_eq!(message.tool_results[0].id, Some("call_42".to_string()));
         assert_eq!(message.tool_results[0].tool_name, CREATE_PLAN_TOOL_NAME);
         assert_eq!(message.tool_results[0].content, "Plan approved by the user. Proceed with execution.");
+        assert!(message.internal, "plan decisions are scaffolding, never final answers");
     }
 
     fn make_plan_state(steps: Vec<&str>) -> PlanState {
@@ -1395,6 +1269,7 @@ mod tests {
         let last = turn_context.messages().last().expect("a step message should have been pushed");
         assert_eq!(last.role, MessageRole::System);
         assert!(last.content.as_ref().unwrap().contains("second"));
+        assert!(last.internal, "plan-step instructions are scaffolding, never final answers");
     }
 
     #[test]
@@ -1422,5 +1297,24 @@ mod tests {
         AgentActor::advance_plan(&mut turn_context, 0);
 
         assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Finalizing);
+    }
+
+    #[test]
+    fn final_messages_filters_out_internal_messages() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        let mut internal = make_message("working on it");
+        internal.internal = true;
+        let mut final_answer = make_message("here you go");
+        final_answer.internal = false;
+
+        turn_context.push_message(internal);
+        turn_context.push_message(final_answer.clone());
+
+        let final_messages = AgentActor::final_messages(&turn_context);
+        assert_eq!(final_messages.len(), 1);
+        assert_eq!(final_messages[0].id, final_answer.id);
     }
 }

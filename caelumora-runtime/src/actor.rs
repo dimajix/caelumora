@@ -16,7 +16,7 @@ use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::ToolCallState;
+use caelumora_model::tool::{Phase, ToolCallState};
 
 #[async_trait]
 pub trait Actor: Any + Debug + Send + Sync {
@@ -77,6 +77,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
         self.agent_channel_state.plan = None;
+        self.agent_channel_state.current_phase = Phase::default();
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -163,6 +164,17 @@ impl<'a> TurnContext<'a> {
         if let Some(plan) = self.agent_channel_state.plan.as_mut() {
             plan.progress = progress;
         }
+    }
+
+    /// Records which phase the current/most recent LLM call was made in.
+    /// Set by the unified planning handler before every call; consulted by
+    /// `ExecutingTools` to know which phase to resume in once tool calls
+    /// finish, instead of inferring it from whether a plan exists yet.
+    pub fn set_phase(&mut self, phase: Phase) {
+        self.agent_channel_state.current_phase = phase;
+    }
+    pub fn phase(&self) -> Phase {
+        self.agent_channel_state.current_phase
     }
 
     pub fn security_context(&self) -> &SecurityContext {

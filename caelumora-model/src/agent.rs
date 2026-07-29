@@ -7,7 +7,7 @@ use crate::plan::PlanState;
 use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
 use crate::store::EntityStore;
-use crate::tool::ToolCallState;
+use crate::tool::{Phase, ToolCallState};
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
@@ -93,15 +93,13 @@ define_id!(PersonalityId);
 pub struct Personality {
     pub id: PersonalityId,
     pub metadata: Metadata,
+    /// Whether the agent first analyzes the request and proposes a
+    /// structured plan requiring user approval before executing it, instead
+    /// of answering directly, is derived from whether `components` wires in
+    /// the `create_plan_tool` component - not a separate flag here, since
+    /// extended planning is just another tool a personality opts into.
     #[serde(default)]
     pub components: ComponentConfig,
-    /// When set, the agent first analyzes the request and proposes a
-    /// structured plan requiring user approval before executing it, instead
-    /// of answering directly. Defaults to `false` so existing personalities
-    /// (including headless agent-to-agent channels with no human approver)
-    /// keep their current behavior unchanged.
-    #[serde(default)]
-    pub enable_extended_planning: bool,
 }
 
 
@@ -156,6 +154,12 @@ pub struct AgentChannelState {
     /// The plan currently awaiting/holding approval for this turn, if any.
     #[serde(default)]
     pub plan: Option<PlanState>,
+    /// Which phase the current LLM call is/was made in - set explicitly by
+    /// the unified planning handler before each call, and consulted by
+    /// `ExecutingTools` to know which phase to resume in afterwards (rather
+    /// than inferring it from whether a plan happens to exist yet).
+    #[serde(default)]
+    pub current_phase: Phase,
     /// Set by a tool (e.g. stop/bye/silence) or by the run loop itself (on a
     /// detected cancellation) to override what state `Reflecting` lands on
     /// instead of the default `Idle`. Consumed once, at the end of the turn.

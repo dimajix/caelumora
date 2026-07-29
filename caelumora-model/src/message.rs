@@ -35,6 +35,14 @@ pub struct Message {
     pub tool_results: Vec<ToolCallResult>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
+    /// True for messages that are internal agent scaffolding - deliberation
+    /// chatter, plan-step instructions, mid-plan tool calls/results - rather
+    /// than a genuine final answer. Kept in `MessageContext` (this agent's
+    /// own future-turn LLM input, which needs the full detail) but excluded
+    /// from `MessageHistory` and end-of-turn `FullResponseGenerated`
+    /// broadcasts (the user-facing/audit trail).
+    #[serde(default)]
+    pub internal: bool,
     // Usage statistics
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u64>,
@@ -62,6 +70,7 @@ impl Default for Message {
             tool_results: Vec::new(),
             timestamp: Utc::now(),
             metadata: HashMap::new(),
+            internal: false,
             prompt_tokens: None,
             completion_tokens: None,
             prompt_duration: None,

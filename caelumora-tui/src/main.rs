@@ -11,10 +11,11 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::EntityStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantId, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
-use caelumora_model::user::UserId;
+use caelumora_model::user::{User, UserId};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
+use caelumora_runtime::component_impl::tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionLoop;
 use clap::Parser;
@@ -38,45 +39,60 @@ fn init_logging() {
         .init();
 }
 
-fn create_component_config(system_prompt: &str) -> ComponentConfig {
-    ComponentConfig {
-        component_nodes: vec![
-            ComponentDescriptor {
-                id: "system-prompt".to_string(),
-                kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
-                params: serde_json::json!({
-                    "prompt": system_prompt
-                }),
-                deps: Vec::new(),
-                tags: Vec::new(),
-                fail_policy: ComponentFailPolicy::FailOpen,
-            },
-            ComponentDescriptor {
-                id: "history-appender".to_string(),
-                kind: STATE_HISTORY_WRITER_KIND.to_string(),
-                params: serde_json::Value::Null,
-                deps: Vec::new(),
-                tags: vec![STAGE_PERCEIVE.to_string()],
-                fail_policy: ComponentFailPolicy::FailClosed,
-            },
-            ComponentDescriptor {
-                id: "context-appender".to_string(),
-                kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
-                params: serde_json::Value::Null,
-                deps: Vec::new(),
-                tags: vec![STAGE_PERCEIVE.to_string()],
-                fail_policy: ComponentFailPolicy::FailClosed,
-            },
-            ComponentDescriptor {
-                id: "context".to_string(),
-                kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
-                params: serde_json::Value::Null,
-                deps: vec!["system-prompt".to_string()],
-                tags: Vec::new(),
-                fail_policy: ComponentFailPolicy::FailClosed,
-            },
-        ],
+fn create_component_config(system_prompt: &str, enable_extended_planning: bool) -> ComponentConfig {
+    let mut component_nodes = vec![
+        ComponentDescriptor {
+            id: "system-prompt".to_string(),
+            kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
+            params: serde_json::json!({
+                "prompt": system_prompt
+            }),
+            deps: Vec::new(),
+            tags: Vec::new(),
+            fail_policy: ComponentFailPolicy::FailOpen,
+        },
+        ComponentDescriptor {
+            id: "history-appender".to_string(),
+            kind: STATE_HISTORY_WRITER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: Vec::new(),
+            tags: vec![STAGE_PERCEIVE.to_string()],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        },
+        ComponentDescriptor {
+            id: "context-appender".to_string(),
+            kind: STATE_CONTEXT_APPENDER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: Vec::new(),
+            tags: vec![STAGE_PERCEIVE.to_string()],
+            fail_policy: ComponentFailPolicy::FailClosed,
+        },
+        ComponentDescriptor {
+            id: "context".to_string(),
+            kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: vec!["system-prompt".to_string()],
+            tags: Vec::new(),
+            fail_policy: ComponentFailPolicy::FailClosed,
+        },
+    ];
+
+    // Extended planning is opt-in per personality by wiring in the
+    // create_plan_tool component - its mere presence (not a separate model
+    // field) is what AgentActor uses to decide whether to start turns in
+    // Deliberating rather than Planning.
+    if enable_extended_planning {
+        component_nodes.push(ComponentDescriptor {
+            id: "create-plan-tool".to_string(),
+            kind: CREATE_PLAN_TOOL_PROVIDER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: Vec::new(),
+            tags: Vec::new(),
+            fail_policy: ComponentFailPolicy::FailClosed,
+        });
     }
+
+    ComponentConfig { component_nodes }
 }
 
 fn create_personality(name: &str, description: &str, system_prompt: &str, enable_extended_planning: bool) -> Personality {
@@ -88,8 +104,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str, enable
             description: description.to_string(),
             ..Metadata::default()
         },
-        components: create_component_config(system_prompt),
-        enable_extended_planning,
+        components: create_component_config(system_prompt, enable_extended_planning),
     }
 }
 
@@ -311,6 +326,15 @@ async fn main() -> anyhow::Result<()> {
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
     let security = SecurityContext::default();
+    if entity_store.get_user(&security, owner).await.is_err() {
+        entity_store.create_user(&security, &User {
+            id: owner,
+            username: "user".to_string(),
+            email: "user@example.com".to_string(),
+            roles: vec!["user".to_string()],
+            security: SecurityContext::default(),
+        }).await?;
+    }
     let context = SessionContext {
         id: session_id,
         owner,
