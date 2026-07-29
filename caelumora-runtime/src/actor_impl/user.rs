@@ -8,6 +8,7 @@ use caelumora_model::approval::ApprovalResponse;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::plan::PlanApprovalResponse;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserController, UserId};
@@ -79,6 +80,16 @@ impl UserActor {
             ActorEvent::ApprovalGranted(response)
         } else {
             ActorEvent::ApprovalDenied(response)
+        };
+        self.user_tx.send(event).await?;
+        Ok(())
+    }
+
+    pub async fn send_plan_approval(&self, response: PlanApprovalResponse, approved: bool) -> anyhow::Result<()> {
+        let event = if approved {
+            ActorEvent::PlanApprovalGranted(response)
+        } else {
+            ActorEvent::PlanApprovalDenied(response)
         };
         self.user_tx.send(event).await?;
         Ok(())

@@ -61,6 +61,12 @@ impl Moderator for RoundRobinModerator {
             ActorEvent::ApprovalTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
+            ActorEvent::PlanApprovalRequested(_) |
+            ActorEvent::PlanApprovalGranted(_) |
+            ActorEvent::PlanApprovalDenied(_) |
+            ActorEvent::PlanApprovalTimedOut(_) => {
+                self.actors.route_plan_approval_events(event)
+            }
             _ => {
                 Vec::new().into()
             }

@@ -3,6 +3,7 @@ use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{Message, MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
+use crate::plan::PlanState;
 use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
 use crate::store::EntityStore;
@@ -94,6 +95,13 @@ pub struct Personality {
     pub metadata: Metadata,
     #[serde(default)]
     pub components: ComponentConfig,
+    /// When set, the agent first analyzes the request and proposes a
+    /// structured plan requiring user approval before executing it, instead
+    /// of answering directly. Defaults to `false` so existing personalities
+    /// (including headless agent-to-agent channels with no human approver)
+    /// keep their current behavior unchanged.
+    #[serde(default)]
+    pub enable_extended_planning: bool,
 }
 
 
@@ -145,6 +153,9 @@ pub struct AgentChannelState {
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
+    /// The plan currently awaiting/holding approval for this turn, if any.
+    #[serde(default)]
+    pub plan: Option<PlanState>,
     /// Set by a tool (e.g. stop/bye/silence) or by the run loop itself (on a
     /// detected cancellation) to override what state `Reflecting` lands on
     /// instead of the default `Idle`. Consumed once, at the end of the turn.

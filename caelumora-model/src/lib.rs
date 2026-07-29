@@ -6,6 +6,7 @@ pub mod channel;
 pub mod config;
 pub mod tool;
 pub mod message;
+pub mod plan;
 pub mod session;
 pub mod store;
 pub mod user;

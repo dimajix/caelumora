@@ -130,6 +130,63 @@ impl ModeratorActors {
             _ => RouteDecision { forwards: Vec::new(), broadcast: false }
         }
     }
+
+    fn route_plan_approval_events(&self, event: &Envelope) -> RouteDecision {
+        match &event.event {
+            ActorEvent::PlanApprovalRequested(_) => {
+                if matches!(event.context.sender_id, ActorId::Agent(_)) {
+                    // Agent -> ApproverActor: internal plumbing, not shown to users yet.
+                    let forwards = self.approval_actors.iter()
+                        .map(|r| (*r.key(), event.clone()))
+                        .collect();
+                    RouteDecision { forwards, broadcast: false }
+                } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    // ApproverActor -> Users: the request users actually act on.
+                    let forwards = self.user_actors.iter()
+                        .map(|r| (*r.key(), event.clone()))
+                        .collect();
+                    RouteDecision { forwards, broadcast: true }
+                } else {
+                    RouteDecision { forwards: Vec::new(), broadcast: false }
+                }
+            }
+            ActorEvent::PlanApprovalGranted(response) | ActorEvent::PlanApprovalDenied(response) => {
+                if matches!(event.context.sender_id, ActorId::User(_)) {
+                    // User -> ApproverActor: lets other observers see the decision too.
+                    let forwards = self.approval_actors.iter()
+                        .map(|r| (*r.key(), event.clone()))
+                        .collect();
+                    RouteDecision { forwards, broadcast: true }
+                } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    // ApproverActor -> Agent: internal plumbing informing the agent.
+                    let agent_id = ActorId::Agent(response.agent_id);
+                    let forwards = if self.agent_actors.contains_key(&agent_id) {
+                        vec![(agent_id, event.clone())]
+                    } else {
+                        Vec::new()
+                    };
+                    RouteDecision { forwards, broadcast: false }
+                } else {
+                    RouteDecision { forwards: Vec::new(), broadcast: false }
+                }
+            }
+            ActorEvent::PlanApprovalTimedOut(response) => {
+                if matches!(event.context.sender_id, ActorId::Approver(_)) {
+                    // ApproverActor -> Agent: internal plumbing informing the agent.
+                    let agent_id = ActorId::Agent(response.agent_id);
+                    let forwards = if self.agent_actors.contains_key(&agent_id) {
+                        vec![(agent_id, event.clone())]
+                    } else {
+                        Vec::new()
+                    };
+                    RouteDecision { forwards, broadcast: false }
+                } else {
+                    RouteDecision { forwards: Vec::new(), broadcast: false }
+                }
+            }
+            _ => RouteDecision { forwards: Vec::new(), broadcast: false }
+        }
+    }
 }
 
 
@@ -160,6 +217,7 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
+    use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanId};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
@@ -178,6 +236,16 @@ mod tests {
             agent_id: AgentId::new(),
             tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}) },
             description: "test".to_string(),
+        }
+    }
+
+    fn plan_approval_request() -> PlanApprovalRequest {
+        PlanApprovalRequest {
+            id: Default::default(),
+            session_id: Default::default(),
+            channel_id: Default::default(),
+            agent_id: AgentId::new(),
+            plan: Plan { id: PlanId::new(), summary: "test".to_string(), steps: vec![] },
         }
     }
 
@@ -212,6 +280,49 @@ mod tests {
         let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
         let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::ApprovalGranted(response));
         let decision = actors.route_approval_events(&event);
+        assert!(!decision.broadcast);
+    }
+
+    #[test]
+    fn plan_approval_requested_from_agent_is_internal_only() {
+        let actors = ModeratorActors::new();
+        let event = envelope(ActorId::Agent(AgentId::new()), ActorEvent::PlanApprovalRequested(plan_approval_request()));
+        let decision = actors.route_plan_approval_events(&event);
+        assert!(!decision.broadcast);
+    }
+
+    #[test]
+    fn plan_approval_requested_from_approver_is_broadcast() {
+        let actors = ModeratorActors::new();
+        let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::PlanApprovalRequested(plan_approval_request()));
+        let decision = actors.route_plan_approval_events(&event);
+        assert!(decision.broadcast);
+    }
+
+    #[test]
+    fn plan_approval_granted_from_user_is_broadcast() {
+        let actors = ModeratorActors::new();
+        let response = PlanApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
+        let event = envelope(ActorId::User(UserId::new()), ActorEvent::PlanApprovalGranted(response));
+        let decision = actors.route_plan_approval_events(&event);
+        assert!(decision.broadcast);
+    }
+
+    #[test]
+    fn plan_approval_granted_from_approver_is_internal_only() {
+        let actors = ModeratorActors::new();
+        let response = PlanApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
+        let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::PlanApprovalGranted(response));
+        let decision = actors.route_plan_approval_events(&event);
+        assert!(!decision.broadcast);
+    }
+
+    #[test]
+    fn unrelated_events_are_not_routed_by_plan_approval_helper() {
+        let actors = ModeratorActors::new();
+        let event = envelope(ActorId::Agent(AgentId::new()), ActorEvent::ResponseRequested);
+        let decision = actors.route_plan_approval_events(&event);
+        assert!(decision.forwards.is_empty());
         assert!(!decision.broadcast);
     }
 }

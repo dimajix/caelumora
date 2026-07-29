@@ -1,9 +1,12 @@
 use caelumora_model::actor::ActorEvent;
+use caelumora_model::agent::AgentId;
 use caelumora_model::agent::Personality;
 use caelumora_model::agent::PersonalityId;
+use caelumora_model::approval::ApprovalId;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::meta::{Metadata, Scope};
+use caelumora_model::plan::PlanApprovalResponse;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::EntityStore;
@@ -76,7 +79,7 @@ fn create_component_config(system_prompt: &str) -> ComponentConfig {
     }
 }
 
-fn create_personality(name: &str, description: &str, system_prompt: &str) -> Personality {
+fn create_personality(name: &str, description: &str, system_prompt: &str, enable_extended_planning: bool) -> Personality {
     Personality {
         id: PersonalityId(Uuid::new_v4()),
         metadata: Metadata {
@@ -86,6 +89,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
             ..Metadata::default()
         },
         components: create_component_config(system_prompt),
+        enable_extended_planning,
     }
 }
 
@@ -94,14 +98,18 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
-        "Your name is Jonathan Heart. You are a helpful assistant."
+        "Your name is Jonathan Heart. You are a helpful assistant.",
+        false,
     );
     store.put_personality(&ctx, &personality_a).await?;
 
+    // Sarah has extended planning enabled so the plan/approval flow can be
+    // exercised end to end from the TUI (/approve, /deny).
     let personality_b = create_personality(
         "sassy-assistant",
         "A sassy and witty assistant",
-        "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant."
+        "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant.",
+        true,
     );
     store.put_personality(&ctx, &personality_b).await?;
 
@@ -150,6 +158,9 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
 
     let mut receiver = user_actor.lock_receiver().await;
     let mut input_rx = spawn_rustyline_input();
+    // Approval id -> agent id, so `/approve <id>`/`/deny <id>` know which
+    // agent to answer.
+    let mut pending_plan_approvals: HashMap<Uuid, AgentId> = HashMap::new();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     loop {
@@ -168,6 +179,20 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             }
                         }
                     }
+                    Some(ActorEvent::IntermediateMessageGenerated(message)) => {
+                        if let Some(content) = message.content {
+                            println!("\r[working] {}> {}", message.sender_name, content);
+                        }
+                    }
+                    Some(ActorEvent::PlanApprovalRequested(request)) => {
+                        pending_plan_approvals.insert(request.id.0, request.agent_id);
+                        println!("\r--- Plan proposed (id: {}) ---", request.id.0);
+                        println!("{}", request.plan.summary);
+                        for (i, step) in request.plan.steps.iter().enumerate() {
+                            println!("  {}. {}", i + 1, step.description);
+                        }
+                        println!("Type '/approve {}' or '/deny {}' to respond.", request.id.0, request.id.0);
+                    }
                     Some(_) => {
                     }
                     None => break,
@@ -182,6 +207,22 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                         }
                         if input == "exit" || input == "quit" {
                             break;
+                        }
+                        if let Some(rest) = input.strip_prefix("/approve ").or_else(|| input.strip_prefix("/deny ")) {
+                            let approved = input.starts_with("/approve ");
+                            match Uuid::parse_str(rest.trim()) {
+                                Ok(id) => {
+                                    match pending_plan_approvals.remove(&id) {
+                                        Some(agent_id) => {
+                                            let response = PlanApprovalResponse { id: ApprovalId(id), agent_id };
+                                            user_actor.send_plan_approval(response, approved).await?;
+                                        }
+                                        None => println!("No pending plan approval with id {}", id),
+                                    }
+                                }
+                                Err(_) => println!("Invalid approval id: {}", rest.trim()),
+                            }
+                            continue;
                         }
                         info!("dispatch: input msg={:?}", input.to_string());
                         let _ = channel.wakeup().await;

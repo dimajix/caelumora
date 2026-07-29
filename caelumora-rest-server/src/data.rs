@@ -188,5 +188,6 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
             description: description.to_string(),
         },
         components,
+        enable_extended_planning: false,
     }
 }

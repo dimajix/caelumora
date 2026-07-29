@@ -1,4 +1,4 @@
-use crate::models::{ChannelResponse, SendApprovalRequest, SendMessageRequest};
+use crate::models::{ChannelResponse, SendApprovalRequest, SendMessageRequest, SendPlanApprovalRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -6,6 +6,7 @@ use axum::{extract::{Path, State}, http::StatusCode, Json};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::message::Message;
+use caelumora_model::plan::PlanApprovalResponse;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
 use futures::StreamExt;
@@ -155,6 +156,31 @@ pub async fn send_approval(
                 agent_id: AgentId(payload.agent_id),
             };
             if !user_actor.send_approval(response, payload.approved).await.is_ok() {
+                return Ok(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            return Ok(StatusCode::OK);
+        }
+    }
+
+    Ok(StatusCode::NOT_FOUND)
+}
+
+pub async fn send_plan_approval(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<SendPlanApprovalRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let session_id = SessionId(id);
+    let channel_id = ChannelId(cid);
+    let session = crate::routes::ensure_session(&state, session_id).await?;
+
+    if let Some(channel) = session.channel_by_id(channel_id) {
+        if let Some(user_actor) = channel.user_actor() {
+            let response = PlanApprovalResponse {
+                id: ApprovalId(payload.approval_id),
+                agent_id: AgentId(payload.agent_id),
+            };
+            if !user_actor.send_plan_approval(response, payload.approved).await.is_ok() {
                 return Ok(StatusCode::INTERNAL_SERVER_ERROR);
             }
             return Ok(StatusCode::OK);

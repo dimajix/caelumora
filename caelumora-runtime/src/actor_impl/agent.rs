@@ -16,11 +16,13 @@ use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
+use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanId, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolParameters};
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
+use serde::Deserialize;
 use std::mem;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -46,6 +48,70 @@ pub struct AgentActor {
     processing_state: Arc<ProcessingStateHolder>,
     loop_count: AtomicI32,
     max_iterations: i32,
+    enable_extended_planning: bool,
+}
+
+const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
+
+const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
+research or multiple steps to complete. If it does, gather any information you need using \
+the available tools, then call `create_plan` once with a short summary and an ordered list \
+of the steps you will take to fulfill the request. The plan will be shown to the user for \
+approval before you execute it. For simple requests that need no research and no multiple \
+steps, skip `create_plan` entirely and just answer directly.";
+
+fn create_plan_tool() -> Tool {
+    Tool {
+        name: CREATE_PLAN_TOOL_NAME.to_string(),
+        description: "Submit your structured multi-step plan for the user's request. Call \
+            this once you have gathered enough information (using other tools if needed) to \
+            describe how you will address the request. For simple requests that need no \
+            research or multiple steps, just answer directly instead of calling this."
+            .to_string(),
+        parameters: ToolParameters::object(
+            [
+                ("summary", ToolParameters::string("One-sentence summary of the overall approach")),
+                (
+                    "steps",
+                    ToolParameters::array(
+                        ToolParameters::object(
+                            [("description", ToolParameters::string("What this step will do"))],
+                            ["description"],
+                        ),
+                        "Ordered list of steps",
+                    ),
+                ),
+            ],
+            ["summary", "steps"],
+        ),
+        requires_approval: false,
+    }
+}
+
+#[derive(Deserialize)]
+struct CreatePlanArgs {
+    summary: String,
+    steps: Vec<CreatePlanStepArg>,
+}
+
+#[derive(Deserialize)]
+struct CreatePlanStepArg {
+    description: String,
+}
+
+fn parse_plan(call: &ToolCall) -> Result<Plan> {
+    let args: CreatePlanArgs = serde_json::from_value(call.arguments.clone())
+        .context("Failed to parse create_plan arguments")?;
+
+    Ok(Plan {
+        id: PlanId::new(),
+        summary: args.summary,
+        steps: args
+            .steps
+            .into_iter()
+            .map(|s| PlanStep { description: s.description })
+            .collect(),
+    })
 }
 
 #[derive(Debug)]
@@ -128,7 +194,8 @@ impl AgentActor {
             state,
             processing_state,
             loop_count: AtomicI32::new(0),
-            max_iterations: 10,
+            max_iterations: 15,
+            enable_extended_planning: personality.enable_extended_planning,
         })
     }
 
@@ -251,6 +318,32 @@ impl AgentActor {
             .await
     }
 
+    /// Like `plan()`, but for the deliberation step: appends an ephemeral
+    /// (not persisted) planning-mode system message and offers the `create_plan`
+    /// pseudo-tool alongside the agent's real tools.
+    async fn deliberate<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+    ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
+        let llm_client = self.actor_runtime.llm_client();
+
+        let mut context = turn_context.full_context();
+        context.push(Message {
+            role: MessageRole::System,
+            content: Some(PLANNING_SYSTEM_PROMPT.to_string()),
+            sender_id: self.id,
+            sender_name: self.agent_controller.name(),
+            ..Message::default()
+        });
+
+        let mut tools = self.tool_executor.tools();
+        tools.push(create_plan_tool());
+
+        llm_client
+            .chat_completion(context.as_slice(), tools.as_slice())
+            .await
+    }
+
     async fn execute_tools<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
@@ -317,6 +410,27 @@ impl AgentActor {
             Some(tool_message)
         } else {
             None
+        }
+    }
+
+    /// Builds the tool-result message that reports a plan approval/rejection
+    /// decision back to the model, using the same protocol as any other tool
+    /// result. This - not a fresh system message - is how the decision (and,
+    /// via the still-intact `create_plan` call earlier in context, the plan's
+    /// own steps) stays visible to the model going forward.
+    fn plan_decision_message(agent_id: AgentId, agent_name: &str, tool_call_id: Option<String>, content: &str) -> Message {
+        Message {
+            id: MessageId(uuid::Uuid::new_v4()),
+            sender_id: ActorId::Agent(agent_id),
+            sender_name: agent_name.to_string(),
+            role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult {
+                id: tool_call_id,
+                tool_name: CREATE_PLAN_TOOL_NAME.to_string(),
+                content: content.to_string(),
+            }],
+            timestamp: chrono::Utc::now(),
+            ..Message::default()
         }
     }
 
@@ -390,7 +504,11 @@ impl AgentActor {
                             }
                             ActorEvent::ResponseRequested => {
                                 self.request_response(turn_context, &event.context, &event.security, output).await?;
-                                Some(ActorState::Planning)
+                                if self.enable_extended_planning {
+                                    Some(ActorState::Deliberating)
+                                } else {
+                                    Some(ActorState::Planning)
+                                }
                             }
                             _ => Some(ActorState::Idle),
                         };
@@ -516,6 +634,196 @@ impl AgentActor {
         }
     }
 
+    /// Handle a plan-approval decision while in WaitingForPlanApproval state.
+    /// On approval, resumes via Planning (which will now execute the plan).
+    /// On denial/timeout, folds the rejection into turn messages and returns
+    /// to Deliberating so the model gets one bounded chance to self-correct
+    /// (mirrors how tool-call ApprovalDenied is handled: recorded, fed back
+    /// into context, the turn continues rather than dead-ending).
+    async fn handle_waiting_for_plan_approval<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        rx: &mut Box<dyn EventReceiver>,
+        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        output: &dyn EventSender,
+    ) -> Result<Option<ActorState>> {
+        let agent_name = self.agent_controller.name();
+        let is_plan_approval_event = |env: &Envelope| {
+            matches!(
+                env.event,
+                ActorEvent::PlanApprovalGranted(_)
+                    | ActorEvent::PlanApprovalDenied(_)
+                    | ActorEvent::PlanApprovalTimedOut(_)
+            )
+        };
+
+        tokio::select! {
+            maybe_event = rx.recv_matching(is_plan_approval_event) => {
+                match maybe_event {
+                    Some(event) => {
+                        let (req, status) = match &event.event {
+                            ActorEvent::PlanApprovalGranted(r) => (r, ApprovalStatus::Approved),
+                            ActorEvent::PlanApprovalDenied(r) => (r, ApprovalStatus::Denied),
+                            ActorEvent::PlanApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
+                            _ => unreachable!("handle_waiting_for_plan_approval called with non-plan-approval event"),
+                        };
+
+                        if !turn_context.set_plan_status(req.id, status) {
+                            warn!("Received plan approval for unknown approval id {}", req.id);
+                        }
+
+                        rx.commit().await?;
+
+                        // Report the decision back as a tool result for the
+                        // create_plan call itself - the same protocol the model
+                        // already understands from every other tool call, and
+                        // the only place the plan's steps (its arguments) are
+                        // still recoverable from context once we move on.
+                        let tool_call_id = turn_context.plan().and_then(|p| p.tool_call_id.clone());
+                        let next = if status == ApprovalStatus::Approved {
+                            turn_context.push_message(Self::plan_decision_message(
+                                self.agent_id,
+                                &agent_name,
+                                tool_call_id,
+                                "Plan approved by the user. Proceed with execution.",
+                            ));
+                            ActorState::Planning
+                        } else {
+                            turn_context.take_plan();
+                            turn_context.push_message(Self::plan_decision_message(
+                                self.agent_id,
+                                &agent_name,
+                                tool_call_id,
+                                "Plan rejected by the user. Do not execute it. Either answer \
+                                 directly without it, ask a clarifying question, or propose a \
+                                 revised plan.",
+                            ));
+                            ActorState::Deliberating
+                        };
+                        Ok(Some(next))
+                    }
+                    // Channel is closed
+                    None => Ok(None),
+                }
+            }
+            maybe_global = global_rx.recv() => {
+                self.handle_global_event(maybe_global, output).await;
+                Ok(Some(ActorState::WaitingForPlanApproval))
+            }
+        }
+    }
+
+    /// Analyzes the request, calling the LLM (and any real research tools it
+    /// chooses) until it either proposes a plan via `create_plan` or answers
+    /// directly (trivial requests, or after a rejected plan). Shares the
+    /// same iteration budget as `handle_planning` via `loop_count`.
+    async fn handle_deliberating<'a>(
+        &self,
+        turn_context: &mut TurnContext<'a>,
+        output: &dyn EventSender,
+    ) -> Result<ActorState> {
+        let agent_name = self.agent_controller.name();
+
+        if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
+            info!("Too many iterations, stop deliberating agent {} {}", self.id, agent_name);
+            return Ok(ActorState::Reflecting);
+        }
+        self.loop_count.fetch_add(1, Ordering::SeqCst);
+
+        let mut response = self.deliberate(turn_context).await;
+        use futures::stream::TryStreamExt;
+        while let Some(event) = response
+            .try_next()
+            .await
+            .context("Error during deliberation stream")?
+        {
+            if self.processing_state.load() == ActorState::Cancelling {
+                info!("Stopping for cancelled agent {} {}", self.id, agent_name);
+                return Ok(ActorState::Cancelling);
+            }
+
+            match event {
+                MessageEvent::Partial(mut message) => {
+                    message.sender_name = agent_name.clone();
+                    message.sender_id = self.id;
+                    if let Some(msg) = self.respond_partial(message, turn_context).await {
+                        turn_context.send_event(ActorEvent::IntermediatePartialGenerated(msg), output).await?;
+                    }
+                }
+                MessageEvent::Complete(mut message) => {
+                    message.sender_name = agent_name.clone();
+                    message.sender_id = self.id;
+
+                    let plan_call = message
+                        .tool_calls
+                        .iter()
+                        .find(|tc| tc.function_name == CREATE_PLAN_TOOL_NAME)
+                        .cloned();
+
+                    if let Some(plan_call) = plan_call {
+                        if message.tool_calls.len() > 1 {
+                            warn!(
+                                "Agent {} called create_plan alongside other tool calls; discarding the others",
+                                self.id
+                            );
+                        }
+                        let plan = parse_plan(&plan_call)?;
+                        // Keep the create_plan call itself in the pushed message
+                        // (rather than stripping it) - its arguments ARE the
+                        // plan, so leaving it in context is how the model still
+                        // knows the plan's steps once execution begins.
+                        message.tool_calls = vec![plan_call.clone()];
+
+                        if let Some(msg) = self.respond_complete(message, turn_context).await {
+                            turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
+                        }
+
+                        let approval_id = ApprovalId::new();
+                        turn_context.set_plan(PlanState {
+                            id: approval_id,
+                            status: ApprovalStatus::Pending,
+                            tool_call_id: plan_call.id,
+                            plan: plan.clone(),
+                        });
+                        let request = PlanApprovalRequest {
+                            id: approval_id,
+                            session_id: turn_context.session_id,
+                            channel_id: turn_context.channel_id,
+                            agent_id: self.agent_id,
+                            plan,
+                        };
+                        turn_context.send_event(ActorEvent::PlanApprovalRequested(request), output).await?;
+                        return Ok(ActorState::WaitingForPlanApproval);
+                    }
+
+                    // Real (research) tool calls - reuse the existing approval
+                    // pipeline verbatim.
+                    self.request_approvals(&message.tool_calls, turn_context, output).await?;
+                    let has_tool_calls = !message.tool_calls.is_empty();
+
+                    if has_tool_calls {
+                        if let Some(msg) = self.respond_complete(message, turn_context).await {
+                            turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
+                        }
+                        if turn_context.has_tool_calls() {
+                            return Ok(ActorState::ExecutingTools);
+                        }
+                    } else {
+                        // No plan proposed, no tools called - a trivial
+                        // request answered directly. This IS the real
+                        // response, so it uses the unchanged final-answer event.
+                        if let Some(msg) = self.respond_complete(message, turn_context).await {
+                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                        }
+                    }
+                }
+                MessageEvent::EndOfTurn(_) => {}
+            }
+        }
+
+        Ok(ActorState::Reflecting)
+    }
+
     /// Registers tool calls for approval and requests approval for the ones that
     /// need it. Purely records data on `turn_context` - it never touches
     /// `processing_state`; `handle_planning`'s return value (always
@@ -581,6 +889,13 @@ impl AgentActor {
         }
         self.loop_count.fetch_add(1, Ordering::SeqCst);
 
+        // If a plan is in play, it has already been approved by the time we
+        // ever reach this state (see handle_waiting_for_plan_approval) - this
+        // is now the execution loop for that plan, and its messages must be
+        // distinguishable from a genuine final response until the model
+        // stops calling tools.
+        let executing_plan = turn_context.is_executing_approved_plan();
+
         // --- PHASE 2: PLAN ---
         let mut response = self.plan(turn_context).await;
         use futures::stream::TryStreamExt;
@@ -599,7 +914,12 @@ impl AgentActor {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
-                        turn_context.send_event(ActorEvent::PartialMessageGenerated(msg), output).await?;
+                        let event = if executing_plan {
+                            ActorEvent::IntermediatePartialGenerated(msg)
+                        } else {
+                            ActorEvent::PartialMessageGenerated(msg)
+                        };
+                        turn_context.send_event(event, output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
@@ -608,9 +928,25 @@ impl AgentActor {
 
                     // Check for tool approvals
                     self.request_approvals(&message.tool_calls, turn_context, output).await?;
+                    let has_tool_calls = !message.tool_calls.is_empty();
 
-                    if let Some(msg) = self.respond_complete(message, turn_context).await {
-                        turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                    if executing_plan && !has_tool_calls {
+                        // The model is done calling tools - this is the real,
+                        // final response. Clear the plan and emit it through
+                        // the unchanged, final-answer events.
+                        turn_context.take_plan();
+                        if let Some(msg) = self.respond_complete(message, turn_context).await {
+                            turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
+                        }
+                    } else {
+                        if let Some(msg) = self.respond_complete(message, turn_context).await {
+                            let event = if executing_plan {
+                                ActorEvent::IntermediateMessageGenerated(msg)
+                            } else {
+                                ActorEvent::CompleteMessageGenerated(msg)
+                            };
+                            turn_context.send_event(event, output).await?;
+                        }
                     }
 
                     if turn_context.has_tool_calls() {
@@ -644,7 +980,20 @@ impl AgentActor {
                 Ok(ActorState::Stopping)
             }
             else {
-                Ok(ActorState::Planning)
+                // A plan not yet Approved means we're still researching ahead
+                // of proposing/re-proposing it - go back to Deliberating.
+                // No plan, or an already-Approved plan being executed, both
+                // fall through to Planning (today's exact behavior when no
+                // plan is in play).
+                let still_deliberating = turn_context
+                    .plan()
+                    .map(|p| p.status != ApprovalStatus::Approved)
+                    .unwrap_or(false);
+                if still_deliberating {
+                    Ok(ActorState::Deliberating)
+                } else {
+                    Ok(ActorState::Planning)
+                }
             }
         } else {
             Ok(ActorState::WaitingForApproval)
@@ -696,6 +1045,9 @@ impl Actor for AgentActor {
                     | ActorEvent::ApprovalTimedOut(_)
                     | ActorEvent::FullResponseGenerated(_)
                     | ActorEvent::ResponseRequested
+                    | ActorEvent::PlanApprovalGranted(_)
+                    | ActorEvent::PlanApprovalDenied(_)
+                    | ActorEvent::PlanApprovalTimedOut(_)
             )
         }
     }
@@ -731,11 +1083,15 @@ impl Actor for AgentActor {
                 ActorState::WaitingForApproval => {
                     self.handle_waiting_for_approval(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
+                ActorState::WaitingForPlanApproval => {
+                    self.handle_waiting_for_plan_approval(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
+                }
                 ActorState::Sleeping => {
                     self.handle_sleep(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
                 ActorState::Stopping => Some(self.handle_stopping()?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut turn_context, &*output).await?),
+                ActorState::Deliberating => Some(self.handle_deliberating(&mut turn_context, &*output).await?),
                 ActorState::Planning => Some(self.handle_planning(&mut turn_context, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*output).await?),
@@ -788,7 +1144,8 @@ impl Actor for AgentActor {
             self.agent_controller.name()
         );
         self.processing_state.transition(|s| match s {
-            ActorState::WaitingForApproval | ActorState::Active | ActorState::ExecutingTools | ActorState::Planning => Some(ActorState::Cancelling),
+            ActorState::WaitingForApproval | ActorState::Active | ActorState::ExecutingTools | ActorState::Planning
+                | ActorState::Deliberating | ActorState::WaitingForPlanApproval => Some(ActorState::Cancelling),
             _ => None,
         });
         Ok(())
@@ -875,5 +1232,63 @@ mod tests {
             .expect("context provider should succeed");
         assert_eq!(turn_context.context().len(), 1);
         assert_eq!(turn_context.context()[0].id, input[0].id);
+    }
+
+    #[test]
+    fn parse_plan_extracts_summary_and_steps() {
+        let call = ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
+            arguments: serde_json::json!({
+                "summary": "Investigate and fix the bug",
+                "steps": [
+                    { "description": "Reproduce the issue" },
+                    { "description": "Find the root cause" },
+                    { "description": "Apply and verify the fix" },
+                ]
+            }),
+        };
+
+        let plan = parse_plan(&call).expect("valid create_plan arguments should parse");
+        assert_eq!(plan.summary, "Investigate and fix the bug");
+        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.steps[0].description, "Reproduce the issue");
+        assert_eq!(plan.steps[2].description, "Apply and verify the fix");
+    }
+
+    #[test]
+    fn parse_plan_rejects_malformed_arguments() {
+        let call = ToolCall {
+            id: Some("call_1".to_string()),
+            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
+            arguments: serde_json::json!({ "summary": "missing steps field" }),
+        };
+
+        assert!(parse_plan(&call).is_err());
+    }
+
+    #[test]
+    fn create_plan_tool_is_never_marked_as_requiring_approval() {
+        // create_plan is intercepted directly in handle_deliberating and must
+        // never reach the tool-call approval pipeline.
+        assert!(!create_plan_tool().requires_approval);
+        assert_eq!(create_plan_tool().name, CREATE_PLAN_TOOL_NAME);
+    }
+
+    #[test]
+    fn plan_decision_message_reports_the_decision_against_the_original_tool_call_id() {
+        let agent_id = AgentId::new();
+        let message = AgentActor::plan_decision_message(
+            agent_id,
+            "Sarah",
+            Some("call_42".to_string()),
+            "Plan approved by the user. Proceed with execution.",
+        );
+
+        assert_eq!(message.role, MessageRole::Tool);
+        assert_eq!(message.tool_results.len(), 1);
+        assert_eq!(message.tool_results[0].id, Some("call_42".to_string()));
+        assert_eq!(message.tool_results[0].tool_name, CREATE_PLAN_TOOL_NAME);
+        assert_eq!(message.tool_results[0].content, "Plan approved by the user. Proceed with execution.");
     }
 }

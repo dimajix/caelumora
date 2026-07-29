@@ -12,6 +12,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::Message;
+use caelumora_model::plan::PlanState;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StateStore;
@@ -75,6 +76,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_context.clear();
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
+        self.agent_channel_state.plan = None;
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -130,6 +132,32 @@ impl<'a> TurnContext<'a> {
     }
     pub fn has_tool_calls(&self) -> bool {
         !self.agent_channel_state.tool_calls.is_empty()
+    }
+
+    pub fn set_plan(&mut self, plan: PlanState) {
+        self.agent_channel_state.plan = Some(plan);
+    }
+    pub fn plan(&self) -> Option<&PlanState> {
+        self.agent_channel_state.plan.as_ref()
+    }
+    pub fn take_plan(&mut self) -> Option<PlanState> {
+        self.agent_channel_state.plan.take()
+    }
+    pub fn set_plan_status(&mut self, id: ApprovalId, status: ApprovalStatus) -> bool {
+        if let Some(plan) = self.agent_channel_state.plan.as_mut() {
+            if plan.id == id {
+                plan.status = status;
+                return true;
+            }
+        }
+        false
+    }
+    pub fn is_executing_approved_plan(&self) -> bool {
+        self.agent_channel_state
+            .plan
+            .as_ref()
+            .map(|p| p.status == ApprovalStatus::Approved)
+            .unwrap_or(false)
     }
 
     pub fn security_context(&self) -> &SecurityContext {
@@ -197,5 +225,77 @@ impl<'a> TurnContext<'a> {
             .await
             .context(format!("Actor {} failed to send event", self.agent_id))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::plan::{Plan, PlanId, PlanStep};
+
+    fn make_plan_state(status: ApprovalStatus) -> (ApprovalId, PlanState) {
+        let id = ApprovalId::new();
+        (
+            id,
+            PlanState {
+                id,
+                status,
+                tool_call_id: Some("call_1".to_string()),
+                plan: Plan {
+                    id: PlanId::new(),
+                    summary: "do the thing".to_string(),
+                    steps: vec![PlanStep { description: "step 1".to_string() }],
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn plan_round_trips_through_set_and_take() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        assert!(ctx.plan().is_none());
+        assert!(!ctx.is_executing_approved_plan());
+
+        let (_, plan_state) = make_plan_state(ApprovalStatus::Pending);
+        ctx.set_plan(plan_state);
+        assert!(ctx.plan().is_some());
+        assert!(!ctx.is_executing_approved_plan());
+
+        let taken = ctx.take_plan();
+        assert!(taken.is_some());
+        assert!(ctx.plan().is_none());
+    }
+
+    #[test]
+    fn set_plan_status_updates_matching_id_and_reports_approval() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        let (id, plan_state) = make_plan_state(ApprovalStatus::Pending);
+        ctx.set_plan(plan_state);
+
+        assert!(!ctx.set_plan_status(ApprovalId::new(), ApprovalStatus::Approved));
+        assert!(!ctx.is_executing_approved_plan());
+
+        assert!(ctx.set_plan_status(id, ApprovalStatus::Approved));
+        assert!(ctx.is_executing_approved_plan());
+    }
+
+    #[test]
+    fn next_turn_clears_a_stale_plan() {
+        let mut agent_state = AgentState::default();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        let (_, plan_state) = make_plan_state(ApprovalStatus::Approved);
+        ctx.set_plan(plan_state);
+        assert!(ctx.plan().is_some());
+
+        ctx.next_turn(EventContext::default(), SecurityContext::default());
+        assert!(ctx.plan().is_none());
     }
 }

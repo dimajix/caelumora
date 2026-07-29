@@ -2,6 +2,7 @@ use crate::agent::AgentId;
 use crate::approval::{ApprovalRequest, ApprovalResponse};
 use crate::channel::ChannelId;
 use crate::message::{Message, MessageEvent};
+use crate::plan::{PlanApprovalRequest, PlanApprovalResponse};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
@@ -59,6 +60,18 @@ pub enum ActorEvent {
     CompleteMessageGenerated(Message),
     FullResponseGenerated(Vec<Message>),
     WakeupRequested,
+    PlanApprovalRequested(PlanApprovalRequest),
+    PlanApprovalGranted(PlanApprovalResponse),
+    PlanApprovalDenied(PlanApprovalResponse),
+    PlanApprovalTimedOut(PlanApprovalResponse),
+    /// Streaming text produced by the agent while it is not yet ready to give
+    /// its final answer - still deliberating (researching, proposing a plan)
+    /// or executing an already-approved plan. Never the final response.
+    IntermediatePartialGenerated(Message),
+    /// A completed message that still carries tool calls (or proposes a
+    /// plan), produced while deliberating or executing an approved plan -
+    /// not the final answer.
+    IntermediateMessageGenerated(Message),
 }
 
 impl ActorEvent {
@@ -198,6 +211,12 @@ impl Envelope {
             ActorEvent::ResponseRequested => {
                 format!("ResponseRequested(sender_id={}, sender_name={}", ctx.sender_id, ctx.sender_name)
             }
+            ActorEvent::IntermediatePartialGenerated(m) => {
+                format!("IntermediatePartial(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+            }
+            ActorEvent::IntermediateMessageGenerated(m) => {
+                format!("IntermediateMessage(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+            }
             _ => {
                 format!("{:?}", self.event)
             }
@@ -225,6 +244,12 @@ pub enum ActorState {
     /// Stop current turn
     Stopping,
     WaitingForApproval,
+    /// Analyzing the request, possibly researching via tool calls, until it
+    /// either proposes a plan or answers directly.
+    Deliberating,
+    /// A plan has been proposed and the turn is paused until the user
+    /// approves, rejects, or the approval times out.
+    WaitingForPlanApproval,
 }
 
 impl From<u8> for ActorState {
@@ -239,6 +264,8 @@ impl From<u8> for ActorState {
             6 => ActorState::Planning,
             7 => ActorState::ExecutingTools,
             8 => ActorState::Reflecting,
+            9 => ActorState::Deliberating,
+            10 => ActorState::WaitingForPlanApproval,
             _ => ActorState::Idle,
         }
     }
@@ -256,6 +283,8 @@ impl From<ActorState> for u8 {
             ActorState::Planning => 6,
             ActorState::ExecutingTools => 7,
             ActorState::Reflecting => 8,
+            ActorState::Deliberating => 9,
+            ActorState::WaitingForPlanApproval => 10,
         }
     }
 }
@@ -368,5 +397,9 @@ mod tests {
         assert_eq!(ActorState::from(6), ActorState::Planning);
         assert_eq!(ActorState::from(7), ActorState::ExecutingTools);
         assert_eq!(ActorState::from(8), ActorState::Reflecting);
+        assert_eq!(u8::from(ActorState::Deliberating), 9);
+        assert_eq!(u8::from(ActorState::WaitingForPlanApproval), 10);
+        assert_eq!(ActorState::from(9), ActorState::Deliberating);
+        assert_eq!(ActorState::from(10), ActorState::WaitingForPlanApproval);
     }
 }
