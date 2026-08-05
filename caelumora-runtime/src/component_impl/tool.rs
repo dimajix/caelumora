@@ -4,8 +4,8 @@ use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
-use caelumora_model::plan::{Plan, PlanId, PlanStep};
-use caelumora_model::tool::{Phase, Tool, ToolCall, ToolParameters};
+use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
+use caelumora_model::tool::{Phase, Tool, ToolParameters};
 use log::info;
 use serde::Deserialize;
 use serde_json::Value;
@@ -29,14 +29,13 @@ of the steps you will take to fulfill the request. The plan will be shown to the
 approval before you execute it. For simple requests that need no research and no multiple \
 steps, skip `create_plan` entirely and just answer directly.";
 
-/// The `create_plan` pseudo-tool: only ever offered during `Phase::Deliberate`
-/// (see its `phases` field), and intercepted directly by `AgentActor`'s
-/// unified LLM-phase handler before it would otherwise reach
-/// `ToolExecutor::execute` - proposing a plan pauses the turn for a
-/// dedicated, structurally distinct approval flow (`PlanApprovalRequest`,
-/// carrying the parsed `Plan`), not a generic tool-call result. `execute()`
-/// here should therefore never actually run; it exists only so `create_plan`
-/// participates in tool discovery/description like any other tool.
+/// The `create_plan` tool: only ever offered during `Phase::Deliberate` (see
+/// its `phases` field), and approved through the exact same generic
+/// tool-call approval pipeline (`requires_approval: true`) as any other
+/// tool. `execute()` only ever runs once that approval has already been
+/// granted, at which point proposing a plan is inherently "approved" - it
+/// parses the plan and stores it on `TurnContext` for `AgentActor` to start
+/// executing.
 #[derive(Debug)]
 pub struct CreatePlanToolProvider;
 
@@ -51,8 +50,8 @@ struct CreatePlanStepArg {
     description: String,
 }
 
-pub fn parse_plan(call: &ToolCall) -> Result<Plan> {
-    let args: CreatePlanArgs = serde_json::from_value(call.arguments.clone())
+pub fn parse_plan(args: &Value) -> Result<Plan> {
+    let args: CreatePlanArgs = serde_json::from_value(args.clone())
         .context("Failed to parse create_plan arguments")?;
 
     Ok(Plan {
@@ -92,16 +91,27 @@ impl ToolProvider for CreatePlanToolProvider {
                 ],
                 ["summary", "steps"],
             ),
-            requires_approval: false,
+            requires_approval: true,
             phases: Some(vec![Phase::Deliberate]),
         }]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
-        Err(ToolError::ExecutionFailed(format!(
-            "'{}' must be intercepted by the agent's planning phase, not dispatched through ToolExecutor",
-            name
-        )))
+    async fn execute(&self, _name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+        let plan = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        context.set_plan(PlanState { plan, progress: PlanProgress::Step(0) });
+        Ok(serde_json::json!({ "status": "accepted" }))
+    }
+
+    fn describe(&self, _name: &str, params: &Value) -> ToolResult<String> {
+        let plan = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let steps = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| format!("{}. {}", i + 1, s.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(format!("Proposed plan: {}\n{}", plan.summary, steps))
     }
 }
 
@@ -285,14 +295,36 @@ mod tests {
     }
 
     #[test]
-    fn create_plan_tool_is_never_marked_as_requiring_approval() {
-        // create_plan is intercepted directly by the agent's unified planning
-        // handler and must never reach the tool-call approval pipeline.
-        assert!(!CreatePlanToolProvider.tools().remove(0).requires_approval);
+    fn create_plan_tool_requires_approval_like_any_other_tool() {
+        assert!(CreatePlanToolProvider.tools().remove(0).requires_approval);
     }
 
     #[tokio::test]
-    async fn create_plan_tool_execute_is_never_meant_to_be_dispatched() {
+    async fn create_plan_tool_execute_stores_the_parsed_plan() {
+        let provider = CreatePlanToolProvider;
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        let params = json!({
+            "summary": "Investigate and fix the bug",
+            "steps": [
+                { "description": "Reproduce the issue" },
+                { "description": "Apply and verify the fix" },
+            ]
+        });
+
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn_context).await;
+        assert!(result.is_ok());
+
+        let plan_state = turn_context.plan().expect("plan should be set after execute");
+        assert_eq!(plan_state.plan.summary, "Investigate and fix the bug");
+        assert_eq!(plan_state.plan.steps.len(), 2);
+        assert_eq!(plan_state.progress, PlanProgress::Step(0));
+    }
+
+    #[tokio::test]
+    async fn create_plan_tool_execute_rejects_malformed_arguments() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
@@ -300,24 +332,38 @@ mod tests {
 
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), &mut turn_context).await;
         assert!(result.is_err());
+        assert!(turn_context.plan().is_none());
+    }
+
+    #[test]
+    fn create_plan_tool_describe_renders_summary_and_steps() {
+        let provider = CreatePlanToolProvider;
+        let params = json!({
+            "summary": "Investigate and fix the bug",
+            "steps": [
+                { "description": "Reproduce the issue" },
+                { "description": "Find the root cause" },
+            ]
+        });
+
+        let description = provider.describe(CREATE_PLAN_TOOL_NAME, &params).expect("valid plan should describe");
+        assert!(description.contains("Investigate and fix the bug"));
+        assert!(description.contains("1. Reproduce the issue"));
+        assert!(description.contains("2. Find the root cause"));
     }
 
     #[test]
     fn parse_plan_extracts_summary_and_steps() {
-        let call = ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
-            arguments: json!({
-                "summary": "Investigate and fix the bug",
-                "steps": [
-                    { "description": "Reproduce the issue" },
-                    { "description": "Find the root cause" },
-                    { "description": "Apply and verify the fix" },
-                ]
-            }),
-        };
+        let args = json!({
+            "summary": "Investigate and fix the bug",
+            "steps": [
+                { "description": "Reproduce the issue" },
+                { "description": "Find the root cause" },
+                { "description": "Apply and verify the fix" },
+            ]
+        });
 
-        let plan = parse_plan(&call).expect("valid create_plan arguments should parse");
+        let plan = parse_plan(&args).expect("valid create_plan arguments should parse");
         assert_eq!(plan.summary, "Investigate and fix the bug");
         assert_eq!(plan.steps.len(), 3);
         assert_eq!(plan.steps[0].description, "Reproduce the issue");
@@ -326,13 +372,9 @@ mod tests {
 
     #[test]
     fn parse_plan_rejects_malformed_arguments() {
-        let call = ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: CREATE_PLAN_TOOL_NAME.to_string(),
-            arguments: json!({ "summary": "missing steps field" }),
-        };
+        let args = json!({ "summary": "missing steps field" });
 
-        assert!(parse_plan(&call).is_err());
+        assert!(parse_plan(&args).is_err());
     }
 }
 

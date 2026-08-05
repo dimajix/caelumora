@@ -2,7 +2,7 @@ use crate::actor::{Actor, TurnContext};
 use crate::component::{ComponentContainer, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
-use crate::component_impl::tool::{parse_plan, CREATE_PLAN_TOOL_NAME, PLANNING_SYSTEM_PROMPT};
+use crate::component_impl::tool::{CREATE_PLAN_TOOL_NAME, PLANNING_SYSTEM_PROMPT};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
@@ -17,7 +17,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::plan::{Plan, PlanApprovalRequest, PlanApprovalResponse, PlanProgress, PlanState, PlanStep};
+use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
 use caelumora_model::tool::{Phase, ToolCall, ToolCallResult, ToolCallState};
@@ -333,7 +333,7 @@ impl AgentActor {
             // when it came from the ordinary single-shot tool loop with no
             // plan in play at all - mirrors the same internal/final rule
             // applied to the assistant message that triggered it.
-            let internal = turn_context.phase() == Phase::Deliberate || turn_context.is_executing_approved_plan();
+            let internal = turn_context.phase() == Phase::Deliberate || turn_context.has_plan();
             let tool_message = Message {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
@@ -350,28 +350,6 @@ impl AgentActor {
             Some(tool_message)
         } else {
             None
-        }
-    }
-
-    /// Builds the tool-result message that reports a plan approval/rejection
-    /// decision back to the model, using the same protocol as any other tool
-    /// result. This - not a fresh system message - is how the decision (and,
-    /// via the still-intact `create_plan` call earlier in context, the plan's
-    /// own steps) stays visible to the model going forward.
-    fn plan_decision_message(agent_id: AgentId, agent_name: &str, tool_call_id: Option<String>, content: &str) -> Message {
-        Message {
-            id: MessageId(uuid::Uuid::new_v4()),
-            sender_id: ActorId::Agent(agent_id),
-            sender_name: agent_name.to_string(),
-            role: MessageRole::Tool,
-            tool_results: vec![ToolCallResult {
-                id: tool_call_id,
-                tool_name: CREATE_PLAN_TOOL_NAME.to_string(),
-                content: content.to_string(),
-            }],
-            timestamp: chrono::Utc::now(),
-            internal: true,
-            ..Message::default()
         }
     }
 
@@ -647,86 +625,6 @@ impl AgentActor {
         }
     }
 
-    /// Handle a plan-approval decision while in WaitingForPlanApproval state.
-    /// On approval, resumes via Planning (which will now execute the plan).
-    /// On denial/timeout, folds the rejection into turn messages and returns
-    /// to Deliberating so the model gets one bounded chance to self-correct
-    /// (mirrors how tool-call ApprovalDenied is handled: recorded, fed back
-    /// into context, the turn continues rather than dead-ending).
-    async fn handle_waiting_for_plan_approval<'a>(
-        &self,
-        turn_context: &mut TurnContext<'a>,
-        rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut mpsc::Receiver<GlobalEvent>,
-        output: &dyn EventSender,
-    ) -> Result<Option<ActorState>> {
-        let agent_name = self.agent_controller.name();
-        let is_plan_approval_event = |env: &Envelope| {
-            matches!(
-                env.event,
-                ActorEvent::PlanApprovalGranted(_)
-                    | ActorEvent::PlanApprovalDenied(_)
-                    | ActorEvent::PlanApprovalTimedOut(_)
-            )
-        };
-
-        tokio::select! {
-            maybe_event = rx.recv_matching(is_plan_approval_event) => {
-                match maybe_event {
-                    Some(event) => {
-                        let (req, status) = match &event.event {
-                            ActorEvent::PlanApprovalGranted(r) => (r, ApprovalStatus::Approved),
-                            ActorEvent::PlanApprovalDenied(r) => (r, ApprovalStatus::Denied),
-                            ActorEvent::PlanApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
-                            _ => unreachable!("handle_waiting_for_plan_approval called with non-plan-approval event"),
-                        };
-
-                        if !turn_context.set_plan_status(req.id, status) {
-                            warn!("Received plan approval for unknown approval id {}", req.id);
-                        }
-
-                        rx.commit().await?;
-
-                        // Report the decision back as a tool result for the
-                        // create_plan call itself - the same protocol the model
-                        // already understands from every other tool call, and
-                        // the only place the plan's steps (its arguments) are
-                        // still recoverable from context once we move on.
-                        let tool_call_id = turn_context.plan().and_then(|p| p.tool_call_id.clone());
-                        let next = if status == ApprovalStatus::Approved {
-                            turn_context.push_message(Self::plan_decision_message(
-                                self.agent_id,
-                                &agent_name,
-                                tool_call_id,
-                                "Plan approved by the user. Proceed with execution.",
-                            ));
-                            Self::advance_plan(turn_context, 0);
-                            ActorState::Planning
-                        } else {
-                            turn_context.take_plan();
-                            turn_context.push_message(Self::plan_decision_message(
-                                self.agent_id,
-                                &agent_name,
-                                tool_call_id,
-                                "Plan rejected by the user. Do not execute it. Either answer \
-                                 directly without it, ask a clarifying question, or propose a \
-                                 revised plan.",
-                            ));
-                            ActorState::Deliberating
-                        };
-                        Ok(Some(next))
-                    }
-                    // Channel is closed
-                    None => Ok(None),
-                }
-            }
-            maybe_global = global_rx.recv() => {
-                self.handle_global_event(maybe_global, output).await;
-                Ok(Some(ActorState::WaitingForPlanApproval))
-            }
-        }
-    }
-
     /// Registers tool calls for approval and requests approval for the ones that
     /// need it. Purely records data on `turn_context` - it never touches
     /// `processing_state`; `handle_planning`'s return value (always
@@ -805,12 +703,12 @@ impl AgentActor {
         self.loop_count.fetch_add(1, Ordering::SeqCst);
         turn_context.set_phase(phase);
 
-        // If a plan is in play, it has already been approved by the time we
-        // ever reach Phase::Act (see handle_waiting_for_plan_approval) - this
-        // is now the execution loop for that plan, and its messages must be
-        // distinguishable from a genuine final response until the model
-        // stops calling tools.
-        let executing_plan = turn_context.is_executing_approved_plan();
+        // A plan can only ever exist here because its create_plan tool call
+        // already went through the generic tool-call approval gate (see
+        // CreatePlanToolProvider::execute) - this is now the execution loop
+        // for that plan, and its messages must be distinguishable from a
+        // genuine final response until the model stops calling tools.
+        let executing_plan = turn_context.has_plan();
 
         let mut response = self.call_llm(phase, turn_context).await;
         use futures::stream::TryStreamExt;
@@ -841,52 +739,6 @@ impl AgentActor {
                 MessageEvent::Complete(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-
-                    if phase == Phase::Deliberate {
-                        let plan_call = message
-                            .tool_calls
-                            .iter()
-                            .find(|tc| tc.function_name == CREATE_PLAN_TOOL_NAME)
-                            .cloned();
-
-                        if let Some(plan_call) = plan_call {
-                            if message.tool_calls.len() > 1 {
-                                warn!(
-                                    "Agent {} called create_plan alongside other tool calls; discarding the others",
-                                    self.id
-                                );
-                            }
-                            let plan = parse_plan(&plan_call)?;
-                            // Keep the create_plan call itself in the pushed message
-                            // (rather than stripping it) - its arguments ARE the
-                            // plan, so leaving it in context is how the model still
-                            // knows the plan's steps once execution begins.
-                            message.tool_calls = vec![plan_call.clone()];
-                            message.internal = true;
-
-                            if let Some(msg) = self.respond_complete(message, turn_context).await {
-                                turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
-                            }
-
-                            let approval_id = ApprovalId::new();
-                            turn_context.set_plan(PlanState {
-                                id: approval_id,
-                                status: ApprovalStatus::Pending,
-                                tool_call_id: plan_call.id,
-                                plan: plan.clone(),
-                                progress: PlanProgress::Step(0),
-                            });
-                            let request = PlanApprovalRequest {
-                                id: approval_id,
-                                session_id: turn_context.session_id,
-                                channel_id: turn_context.channel_id,
-                                agent_id: self.agent_id,
-                                plan,
-                            };
-                            turn_context.send_event(ActorEvent::PlanApprovalRequested(request), output).await?;
-                            return Ok(ActorState::WaitingForPlanApproval);
-                        }
-                    }
 
                     self.request_approvals(&message.tool_calls, turn_context, output).await?;
                     let has_tool_calls = !message.tool_calls.is_empty();
@@ -962,13 +814,25 @@ impl AgentActor {
             };
             turn_context.send_event(event, output).await?;
 
+            // A plan was just created this batch (progress is only ever
+            // Step(0) immediately after creation - advance_plan always moves
+            // it forward from there). Announce step 1 (or finalize
+            // immediately for an empty plan) now that the tool-result
+            // message reporting the create_plan call is already in place -
+            // this must not happen inside CreatePlanToolProvider::execute
+            // itself, since that would land a message between the assistant's
+            // tool-call message and its own tool result.
+            if turn_context.plan().map(|p| p.progress) == Some(PlanProgress::Step(0)) {
+                Self::advance_plan(turn_context, 0);
+            }
+
             // Handle "Silent" requested state
             if turn_context.requested_state() == Some(ActorState::Stopping) {
                 // "Stopping" is a one-time state, so we remove it
                 turn_context.take_requested_state();
                 Ok(ActorState::Stopping)
             }
-            else if turn_context.is_executing_approved_plan() {
+            else if turn_context.has_plan() {
                 // An approved plan's steps now need executing.
                 Ok(ActorState::Planning)
             }
@@ -1034,9 +898,6 @@ impl Actor for AgentActor {
                     | ActorEvent::ApprovalTimedOut(_)
                     | ActorEvent::FullResponseGenerated(_)
                     | ActorEvent::ResponseRequested
-                    | ActorEvent::PlanApprovalGranted(_)
-                    | ActorEvent::PlanApprovalDenied(_)
-                    | ActorEvent::PlanApprovalTimedOut(_)
             )
         }
     }
@@ -1071,9 +932,6 @@ impl Actor for AgentActor {
                 }
                 ActorState::WaitingForApproval => {
                     self.handle_waiting_for_approval(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
-                }
-                ActorState::WaitingForPlanApproval => {
-                    self.handle_waiting_for_plan_approval(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
                 ActorState::Sleeping => {
                     self.handle_sleep(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
@@ -1134,7 +992,7 @@ impl Actor for AgentActor {
         );
         self.processing_state.transition(|s| match s {
             ActorState::WaitingForApproval | ActorState::Active | ActorState::ExecutingTools | ActorState::Planning
-                | ActorState::Deliberating | ActorState::WaitingForPlanApproval => Some(ActorState::Cancelling),
+                | ActorState::Deliberating => Some(ActorState::Cancelling),
             _ => None,
         });
         Ok(())
@@ -1148,7 +1006,7 @@ mod tests {
     use crate::component_impl::history::StateHistoryWriter;
     use crate::component_impl::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::plan::PlanId;
+    use caelumora_model::plan::{PlanId, PlanState};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -1224,29 +1082,8 @@ mod tests {
         assert_eq!(turn_context.context()[0].id, input[0].id);
     }
 
-    #[test]
-    fn plan_decision_message_reports_the_decision_against_the_original_tool_call_id() {
-        let agent_id = AgentId::new();
-        let message = AgentActor::plan_decision_message(
-            agent_id,
-            "Sarah",
-            Some("call_42".to_string()),
-            "Plan approved by the user. Proceed with execution.",
-        );
-
-        assert_eq!(message.role, MessageRole::Tool);
-        assert_eq!(message.tool_results.len(), 1);
-        assert_eq!(message.tool_results[0].id, Some("call_42".to_string()));
-        assert_eq!(message.tool_results[0].tool_name, CREATE_PLAN_TOOL_NAME);
-        assert_eq!(message.tool_results[0].content, "Plan approved by the user. Proceed with execution.");
-        assert!(message.internal, "plan decisions are scaffolding, never final answers");
-    }
-
     fn make_plan_state(steps: Vec<&str>) -> PlanState {
         PlanState {
-            id: ApprovalId::new(),
-            status: ApprovalStatus::Approved,
-            tool_call_id: Some("call_1".to_string()),
             progress: PlanProgress::Step(0),
             plan: Plan {
                 id: PlanId::new(),

@@ -2,11 +2,10 @@ use caelumora_model::actor::ActorEvent;
 use caelumora_model::agent::AgentId;
 use caelumora_model::agent::Personality;
 use caelumora_model::agent::PersonalityId;
-use caelumora_model::approval::ApprovalId;
+use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::meta::{Metadata, Scope};
-use caelumora_model::plan::PlanApprovalResponse;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::EntityStore;
@@ -174,8 +173,9 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
     let mut receiver = user_actor.lock_receiver().await;
     let mut input_rx = spawn_rustyline_input();
     // Approval id -> agent id, so `/approve <id>`/`/deny <id>` know which
-    // agent to answer.
-    let mut pending_plan_approvals: HashMap<Uuid, AgentId> = HashMap::new();
+    // agent to answer. Covers both plan proposals and regular tool calls -
+    // both flow through the same generic ApprovalRequested event.
+    let mut pending_approvals: HashMap<Uuid, AgentId> = HashMap::new();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     loop {
@@ -199,13 +199,10 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             println!("\r[working] {}> {}", message.sender_name, content);
                         }
                     }
-                    Some(ActorEvent::PlanApprovalRequested(request)) => {
-                        pending_plan_approvals.insert(request.id.0, request.agent_id);
-                        println!("\r--- Plan proposed (id: {}) ---", request.id.0);
-                        println!("{}", request.plan.summary);
-                        for (i, step) in request.plan.steps.iter().enumerate() {
-                            println!("  {}. {}", i + 1, step.description);
-                        }
+                    Some(ActorEvent::ApprovalRequested(request)) => {
+                        pending_approvals.insert(request.id.0, request.agent_id);
+                        println!("\r--- Approval requested (id: {}) ---", request.id.0);
+                        println!("{}", request.description);
                         println!("Type '/approve {}' or '/deny {}' to respond.", request.id.0, request.id.0);
                     }
                     Some(_) => {
@@ -227,12 +224,12 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             let approved = input.starts_with("/approve ");
                             match Uuid::parse_str(rest.trim()) {
                                 Ok(id) => {
-                                    match pending_plan_approvals.remove(&id) {
+                                    match pending_approvals.remove(&id) {
                                         Some(agent_id) => {
-                                            let response = PlanApprovalResponse { id: ApprovalId(id), agent_id };
-                                            user_actor.send_plan_approval(response, approved).await?;
+                                            let response = ApprovalResponse { id: ApprovalId(id), agent_id };
+                                            user_actor.send_approval(response, approved).await?;
                                         }
-                                        None => println!("No pending plan approval with id {}", id),
+                                        None => println!("No pending approval with id {}", id),
                                     }
                                 }
                                 Err(_) => println!("Invalid approval id: {}", rest.trim()),

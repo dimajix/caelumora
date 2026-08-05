@@ -144,21 +144,12 @@ impl<'a> TurnContext<'a> {
     pub fn take_plan(&mut self) -> Option<PlanState> {
         self.agent_channel_state.plan.take()
     }
-    pub fn set_plan_status(&mut self, id: ApprovalId, status: ApprovalStatus) -> bool {
-        if let Some(plan) = self.agent_channel_state.plan.as_mut() {
-            if plan.id == id {
-                plan.status = status;
-                return true;
-            }
-        }
-        false
-    }
-    pub fn is_executing_approved_plan(&self) -> bool {
-        self.agent_channel_state
-            .plan
-            .as_ref()
-            .map(|p| p.status == ApprovalStatus::Approved)
-            .unwrap_or(false)
+    /// Whether a plan is currently in play. A `PlanState` is only ever
+    /// constructed after its `create_plan` tool call has already been
+    /// through the generic tool-call approval gate, so its mere presence
+    /// implies "approved and executing".
+    pub fn has_plan(&self) -> bool {
+        self.agent_channel_state.plan.is_some()
     }
     pub fn set_plan_progress(&mut self, progress: PlanProgress) {
         if let Some(plan) = self.agent_channel_state.plan.as_mut() {
@@ -250,22 +241,15 @@ mod tests {
     use super::*;
     use caelumora_model::plan::{Plan, PlanId, PlanStep};
 
-    fn make_plan_state(status: ApprovalStatus) -> (ApprovalId, PlanState) {
-        let id = ApprovalId::new();
-        (
-            id,
-            PlanState {
-                id,
-                status,
-                tool_call_id: Some("call_1".to_string()),
-                progress: PlanProgress::Step(0),
-                plan: Plan {
-                    id: PlanId::new(),
-                    summary: "do the thing".to_string(),
-                    steps: vec![PlanStep { description: "step 1".to_string() }],
-                },
+    fn make_plan_state() -> PlanState {
+        PlanState {
+            progress: PlanProgress::Step(0),
+            plan: Plan {
+                id: PlanId::new(),
+                summary: "do the thing".to_string(),
+                steps: vec![PlanStep { description: "step 1".to_string() }],
             },
-        )
+        }
     }
 
     #[test]
@@ -275,32 +259,16 @@ mod tests {
         let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
         assert!(ctx.plan().is_none());
-        assert!(!ctx.is_executing_approved_plan());
+        assert!(!ctx.has_plan());
 
-        let (_, plan_state) = make_plan_state(ApprovalStatus::Pending);
-        ctx.set_plan(plan_state);
+        ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
-        assert!(!ctx.is_executing_approved_plan());
+        assert!(ctx.has_plan());
 
         let taken = ctx.take_plan();
         assert!(taken.is_some());
         assert!(ctx.plan().is_none());
-    }
-
-    #[test]
-    fn set_plan_status_updates_matching_id_and_reports_approval() {
-        let mut agent_state = AgentState::default();
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
-
-        let (id, plan_state) = make_plan_state(ApprovalStatus::Pending);
-        ctx.set_plan(plan_state);
-
-        assert!(!ctx.set_plan_status(ApprovalId::new(), ApprovalStatus::Approved));
-        assert!(!ctx.is_executing_approved_plan());
-
-        assert!(ctx.set_plan_status(id, ApprovalStatus::Approved));
-        assert!(ctx.is_executing_approved_plan());
+        assert!(!ctx.has_plan());
     }
 
     #[test]
@@ -309,8 +277,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
 
-        let (_, plan_state) = make_plan_state(ApprovalStatus::Approved);
-        ctx.set_plan(plan_state);
+        ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
 
         ctx.next_turn(EventContext::default(), SecurityContext::default());

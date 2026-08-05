@@ -1,7 +1,3 @@
-use crate::agent::AgentId;
-use crate::approval::{ApprovalId, ApprovalStatus};
-use crate::channel::ChannelId;
-use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
 
 define_id!(PlanId);
@@ -19,7 +15,7 @@ pub struct Plan {
 }
 
 /// Which part of an approved plan's sequential execution is currently in
-/// progress. Only meaningful once `PlanState.status == Approved`.
+/// progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanProgress {
     /// Currently working the step at this index (0-based) into `plan.steps`.
@@ -29,32 +25,14 @@ pub enum PlanProgress {
     Finalizing,
 }
 
-/// Turn-scoped bookkeeping for the plan currently awaiting/holding approval,
-/// analogous to `ToolCallState` for tool calls.
+/// Turn-scoped bookkeeping for the plan currently executing. Only ever
+/// constructed after the `create_plan` tool call that produced it has
+/// already been through the generic tool-call approval gate, so its mere
+/// existence implies "approved" - there is no separate pending/approved
+/// status to track here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanState {
-    pub id: ApprovalId,
-    pub status: ApprovalStatus,
     pub plan: Plan,
-    /// The id of the `create_plan` tool call that produced this plan, so the
-    /// approval/rejection outcome can be reported back as a matching tool
-    /// result message once the decision is known.
-    pub tool_call_id: Option<String>,
     /// Which step (or finalization) execution is currently working on.
     pub progress: PlanProgress,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanApprovalRequest {
-    pub id: ApprovalId,
-    pub session_id: SessionId,
-    pub channel_id: ChannelId,
-    pub agent_id: AgentId,
-    pub plan: Plan,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanApprovalResponse {
-    pub id: ApprovalId,
-    pub agent_id: AgentId,
 }

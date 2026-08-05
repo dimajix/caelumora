@@ -39,10 +39,3 @@ pub struct SendApprovalRequest {
     pub agent_id: Uuid,
     pub approved: bool,
 }
-
-#[derive(Debug, Deserialize)]
-pub struct SendPlanApprovalRequest {
-    pub approval_id: Uuid,
-    pub agent_id: Uuid,
-    pub approved: bool,
-}
