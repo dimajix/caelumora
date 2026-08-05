@@ -131,7 +131,6 @@ async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<Stri
                 description,
                 parameters: schema_to_tool_parameters(&schema),
                 requires_approval: false,
-                phases: None,
             }
         })
         .collect())

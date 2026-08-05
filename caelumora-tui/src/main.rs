@@ -78,8 +78,8 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
 
     // Extended planning is opt-in per personality by wiring in the
     // create_plan_tool component - its mere presence (not a separate model
-    // field) is what AgentActor uses to decide whether to start turns in
-    // Deliberating rather than Planning.
+    // field) is what AgentActor uses to decide whether to nudge the model
+    // towards create_plan and hide pre-plan scaffolding.
     if enable_extended_planning {
         component_nodes.push(ComponentDescriptor {
             id: "create-plan-tool".to_string(),

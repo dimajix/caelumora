@@ -227,7 +227,10 @@ pub enum ActorState {
     /// Kept only because `ChannelLoop` reuses this enum for its own, unrelated
     /// cancel/wakeup tri-state. `AgentActor` never assigns this to itself anymore.
     Active,
-    /// Calling the LLM and streaming its response.
+    /// Calling the LLM and streaming its response - covers everything from
+    /// initial research/deliberation through proposing or extending a plan
+    /// to executing its steps, and the ordinary single-shot tool loop for
+    /// personalities without extended planning.
     Planning,
     /// Running approved tool calls.
     ExecutingTools,
@@ -239,9 +242,6 @@ pub enum ActorState {
     /// Stop current turn
     Stopping,
     WaitingForApproval,
-    /// Analyzing the request, possibly researching via tool calls, until it
-    /// either proposes a plan or answers directly.
-    Deliberating,
 }
 
 impl From<u8> for ActorState {
@@ -256,7 +256,6 @@ impl From<u8> for ActorState {
             6 => ActorState::Planning,
             7 => ActorState::ExecutingTools,
             8 => ActorState::Reflecting,
-            9 => ActorState::Deliberating,
             _ => ActorState::Idle,
         }
     }
@@ -274,7 +273,6 @@ impl From<ActorState> for u8 {
             ActorState::Planning => 6,
             ActorState::ExecutingTools => 7,
             ActorState::Reflecting => 8,
-            ActorState::Deliberating => 9,
         }
     }
 }
@@ -387,7 +385,5 @@ mod tests {
         assert_eq!(ActorState::from(6), ActorState::Planning);
         assert_eq!(ActorState::from(7), ActorState::ExecutingTools);
         assert_eq!(ActorState::from(8), ActorState::Reflecting);
-        assert_eq!(u8::from(ActorState::Deliberating), 9);
-        assert_eq!(ActorState::from(9), ActorState::Deliberating);
     }
 }

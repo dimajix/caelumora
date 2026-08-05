@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
-use caelumora_model::tool::{Phase, Tool, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters};
 use log::info;
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,8 +20,8 @@ pub const CREATE_PLAN_TOOL_PROVIDER_KIND: &str = "create_plan_tool";
 pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 
 /// Ephemeral system message appended (only to the LLM prompt, never
-/// persisted) while the agent is in `Phase::Deliberate`, nudging it towards
-/// `create_plan` for anything non-trivial.
+/// persisted) while a plan-capable agent hasn't committed to a plan yet,
+/// nudging it towards `create_plan` for anything non-trivial.
 pub const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
 research or multiple steps to complete. If it does, gather any information you need using \
 the available tools, then call `create_plan` once with a short summary and an ordered list \
@@ -29,13 +29,13 @@ of the steps you will take to fulfill the request. The plan will be shown to the
 approval before you execute it. For simple requests that need no research and no multiple \
 steps, skip `create_plan` entirely and just answer directly.";
 
-/// The `create_plan` tool: only ever offered during `Phase::Deliberate` (see
-/// its `phases` field), and approved through the exact same generic
-/// tool-call approval pipeline (`requires_approval: true`) as any other
-/// tool. `execute()` only ever runs once that approval has already been
-/// granted, at which point proposing a plan is inherently "approved" - it
-/// parses the plan and stores it on `TurnContext` for `AgentActor` to start
-/// executing.
+/// The `create_plan` tool: available at every point in a turn (not phase-
+/// gated) and approved through the exact same generic tool-call approval
+/// pipeline (`requires_approval: true`) as any other tool. `execute()` only
+/// ever runs once that approval has already been granted, at which point
+/// the submission is inherently "approved" - it parses the plan and either
+/// stores it on `TurnContext` as a fresh plan, or, if one is already in
+/// progress, appends the new steps to it (see `execute` below).
 #[derive(Debug)]
 pub struct CreatePlanToolProvider;
 
@@ -73,7 +73,10 @@ impl ToolProvider for CreatePlanToolProvider {
             description: "Submit your structured multi-step plan for the user's request. Call \
                 this once you have gathered enough information (using other tools if needed) to \
                 describe how you will address the request. For simple requests that need no \
-                research or multiple steps, just answer directly instead of calling this."
+                research or multiple steps, just answer directly instead of calling this. If a \
+                plan is already in progress, calling this again appends the given steps to it \
+                instead of replacing it - use that to add more work once you discover it's \
+                needed, whether mid-step or after the original steps are done."
                 .to_string(),
             parameters: ToolParameters::object(
                 [
@@ -92,14 +95,33 @@ impl ToolProvider for CreatePlanToolProvider {
                 ["summary", "steps"],
             ),
             requires_approval: true,
-            phases: Some(vec![Phase::Deliberate]),
         }]
     }
 
     async fn execute(&self, _name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
-        let plan = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        context.set_plan(PlanState { plan, progress: PlanProgress::Step(0) });
-        Ok(serde_json::json!({ "status": "accepted" }))
+        let incoming = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        match context.take_plan() {
+            Some(mut state) => {
+                let start = state.plan.steps.len();
+                state.plan.summary = incoming.summary;
+                state.plan.steps.extend(incoming.steps);
+                if state.progress == PlanProgress::Finalizing {
+                    // Already told the model to synthesize a final answer -
+                    // redirect it to the newly-added work instead of
+                    // silently dropping it.
+                    state.progress = PlanProgress::Step(start);
+                }
+                // Otherwise (mid Step(k), k < start): leave progress
+                // untouched - the current step continues uninterrupted, and
+                // the new steps get picked up once it converges.
+                context.set_plan(state);
+                Ok(serde_json::json!({ "status": "steps_added" }))
+            }
+            None => {
+                context.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
+                Ok(serde_json::json!({ "status": "accepted" }))
+            }
+        }
     }
 
     fn describe(&self, _name: &str, params: &Value) -> ToolResult<String> {
@@ -129,21 +151,18 @@ impl ToolProvider for StopToolProvider {
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
-                phases: None,
             },
             Tool {
                 name: "bye".to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
-                phases: None,
             },
             Tool {
                 name: "silence".to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
                 requires_approval: true,
-                phases: None,
             }
         ]
     }
@@ -181,7 +200,6 @@ impl ToolProvider for EchoToolProvider {
                 vec!["message"],
             ),
             requires_approval: false,
-            phases: None,
         }]
     }
 
@@ -208,7 +226,6 @@ impl ToolProvider for CalculatorToolProvider {
                 vec!["expression"],
             ),
             requires_approval: false,
-            phases: None,
         }]
     }
 
@@ -288,13 +305,6 @@ mod tests {
     }
 
     #[test]
-    fn create_plan_tool_is_only_offered_while_deliberating() {
-        let tool = CreatePlanToolProvider.tools().remove(0);
-        assert_eq!(tool.name, CREATE_PLAN_TOOL_NAME);
-        assert_eq!(tool.phases, Some(vec![Phase::Deliberate]));
-    }
-
-    #[test]
     fn create_plan_tool_requires_approval_like_any_other_tool() {
         assert!(CreatePlanToolProvider.tools().remove(0).requires_approval);
     }
@@ -321,6 +331,66 @@ mod tests {
         assert_eq!(plan_state.plan.summary, "Investigate and fix the bug");
         assert_eq!(plan_state.plan.steps.len(), 2);
         assert_eq!(plan_state.progress, PlanProgress::Step(0));
+    }
+
+    #[tokio::test]
+    async fn create_plan_tool_execute_appends_steps_to_a_plan_mid_step() {
+        let provider = CreatePlanToolProvider;
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        turn_context.set_plan(PlanState {
+            progress: PlanProgress::Step(0),
+            plan: Plan {
+                id: PlanId::new(),
+                summary: "original".to_string(),
+                steps: vec![PlanStep { description: "first".to_string() }],
+            },
+        });
+
+        let params = json!({
+            "summary": "updated",
+            "steps": [ { "description": "second" } ]
+        });
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn_context).await;
+        assert!(result.is_ok());
+
+        let plan_state = turn_context.plan().expect("plan should still be set");
+        assert_eq!(plan_state.plan.summary, "updated");
+        assert_eq!(plan_state.plan.steps.len(), 2);
+        assert_eq!(plan_state.plan.steps[1].description, "second");
+        // Mid-step progress is untouched - the current step continues uninterrupted.
+        assert_eq!(plan_state.progress, PlanProgress::Step(0));
+    }
+
+    #[tokio::test]
+    async fn create_plan_tool_execute_resumes_a_finalizing_plan_when_steps_are_added() {
+        let provider = CreatePlanToolProvider;
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+
+        turn_context.set_plan(PlanState {
+            progress: PlanProgress::Finalizing,
+            plan: Plan {
+                id: PlanId::new(),
+                summary: "original".to_string(),
+                steps: vec![PlanStep { description: "first".to_string() }],
+            },
+        });
+
+        let params = json!({
+            "summary": "updated",
+            "steps": [ { "description": "one more thing" } ]
+        });
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn_context).await;
+        assert!(result.is_ok());
+
+        let plan_state = turn_context.plan().expect("plan should still be set");
+        assert_eq!(plan_state.plan.steps.len(), 2);
+        // Redirected back to the newly-added step instead of staying Finalizing.
+        assert_eq!(plan_state.progress, PlanProgress::Step(1));
     }
 
     #[tokio::test]

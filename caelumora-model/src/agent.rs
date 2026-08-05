@@ -7,7 +7,7 @@ use crate::plan::PlanState;
 use crate::security::{SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
 use crate::store::EntityStore;
-use crate::tool::{Phase, ToolCallState};
+use crate::tool::ToolCallState;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
@@ -151,15 +151,9 @@ pub struct AgentChannelState {
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
-    /// The plan currently awaiting/holding approval for this turn, if any.
+    /// The plan currently in progress for this turn, if any.
     #[serde(default)]
     pub plan: Option<PlanState>,
-    /// Which phase the current LLM call is/was made in - set explicitly by
-    /// the unified planning handler before each call, and consulted by
-    /// `ExecutingTools` to know which phase to resume in afterwards (rather
-    /// than inferring it from whether a plan happens to exist yet).
-    #[serde(default)]
-    pub current_phase: Phase,
     /// Set by a tool (e.g. stop/bye/silence) or by the run loop itself (on a
     /// detected cancellation) to override what state `Reflecting` lands on
     /// instead of the default `Idle`. Consumed once, at the end of the turn.

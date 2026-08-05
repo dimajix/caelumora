@@ -20,7 +20,7 @@ use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::{Phase, ToolCall, ToolCallResult, ToolCallState};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
 use futures::stream::BoxStream;
 use log::{debug, info, warn};
 use std::mem;
@@ -103,7 +103,9 @@ impl AgentActor {
         // Extended planning is opt-in per personality by wiring the
         // create_plan_tool component into its ComponentConfig - its presence
         // (not a separate flag) is the single source of truth for whether
-        // this agent starts turns in Deliberating rather than Planning.
+        // this agent hides pre-plan scaffolding and nudges the model towards
+        // create_plan before it has committed to one (see hide_before_plan
+        // in handle_llm_turn).
         let enable_extended_planning = tool_executor
             .tools()
             .iter()
@@ -250,19 +252,19 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Calls the LLM for one step of `phase`. `Phase::Deliberate` appends an
-    /// ephemeral (not persisted) planning-mode system message, and tool
-    /// availability is whatever `tools_for_phase` grants that phase (e.g.
-    /// `create_plan` only shows up here).
+    /// Calls the LLM for one turn step. While a plan-capable personality
+    /// hasn't committed to a plan yet (`hide_before_plan`), an ephemeral (not
+    /// persisted) planning-mode system message is appended, nudging it
+    /// towards `create_plan`.
     async fn call_llm<'a>(
         &self,
-        phase: Phase,
+        hide_before_plan: bool,
         turn_context: &mut TurnContext<'a>,
     ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
         let llm_client = self.actor_runtime.llm_client();
 
         let mut context = turn_context.full_context();
-        if phase == Phase::Deliberate {
+        if hide_before_plan {
             context.push(Message {
                 role: MessageRole::System,
                 content: Some(PLANNING_SYSTEM_PROMPT.to_string()),
@@ -272,7 +274,7 @@ impl AgentActor {
             });
         }
 
-        let tools = self.tool_executor.tools_for_phase(phase);
+        let tools = self.tool_executor.tools();
         llm_client
             .chat_completion(context.as_slice(), tools.as_slice())
             .await
@@ -333,7 +335,8 @@ impl AgentActor {
             // when it came from the ordinary single-shot tool loop with no
             // plan in play at all - mirrors the same internal/final rule
             // applied to the assistant message that triggered it.
-            let internal = turn_context.phase() == Phase::Deliberate || turn_context.has_plan();
+            let hide_before_plan = self.enable_extended_planning && !turn_context.has_plan();
+            let internal = turn_context.has_plan() || hide_before_plan;
             let tool_message = Message {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
@@ -494,11 +497,7 @@ impl AgentActor {
                             }
                             ActorEvent::ResponseRequested => {
                                 self.request_response(turn_context, &event.context, &event.security, output).await?;
-                                if self.enable_extended_planning {
-                                    Some(ActorState::Deliberating)
-                                } else {
-                                    Some(ActorState::Planning)
-                                }
+                                Some(ActorState::Planning)
                             }
                             _ => Some(ActorState::Idle),
                         };
@@ -674,48 +673,51 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Calls the LLM and streams its response for a single step of `phase`,
-    /// shared by both `ActorState::Deliberating` (`Phase::Deliberate`) and
-    /// `ActorState::Planning` (`Phase::Act`). Loops back to itself (via the
-    /// run loop, after a trip through `ExecutingTools`) as long as the model
-    /// keeps making tool calls, up to `max_iterations`.
+    /// Calls the LLM and streams its response for a single turn step. Loops
+    /// back to itself (via the run loop, after a trip through
+    /// `ExecutingTools`) as long as the model keeps making tool calls, up to
+    /// `max_iterations`.
     ///
     /// A message is "final" (shown to the user, kept in `history`) exactly
-    /// when none of the following hold: the model is still deliberating and
-    /// produced tool calls or a plan proposal (`phase == Deliberate` with
-    /// tool calls), or it's mid-execution of an already-approved plan
-    /// (`executing_plan`, and not yet at the last, synthesizing step).
-    /// Anything else is internal - `IntermediatePartialGenerated`/
-    /// `IntermediateMessageGenerated` instead of the `Partial`/`Complete`
-    /// variants, and excluded from `history` in `reflect()`.
-    async fn handle_llm_phase<'a>(
+    /// when none of the following hold: this is a plan-capable personality
+    /// that hasn't committed to a plan yet and produced tool calls or a plan
+    /// proposal (`hide_before_plan` with tool calls), or it's mid-execution
+    /// of an in-progress plan (`executing_plan`, and not yet at the last,
+    /// synthesizing step). Anything else is internal -
+    /// `IntermediatePartialGenerated`/`IntermediateMessageGenerated` instead
+    /// of the `Partial`/`Complete` variants, and excluded from `history` in
+    /// `reflect()`.
+    async fn handle_llm_turn<'a>(
         &self,
-        phase: Phase,
         turn_context: &mut TurnContext<'a>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
 
         if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
-            info!("Too many iterations, stopping agent {} {} in {:?}", self.id, agent_name, phase);
+            info!("Too many iterations, stopping agent {} {}", self.id, agent_name);
             return Ok(ActorState::Reflecting);
         }
         self.loop_count.fetch_add(1, Ordering::SeqCst);
-        turn_context.set_phase(phase);
 
         // A plan can only ever exist here because its create_plan tool call
         // already went through the generic tool-call approval gate (see
-        // CreatePlanToolProvider::execute) - this is now the execution loop
-        // for that plan, and its messages must be distinguishable from a
-        // genuine final response until the model stops calling tools.
+        // CreatePlanToolProvider::execute) - once one is in play, its
+        // messages must be distinguishable from a genuine final response
+        // until the model stops calling tools.
         let executing_plan = turn_context.has_plan();
+        // A plan-capable personality that hasn't committed to a plan yet is
+        // still deciding whether to research, propose a plan, or answer
+        // directly - keep that scaffolding hidden the same way it always
+        // has been, without needing a dedicated Deliberating state to track it.
+        let hide_before_plan = self.enable_extended_planning && !executing_plan;
 
-        let mut response = self.call_llm(phase, turn_context).await;
+        let mut response = self.call_llm(hide_before_plan, turn_context).await;
         use futures::stream::TryStreamExt;
         while let Some(event) = response
             .try_next()
             .await
-            .with_context(|| format!("Error during {:?} stream", phase))?
+            .with_context(|| "Error during LLM stream".to_string())?
         {
             if self.processing_state.load() == ActorState::Cancelling {
                 info!("Stopping for cancelled agent {} {}", self.id, agent_name);
@@ -726,7 +728,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    message.internal = executing_plan || phase == Phase::Deliberate;
+                    message.internal = executing_plan || hide_before_plan;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
                         let event = if msg.internal {
                             ActorEvent::IntermediatePartialGenerated(msg)
@@ -771,10 +773,10 @@ impl AgentActor {
                     } else {
                         // Covers: the ordinary single-shot tool loop (no plan
                         // in play at all - always final, regardless of tool
-                        // calls); mid-plan research tool calls (internal);
-                        // and a trivial direct answer while deliberating (no
-                        // plan, no tool calls - final).
-                        message.internal = executing_plan || (phase == Phase::Deliberate && has_tool_calls);
+                        // calls); mid-plan research/extension tool calls
+                        // (internal); and a trivial direct answer before
+                        // committing to a plan (no plan, no tool calls - final).
+                        message.internal = executing_plan || (hide_before_plan && has_tool_calls);
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
                             let event = if msg.internal {
                                 ActorEvent::IntermediateMessageGenerated(msg)
@@ -798,14 +800,14 @@ impl AgentActor {
 
     /// Runs any tool calls that are ready (Approved, or newly-approved on resume
     /// from WaitingForApproval). Loops back to Planning once all calls for this
-    /// step have results (Planning's own top-of-function check will notice if a
-    /// stop/bye/silence tool just ran), or parks in WaitingForApproval if some
-    /// are still Pending.
+    /// step have results, or parks in WaitingForApproval if some are still
+    /// Pending.
     async fn handle_executing_tools<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
+        let progress_before = turn_context.plan().map(|p| p.progress);
         if let Some(tool_message) = self.execute_tools(turn_context).await {
             let event = if tool_message.internal {
                 ActorEvent::IntermediateMessageGenerated(tool_message)
@@ -814,16 +816,21 @@ impl AgentActor {
             };
             turn_context.send_event(event, output).await?;
 
-            // A plan was just created this batch (progress is only ever
-            // Step(0) immediately after creation - advance_plan always moves
-            // it forward from there). Announce step 1 (or finalize
-            // immediately for an empty plan) now that the tool-result
-            // message reporting the create_plan call is already in place -
-            // this must not happen inside CreatePlanToolProvider::execute
-            // itself, since that would land a message between the assistant's
-            // tool-call message and its own tool result.
-            if turn_context.plan().map(|p| p.progress) == Some(PlanProgress::Step(0)) {
-                Self::advance_plan(turn_context, 0);
+            // A plan was just created, or extended after already reaching
+            // Finalizing, by a create_plan call in this batch (progress only
+            // ever changes here as a result of that - a plain append to an
+            // already-in-progress plan leaves progress untouched). Announce
+            // the step it now points at (or finalize immediately for an
+            // empty plan) now that the tool-result message reporting the
+            // create_plan call is already in place - this must not happen
+            // inside CreatePlanToolProvider::execute itself, since that
+            // would land a message between the assistant's tool-call message
+            // and its own tool result.
+            let progress_after = turn_context.plan().map(|p| p.progress);
+            if progress_after != progress_before {
+                if let Some(PlanProgress::Step(idx)) = progress_after {
+                    Self::advance_plan(turn_context, idx);
+                }
             }
 
             // Handle "Silent" requested state
@@ -832,21 +839,8 @@ impl AgentActor {
                 turn_context.take_requested_state();
                 Ok(ActorState::Stopping)
             }
-            else if turn_context.has_plan() {
-                // An approved plan's steps now need executing.
-                Ok(ActorState::Planning)
-            }
             else {
-                // No plan is in play (it was never proposed, or got rejected
-                // and cleared) - resume whichever phase actually led into
-                // this ExecutingTools cycle, tracked explicitly on
-                // turn_context rather than inferred from plan state (which
-                // can't distinguish "still deliberating, no plan proposed
-                // yet" from "no plan at all").
-                match turn_context.phase() {
-                    Phase::Deliberate => Ok(ActorState::Deliberating),
-                    Phase::Act => Ok(ActorState::Planning),
-                }
+                Ok(ActorState::Planning)
             }
         } else {
             Ok(ActorState::WaitingForApproval)
@@ -938,8 +932,7 @@ impl Actor for AgentActor {
                 }
                 ActorState::Stopping => Some(self.handle_stopping()?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut turn_context, &*output).await?),
-                ActorState::Deliberating => Some(self.handle_llm_phase(Phase::Deliberate, &mut turn_context, &*output).await?),
-                ActorState::Planning => Some(self.handle_llm_phase(Phase::Act, &mut turn_context, &*output).await?),
+                ActorState::Planning => Some(self.handle_llm_turn(&mut turn_context, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*output).await?),
                 ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
@@ -992,7 +985,7 @@ impl Actor for AgentActor {
         );
         self.processing_state.transition(|s| match s {
             ActorState::WaitingForApproval | ActorState::Active | ActorState::ExecutingTools | ActorState::Planning
-                | ActorState::Deliberating => Some(ActorState::Cancelling),
+                => Some(ActorState::Cancelling),
             _ => None,
         });
         Ok(())

@@ -77,19 +77,6 @@ impl ToolParameters {
     }
 }
 
-/// Which stage of an agent's turn a tool may be offered in. `Tool::phases ==
-/// None` means "every phase" (the default for ordinary tools); `Some(...)`
-/// restricts availability to exactly the listed phases.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Phase {
-    /// Deciding whether to research, propose a plan, or answer directly.
-    #[default]
-    Deliberate,
-    /// Executing tool calls: an approved plan step, or the ordinary
-    /// single-shot tool loop when no plan is in play.
-    Act,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
@@ -97,8 +84,6 @@ pub struct Tool {
     pub parameters: ToolParameters,
     #[serde(default)]
     pub requires_approval: bool,
-    #[serde(default)]
-    pub phases: Option<Vec<Phase>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
