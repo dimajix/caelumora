@@ -2,7 +2,6 @@ use crate::actor::{Actor, TurnContext};
 use crate::component::{ComponentContainer, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
-use crate::component_impl::tool::{CREATE_PLAN_TOOL_NAME, PLANNING_SYSTEM_PROMPT};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
@@ -48,7 +47,6 @@ pub struct AgentActor {
     processing_state: Arc<ProcessingStateHolder>,
     loop_count: AtomicI32,
     max_iterations: i32,
-    enable_extended_planning: bool,
 }
 
 #[derive(Debug)]
@@ -100,16 +98,6 @@ impl AgentActor {
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
         let tool_executor = actor_runtime
             .new_tool_executor(tool_providers.into_iter().map(|p| p.facet).collect());
-        // Extended planning is opt-in per personality by wiring the
-        // create_plan_tool component into its ComponentConfig - its presence
-        // (not a separate flag) is the single source of truth for whether
-        // this agent hides pre-plan scaffolding and nudges the model towards
-        // create_plan before it has committed to one (see hide_before_plan
-        // in handle_llm_turn).
-        let enable_extended_planning = tool_executor
-            .tools()
-            .iter()
-            .any(|t| t.name == CREATE_PLAN_TOOL_NAME);
 
         let state_store = actor_runtime.state_store();
         let mut agent_channel_state = state_store
@@ -142,7 +130,6 @@ impl AgentActor {
             processing_state,
             loop_count: AtomicI32::new(0),
             max_iterations: 25,
-            enable_extended_planning,
         })
     }
 
@@ -252,28 +239,16 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Calls the LLM for one turn step. While a plan-capable personality
-    /// hasn't committed to a plan yet (`hide_before_plan`), an ephemeral (not
-    /// persisted) planning-mode system message is appended, nudging it
-    /// towards `create_plan`.
+    /// Calls the LLM for one turn step. `create_plan_tool` (when wired in)
+    /// contributes its own planning nudge into `turn_context.context` as a
+    /// `SystemPromptProvider`, composed by `StateContextProvider` once per
+    /// turn - nothing plan-specific needs handling here.
     async fn call_llm<'a>(
         &self,
-        hide_before_plan: bool,
         turn_context: &mut TurnContext<'a>,
     ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
         let llm_client = self.actor_runtime.llm_client();
-
-        let mut context = turn_context.full_context();
-        if hide_before_plan {
-            context.push(Message {
-                role: MessageRole::System,
-                content: Some(PLANNING_SYSTEM_PROMPT.to_string()),
-                sender_id: self.id,
-                sender_name: self.agent_controller.name(),
-                ..Message::default()
-            });
-        }
-
+        let context = turn_context.full_context();
         let tools = self.tool_executor.tools();
         llm_client
             .chat_completion(context.as_slice(), tools.as_slice())
@@ -332,11 +307,10 @@ impl AgentActor {
                 })
             }
             // A tool result is only ever "final" (shown as the real answer)
-            // when it came from the ordinary single-shot tool loop with no
-            // plan in play at all - mirrors the same internal/final rule
-            // applied to the assistant message that triggered it.
-            let hide_before_plan = self.enable_extended_planning && !turn_context.has_plan();
-            let internal = turn_context.has_plan() || hide_before_plan;
+            // when it's not part of executing an in-progress plan - mirrors
+            // the same internal/final rule applied to the assistant message
+            // that triggered it.
+            let internal = turn_context.has_plan();
             let tool_message = Message {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
@@ -679,14 +653,14 @@ impl AgentActor {
     /// `max_iterations`.
     ///
     /// A message is "final" (shown to the user, kept in `history`) exactly
-    /// when none of the following hold: this is a plan-capable personality
-    /// that hasn't committed to a plan yet and produced tool calls or a plan
-    /// proposal (`hide_before_plan` with tool calls), or it's mid-execution
-    /// of an in-progress plan (`executing_plan`, and not yet at the last,
-    /// synthesizing step). Anything else is internal -
+    /// when it isn't part of executing an in-progress plan (`executing_plan`,
+    /// and not yet at the last, synthesizing step) - ordinary tool calls,
+    /// pre-plan research, and the `create_plan` call itself are all shown
+    /// like any other message, same as a personality with no planning
+    /// capability at all. Anything internal instead gets
     /// `IntermediatePartialGenerated`/`IntermediateMessageGenerated` instead
-    /// of the `Partial`/`Complete` variants, and excluded from `history` in
-    /// `reflect()`.
+    /// of the `Partial`/`Complete` variants, and is excluded from `history`
+    /// in `reflect()`.
     async fn handle_llm_turn<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
@@ -706,13 +680,8 @@ impl AgentActor {
         // messages must be distinguishable from a genuine final response
         // until the model stops calling tools.
         let executing_plan = turn_context.has_plan();
-        // A plan-capable personality that hasn't committed to a plan yet is
-        // still deciding whether to research, propose a plan, or answer
-        // directly - keep that scaffolding hidden the same way it always
-        // has been, without needing a dedicated Deliberating state to track it.
-        let hide_before_plan = self.enable_extended_planning && !executing_plan;
 
-        let mut response = self.call_llm(hide_before_plan, turn_context).await;
+        let mut response = self.call_llm(turn_context).await;
         use futures::stream::TryStreamExt;
         while let Some(event) = response
             .try_next()
@@ -728,7 +697,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    message.internal = executing_plan || hide_before_plan;
+                    message.internal = executing_plan;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
                         let event = if msg.internal {
                             ActorEvent::IntermediatePartialGenerated(msg)
@@ -771,12 +740,11 @@ impl AgentActor {
                             None => unreachable!("executing_plan implies a plan is present"),
                         }
                     } else {
-                        // Covers: the ordinary single-shot tool loop (no plan
-                        // in play at all - always final, regardless of tool
-                        // calls); mid-plan research/extension tool calls
-                        // (internal); and a trivial direct answer before
-                        // committing to a plan (no plan, no tool calls - final).
-                        message.internal = executing_plan || (hide_before_plan && has_tool_calls);
+                        // Covers: the ordinary single-shot tool loop, pre-plan
+                        // research/create_plan calls, and a direct answer
+                        // before committing to a plan - all final/visible;
+                        // mid-plan research/extension tool calls stay internal.
+                        message.internal = executing_plan;
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
                             let event = if msg.internal {
                                 ActorEvent::IntermediateMessageGenerated(msg)

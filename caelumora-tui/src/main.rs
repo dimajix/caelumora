@@ -39,6 +39,15 @@ fn init_logging() {
 }
 
 fn create_component_config(system_prompt: &str, enable_extended_planning: bool) -> ComponentConfig {
+    // create_plan_tool contributes its own planning-nudge SystemPromptProvider
+    // (see CreatePlanToolProvider in caelumora-runtime), so the "context" node
+    // needs to depend on it too - StateContextProvider only picks up
+    // SystemPromptProviders declared among its own deps - whenever it's wired in.
+    let mut context_deps = vec!["system-prompt".to_string()];
+    if enable_extended_planning {
+        context_deps.push("create-plan-tool".to_string());
+    }
+
     let mut component_nodes = vec![
         ComponentDescriptor {
             id: "system-prompt".to_string(),
@@ -70,7 +79,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
             id: "context".to_string(),
             kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
             params: serde_json::Value::Null,
-            deps: vec!["system-prompt".to_string()],
+            deps: context_deps,
             tags: Vec::new(),
             fail_policy: ComponentFailPolicy::FailClosed,
         },
@@ -78,8 +87,9 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
 
     // Extended planning is opt-in per personality by wiring in the
     // create_plan_tool component - its mere presence (not a separate model
-    // field) is what AgentActor uses to decide whether to nudge the model
-    // towards create_plan and hide pre-plan scaffolding.
+    // field) is what AgentActor uses to decide whether the create_plan tool
+    // (and its planning-nudge system prompt, via "context"'s dep above) is
+    // available at all.
     if enable_extended_planning {
         component_nodes.push(ComponentDescriptor {
             id: "create-plan-tool".to_string(),

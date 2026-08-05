@@ -1,5 +1,6 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component_impl::context::SystemPromptProvider;
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -19,9 +20,13 @@ pub const CREATE_PLAN_TOOL_PROVIDER_KIND: &str = "create_plan_tool";
 
 pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 
-/// Ephemeral system message appended (only to the LLM prompt, never
-/// persisted) while a plan-capable agent hasn't committed to a plan yet,
-/// nudging it towards `create_plan` for anything non-trivial.
+/// System prompt contributed by `CreatePlanToolProvider`'s `SystemPromptProvider`
+/// impl, nudging the model towards `create_plan` for anything non-trivial.
+/// Composed alongside the personality's own system prompt by
+/// `StateContextProvider` once per turn - it stays for the whole turn
+/// (including once a plan is being executed), which is harmless: the far
+/// more specific `plan_step_message`/`plan_finalize_message` instructions
+/// dominate by then.
 pub const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
 research or multiple steps to complete. If it does, gather any information you need using \
 the available tools, then call `create_plan` once with a short summary and an ordered list \
@@ -35,9 +40,20 @@ steps, skip `create_plan` entirely and just answer directly.";
 /// ever runs once that approval has already been granted, at which point
 /// the submission is inherently "approved" - it parses the plan and either
 /// stores it on `TurnContext` as a fresh plan, or, if one is already in
-/// progress, appends the new steps to it (see `execute` below).
+/// progress, appends the new steps to it (see `execute` below). Also
+/// implements `SystemPromptProvider` to contribute `PLANNING_SYSTEM_PROMPT` -
+/// see the `context` node's `deps` in whatever `ComponentConfig` wires this
+/// component in (e.g. `caelumora-tui/src/main.rs`), which must list this
+/// component's id so `StateContextProvider` picks up the prompt.
 #[derive(Debug)]
 pub struct CreatePlanToolProvider;
+
+#[async_trait]
+impl SystemPromptProvider for CreatePlanToolProvider {
+    async fn get_prompt(&self) -> Result<String> {
+        Ok(PLANNING_SYSTEM_PROMPT.to_string())
+    }
+}
 
 #[derive(Deserialize)]
 struct CreatePlanArgs {
@@ -422,6 +438,12 @@ mod tests {
         assert!(description.contains("2. Find the root cause"));
     }
 
+    #[tokio::test]
+    async fn create_plan_tool_contributes_the_planning_system_prompt() {
+        let prompt = CreatePlanToolProvider.get_prompt().await.expect("prompt should be available");
+        assert_eq!(prompt, PLANNING_SYSTEM_PROMPT);
+    }
+
     #[test]
     fn parse_plan_extracts_summary_and_steps() {
         let args = json!({
@@ -478,6 +500,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         Box::new(|_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CreatePlanToolProvider));
+            facets.insert::<dyn SystemPromptProvider>(Arc::new(CreatePlanToolProvider));
             Ok(facets)
         }),
     );
