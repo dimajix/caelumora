@@ -259,6 +259,12 @@ impl AgentActor {
         &self,
         turn_context: &mut TurnContext<'a>,
     ) -> Option<Message> {
+        // Captured before running the calls: a `create_plan` call among them
+        // sets the plan as a side effect of executing it, and the result
+        // must be classified against the state that produced the call (same
+        // as the assistant message that triggered it), not the state that
+        // call itself just brought about.
+        let had_plan_before = turn_context.has_plan();
         let mut tool_calls = turn_context.take_tool_calls();
         let mut complete = true;
         for c in &mut tool_calls {
@@ -310,7 +316,7 @@ impl AgentActor {
             // when it's not part of executing an in-progress plan - mirrors
             // the same internal/final rule applied to the assistant message
             // that triggered it.
-            let internal = turn_context.has_plan();
+            let internal = had_plan_before;
             let tool_message = Message {
                 id: MessageId(uuid::Uuid::new_v4()),
                 prev_id: message_id,
@@ -550,14 +556,14 @@ impl AgentActor {
     ) -> Result<ActorState> {
         self.reflect(turn_context).await;
 
-        // Send final message
-        let final_messages = Self::final_messages(turn_context);
-        if !final_messages.is_empty() {
-            turn_context.send_event(
-                ActorEvent::FullResponseGenerated(final_messages),
-                output,
-            ).await?;
-        }
+        // Always signal the end of the turn, even with no final messages -
+        // a plan cancelled before any step produced a visible answer still
+        // has to tell observers (e.g. the web UI) that generation stopped,
+        // the same way handle_reflecting does unconditionally.
+        turn_context.send_event(
+            ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
+            output,
+        ).await?;
         turn_context.finish_turn();
 
         info!("Agent {} {} finished cancelling", self.id, self.agent_controller.name());
