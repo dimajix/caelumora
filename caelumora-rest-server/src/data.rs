@@ -13,7 +13,7 @@ use uuid::Uuid;
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
-use caelumora_runtime::component_impl::tool::{CALCULATOR_TOOL_PROVIDER_KIND, STOP_TOOL_PROVIDER_KIND};
+use caelumora_runtime::component_impl::tool::{CALCULATOR_TOOL_PROVIDER_KIND, CREATE_PLAN_TOOL_PROVIDER_KIND, STOP_TOOL_PROVIDER_KIND};
 
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
     let ctx = SecurityContext::default();
@@ -158,6 +158,14 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         id: "system-prompt".to_string(),
         kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
         params: json!({ "prompt": system_prompt }),
+        deps: vec![],
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+    });
+    components.component_nodes.push(ComponentDescriptor {
+        id: "create-plan-tool".to_string(),
+        kind: CREATE_PLAN_TOOL_PROVIDER_KIND.to_string(),
+        params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,

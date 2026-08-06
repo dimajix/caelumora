@@ -21,7 +21,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
 use futures::stream::BoxStream;
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::mem;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;

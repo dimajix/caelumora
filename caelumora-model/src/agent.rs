@@ -10,7 +10,6 @@ use crate::store::EntityStore;
 use crate::tool::ToolCallState;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
-use serde::{Deserializer, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
