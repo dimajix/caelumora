@@ -1,18 +1,18 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-    CheckCircle2,
-    Send,
-    Square,
-    Terminal,
-    Users,
-    Wrench
+  CheckCircle2,
+  Send,
+  Square,
+  Terminal,
+  Users,
+  Wrench
 } from 'lucide-react';
 import type {
-    ApprovalRequest,
-    ChannelResponse,
-    Envelope,
-    Message,
-    PlanStepEvent
+  ApprovalRequest,
+  ChannelResponse,
+  Envelope,
+  Message,
+  PlanStepEvent
 } from '../types';
 import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
@@ -39,6 +39,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [isSending, setIsSending] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
+  const [streamingSender, setStreamingSender] = useState<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -55,9 +56,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         if (actorEvent.ResponseStarted) {
           setIsGenerating(true);
           setStreamingMessage('');
+          setStreamingSender(envelope.context.sender_name || null);
         } else if (actorEvent.PartialMessageGenerated) {
           setIsGenerating(true);
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
+          setStreamingSender(envelope.context.sender_name || null);
         } else if (actorEvent.CompleteMessageGenerated) {
           setMessages(prev => {
             const newMsg = actorEvent.CompleteMessageGenerated!;
@@ -74,6 +77,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             return [...prev, newMsg];
           });
           setStreamingMessage(null);
+          setStreamingSender(null);
         } else if (actorEvent.ApprovalRequested) {
           setPendingApprovals(prev => [...prev, actorEvent.ApprovalRequested!]);
         } else if (actorEvent.ApprovalGranted) {
@@ -85,6 +89,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
+          setStreamingSender(null);
           setIsGenerating(false);
           setCurrentStep(null);
         } else if (actorEvent.PlanStepStarted) {
@@ -119,6 +124,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       const data = await api.getMessages(sessionId, channelId);
       setMessages(data);
       setStreamingMessage(null);
+      setStreamingSender(null);
       setIsGenerating(false);
     } catch (error) {
       console.error('Failed to load messages', error);
@@ -259,12 +265,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               )}
             </div>
           ))}
-          {streamingMessage && (
+          {(isGenerating || streamingMessage) && (
             <div className="max-w-[80%] p-3 rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
-              <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider">
-                {isGenerating ? "Generating..." : "Stopped"}
+              <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
+                <span>{streamingSender || 'Assistant'}</span>
+                {isGenerating ? (
+                  <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
+                    <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                    generating…
+                  </span>
+                ) : (
+                  <span className="normal-case font-normal text-red-500 dark:text-red-400">stopped</span>
+                )}
               </div>
-              <MarkdownMessage content={streamingMessage} />
+              {streamingMessage && <MarkdownMessage content={streamingMessage} />}
             </div>
           )}
           <div ref={messagesEndRef} />

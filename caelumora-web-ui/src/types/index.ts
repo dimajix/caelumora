@@ -68,10 +68,21 @@ export interface ActorEvent {
   PlanStepFinished?: PlanStepEvent;
 }
 
+export interface EventContext {
+  session_id: string;
+  channel_id: string;
+  sender_id: any;
+  sender_name: string;
+  event_id: string;
+  correlation_id: string;
+  span_id: string;
+  span_depth: number;
+}
+
 export interface Envelope {
   timestamp: string;
   event: ActorEvent;
-  context: any;
+  context: EventContext;
   security: any;
 }
 
