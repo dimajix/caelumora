@@ -18,6 +18,8 @@ struct OllamaChatRequest {
     messages: Vec<OllamaChatMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OllamaTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
     stream: bool,
 }
 
@@ -98,6 +100,8 @@ impl From<caelumora_model::tool::ToolParameters> for OllamaFunctionParameters {
 struct OllamaChatMessage {
     role: String,
     content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thinking: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OllamaToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,10 +173,11 @@ impl OllamaChatMessage {
             )
         };
 
-        if tool_calls.is_some() || value.content.is_some() {
+        if tool_calls.is_some() || value.content.is_some() || value.reasoning.is_some() {
             messages.push( Self {
                 role,
                 content: value.content.clone().unwrap_or_default(),
+                thinking: value.reasoning.clone(),
                 tool_name: None,
                 tool_calls,
                 tool_call_id: None
@@ -182,6 +187,7 @@ impl OllamaChatMessage {
             messages.push( Self {
                 role: "tool".to_string(),
                 content: serde_json::to_string(&r).unwrap_or_default(),
+                thinking: None,
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
                 tool_call_id: r.id.clone()
@@ -235,6 +241,72 @@ mod tests {
         assert_eq!(ollama_tool_calls[1].function.name, "test_func_2");
         assert_eq!(ollama_tool_calls[1].function.index, 1);
     }
+
+    #[test]
+    fn test_ollama_chat_message_from_with_reasoning() {
+        let message = Message {
+            role: MessageRole::Assistant,
+            content: Some("the answer".to_string()),
+            reasoning: Some("let me think".to_string()),
+            ..Message::default()
+        };
+
+        let ollama_messages = OllamaChatMessage::from(&message);
+        assert_eq!(ollama_messages.len(), 1);
+        assert_eq!(ollama_messages[0].thinking, Some("let me think".to_string()));
+    }
+
+    #[test]
+    fn test_ollama_chat_request_omits_think_when_none() {
+        let request = OllamaChatRequest {
+            model: "test-model".to_string(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            think: None,
+            stream: true,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(json.get("think").is_none());
+    }
+
+    #[test]
+    fn test_ollama_chat_request_includes_think_when_set() {
+        let request = OllamaChatRequest {
+            model: "test-model".to_string(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            think: Some(true),
+            stream: true,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json.get("think"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn test_ollama_chat_message_deserializes_thinking() {
+        let raw = r#"{"role":"assistant","content":"","thinking":"pondering..."}"#;
+        let msg: OllamaChatMessage = serde_json::from_str(raw).unwrap();
+        assert_eq!(msg.thinking, Some("pondering...".to_string()));
+
+        let raw_without_thinking = r#"{"role":"assistant","content":"hi"}"#;
+        let msg: OllamaChatMessage = serde_json::from_str(raw_without_thinking).unwrap();
+        assert_eq!(msg.thinking, None);
+    }
+
+    #[test]
+    fn test_from_env_parses_think_flag() {
+        unsafe {
+            env::set_var("OLLAMA_THINK", "true");
+        }
+        let client = OllamaClient::from_env();
+        assert_eq!(client.think, Some(true));
+        unsafe {
+            env::remove_var("OLLAMA_THINK");
+        }
+
+        let client = OllamaClient::from_env();
+        assert_eq!(client.think, None);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +314,9 @@ pub struct OllamaClient {
     http: reqwest::Client,
     base_url: String,
     model: String,
+    /// Whether to request thinking/reasoning output from the model.
+    /// `None` leaves the decision to Ollama's per-model default.
+    think: Option<bool>,
 }
 
 impl Default for OllamaClient {
@@ -257,7 +332,16 @@ impl OllamaClient {
             base_url: env::var("OLLAMA_BASE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
             model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "gemma4:26b".to_string()),
+            think: env::var("OLLAMA_THINK")
+                .ok()
+                .and_then(|v| v.parse::<bool>().ok()),
         }
+    }
+
+    /// Explicitly enable or disable thinking, overriding the model's default.
+    pub fn with_think(mut self, think: Option<bool>) -> Self {
+        self.think = think;
+        self
     }
 }
 
@@ -288,6 +372,7 @@ impl LLMClient for OllamaClient {
             model: self.model.clone(),
             messages: context.iter().flat_map(OllamaChatMessage::from).collect(),
             tools: ollama_tools,
+            think: self.think,
             stream: true,
         };
 
@@ -308,6 +393,7 @@ impl LLMClient for OllamaClient {
             let mut stream = response.error_for_status()?.bytes_stream();
 
             let mut full_content = String::new();
+            let mut full_reasoning = String::new();
             let mut all_tool_calls = Vec::new();
 
             while let Some(chunk_result) = stream.next().await {
@@ -330,6 +416,21 @@ impl LLMClient for OllamaClient {
                                             arguments: call.function.arguments,
                                         });
                                     }
+                                }
+
+                                if let Some(thinking) = msg.thinking.filter(|t| !t.is_empty()) {
+                                    full_reasoning.push_str(&thinking);
+                                    let partial_message = Message {
+                                        id: MessageId(Uuid::new_v4()),
+                                        prev_id,
+                                        sender_id,
+                                        sender_name: sender_name.clone(),
+                                        role: MessageRole::Assistant,
+                                        reasoning: Some(thinking),
+                                        timestamp: Utc::now(),
+                                        ..Message::default()
+                                    };
+                                    yield Ok(MessageEvent::Partial(partial_message));
                                 }
 
                                 if !msg.content.is_empty() {
@@ -355,6 +456,7 @@ impl LLMClient for OllamaClient {
                                     sender_name: sender_name.clone(),
                                     role: MessageRole::Assistant,
                                     content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
+                                    reasoning: if full_reasoning.is_empty() { None } else { Some(full_reasoning.clone()) },
                                     tool_calls: all_tool_calls.clone(),
                                     timestamp: Utc::now(),
                                     ..Message::default()
