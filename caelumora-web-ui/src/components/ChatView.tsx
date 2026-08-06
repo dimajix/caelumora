@@ -17,6 +17,7 @@ import type {
 import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
+import {MarkdownMessage} from './MarkdownMessage';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -215,7 +216,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 {msg.sender_name || msg.role}
               </div>
               
-              {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
+              {msg.content && <MarkdownMessage content={msg.content} invert={msg.role === 'User'} />}
 
               {msg.tool_calls && msg.tool_calls.length > 0 && (
                 <div className="mt-2 space-y-2">
@@ -263,7 +264,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider">
                 {isGenerating ? "Generating..." : "Stopped"}
               </div>
-              <div className="whitespace-pre-wrap">{streamingMessage}</div>
+              <MarkdownMessage content={streamingMessage} />
             </div>
           )}
           <div ref={messagesEndRef} />
