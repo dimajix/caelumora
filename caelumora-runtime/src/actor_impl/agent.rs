@@ -701,6 +701,15 @@ impl AgentActor {
         // messages must be distinguishable from a genuine final response
         // until the model stops calling tools.
         let executing_plan = turn_context.has_plan();
+        // The dedicated synthesis call (after the last step converged) is
+        // still `executing_plan`, but its streamed text *is* the final
+        // answer and must reach the user live, not be swallowed as internal
+        // plan scaffolding.
+        let finalizing_plan = matches!(
+            turn_context.plan().map(|p| p.progress),
+            Some(PlanProgress::Finalizing)
+        );
+        let internal_message = executing_plan && !finalizing_plan;
 
         let mut response = self.call_llm(turn_context).await;
         use futures::stream::TryStreamExt;
@@ -718,7 +727,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    message.internal = executing_plan;
+                    message.internal = internal_message;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
                         let event = if msg.internal {
                             ActorEvent::IntermediatePartialGenerated(msg)
@@ -731,6 +740,7 @@ impl AgentActor {
                 MessageEvent::Complete(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
+                    message.internal = internal_message;
 
                     self.request_approvals(&message.tool_calls, turn_context, output).await?;
                     let has_tool_calls = !message.tool_calls.is_empty();
@@ -741,7 +751,6 @@ impl AgentActor {
                                 // The dedicated synthesis call converged -
                                 // this is the real, final response.
                                 turn_context.take_plan();
-                                message.internal = false;
                                 if let Some(msg) = self.respond_complete(message, turn_context).await {
                                     turn_context.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
                                 }
@@ -751,7 +760,6 @@ impl AgentActor {
                                 // is already part of context (respond_complete
                                 // pushes it); move on to the next step, or to
                                 // finalization if this was the last one.
-                                message.internal = true;
                                 if let Some(msg) = self.respond_complete(message, turn_context).await {
                                     turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
                                 }
@@ -773,7 +781,7 @@ impl AgentActor {
                         // research/create_plan calls, and a direct answer
                         // before committing to a plan - all final/visible;
                         // mid-plan research/extension tool calls stay internal.
-                        message.internal = executing_plan;
+                        message.internal = internal_message;
                         if let Some(msg) = self.respond_complete(message, turn_context).await {
                             let event = if msg.internal {
                                 ActorEvent::IntermediateMessageGenerated(msg)
