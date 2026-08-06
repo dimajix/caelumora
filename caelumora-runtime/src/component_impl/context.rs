@@ -3,6 +3,7 @@ use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
 use caelumora_model::message::Message;
 use caelumora_model::message::MessageRole;
 use std::sync::Arc;
@@ -75,6 +76,8 @@ impl ContextProvider for StateContextProvider {
             full_context.push(Message {
                 role: MessageRole::System,
                 content: Some(system_prompts.join("\n\n")),
+                sender_id: ActorId::Agent(state.agent_id),
+                sender_name: state.agent_name.clone(),
                 ..Default::default()
             });
         }
