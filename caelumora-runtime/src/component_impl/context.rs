@@ -61,10 +61,14 @@ impl ContextProvider for StateContextProvider {
     async fn current_context(&self, state: &mut TurnContext) -> Result<()> {
         let mut full_context = Vec::new();
 
-        // 1. Assemble System Prompt from all providers
+        // Assemble System Prompt from all providers
         let mut system_prompts = Vec::new();
         for provider in &self.prompt_providers {
-            system_prompts.push(provider.get_prompt().await?);
+            let p = provider.get_prompt().await?;
+            let pt = p.trim().to_string();
+            if !pt.is_empty() {
+                system_prompts.push(pt);
+            }
         }
 
         if !system_prompts.is_empty() {
