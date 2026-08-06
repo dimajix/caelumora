@@ -67,6 +67,22 @@ pub enum ActorEvent {
     /// plan), produced while deliberating or executing an approved plan -
     /// not the final answer.
     IntermediateMessageGenerated(Message),
+    /// A plan step has just begun execution. Emitted directly by `AgentActor`
+    /// whenever it pushes that step's instruction, so observers (e.g. the web
+    /// UI) can show which step of the plan is currently in progress.
+    PlanStepStarted {
+        step_index: usize,
+        total_steps: usize,
+        description: String,
+    },
+    /// The plan step that was in progress has converged. Emitted directly by
+    /// `AgentActor` right before it advances to the next step (or to
+    /// finalization).
+    PlanStepFinished {
+        step_index: usize,
+        total_steps: usize,
+        description: String,
+    },
 }
 
 impl ActorEvent {
@@ -211,6 +227,12 @@ impl Envelope {
             }
             ActorEvent::IntermediateMessageGenerated(m) => {
                 format!("IntermediateMessage(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
+            }
+            ActorEvent::PlanStepStarted { step_index, total_steps, .. } => {
+                format!("PlanStepStarted(sender_id={}, sender_name={}, step={}/{})", ctx.sender_id, ctx.sender_name, step_index + 1, total_steps)
+            }
+            ActorEvent::PlanStepFinished { step_index, total_steps, .. } => {
+                format!("PlanStepFinished(sender_id={}, sender_name={}, step={}/{})", ctx.sender_id, ctx.sender_name, step_index + 1, total_steps)
             }
             _ => {
                 format!("{:?}", self.event)

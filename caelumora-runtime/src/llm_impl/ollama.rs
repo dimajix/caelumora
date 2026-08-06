@@ -256,7 +256,7 @@ impl OllamaClient {
             http: reqwest::Client::new(),
             base_url: env::var("OLLAMA_BASE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
-            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string()),
+            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "gemma4:26b".to_string()),
         }
     }
 }

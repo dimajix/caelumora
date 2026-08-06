@@ -46,6 +46,12 @@ export interface Message {
   [key: string]: any;
 }
 
+export interface PlanStepEvent {
+  step_index: number;
+  total_steps: number;
+  description: string;
+}
+
 export interface ActorEvent {
   ResponseStarted?: any;
   PartialMessageGenerated?: Message;
@@ -56,6 +62,10 @@ export interface ActorEvent {
   ResponseRequested?: any;
   FullResponseGenerated?: Message[];
   WakeupRequested?: any;
+  IntermediatePartialGenerated?: Message;
+  IntermediateMessageGenerated?: Message;
+  PlanStepStarted?: PlanStepEvent;
+  PlanStepFinished?: PlanStepEvent;
 }
 
 export interface Envelope {

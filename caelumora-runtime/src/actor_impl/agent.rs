@@ -376,19 +376,34 @@ impl AgentActor {
     /// finalize instruction and sets progress to `Finalizing`. Handles the
     /// empty-plan edge case (next_step_index == 0 immediately finalizes).
     /// Called once at approval time (next_step_index == 0) and once each
-    /// time a step converges in `handle_planning`.
-    fn advance_plan(turn_context: &mut TurnContext, next_step_index: usize) {
-        let Some(plan) = turn_context.plan().map(|p| p.plan.clone()) else { return };
+    /// time a step converges in `handle_planning`. Emits `PlanStepStarted`
+    /// when a step instruction is actually pushed - finalization is not a
+    /// step, so it gets no event of its own.
+    async fn advance_plan<'a>(
+        turn_context: &mut TurnContext<'a>,
+        next_step_index: usize,
+        output: &dyn EventSender,
+    ) -> Result<()> {
+        let Some(plan) = turn_context.plan().map(|p| p.plan.clone()) else { return Ok(()) };
         match plan.steps.get(next_step_index) {
             Some(step) => {
                 turn_context.push_message(Self::plan_step_message(next_step_index + 1, plan.steps.len(), step));
                 turn_context.set_plan_progress(PlanProgress::Step(next_step_index));
+                turn_context.send_event(
+                    ActorEvent::PlanStepStarted {
+                        step_index: next_step_index,
+                        total_steps: plan.steps.len(),
+                        description: step.description.clone(),
+                    },
+                    output,
+                ).await?;
             }
             None => {
                 turn_context.push_message(Self::plan_finalize_message(&plan));
                 turn_context.set_plan_progress(PlanProgress::Finalizing);
             }
         }
+        Ok(())
     }
 
     /// `context` (this agent's own future-turn LLM input) keeps every message
@@ -734,7 +749,15 @@ impl AgentActor {
                                 if let Some(msg) = self.respond_complete(message, turn_context).await {
                                     turn_context.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
                                 }
-                                Self::advance_plan(turn_context, idx + 1);
+                                let finished_step = turn_context.plan()
+                                    .map(|p| (p.plan.steps[idx].description.clone(), p.plan.steps.len()));
+                                if let Some((description, total_steps)) = finished_step {
+                                    turn_context.send_event(
+                                        ActorEvent::PlanStepFinished { step_index: idx, total_steps, description },
+                                        output,
+                                    ).await?;
+                                }
+                                Self::advance_plan(turn_context, idx + 1, output).await?;
                                 return Ok(ActorState::Planning);
                             }
                             None => unreachable!("executing_plan implies a plan is present"),
@@ -797,7 +820,7 @@ impl AgentActor {
             let progress_after = turn_context.plan().map(|p| p.progress);
             if progress_after != progress_before {
                 if let Some(PlanProgress::Step(idx)) = progress_after {
-                    Self::advance_plan(turn_context, idx);
+                    Self::advance_plan(turn_context, idx, output).await?;
                 }
             }
 
@@ -1054,45 +1077,63 @@ mod tests {
         }
     }
 
-    #[test]
-    fn advance_plan_moves_to_the_next_step_when_one_remains() {
+    #[tokio::test]
+    async fn advance_plan_moves_to_the_next_step_when_one_remains() {
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
         turn_context.set_plan(make_plan_state(vec!["first", "second"]));
+        let (tx, mut rx) = mpsc::channel(10);
+        let output = crate::transport_impl::InMemoryEventSender::new(tx);
 
-        AgentActor::advance_plan(&mut turn_context, 1);
+        AgentActor::advance_plan(&mut turn_context, 1, &output).await.unwrap();
 
         assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Step(1));
         let last = turn_context.messages().last().expect("a step message should have been pushed");
         assert_eq!(last.role, MessageRole::System);
         assert!(last.content.as_ref().unwrap().contains("second"));
         assert!(last.internal, "plan-step instructions are scaffolding, never final answers");
+
+        let event = rx.try_recv().expect("a PlanStepStarted event should have been sent");
+        match event.event {
+            ActorEvent::PlanStepStarted { step_index, total_steps, description } => {
+                assert_eq!(step_index, 1);
+                assert_eq!(total_steps, 2);
+                assert_eq!(description, "second");
+            }
+            other => panic!("expected PlanStepStarted, got {:?}", other),
+        }
     }
 
-    #[test]
-    fn advance_plan_finalizes_once_steps_are_exhausted() {
+    #[tokio::test]
+    async fn advance_plan_finalizes_once_steps_are_exhausted() {
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
         turn_context.set_plan(make_plan_state(vec!["first", "second"]));
+        let (tx, mut rx) = mpsc::channel(10);
+        let output = crate::transport_impl::InMemoryEventSender::new(tx);
 
-        AgentActor::advance_plan(&mut turn_context, 2);
+        AgentActor::advance_plan(&mut turn_context, 2, &output).await.unwrap();
 
         assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Finalizing);
         let last = turn_context.messages().last().expect("a finalize message should have been pushed");
         assert_eq!(last.role, MessageRole::System);
         assert!(last.content.as_ref().unwrap().contains("completed every step"));
+
+        assert!(rx.try_recv().is_err(), "finalization is not a step, so no PlanStepStarted should be sent");
     }
 
-    #[test]
-    fn advance_plan_finalizes_immediately_for_an_empty_plan() {
+    #[tokio::test]
+    async fn advance_plan_finalizes_immediately_for_an_empty_plan() {
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
         turn_context.set_plan(make_plan_state(vec![]));
+        let (tx, _rx) = mpsc::channel(10);
+        let output = crate::transport_impl::InMemoryEventSender::new(tx);
 
-        AgentActor::advance_plan(&mut turn_context, 0);
+        AgentActor::advance_plan(&mut turn_context, 0, &output).await.unwrap();
 
         assert_eq!(turn_context.plan().unwrap().progress, PlanProgress::Finalizing);
     }

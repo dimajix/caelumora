@@ -1,17 +1,18 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  CheckCircle2,
-  Send,
-  Square,
-  Terminal,
-  Users,
-  Wrench
+    CheckCircle2,
+    Send,
+    Square,
+    Terminal,
+    Users,
+    Wrench
 } from 'lucide-react';
 import type {
-  ApprovalRequest,
-  ChannelResponse,
-  Envelope,
-  Message
+    ApprovalRequest,
+    ChannelResponse,
+    Envelope,
+    Message,
+    PlanStepEvent
 } from '../types';
 import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
@@ -38,6 +39,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
+  const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,6 +85,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
           setIsGenerating(false);
+          setCurrentStep(null);
+        } else if (actorEvent.PlanStepStarted) {
+          setCurrentStep(actorEvent.PlanStepStarted);
+        } else if (actorEvent.PlanStepFinished) {
+          setCurrentStep(prev =>
+            prev && prev.step_index === actorEvent.PlanStepFinished!.step_index ? null : prev
+          );
         }
       } catch (e) {
         console.error('Failed to parse SSE event', e);
@@ -166,6 +175,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
+        {currentStep && (
+          <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-900/50 flex items-center gap-2">
+            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300 shrink-0">
+              Step {currentStep.step_index + 1} of {currentStep.total_steps}
+            </span>
+            <span className="text-xs text-blue-700 dark:text-blue-300 truncate">
+              {currentStep.description}
+            </span>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.reduce((acc: Message[], msg) => {
             // Logic to merge tool calls and results
