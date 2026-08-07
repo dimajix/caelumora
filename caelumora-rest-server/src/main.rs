@@ -6,7 +6,6 @@ use caelumora_model::session::SessionId;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
-use dashmap::DashMap;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -73,7 +72,6 @@ async fn main() -> anyhow::Result<()> {
         session_manager,
         entity_store,
         state_store,
-        running_sessions: DashMap::new(),
     });
 
     let app = routes::create_router(state).layer(TraceLayer::new_for_http());

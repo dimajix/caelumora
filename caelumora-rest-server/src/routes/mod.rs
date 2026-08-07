@@ -25,26 +25,16 @@ pub async fn ensure_session(
 
     let security_context = SecurityContext::new(ActorId::User(state.user_id), SessionId::default(), ChannelId::default());
 
-    // Try to load the session
-    let session_loop = state
+    // Not currently running: load it from the store and start it. `load_session` owns
+    // spawning the run loop and emitting the `SessionStarted` event.
+    state
         .session_manager
         .load_session(session_id, &security_context)
         .await
         .map_err(|e| {
             tracing::error!("Failed to load session {}: {}", session_id, e);
             StatusCode::NOT_FOUND
-        })?;
-
-    let session_loop_clone = session_loop.clone();
-    let handle = tokio::spawn(async move {
-        if let Err(e) = session_loop_clone.run().await {
-            tracing::error!("Session loop for {} failed: {}", session_id, e);
-        }
-    });
-
-    state.running_sessions.insert(session_id, handle);
-
-    Ok(session_loop)
+        })
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

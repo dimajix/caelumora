@@ -163,7 +163,9 @@ impl SessionTemplate {
             updated_at: now,
             security_attributes,
         };
-        context.entity_store.create_session(&context.security, &session).await?;
+        // NOTE: persistence is intentionally the caller's responsibility (SessionManager), so
+        // that session lifecycle events can be emitted at the point of creation. This just
+        // builds the in-memory session.
         Ok(session)
     }
 }

@@ -36,17 +36,9 @@ pub async fn create_session(
     let session = template.instantiate(name, &context, mapping).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let session_loop = state.session_manager.create_session(session).await
+    // `create_session` persists the session, emits its lifecycle events, and starts it.
+    let session_loop = state.session_manager.create_session(&ctx, session).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let session_loop_clone = session_loop.clone();
-    let handle = tokio::spawn(async move {
-        if let Err(e) = session_loop_clone.run().await {
-            tracing::error!("Session loop for {} failed: {}", session_id, e);
-        }
-    });
-
-    state.running_sessions.insert(session_id, handle);
 
     let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {
@@ -85,16 +77,11 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Result<Json<Ve
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> StatusCode {
     let session_id = SessionId(id);
-
-    // Stop the running session loop, if any.
-    if let Some((_, handle)) = state.running_sessions.remove(&session_id) {
-        handle.abort();
-    }
-    state.session_manager.remove_session(session_id);
-
-    // Remove the persisted session (and all of its channels) from the store.
     let ctx = SecurityContext::default();
-    match state.entity_store.delete_session(&ctx, session_id).await {
+
+    // `delete_session` stops the running loop, removes the persisted session (and all of its
+    // channels), and emits the corresponding lifecycle events.
+    match state.session_manager.delete_session(&ctx, session_id).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(e) => {
             tracing::error!("Failed to delete session {}: {}", session_id, e);

@@ -16,10 +16,10 @@ use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, ST
 use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 use caelumora_runtime::component_impl::tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::session::SessionLoop;
+use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use env_logger::WriteStyle;
-use log::{error, info, LevelFilter};
+use log::{info, LevelFilter};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::collections::HashMap;
@@ -351,16 +351,10 @@ async fn main() -> anyhow::Result<()> {
     let mut mapping = HashMap::new();
     mapping.insert("user".to_string(), ParticipantId::UserId(owner));
     let session = template.instantiate("default-session".to_string(), &context, mapping).await?;
-    let session_loop = Arc::new(SessionLoop::new(session, runtime.clone()).await?);
-    let runner = tokio::spawn({
-        let session_loop = session_loop.clone();
-        async move {
-            let result = session_loop.run().await;
-            if let Err(e) = result {
-                error!("Cannot start session loop: {}", e)
-            }
-        }
-    });
+
+    // SessionManager owns persistence, spawning the run loop, and lifecycle events.
+    let session_manager = SessionManager::new(runtime.clone());
+    let session_loop = session_manager.create_session(&context.security, session).await?;
 
     let channel = session_loop
         .channel_by_name("main")
@@ -369,7 +363,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start the interactive loop
     run_repl(channel).await?;
-    runner.abort();
+    session_manager.stop_session(session_id);
 
     Ok(())
 }

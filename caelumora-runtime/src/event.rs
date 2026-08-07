@@ -67,10 +67,12 @@ impl EventBus {
         let mut topics_to_notify = vec![SubscriptionTopic::All];
 
         match &event {
-            GlobalEvent::SessionCreated(sid) | GlobalEvent::SessionUpdated(sid, _) | GlobalEvent::SessionDeleted(sid) => {
+            GlobalEvent::SessionCreated(sid) | GlobalEvent::SessionUpdated(sid, _) | GlobalEvent::SessionDeleted(sid) |
+            GlobalEvent::SessionStarted(sid) | GlobalEvent::SessionStopped(sid) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
             }
-            GlobalEvent::ChannelCreated(sid, cid) | GlobalEvent::ChannelUpdated(sid, cid, _) | GlobalEvent::ChannelDeleted(sid, cid) => {
+            GlobalEvent::ChannelCreated(sid, cid) | GlobalEvent::ChannelUpdated(sid, cid, _) | GlobalEvent::ChannelDeleted(sid, cid) |
+            GlobalEvent::ChannelStarted(sid, cid) | GlobalEvent::ChannelStopped(sid, cid) => {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
