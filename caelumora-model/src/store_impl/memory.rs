@@ -212,6 +212,29 @@ impl EntityStore for MemoryStore {
         })?
     }
 
+    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
+        let _ = ctx; // Placeholder for security check
+        let removed = self.write_lock(&self.sessions, |v| v.remove(&id))?;
+
+        if let Some(session) = &removed {
+            for channel in &session.channels {
+                let channel_id = channel.id;
+                self.write_lock(&self.channel_states, |v| {
+                    v.remove(&channel_id);
+                })?;
+                self.write_lock(&self.agent_channel_states, |v| {
+                    v.retain(|(_, cid), _| *cid != channel_id);
+                })?;
+            }
+        }
+
+        self.write_lock(&self.session_states, |v| {
+            v.remove(&id);
+        })?;
+
+        Ok(removed.is_some())
+    }
+
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
         let _ = ctx; // Placeholder for security check
         let values = self.read_lock(&self.sessions, |v| v.values().cloned().collect())?;

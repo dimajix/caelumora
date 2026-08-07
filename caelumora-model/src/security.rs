@@ -28,6 +28,7 @@ pub enum ActionType<'a> {
     CreateSession(&'a Session),
     GetSession(SessionId),
     UpdateSession(&'a Session),
+    DeleteSession(SessionId),
     ListSessions,
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),

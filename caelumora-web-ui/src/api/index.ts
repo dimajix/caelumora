@@ -69,6 +69,13 @@ export const api = {
     if (!res.ok) throw new Error('Failed to cancel channel');
   },
 
+  async deleteSession(sessionId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete session');
+  },
+
   async renameSession(sessionId: string, name: string): Promise<SessionResponse> {
     const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
       method: 'PATCH',

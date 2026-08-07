@@ -53,6 +53,7 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
+    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
 
     // Users

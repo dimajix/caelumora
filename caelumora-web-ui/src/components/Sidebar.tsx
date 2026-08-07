@@ -1,9 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, MessageSquare, ChevronDown, ChevronRight, MoreVertical, Edit2 } from 'lucide-react';
-import type { SessionResponse, ChannelResponse, SessionTemplate } from '../types';
-import { api } from '../api';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import React, {useEffect, useState} from 'react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Edit2,
+  MessageSquare,
+  MoreVertical,
+  Plus,
+  Trash2
+} from 'lucide-react';
+import type {ChannelResponse, SessionResponse, SessionTemplate} from '../types';
+import {api} from '../api';
+import {type ClassValue, clsx} from 'clsx';
+import {twMerge} from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -13,12 +21,14 @@ interface SidebarProps {
   selectedSessionId: string | null;
   selectedChannelId: string | null;
   onSelectChannel: (sessionId: string, channelId: string) => void;
+  onSessionDeleted: (sessionId: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   selectedSessionId,
   selectedChannelId,
   onSelectChannel,
+  onSessionDeleted,
 }) => {
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
@@ -111,6 +121,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+    try {
+      await api.deleteSession(sessionId);
+      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      setChannels(prev => {
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+      setExpandedSessions(prev => {
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+      onSessionDeleted(sessionId);
+    } catch (error) {
+      console.error('Failed to delete session', error);
+    }
+  };
+
   const toggleMenu = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
     setOpenMenuId(openMenuId === sessionId ? null : sessionId);
@@ -177,6 +209,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     >
                       <Edit2 size={12} className="mr-2" />
                       Rename
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteSession(e, session.id)}
+                      className="w-full flex items-center px-3 py-2 text-xs text-red-400 hover:bg-gray-700 transition-colors"
+                    >
+                      <Trash2 size={12} className="mr-2" />
+                      Delete
                     </button>
                   </div>
                 )}

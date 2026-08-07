@@ -144,7 +144,7 @@ impl SessionLoop {
 
 
 pub struct SessionManager {
-    pub sessions: DashMap<SessionId, Arc<SessionLoop>>,
+    sessions: DashMap<SessionId, Arc<SessionLoop>>,
     runtime_manager: Arc<RuntimeManager>,
 }
 
@@ -171,5 +171,9 @@ impl SessionManager {
 
     pub fn get_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
         self.sessions.get(&id).map(|s| s.clone())
+    }
+
+    pub fn remove_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+        self.sessions.remove(&id).map(|(_, s)| s)
     }
 }

@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { ChatView } from './components/ChatView';
+import {useState} from 'react';
+import {Sidebar} from './components/Sidebar';
+import {ChatView} from './components/ChatView';
 
 function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -11,12 +11,20 @@ function App() {
     setSelectedChannelId(channelId);
   };
 
+  const handleSessionDeleted = (sessionId: string) => {
+    if (selectedSessionId === sessionId) {
+      setSelectedSessionId(null);
+      setSelectedChannelId(null);
+    }
+  };
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-white dark:bg-gray-900">
       <Sidebar
         selectedSessionId={selectedSessionId}
         selectedChannelId={selectedChannelId}
         onSelectChannel={handleSelectChannel}
+        onSessionDeleted={handleSessionDeleted}
       />
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">

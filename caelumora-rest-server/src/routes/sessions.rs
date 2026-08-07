@@ -83,14 +83,24 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Result<Json<Ve
     Ok(Json(response))
 }
 
-pub async fn terminate_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> StatusCode {
+pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> StatusCode {
     let session_id = SessionId(id);
+
+    // Stop the running session loop, if any.
     if let Some((_, handle)) = state.running_sessions.remove(&session_id) {
         handle.abort();
     }
-    
-    state.session_manager.sessions.remove(&session_id);
-    StatusCode::NO_CONTENT
+    state.session_manager.remove_session(session_id);
+
+    // Remove the persisted session (and all of its channels) from the store.
+    let ctx = SecurityContext::default();
+    match state.entity_store.delete_session(&ctx, session_id).await {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(e) => {
+            tracing::error!("Failed to delete session {}: {}", session_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 pub async fn rename_session(

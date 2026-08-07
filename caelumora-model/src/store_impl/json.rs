@@ -118,9 +118,12 @@ impl JsonFileStore {
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
-        self.agent_channel_states_dir()
-            .join(channel_id.to_string())
+        self.agent_channel_state_dir(channel_id)
             .join(format!("{}.json", agent_id))
+    }
+
+    fn agent_channel_state_dir(&self, channel_id: ChannelId) -> PathBuf {
+        self.agent_channel_states_dir().join(channel_id.to_string())
     }
 
     fn agent_state_path(&self, id: AgentId) -> PathBuf {
@@ -206,6 +209,14 @@ fn read_all_from_dir<T: DeserializeOwned>(dir: &Path) -> StoreResult<Vec<T>> {
 
 fn delete_if_exists(path: &Path) -> StoreResult<bool> {
     match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(to_backend_error(err)),
+    }
+}
+
+fn delete_dir_if_exists(path: &Path) -> StoreResult<bool> {
+    match fs::remove_dir_all(path) {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(to_backend_error(err)),
@@ -456,6 +467,29 @@ impl EntityStore for JsonFileStore {
                 value,
             },
         )
+    }
+
+    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
+        if !self.security_manager.check(ctx, ActionType::DeleteSession(id)).await {
+            return Err(StoreError::PermissionDenied);
+        }
+
+        // Load the session first so we can clean up the state files of all its channels.
+        let session = read_json_opt::<Persisted<Session>>(&self.session_path(id))?.map(|p| p.value);
+
+        if let Some(session) = &session {
+            for channel in &session.channels {
+                info!("Deleting channel {} of session {}", channel.id, id);
+                delete_if_exists(&self.channel_state_path(channel.id))?;
+                delete_dir_if_exists(&self.agent_channel_state_dir(channel.id))?;
+            }
+        }
+
+        // Remove the session state and the durable session definition itself.
+        delete_if_exists(&self.session_state_path(id))?;
+        let removed = delete_if_exists(&self.session_path(id))?;
+        info!("Deleted session {}", id);
+        Ok(removed)
     }
 
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
@@ -862,6 +896,64 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == s1.id));
         assert!(sessions.iter().any(|s| s.id == s2.id));
+    }
+
+    #[tokio::test]
+    async fn delete_session_removes_files_and_channel_state() {
+        use crate::channel::{Channel, ChannelId};
+
+        let dir = tempdir().unwrap();
+        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
+        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
+        let ctx = SecurityContext::default();
+
+        let session_id = SessionId(Uuid::new_v4());
+        let channel = Channel {
+            id: ChannelId(Uuid::new_v4()),
+            session_id,
+            name: "general".to_string(),
+            moderator: "broadcast".to_string(),
+            participants: Vec::new(),
+            security_attributes: SecurityAttributes::default(),
+        };
+        let channel_id = channel.id;
+        let session = Session {
+            id: session_id,
+            metadata: Metadata {
+                name: "to-delete".to_string(),
+                scope: Scope::GlobalScope,
+                ..Metadata::default()
+            },
+            participants: Vec::new(),
+            channels: vec![channel],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            security_attributes: SecurityAttributes::default(),
+        };
+        store.create_session(&ctx, &session).await.unwrap();
+
+        // Write out session state and channel state so we can assert they get removed.
+        store.put_session_state(session_id, &SessionState::default()).await.unwrap();
+        let agent_id = AgentId(Uuid::new_v4());
+        store
+            .put_agent_channel_state(agent_id, channel_id, &AgentChannelState::default())
+            .await
+            .unwrap();
+
+        assert!(store.session_path(session_id).exists());
+        assert!(store.session_state_path(session_id).exists());
+        assert!(store.agent_channel_state_dir(channel_id).exists());
+
+        assert!(store.delete_session(&ctx, session_id).await.unwrap());
+
+        assert!(!store.session_path(session_id).exists());
+        assert!(!store.session_state_path(session_id).exists());
+        assert!(!store.agent_channel_state_dir(channel_id).exists());
+
+        // Deleting again reports that nothing was removed.
+        assert!(!store.delete_session(&ctx, session_id).await.unwrap());
+        let err = store.get_session(&ctx, session_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::NotFound { entity: "session", .. }));
     }
 
     #[tokio::test]
