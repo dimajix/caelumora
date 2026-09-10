@@ -9,6 +9,52 @@ Before making any changes, please refer to [ARCHITECTURE.md](ARCHITECTURE.md) fo
 *   The `AgentLoop` cognitive cycle
 *   The Actor-based communication model
 
+## Issue Tracking
+
+Open issues live in this repository, not in an external tracker. The overview
+is [issues/INDEX.md](issues/INDEX.md); every issue additionally has its own
+file `issues/<number>-<slug>.md` holding the reasoning, the options that were
+weighed, and the decision.
+
+Read `issues/INDEX.md` before starting work. If what you are about to do
+corresponds to an issue, work from that issue's file — it usually records why
+an obvious approach was already rejected.
+
+### Keeping issues up to date
+
+*   **An issue is two places.** A line in `issues/INDEX.md` *and* a file
+    `issues/<number>-<slug>.md`. Create both together; never delete either.
+*   **Status lives in both places** and must be changed in both when it moves.
+    The valid values are `open`, `in progress`, `done` and `rejected`.
+    `rejected` means: considered and deliberately not done, with the reason
+    recorded — that reason is the whole point, otherwise it gets re-derived
+    six months later.
+*   **Never rewrite the description of an issue that has been resolved.** The
+    original text is the record of the problem, not of the solution. Append
+    what happened under `## History` at the end of the issue file, dated, as a
+    new bullet. Outdated text stays.
+*   **Numbers are permanent.** They are never reused and never reassigned —
+    commits, code comments and other issues refer to them. A new issue takes
+    the next free number even if lower ones are closed. Write them with two
+    digits (`01`, not `1`) so the directory sorts correctly; from `100`
+    onwards, three.
+*   **The index line is one sentence.** It says what is wrong, not how it will
+    be fixed. Everything longer belongs in the issue file, where length is not
+    a problem.
+
+### Creating a new issue
+
+1.  Check `issues/INDEX.md` first — an issue for it may already exist, in
+    which case add to that file's `## History` rather than opening a second
+    one.
+2.  Take the next free number and create `issues/<number>-<slug>.md` with the
+    status header, the problem, why it matters, the considerations (options
+    and their trade-offs), a "done when", and a first `## History` entry.
+3.  Add one line to the matching section of `issues/INDEX.md`. If no section
+    fits, add one.
+4.  Cross-reference related issues by number, e.g. `[19](19-memory-tiers.md)`,
+    where one genuinely blocks or overlaps another.
+
 ## Coding Style
 
 ### Comments and Documentation
@@ -39,12 +85,13 @@ Before making any changes, please refer to [ARCHITECTURE.md](ARCHITECTURE.md) fo
 *   Place integration tests in the `tests/` directory of the relevant crate or in the `examples/` directory if they serve as documentation.
 
 ## Contribution Workflow
-1.  **Analyze**: Understand the requirement and how it fits into the architecture.
+1.  **Analyze**: Understand the requirement and how it fits into the architecture. Check [issues/INDEX.md](issues/INDEX.md) for an existing issue covering it.
 2.  **Plan**: Identify the files that need modification and the tests required.
 3.  **Implement**: Apply minimal, focused changes following the coding style.
 4.  **Document**: Update `ARCHITECTURE.md` and/or `README.md` if your changes introduce new architectural concepts, modules, or significant features.
 5.  **Verify**: Run existing tests and add new ones to cover your changes.
 6.  **Refactor**: Ensure the code is clean and well-documented.
+7.  **Record**: If the change resolves or advances an issue, update its status in *both* `issues/INDEX.md` and the issue file, and append a dated entry under `## History`. If it uncovered something new, open an issue for it rather than leaving it in a comment.
 
 ## Agent-Specific Tips
 *   When adding new components, remember to register them in the appropriate `ComponentRegistry`.
