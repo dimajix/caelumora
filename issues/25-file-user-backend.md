@@ -62,8 +62,9 @@ backends:
   file, re-read on every lookup so a user can be added or disabled without
   restarting, a missing file treated as "no entries" rather than a hard error.
 - The format should carry structure, because `User` already has more than a
-  name: id, username, email, roles, and — once [23](23-acls-in-security-attributes.md)
-  lands — group membership. That rules out an `htpasswd`-style
+  name: id, username, email, and the roles or group names that
+  [23](23-acls-in-security-attributes.md) resolves into effective roles. That
+  rules out an `htpasswd`-style
   `user:hash` line format, which is the most familiar shape for this kind of
   file but has room for exactly two fields. YAML matches `AppConfig`, JSON
   matches the secrets file and `JsonFileStore`; picking one of those two is a

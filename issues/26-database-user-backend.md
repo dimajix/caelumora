@@ -84,14 +84,24 @@ uses an immutable internal key, the mapping survives renames — which is an
 argument for insisting on an immutable key column even when the login name
 looks unique.
 
+### Groups are an input to roles, not a subject
+
+[23](23-acls-in-security-attributes.md) does not accept groups as ACL subjects:
+entries name an actor or a role, and group names delivered by a user backend
+reach the ACL only through a role assignment stored in the system. This backend
+therefore supplies group names — whatever the schema calls them — and does not
+care what they mean; the mapping onto roles is not its configuration to hold,
+precisely so that the same mapping applies no matter which backend a deployment
+runs.
+
 ### It is on the hot path
 
-Once [23](23-acls-in-security-attributes.md) exists, group membership is read
-during authorization, and authorization runs on every store operation and every
-tool call. A database round trip per check is not viable, so a cache with a
-short TTL is part of this backend rather than an optimisation for later — along
-with the decision of how quickly a disabled account actually stops working,
-which is the TTL stated as a security property.
+Once 23 exists, a subject's effective roles are read during authorization, and
+authorization runs on every store operation and every tool call. A database
+round trip per check is not viable, so resolution happens once at
+authentication and is cached with the session — along with the decision of how
+quickly a disabled account, or a revoked group membership, actually stops
+working, which is that cache's lifetime stated as a security property.
 
 ### Availability
 
@@ -106,7 +116,9 @@ getting one while believing the other is not.
 The temptation with a database is to put the authorization rules in it too.
 They belong in [23](23-acls-in-security-attributes.md) as attributes on the
 entities, or in a policy engine ([24](24-opa-security-manager.md)). This
-backend answers who someone is and which groups they are in, and stops there.
+backend answers who someone is and which groups the schema places them in, and
+stops there — including the mapping from those groups onto roles would put
+privilege assignment inside a backend's configuration.
 
 ## Done when
 
@@ -115,7 +127,9 @@ backend answers who someone is and which groups they are in, and stops there.
   owned-schema cases explicitly distinguished in configuration.
 - Connection details come from the secret chain, never from plaintext config.
 - The external-key-to-`UserId` mapping is stable and survives a rename.
-- Group and role lookup is cached with a stated freshness bound.
+- Group lookup feeds the role resolution of
+  [23](23-acls-in-security-attributes.md) and is cached with a stated
+  freshness bound.
 - Schema ownership, migrations and pooling reuse whatever
   [03](03-postgres-entity-store.md) establishes rather than introducing a
   second mechanism.

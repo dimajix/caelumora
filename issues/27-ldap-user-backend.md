@@ -25,10 +25,12 @@ assumes a stored hash can be fetched and compared cannot express LDAP at all.
 Getting that wrong is cheap to fix now and expensive once two backends depend
 on the wrong shape.
 
-It also supplies, for free, the thing [23](23-acls-in-security-attributes.md)
-needs and does not have: groups. A directory already knows them, and a
-`GroupId` derived from a directory group is a far better starting point than a
-group registry the system maintains itself.
+It also supplies, for free, the input that
+[23](23-acls-in-security-attributes.md) needs and does not have: a directory
+already knows who belongs to what. Those groups do not become ACL subjects —
+23 deliberately admits only actors and roles — but they are what a role
+assignment maps from, and a directory is a far better source for that than a
+membership registry the system maintains itself.
 
 ## Considerations
 
@@ -61,17 +63,25 @@ result. This has consequences the other backends do not have:
   UUID in both cases makes the derivation trivial; that it is *not* what people
   will reach for first makes it worth writing down.
 
-### Groups
+### Groups, and where they stop
 
 `memberOf` is the easy case and is not universal: POSIX groups list their
 members instead, nesting is expressed differently per directory, and resolving
 nested groups can mean several queries per login. Since
-[23](23-acls-in-security-attributes.md) will consult group membership during
-authorization — which runs on every store operation and every tool call —
-membership has to be resolved once at authentication and cached with the
-session, not queried per check. The freshness bound is then a security
-statement: how long after being removed from a group a user still acts with its
-rights.
+[23](23-acls-in-security-attributes.md) consults a subject's effective roles
+during authorization — which runs on every store operation and every tool
+call — membership must be resolved once at authentication, mapped onto roles,
+and cached with the session, not queried per check. The freshness bound is then
+a security statement: how long after being removed from a directory group a
+user still acts with the rights its role carried.
+
+The mapping itself is not this backend's business. It is tempting to put
+`cn=ops,ou=groups,dc=example,dc=com -> admin` next to the base DN and the
+attribute map, since that is where it would be most convenient to write — but
+then privilege assignment lives in the configuration of whichever backend
+happens to be running, is invisible to the rest of the system, and is granted
+by anyone who may edit that file. 23 keeps it as a stored, permission-protected
+entity. This backend delivers group names and nothing more.
 
 ### Availability and the connection
 
@@ -115,8 +125,8 @@ default and LDAP the fallback, not the other way round.
 - `UserId` derives from the directory's immutable entry identifier, so moves
   and renames do not create a new principal.
 - Group membership is resolved at authentication, cached with a stated
-  freshness bound, and usable as the group subject in
-  [23](23-acls-in-security-attributes.md).
+  freshness bound, and handed to the role assignment of
+  [23](23-acls-in-security-attributes.md) rather than mapped onto roles here.
 
 ## History
 

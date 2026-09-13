@@ -7,7 +7,7 @@
 
 `SecurityAttributes` holds exactly one field, `owner_id: ActorId`, and nothing
 reads it ([11](11-agent-ownership.md)). There is no way to express that a
-second user may read a session, that a group may start sessions from a
+second user may read a session, that a role may start sessions from a
 template, or that one agent — and only that one — may execute a given tool.
 Access is therefore all-or-nothing per deployment, and with
 `DummySecurityManager` the answer is always "all".
@@ -21,7 +21,8 @@ Three things have to be decided together, and the third is the one with no
 obvious answer:
 
 1.  **Which entities carry `SecurityAttributes` at all.**
-2.  **What a subject is** — an `ActorId`, or a group, of which there is none.
+2.  **What a subject is** — an `ActorId`, or a role, of which there is
+    today only an unread `User.roles: Vec<String>`.
 3.  **What an entry grants.** `Create`, `Read`, `List`/`Find`, `Write`,
     `Delete`, `Execute` is the obvious verb set, but not every verb means
     anything for every entity kind, and a verb set that is two thirds
@@ -60,10 +61,14 @@ skills and tools. The full inventory is larger:
   anywhere via `kind: "ref"`, and an `mcp_tool` descriptor names a secret. A
   component descriptor is the most privileged object in the store and the one
   with no attributes at all today.
-- **`User`** — who may read, list and update a user; and, once groups exist,
-  who may change a user's membership.
-- **`Group`** — does not exist yet (below), and will need attributes of its
-  own; membership management is itself a privileged operation.
+- **`User`** — who may read, list and update a user.
+- **`Role`** — does not exist as an entity yet (below), and needs attributes of
+  its own.
+- **`RoleAssignment`** — the mapping from actors and external groups onto
+  roles is itself the most privilege-granting object in the system: whoever may
+  write `ldap-group ops -> role admin` has granted admin. It needs attributes
+  for the same reason a role does, and it must not be reachable by anyone who
+  can merely edit a backend's configuration file.
 - **`Skill`** ([22](22-skill-management.md)) — the loading right is the whole
   point of that issue.
 - **Tools** are the awkward case, because a tool is not a stored entity. Tools
@@ -98,7 +103,7 @@ owner field makes three sources of truth. The overlap has to be resolved
 first — most likely by `Metadata` keeping name, description and scope, and
 everything security-relevant moving into `SecurityAttributes`.
 
-### What a subject is
+### What a subject is: actors and roles, never groups
 
 Three subject vocabularies are already half-started in the code and none is
 finished:
@@ -108,14 +113,64 @@ finished:
   with no `Group` entity, no `GroupId` newtype and no membership anywhere.
 - `User.roles: Vec<String>` — exists on every user and is read by nothing.
 
-Shipping ACLs on top of all three would give the deployment two independent
-ways to say the same thing. The recommendation is one subject enum over
-`ActorId` and a new `GroupId`, with `User.roles` either folded into groups or
-deleted — a role that is just a group with a name is not worth a second
-mechanism. Groups then need a real entity with membership, their own
-attributes (recursion: who may add a member), and a membership resolution that
-is cheap, because it is on the path of every single check. Whether groups may
-nest, and what happens to a cycle, is part of that.
+An ACL entry names an `ActorId` or a **`RoleId`**, and nothing else. Groups are
+deliberately not a subject type, even though every directory has them, because
+a group answers a different question than an ACL asks. A group is *who* —
+externally defined, with whatever meaning the organisation gave it
+(`team-platform`, `berlin-office`). A role is *what, in this system* — defined
+by us, and therefore something an ACL can be validated against when it is
+written.
+
+The reason this matters here rather than being a terminology preference: we do
+not control the directory. If entries referenced directory groups, every ACL
+would be coupled to a foreign naming scheme that we cannot check at authoring
+time, that changes without us, and that does not exist at all in a deployment
+running the file backend ([25](25-file-user-backend.md)). The three user
+backends would each supply a different subject vocabulary. With roles as the
+only collective subject, all ACLs speak one language, and the deployment's
+reality arrives at exactly one place instead of being spread across every
+object's ACL.
+
+That one place is the **role assignment**: a mapping from an actor, or from an
+external group name delivered by a user backend, onto a role. A user's
+effective roles are the union of the roles assigned to them directly and the
+roles their groups map to, resolved once at authentication and cached with the
+session — which is exactly the resolution [26](26-database-user-backend.md) and
+[27](27-ldap-user-backend.md) already have to perform for membership.
+
+Two properties keep this from becoming a second permission mechanism:
+
+- **A role is a subject label, not a bundle of rights.** It names a set of
+  principals and holds no permissions of its own; rights come only from ACL
+  entries, on objects and on scopes. This has to be written down explicitly,
+  because the word suggests the opposite — in textbook RBAC a role *is* a
+  permission set. If a role could carry rights directly there would again be
+  two places to look when answering why somebody may do something, which is
+  the thing this whole issue exists to avoid.
+- **An assignment carries a `Scope`**, defaulting to `GlobalScope`. That is
+  the difference between "alice is an admin" and "alice is an admin *of this
+  session*", it costs one field, and `Scope` already exists with a working
+  `contains()`. Without it, session- or channel-local roles get re-invented
+  later as a parallel mechanism.
+
+Consequences for what is already in the code:
+
+- `User.roles: Vec<String>` stops being dead and becomes the direct half of
+  the assignment — though it should hold role identifiers rather than free
+  strings, and for a directory-backed user the roles are computed from the
+  mapping rather than stored.
+- `Scope::GroupScope { group_id: Uuid }` should become a role scope or be
+  removed. Leaving a group id in the scope hierarchy while groups are not a
+  subject type anywhere else is precisely the kind of third, unfinished
+  vocabulary this section is trying to end.
+- Allow-only union stays trivial: the effective right set is the union over
+  the subject's direct entries and all of its roles, with no precedence rule
+  to define.
+
+What is given up is the ability to write a directory group straight into an
+ACL. In an organisation with hundreds of directory groups that is mapping
+work — but mechanical work, done once, and ACLs are rarely written against
+hundreds of groups. The coupling avoided is worth more.
 
 ### What an entry grants — and why the verb list is the hard part
 
@@ -219,9 +274,12 @@ choice.
   added, including the answer for tools and secrets, which have no entity.
 - The duplication between `Metadata.owner` and `SecurityAttributes.owner_id`
   is resolved rather than extended.
-- A subject type exists — `ActorId` plus a real `GroupId` with a `Group`
-  entity and membership — and `User.roles` is either folded into it or
-  removed.
+- A subject type exists — `ActorId` plus a real `RoleId` with a `Role`
+  entity — together with a role assignment that maps actors and
+  backend-supplied group names onto roles, carries a `Scope`, and is a
+  permission-protected entity rather than backend configuration.
+- It is written down that a role holds no rights of its own, and
+  `Scope::GroupScope` is either converted to a role scope or removed.
 - The verb model is decided, with an explicit answer for `Create` and
   `List`/`Find`, and a single place that maps `ActionType` onto it so that a
   new action cannot be added without declaring what it requires.
@@ -240,3 +298,13 @@ choice.
   file widens the entity inventory, records that `Scope::GroupScope` and
   `User.roles` already exist unfinished, and argues that `Create` and `List`
   are scope-level rather than instance-level permissions.
+- **2026-09-13** — Subjects decided against groups and in favour of roles,
+  with a separate assignment mapping actors and backend-supplied groups onto
+  them. The argument is that the directory is not ours: group names cannot be
+  validated when an ACL is written, differ per backend, and do not exist under
+  the file backend, whereas roles are defined here and the mapping confines
+  deployment-specific naming to one place. Two constraints came with the
+  decision — a role carries no rights of its own, and an assignment carries a
+  `Scope` — and the assignment was made a stored, permission-protected entity
+  rather than part of a user backend's configuration, since editing it grants
+  privilege.

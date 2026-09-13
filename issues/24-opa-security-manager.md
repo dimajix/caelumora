@@ -78,8 +78,8 @@ attributes, not a way to avoid having them.
   ([03](03-postgres-entity-store.md)). It is also a significantly larger piece
   of work than a boolean check, and should not be a prerequisite for the first
   version.
-- **Where the policy's data comes from.** Rego needs facts: group membership,
-  ownership, which agent belongs to whom. Pushing them into OPA as data
+- **Where the policy's data comes from.** Rego needs facts: a subject's
+  effective roles, ownership, which agent belongs to whom. Pushing them into OPA as data
   documents means they can be stale; having the policy fetch them means
   latency inside the decision and a potential loop back into the runtime.
   Carrying the relevant attributes in the input document avoids most of this,
