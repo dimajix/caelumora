@@ -65,6 +65,11 @@ against it, and what came out of the last attempt.
 | [10](10-user-authentication.md) | open | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
 | [11](11-agent-ownership.md) | open | `SecurityAttributes` carries an `owner_id` that nothing enforces — every agent, session and template is effectively global. |
 | [12](12-user-and-agent-permissions.md) | open | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
+| [23](23-acls-in-security-attributes.md) | open | `SecurityAttributes` holds only an unused `owner_id` — there is no way to grant an actor or a group any right on any entity. |
+| [24](24-opa-security-manager.md) | open | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
+| [25](25-file-user-backend.md) | open | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
+| [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
+| [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 
 ## Tools and approvals
 
@@ -82,6 +87,7 @@ against it, and what came out of the last attempt.
 | [17](17-information-sharing-within-session.md) | open | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
 | [18](18-knowledge-sharing.md) | open | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
 | [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
+| [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Open architecture questions
 
