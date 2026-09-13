@@ -172,6 +172,43 @@ ACL. In an organisation with hundreds of directory groups that is mapping
 work — but mechanical work, done once, and ACLs are rarely written against
 hundreds of groups. The coupling avoided is worth more.
 
+### Identifiers
+
+Both subject kinds are identified by a UUID: `ActorId` as it already is, and
+`RoleId` as a new `define_id!` newtype. A role's name lives in its `Metadata`
+alongside its description, and nothing references it.
+
+For `ActorId` this only confirms what the user backends already require. A
+`UserId` ends up in `SecurityAttributes.owner_id`, in `Metadata.owner` and in
+every persisted session, and it has to survive a rename in a directory we do
+not control — which is why [25](25-file-user-backend.md),
+[26](26-database-user-backend.md) and [27](27-ldap-user-backend.md) all derive
+it from an immutable external key rather than from a login name.
+`ActorId::Approver(Uuid)` has no name to use in the first place.
+
+For `RoleId` the reason is renaming, and renaming is not the rare event it
+looks like: a deployment introduces a uniform naming scheme after the fact and
+renames everything it has, or somebody finds a typo in a role that is already
+referenced from a hundred ACLs. Neither of those is a change of meaning, and
+neither should require touching a single reference. A name used as a key makes
+both of them a migration; a UUID makes them an edit of one field.
+
+The cost is that the readable part is gone exactly where things are read:
+hand-written ACLs, a role assignment file, a Rego policy in
+[24](24-opa-security-manager.md). That is a real loss and it has to be paid
+back deliberately rather than assumed away:
+
+- Anything hand-authored refers to roles by name and resolves them to ids when
+  it is loaded, failing loudly on a name that does not exist. This is possible
+  precisely because roles are ours and enumerable — the property that
+  disqualified directory groups as subjects.
+- Anything rendered to a human — an error, a log line, an ACL listing —
+  resolves the id back to the name. A permission error naming only a UUID is
+  the failure mode [02](02-better-error-messages.md) describes.
+- Policy input documents carry both, and policies match on the id. A Rego rule
+  matching on a name would reintroduce exactly the breakage the UUID prevents,
+  so the name in the input is for reading and decision logs only.
+
 ### What an entry grants — and why the verb list is the hard part
 
 `Create` / `Read` / `List`+`Find` / `Write` / `Delete` / `Execute` applied
@@ -274,12 +311,16 @@ choice.
   added, including the answer for tools and secrets, which have no entity.
 - The duplication between `Metadata.owner` and `SecurityAttributes.owner_id`
   is resolved rather than extended.
-- A subject type exists — `ActorId` plus a real `RoleId` with a `Role`
-  entity — together with a role assignment that maps actors and
+- A subject type exists — `ActorId` plus a real `RoleId`, both UUIDs, with a
+  `Role` entity carrying the name in its `Metadata` — together with a role
+  assignment that maps actors and
   backend-supplied group names onto roles, carries a `Scope`, and is a
   permission-protected entity rather than backend configuration.
 - It is written down that a role holds no rights of its own, and
   `Scope::GroupScope` is either converted to a role scope or removed.
+- Role names survive the round trip: hand-written configuration names roles
+  and fails loudly on an unknown one, and everything shown to a human resolves
+  ids back to names.
 - The verb model is decided, with an explicit answer for `Create` and
   `List`/`Find`, and a single place that maps `ActionType` onto it so that a
   new action cannot be added without declaring what it requires.
@@ -308,3 +349,14 @@ choice.
   `Scope` — and the assignment was made a stored, permission-protected entity
   rather than part of a user backend's configuration, since editing it grants
   privilege.
+- **2026-09-13** — `RoleId` decided as a UUID, like `ActorId`, with the name
+  held in `Metadata`. The case for a readable slug was that ACLs, assignment
+  files and Rego policies are written and reviewed by hand, and that
+  `ComponentDescriptor.id` already sets a precedent for stable string keys.
+  It lost to renaming: introducing a uniform naming scheme after the fact, or
+  fixing a typo in a role that is already referenced, are ordinary
+  housekeeping, and with a name as key both become migrations across every
+  reference. The readability that is given up is bought back explicitly —
+  configuration names roles and resolves them on load, human-facing output
+  resolves them back, and policies match on the id while carrying the name for
+  display.
