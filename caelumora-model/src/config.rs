@@ -5,6 +5,8 @@ use crate::security::SecurityManager;
 use crate::store::{EntityStore, StateStore, StoreError};
 use crate::store_impl::json::JsonFileStore;
 use crate::store_impl::memory::MemoryStore;
+use crate::user_provider::{UserManager, UserProvider};
+use crate::user_provider_impl::accept_any::AcceptAnyUserProvider;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,10 +61,24 @@ pub struct SecretsConfig {
     pub providers: Vec<SecretProviderConfig>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UserProviderConfig {
+    /// Development only: accepts any username and password (see
+    /// `AcceptAnyUserProvider`). Never part of the default chain.
+    AcceptAny,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct UsersConfig {
+    pub providers: Vec<UserProviderConfig>,
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
     pub secrets: Option<SecretsConfig>,
+    pub users: Option<UsersConfig>,
 }
 
 impl AppConfig {
@@ -122,6 +138,29 @@ impl AppConfig {
             .collect();
 
         Ok(Arc::new(SecretManager::new(providers, security_manager)))
+    }
+
+    /// Builds the chain of user providers from the `users` section. Without
+    /// one the chain is empty and nobody can authenticate: there is no
+    /// default provider, because the only one that needs no setup accepts
+    /// everybody.
+    pub fn create_user_manager(&self, entity_store: Arc<dyn EntityStore>) -> ConfigResult<Arc<UserManager>> {
+        let provider_configs = self.users.as_ref()
+            .map(|users| users.providers.clone())
+            .unwrap_or_default();
+
+        let providers = provider_configs
+            .into_iter()
+            .map(|config| match config {
+                UserProviderConfig::AcceptAny => {
+                    log::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
+                        Development only - never expose this server to a network.");
+                    Arc::new(AcceptAnyUserProvider::new(entity_store.clone())) as Arc<dyn UserProvider>
+                }
+            })
+            .collect();
+
+        Ok(Arc::new(UserManager::new(providers)))
     }
 }
 
@@ -194,6 +233,44 @@ secrets:
             _ => panic!("Expected File provider first"),
         }
         assert!(matches!(secrets.providers[1], SecretProviderConfig::Env));
+    }
+
+    #[test]
+    fn test_load_config_users() {
+        let yaml = r#"
+users:
+  providers:
+    - type: accept_any
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let users = config.users.expect("users config present");
+        assert_eq!(users.providers.len(), 1);
+        assert!(matches!(users.providers[0], UserProviderConfig::AcceptAny));
+    }
+
+    #[tokio::test]
+    async fn test_create_user_manager_without_config_accepts_nobody() {
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let manager = AppConfig::default().create_user_manager(store).unwrap();
+
+        let result = manager.authenticate("user", &crate::user_provider::Credential::Password("x")).await;
+        assert!(result.is_err(), "no provider must be enabled by default");
+    }
+
+    #[tokio::test]
+    async fn test_create_user_manager_with_accept_any() {
+        let yaml = r#"
+users:
+  providers:
+    - type: accept_any
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let manager = config.create_user_manager(store).unwrap();
+
+        let user = manager.authenticate("alice", &crate::user_provider::Credential::Password("x")).await
+            .expect("accept_any accepts everybody");
+        assert_eq!(user.username, "alice");
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 # 25 — A text-file user backend
 
-**Status:** open
+**Status:** in progress
 **Area:** Identity & access management
 
 ## The problem
@@ -138,3 +138,48 @@ an unreadable one should deny rather than fall through.
   [10](10-user-authentication.md); it carries the design of the shared
   `UserProvider` trait that [26](26-database-user-backend.md) and
   [27](27-ldap-user-backend.md) build on.
+- **2026-09-21** — Split and sequenced together with
+  [10](10-user-authentication.md). Order:
+  1. The `UserProvider` trait and its chain, from this issue, without the
+     file backend.
+  2. An `AcceptAnyUserProvider` as an explicit development stand-in: accepts
+     any username and password, must be enabled in the configuration, is
+     never the default, and warns loudly at startup.
+  3. [10](10-user-authentication.md): login page, JWT cookie, middleware,
+     all written against the trait only.
+  4. The file backend of this issue, as a drop-in behind the trait.
+
+  Reason: the file backend carries decisions of its own (format, explicit or
+  derived ids, who owns the `User` record, what `update_user` may do) that
+  10 does not depend on, while a trait designed without a real consumer tends
+  to be cut wrong. 10 is that consumer.
+
+  **Decided: how `UserId`s are assigned is left to each provider.** The
+  trait's contract is only that a provider returns the same id for the same
+  user for as long as it knows that user, including across restarts. Random
+  ids are fine if the provider persists them; derived ids (e.g. UUIDv5 over
+  the username) are fine too. This replaces the "same rule for 26 and 27"
+  expectation in *Done when*: there is a shared contract, not a shared rule.
+- **2026-09-21** — Step 1 done: `UserProvider`, `Credential`, `AuthError` and
+  the `UserManager` chain in `caelumora-model/src/user_provider.rs`;
+  `AcceptAnyUserProvider` in `user_provider_impl/accept_any.rs`; a `users`
+  section in `AppConfig` (`create_user_manager`). Decisions:
+  - `Credential` is borrowed and `#[non_exhaustive]`, and its `Debug` impl
+    redacts the secret. Only `Password` exists so far.
+  - In the chain, `Ok(None)` falls through; `InvalidCredentials` and
+    `Backend` errors end it — for lookups as well as for authentication.
+    Unknown users are reported as `InvalidCredentials`.
+  - Lookups are not gated through the `SecurityManager`, unlike
+    `SecretManager::resolve`: authentication is what produces the context
+    such a check would need.
+  - No default chain: without a `users` section nobody can authenticate.
+  - `AcceptAnyUserProvider` keeps users in the `EntityStore` with random ids,
+    so it finds the user `setup_initial_data` bootstraps from `--user`, and
+    its ids are as stable as the configured store. Its find-or-create is not
+    atomic; accepted rather than giving `caelumora-model` a runtime
+    dependency on tokio.
+  - Not decided yet, still open here: who owns the `User` record in general
+    (the accept-any provider simply uses the store), and the file backend.
+    Nothing uses the `UserManager` yet; that starts with
+    [10](10-user-authentication.md).
+

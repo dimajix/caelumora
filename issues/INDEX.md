@@ -67,7 +67,7 @@ against it, and what came out of the last attempt.
 | [12](12-user-and-agent-permissions.md) | open | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
 | [23](23-acls-in-security-attributes.md) | open | `SecurityAttributes` holds only an unused `owner_id` — there is no way to grant an actor or a role any right on any entity. |
 | [24](24-opa-security-manager.md) | open | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
-| [25](25-file-user-backend.md) | open | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
+| [25](25-file-user-backend.md) | in progress | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
 | [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 

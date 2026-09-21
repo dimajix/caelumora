@@ -136,3 +136,9 @@ without it treats every authenticated user as the same channel participant.
   with a provider check, and an absolute limit via `auth_time`. Noted that
   mapping the authenticated user onto the channel's `UserActor` is still open
   ([09](09-creating-channels.md), [11](11-agent-ownership.md)).
+- **2026-09-21** — Sequenced with [25](25-file-user-backend.md): first the
+  `UserProvider` trait from 25 plus an `AcceptAnyUserProvider` for
+  development (any username and password accepted, ids still stable, opt-in
+  only, loud warning), then this issue against the trait, then 25's file
+  backend as a drop-in. Details and reasons in 25's history.
+

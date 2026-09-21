@@ -37,6 +37,12 @@ Multiple `mcp_tool` instances (one per server) can coexist; each server's tools 
 
 Component configuration (such as an `mcp_tool`'s `auth.secret`) may need to reference credentials without embedding them directly in persisted config. `SecretProvider` (`caelumora-model`) is a pluggable source of secrets; a `SecretManager` holds an ordered list of providers and tries them in turn, returning the first match. Built-in providers are `FileSecretProvider` (a flat JSON key/value file, re-read on every lookup so secrets can rotate without a restart) and `EnvSecretProvider` (process environment variables). `AppConfig`'s `secrets` section configures the provider chain; the default, if unspecified, is `[File("local/secrets.json"), Env]`. Every `SecretManager::resolve` call is gated through the `SecurityManager` (`ActionType::ReadSecret`) before any provider is consulted, consistent with how `EntityStore`/`StateStore` gate access on a `SecurityContext`.
 
+## User Providers
+
+Where users come from and how their credentials are verified is pluggable in the same way as secrets. A `UserProvider` (`caelumora-model`) is one source of users; a `UserManager` holds an ordered chain of them, configured in `AppConfig`'s `users` section. Looking a user up (`find_user`, `get_user`) and verifying a credential (`authenticate`) are separate operations, and verification never hands out the stored credential, so backends that verify by binding (LDAP) fit the same trait as backends that compare a hash. How a provider assigns `UserId`s is its own business; the contract is only that the same user keeps the same id, across restarts included.
+
+The chain differs from the secret chain in how it fails: `Ok(None)` passes the question to the next provider, but a rejected credential or a failing provider ends it. A broken user file must deny, never fall through, and an unknown user is reported exactly like a wrong password. There is no default provider. The only built-in one so far, `accept_any`, is a development stand-in that accepts any username and password and keeps users in the `EntityStore`; it must be enabled explicitly and warns at startup (issues 10, 25).
+
 ## Agent Cognitive Cycle
 
 The agent cognitive cycle (implemented within `AgentActor`) defines how an agent processes information and generates responses. It typically follows these stages:
