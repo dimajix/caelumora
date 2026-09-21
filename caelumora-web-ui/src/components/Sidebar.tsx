@@ -3,12 +3,14 @@ import {
   ChevronDown,
   ChevronRight,
   Edit2,
+  LogOut,
   MessageSquare,
   MoreVertical,
   Plus,
-  Trash2
+  Trash2,
+  User
 } from 'lucide-react';
-import type {ChannelResponse, SessionResponse, SessionTemplate} from '../types';
+import type {ChannelResponse, SessionResponse, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
@@ -18,6 +20,8 @@ function cn(...inputs: ClassValue[]) {
 }
 
 interface SidebarProps {
+  user: UserResponse;
+  onLogout: () => void;
   selectedSessionId: string | null;
   selectedChannelId: string | null;
   onSelectChannel: (sessionId: string, channelId: string) => void;
@@ -25,6 +29,8 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  user,
+  onLogout,
   selectedSessionId,
   selectedChannelId,
   onSelectChannel,
@@ -249,6 +255,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           )}
         </div>
+      </div>
+
+      <div className="p-3 border-t border-gray-800 flex items-center gap-2 text-sm">
+        <User size={16} className="text-gray-400 shrink-0" />
+        <span className="flex-1 truncate" title={user.username}>{user.username}</span>
+        <button
+          onClick={onLogout}
+          className="p-1 hover:bg-gray-800 rounded-md transition-colors"
+          title="Log out"
+        >
+          <LogOut size={16} />
+        </button>
       </div>
     </div>
   );

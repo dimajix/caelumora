@@ -1,6 +1,6 @@
 # 10 — User authentication
 
-**Status:** open
+**Status:** in progress
 **Area:** Identity & access management
 
 ## The problem
@@ -141,4 +141,36 @@ without it treats every authenticated user as the same channel participant.
   development (any username and password accepted, ids still stable, opt-in
   only, loud warning), then this issue against the trait, then 25's file
   backend as a drop-in. Details and reasons in 25's history.
+- **2026-09-21** — REST server and web UI implemented (step 3 of the
+  sequence above), against `UserManager` from
+  [25](25-file-user-backend.md):
+  - `caelumora-rest-server/src/auth.rs`: `TokenService` (HS256, algorithm
+    fixed, `kid` = name of the signing secret, keys under 32 bytes refused),
+    `require_auth` middleware with renewal past half the lifetime and a
+    provider check only on renewal, `/auth/login`, `/auth/logout`,
+    `/auth/me`. Settings in `AppConfig.auth` (`jwt_secret`,
+    `token_lifetime_secs`, `max_session_secs`, `secure_cookie`); a missing
+    signing secret means a random key per process, announced at startup.
+  - Every other route sits behind the middleware; handlers take an
+    `AuthenticatedUser` and derive their `SecurityContext` from it instead of
+    `SecurityContext::default()`. A new session is owned by the logged-in
+    user, who also fills the template's "user" participant. `--user` now
+    only names the owner of the seeded templates.
+  - This exposed a bug in `ChannelTemplate::instantiate`: channel members
+    were matched by the user's *username* against the template's participant
+    names, which only worked because the bootstrap user was called "user".
+    Channels now resolve participants by their name in the template.
+  - Web UI: login page, session check on start (`/auth/me`), every `401`
+    returns to the login page, username and logout in the sidebar. An SSE
+    error triggers a session check, since `EventSource` hides the status.
+  - Known limits, deliberately left: an open SSE stream is authenticated
+    only when it connects and outlives token expiry and user removal; SSE
+    traffic does not renew the token, so 15 minutes without any other
+    request end the session (a keep-alive ping from the UI would change
+    that); no rate limiting on `/auth/login`.
+  - Still open for *Done when*: the TUI and local client still fabricate
+    their `SecurityContext`, and `DummySecurityManager` is still the only
+    `SecurityManager`. Other users still write through the channel's first
+    `UserActor` (`ChannelLoop::user_actor()`), see
+    [09](09-creating-channels.md) / [11](11-agent-ownership.md).
 

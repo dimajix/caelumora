@@ -1,7 +1,7 @@
+use crate::auth::AuthenticatedUser;
 use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse};
 use crate::state::AppState;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::{ParticipantId, SessionTemplateId};
 use std::collections::HashMap;
@@ -10,9 +10,10 @@ use uuid::Uuid;
 
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(payload): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
-    let ctx = SecurityContext::default();
+    let ctx = user.security_context();
     let template_id = SessionTemplateId(payload.template_id);
     let template = state.entity_store.list_session_templates(&ctx).await
         .expect("failed to list templates")
@@ -21,8 +22,9 @@ pub async fn create_session(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let session_id = SessionId(Uuid::new_v4());
-    let owner = state.user_id;
-    let security = SecurityContext::default();
+    // The logged-in user owns the session and fills its "user" participant.
+    let owner = user.id;
+    let security = user.security_context();
     let context = SessionContext {
         id: session_id,
         owner,
@@ -34,11 +36,17 @@ pub async fn create_session(
     let mut mapping = HashMap::new();
     mapping.insert("user".to_string(), ParticipantId::UserId(owner));
     let session = template.instantiate(name, &context, mapping).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Failed to instantiate template {}: {}", template_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // `create_session` persists the session, emits its lifecycle events, and starts it.
     let session_loop = state.session_manager.create_session(&ctx, session).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Failed to create session {}: {}", session_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {
@@ -48,8 +56,8 @@ pub async fn create_session(
     }))
 }
 
-pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Result<Json<Vec<SessionResponse>>, StatusCode> {
-    let ctx = SecurityContext::default();
+pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, StatusCode> {
+    let ctx = user.security_context();
     let sessions = state.entity_store.list_sessions(&ctx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -75,9 +83,9 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Result<Json<Ve
     Ok(Json(response))
 }
 
-pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> StatusCode {
+pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> StatusCode {
     let session_id = SessionId(id);
-    let ctx = SecurityContext::default();
+    let ctx = user.security_context();
 
     // `delete_session` stops the running loop, removes the persisted session (and all of its
     // channels), and emits the corresponding lifecycle events.
@@ -93,10 +101,11 @@ pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<U
 pub async fn rename_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
     Json(payload): Json<RenameSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let session_id = SessionId(id);
-    let session_loop = crate::routes::ensure_session(&state, session_id).await?;
+    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_name(payload.name).await;
 

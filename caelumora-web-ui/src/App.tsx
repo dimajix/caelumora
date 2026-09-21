@@ -1,8 +1,49 @@
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import {Sidebar} from './components/Sidebar';
 import {ChatView} from './components/ChatView';
+import {Login} from './components/Login';
+import {api} from './api';
+import type {UserResponse} from './types';
 
 function App() {
+  // undefined while the session is being checked, null when logged out.
+  const [user, setUser] = useState<UserResponse | null | undefined>(undefined);
+
+  useEffect(() => {
+    api.setUnauthorizedHandler(() => setUser(null));
+    api.me()
+      .then(setUser)
+      .catch((error) => {
+        console.error('Failed to check session', error);
+        setUser(null);
+      });
+    return () => api.setUnauthorizedHandler(null);
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      setUser(null);
+    }
+  };
+
+  if (user === undefined) {
+    return <div className="flex h-screen w-full bg-white dark:bg-gray-900" />;
+  }
+  if (user === null) {
+    return <Login onLogin={setUser} />;
+  }
+  // Keyed by user, so nothing of a previous user's view survives a re-login.
+  return <Workspace key={user.id} user={user} onLogout={handleLogout} />;
+}
+
+interface WorkspaceProps {
+  user: UserResponse;
+  onLogout: () => void;
+}
+
+function Workspace({ user, onLogout }: WorkspaceProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
@@ -21,6 +62,8 @@ function App() {
   return (
     <div className="flex h-screen w-full overflow-hidden bg-white dark:bg-gray-900">
       <Sidebar
+        user={user}
+        onLogout={onLogout}
         selectedSessionId={selectedSessionId}
         selectedChannelId={selectedChannelId}
         onSelectChannel={handleSelectChannel}

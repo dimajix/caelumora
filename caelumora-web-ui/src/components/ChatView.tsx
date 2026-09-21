@@ -127,6 +127,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     eventSource.onerror = (e) => {
       console.error('SSE Error', e);
       eventSource.close();
+      // EventSource does not expose the status code; if the session has
+      // expired, this request's 401 brings up the login page.
+      void api.me();
     };
 
     return () => {

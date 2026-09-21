@@ -1,11 +1,11 @@
+use crate::auth::Auth;
 use caelumora_model::store::{EntityStore, StateStore};
-use caelumora_model::user::UserId;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use std::sync::Arc;
 
 pub struct AppState {
-    pub user_id: UserId,
+    pub auth: Arc<Auth>,
     #[allow(dead_code)]
     pub runtime_manager: Arc<RuntimeManager>,
     // Owns the lifecycle of running session loops (start/stop/create/delete).

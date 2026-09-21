@@ -62,7 +62,7 @@ against it, and what came out of the last attempt.
 
 | No. | Status | Issue |
 |---|---|---|
-| [10](10-user-authentication.md) | open | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
+| [10](10-user-authentication.md) | in progress | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
 | [11](11-agent-ownership.md) | open | `SecurityAttributes` carries an `owner_id` that nothing enforces — every agent, session and template is effectively global. |
 | [12](12-user-and-agent-permissions.md) | open | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
 | [23](23-acls-in-security-attributes.md) | open | `SecurityAttributes` holds only an unused `owner_id` — there is no way to grant an actor or a role any right on any entity. |

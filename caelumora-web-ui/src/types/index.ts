@@ -6,6 +6,11 @@ export interface ChannelId {
   0: string;
 }
 
+export interface UserResponse {
+  id: string;
+  username: string;
+}
+
 export interface SessionResponse {
   id: string;
   name: string;

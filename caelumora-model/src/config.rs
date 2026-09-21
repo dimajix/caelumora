@@ -74,11 +74,46 @@ pub struct UsersConfig {
     pub providers: Vec<UserProviderConfig>,
 }
 
+/// How the REST server keeps a browser logged in: a signed JWT in an
+/// `HttpOnly` cookie, renewed while in use (issue 10).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// Name of the secret holding the JWT signing key, resolved through the
+    /// secret chain. Also used as the token's `kid`, so rotating the key means
+    /// pointing this at a new secret. If the secret does not exist, the server
+    /// generates a random key at startup - which logs everybody out on every
+    /// restart.
+    pub jwt_secret: String,
+    /// Lifetime of a token in seconds. A token is renewed once it is past half
+    /// its lifetime; a session without requests for this long ends.
+    pub token_lifetime_secs: u64,
+    /// Absolute limit of a login in seconds, however active the user is.
+    pub max_session_secs: u64,
+    /// Whether the session cookie carries `Secure`. Browsers accept `Secure`
+    /// cookies on `http://localhost`, so this only needs turning off for plain
+    /// HTTP on another host - which should not happen outside a test setup.
+    pub secure_cookie: bool,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            jwt_secret: "CAELUMORA_JWT_SECRET".to_string(),
+            token_lifetime_secs: 15 * 60,
+            max_session_secs: 12 * 60 * 60,
+            secure_cookie: true,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
     pub secrets: Option<SecretsConfig>,
     pub users: Option<UsersConfig>,
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 impl AppConfig {
@@ -246,6 +281,23 @@ users:
         let users = config.users.expect("users config present");
         assert_eq!(users.providers.len(), 1);
         assert!(matches!(users.providers[0], UserProviderConfig::AcceptAny));
+    }
+
+    #[test]
+    fn test_load_config_auth_defaults_and_overrides() {
+        let config: AppConfig = serde_yaml::from_str("persistence: {}").unwrap();
+        assert_eq!(config.auth.token_lifetime_secs, 900);
+        assert!(config.auth.secure_cookie);
+
+        let yaml = r#"
+auth:
+  jwt_secret: "OTHER_KEY"
+  token_lifetime_secs: 60
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.auth.jwt_secret, "OTHER_KEY");
+        assert_eq!(config.auth.token_lifetime_secs, 60);
+        assert_eq!(config.auth.max_session_secs, 12 * 60 * 60, "unset fields keep their defaults");
     }
 
     #[tokio::test]

@@ -102,6 +102,11 @@ impl UserManager {
         Self { providers }
     }
 
+    /// Whether the chain has no providers, i.e. nobody can authenticate.
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
+
     /// Authenticates `username` with `credential` against the chain.
     ///
     /// # Errors

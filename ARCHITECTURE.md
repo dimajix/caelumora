@@ -107,6 +107,12 @@ Security in Caelumora is handled through a combination of context and explicit c
 *   **`SecurityManager`**: A trait responsible for authorizing actions based on the `SecurityContext`.
 *   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`) used by the `SecurityManager` for policy decisions.
 
+### Authentication in the REST server
+
+Every route except `POST /auth/login` and `POST /auth/logout` requires a logged-in user. Login verifies username and password through the `UserManager` (see *User Providers*) and answers with a signed JWT (HS256) in an `HttpOnly`, `SameSite=Strict`, `Secure` cookie. There is no server-side session store; the token is the session. The `require_auth` middleware (`caelumora-rest-server/src/auth.rs`) verifies the cookie on each request and puts an `AuthenticatedUser` into it, from which handlers derive their `SecurityContext`. A cookie rather than an `Authorization` header, because `EventSource` cannot send headers and an `HttpOnly` cookie is out of reach of injected scripts.
+
+A JWT cannot be revoked, so its validity is bounded instead: tokens are short-lived (`auth.token_lifetime_secs`, default 15 minutes) and renewed once past half their lifetime, and only on renewal is the `UserManager` asked whether the user still exists. The `auth_time` claim survives renewal, so a login ends after `auth.max_session_secs` (default 12 hours) regardless. The signing key is the secret named by `auth.jwt_secret`, resolved through the secret chain; if it is missing, a random key is generated at startup and every restart logs everybody out.
+
 ## Human-in-the-Loop Approvals
 
 Caelumora supports a mechanism for manual user approval of sensitive or impactful tool executions. The process is asynchronous and non-blocking, allowing the agent to suspend its execution while waiting for human input.

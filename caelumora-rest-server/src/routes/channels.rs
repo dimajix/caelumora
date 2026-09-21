@@ -1,3 +1,4 @@
+use crate::auth::AuthenticatedUser;
 use crate::models::{ChannelMemberResponse, ChannelResponse, SendApprovalRequest, SendMessageRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
@@ -18,9 +19,10 @@ use uuid::Uuid;
 pub async fn list_channels(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<Json<Vec<ChannelResponse>>, StatusCode> {
     let session_id = SessionId(id);
-    let session = crate::routes::ensure_session(&state, session_id).await?;
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     Ok(Json(
         session.channels()
@@ -33,10 +35,11 @@ pub async fn list_channels(
 pub async fn get_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, session_id).await?;
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     
     let channel = session.channel_by_id(channel_id)
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -58,10 +61,11 @@ fn channel_response(channel: &ChannelLoop) -> ChannelResponse {
 pub async fn get_channel_messages(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
 ) -> Result<Json<Vec<Message>>, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, session_id).await?;
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     let channel = session.channel_by_id(channel_id)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
@@ -73,11 +77,12 @@ pub async fn get_channel_messages(
 pub async fn join_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
 
-    let session_loop = crate::routes::ensure_session(&state, session_id).await?;
+    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
     let channel = session_loop.channel_by_id(channel_id)
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
@@ -105,11 +110,12 @@ pub async fn join_channel(
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, session_id).await?;
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     
     if let Some(channel) = session.channel_by_id(channel_id) {
         if let Some(user_actor) = channel.user_actor() {
@@ -129,10 +135,11 @@ pub async fn send_message(
 pub async fn cancel_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, session_id).await?;
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     if session.cancel_channel(channel_id).await.is_ok() {
         return Ok(StatusCode::OK);
@@ -144,11 +151,12 @@ pub async fn cancel_channel(
 pub async fn send_approval(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
     Json(payload): Json<SendApprovalRequest>,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(id);
     let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, session_id).await?;
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     if let Some(channel) = session.channel_by_id(channel_id) {
         if let Some(user_actor) = channel.user_actor() {

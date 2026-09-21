@@ -1,12 +1,10 @@
+use crate::auth::{require_auth, AuthenticatedUser};
 use crate::state::AppState;
 use axum::{
     http::StatusCode,
     routing::{delete, get, post},
     Router,
 };
-use caelumora_model::actor::ActorId;
-use caelumora_model::channel::ChannelId;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use std::sync::Arc;
 
@@ -17,13 +15,14 @@ mod templates;
 
 pub async fn ensure_session(
     state: &Arc<AppState>,
+    user: &AuthenticatedUser,
     session_id: SessionId,
 ) -> Result<Arc<caelumora_runtime::session::SessionLoop>, StatusCode> {
     if let Some(session_loop) = state.session_manager.get_session(session_id) {
         return Ok(session_loop);
     }
 
-    let security_context = SecurityContext::new(ActorId::User(state.user_id), SessionId::default(), ChannelId::default());
+    let security_context = user.security_context();
 
     // Not currently running: load it from the store and start it. `load_session` owns
     // spawning the run loop and emitting the `SessionStarted` event.
@@ -37,8 +36,10 @@ pub async fn ensure_session(
         })
 }
 
+/// All routes. Everything except `/auth/login` and `/auth/logout` requires a
+/// session (see `crate::auth`).
 pub fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let protected = Router::new()
         .route("/templates", get(templates::list_templates))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
@@ -55,5 +56,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
         .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
         .route("/events", get(events::global_events))
-        .with_state(state)
+        .route_layer(axum::middleware::from_fn_with_state(state.auth.clone(), require_auth))
+        .with_state(state.clone());
+
+    crate::auth::router(state.auth.clone()).merge(protected)
 }
