@@ -57,6 +57,7 @@ against it, and what came out of the last attempt.
 | [07](07-session-deletion-audit.md) | in progress | Deletion works since `540e482`; what remains open is whether and how a deletion is recorded. |
 | [08](08-retry-and-edit-past-answers.md) | open | A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one. |
 | [09](09-creating-channels.md) | open | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
+| [30](30-user-actor-for-authenticated-user.md) | open | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 
 ## Identity and access management
 
@@ -70,6 +71,7 @@ against it, and what came out of the last attempt.
 | [25](25-file-user-backend.md) | in progress | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
 | [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
+| [31](31-session-renewal-from-ui.md) | open | The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input. |
 
 ## Tools and approvals
 
