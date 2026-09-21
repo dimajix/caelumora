@@ -79,6 +79,12 @@ against it, and what came out of the last attempt.
 | [14](14-approval-privilege.md) | open | Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist. |
 | [15](15-disallowed-tool-errors-to-llm.md) | open | A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded. |
 
+## User interaction
+
+| No. | Status | Issue |
+|---|---|---|
+| [28](28-user-commands.md) | open | Everything a user types goes to the agents; there is no way to address the system itself with slash commands such as `/help`, `/wakeup` or `/compact`. |
+
 ## Context and knowledge
 
 | No. | Status | Issue |
