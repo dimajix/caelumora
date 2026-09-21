@@ -11,6 +11,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
@@ -23,6 +24,19 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+
+/// A participant of a channel, with the handle it is `@`-mentioned by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelMember {
+    pub id: ActorId,
+    pub name: String,
+    /// The handle the participant is mentioned by (see `caelumora_model::mention`),
+    /// or `None` if it cannot be mentioned - approvers, and names that yield
+    /// no handle.
+    pub handle: Option<String>,
+    /// The actor kind, e.g. `"user"` or the agent's kind.
+    pub kind: String,
+}
 
 struct ActorHandle {
     id: ActorId,
@@ -38,6 +52,7 @@ pub struct ChannelLoop {
     runtime_manager: Arc<RuntimeManager>,
     actors: HashMap<ActorId,Arc<dyn Actor>>,
     moderator: Mutex<Box<dyn Moderator>>,
+    mentions: MentionDirectory,
     recorder: Mutex<Box<dyn Recorder>>,
     state: Arc<Mutex<ChannelState>>,
     state_store: Arc<dyn StateStore>,
@@ -77,6 +92,10 @@ impl ChannelLoop {
             moderator.add_actor(actor.clone());
             actors.insert(actor.id(), actor);
         }
+        let mentions = Self::mention_directory(&actors);
+        for handle in mentions.ambiguous() {
+            warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", id, handle);
+        }
 
         Ok(Self {
             id,
@@ -85,6 +104,7 @@ impl ChannelLoop {
             runtime_manager,
             actors,
             moderator: Mutex::new(moderator),
+            mentions,
             recorder: Mutex::new(recorder),
             state,
             state_store,
@@ -134,6 +154,30 @@ impl ChannelLoop {
     }
     pub fn actor_ids(&self) -> Vec<ActorId> {
         self.actors.values().map(|a| a.id()).collect()
+    }
+
+    /// All participants of the channel, in no particular order.
+    pub fn members(&self) -> Vec<ChannelMember> {
+        self.actors.values()
+            .map(|a| {
+                let name = a.name();
+                let handle = Some(handle_of(&name))
+                    .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
+                ChannelMember { id: a.id(), name, handle, kind: a.kind() }
+            })
+            .collect()
+    }
+
+    fn is_mentionable(id: ActorId) -> bool {
+        matches!(id, ActorId::User(_) | ActorId::Agent(_))
+    }
+
+    fn mention_directory(actors: &HashMap<ActorId, Arc<dyn Actor>>) -> MentionDirectory {
+        let names: Vec<(ActorId, String)> = actors.values()
+            .filter(|a| Self::is_mentionable(a.id()))
+            .map(|a| (a.id(), a.name()))
+            .collect();
+        MentionDirectory::new(names.iter().map(|(id, name)| (*id, name.as_str())))
     }
 
     pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
@@ -197,6 +241,7 @@ impl ChannelLoop {
     async fn handle_actor_event(&self, maybe_event: Option<Envelope>, actors: &Arc<HashMap<ActorId,ActorHandle>>) -> bool {
         if let Some(event) = maybe_event {
             debug!("Received actor event {:?}", event);
+            let event = self.resolve_mentions(event);
             self.record_receive_event(&event).await;
             self.append_history(&event).await;
             self.route_event(actors, event).await;
@@ -248,10 +293,50 @@ impl ChannelLoop {
         ActorHandle { id, abort_handle, sender: filtered_sender }
     }
 
+    /// Resolves the `@`-mentions in every complete message carried by `event`
+    /// and stores them in `Message::mentions`. Done here, once, as the message
+    /// enters the channel, so that every frontend, the history and the
+    /// moderator all see the same resolution (issue 29).
+    fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
+        let resolve = |m: &mut Message| {
+            if let Some(content) = &m.content {
+                m.mentions = self.mentions.resolve(content);
+            }
+        };
+        match &mut event.event {
+            ActorEvent::CompleteMessageGenerated(m) | ActorEvent::IntermediateMessageGenerated(m) => resolve(m),
+            ActorEvent::FullResponseGenerated(msgs) => msgs.iter_mut().for_each(resolve),
+            _ => {}
+        }
+        event
+    }
+
+    /// Wakes every sleeping agent a user explicitly mentioned, so that the
+    /// moderator's `ResponseRequested` reaches an agent that acts on it.
+    /// Mentions in agent responses wake nobody, matching the moderator, which
+    /// does not route them either.
+    async fn wake_mentioned(&self, event: &Envelope) {
+        if !matches!(event.context.sender_id, ActorId::User(_)) {
+            return;
+        }
+        if let ActorEvent::FullResponseGenerated(messages) = &event.event {
+            for id in messages.iter().flat_map(|m| m.mentions.iter()) {
+                if let Some(actor) = self.actors.get(id) {
+                    if matches!(id, ActorId::Agent(_)) && actor.state() == ActorState::Sleeping {
+                        if let Err(e) = actor.wakeup().await {
+                            warn!("Cannot wake mentioned agent {}: {}", id, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
         if matches!(event.event, ActorEvent::WakeupRequested) {
             let _ = self.wakeup().await;
         }
+        self.wake_mentioned(&event).await;
 
         //if let ActorEvent::FullResponseGenerated(messages) = &event.event {
         //    if messages.iter().any(|m| m.role == MessageRole::User) {

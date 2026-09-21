@@ -1,9 +1,10 @@
-use crate::models::{ChannelResponse, SendApprovalRequest, SendMessageRequest};
+use crate::models::{ChannelMemberResponse, ChannelResponse, SendApprovalRequest, SendMessageRequest};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use caelumora_model::agent::AgentId;
+use caelumora_runtime::channel::ChannelLoop;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -24,13 +25,7 @@ pub async fn list_channels(
     Ok(Json(
         session.channels()
             .into_iter()
-            .map(|c| {
-                ChannelResponse {
-                    id: c.id(),
-                    name: c.name(),
-                    participants: c.actor_names()
-                }
-            })
+            .map(|c| channel_response(&c))
             .collect(),
     ))
 }
@@ -46,11 +41,18 @@ pub async fn get_channel(
     let channel = session.channel_by_id(channel_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(ChannelResponse {
+    Ok(Json(channel_response(&channel)))
+}
+
+fn channel_response(channel: &ChannelLoop) -> ChannelResponse {
+    ChannelResponse {
         id: channel.id(),
         name: channel.name(),
-        participants: channel.actor_names()
-    }))
+        members: channel.members()
+            .into_iter()
+            .map(|m| ChannelMemberResponse { id: m.id, name: m.name, handle: m.handle, kind: m.kind })
+            .collect(),
+    }
 }
 
 pub async fn get_channel_messages(

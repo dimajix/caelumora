@@ -1,10 +1,12 @@
-use caelumora_model::actor::ActorEvent;
+use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::AgentId;
 use caelumora_model::agent::Personality;
 use caelumora_model::agent::PersonalityId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
+use caelumora_model::mention::mention_spans;
+use caelumora_model::message::Message;
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{SessionContext, SessionId};
@@ -176,6 +178,25 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
     Ok(template)
 }
 
+/// Formats a message's content for the terminal, highlighting the
+/// `@`-mentions that were resolved to a participant of the channel.
+fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
+    let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
+    let mut rendered = String::with_capacity(content.len());
+    let mut pos = 0;
+    for span in mention_spans(content) {
+        if mentioned.contains(&&span.handle) {
+            rendered.push_str(&content[pos..span.range.start]);
+            rendered.push_str("\x1b[1;36m");
+            rendered.push_str(&content[span.range.clone()]);
+            rendered.push_str("\x1b[0m");
+            pos = span.range.end;
+        }
+    }
+    rendered.push_str(&content[pos..]);
+    rendered
+}
+
 async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
     let user_actor = channel.user_actor()
         .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
@@ -186,6 +207,10 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
     // agent to answer. Covers both plan proposals and regular tool calls -
     // both flow through the same generic ApprovalRequested event.
     let mut pending_approvals: HashMap<Uuid, AgentId> = HashMap::new();
+    let handles: HashMap<ActorId, String> = channel.members()
+        .into_iter()
+        .filter_map(|m| Some((m.id, m.handle?)))
+        .collect();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     loop {
@@ -193,20 +218,20 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
             maybe_event = receiver.recv() => {
                 match maybe_event {
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {
-                        if let Some(content) = message.content {
-                            println!("\r{}> {}", message.sender_name, content);
+                        if let Some(content) = &message.content {
+                            println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
                         }
                     }
                     Some(ActorEvent::FullResponseGenerated(messages)) => {
                         for message in messages {
-                            if let Some(content) = message.content {
-                                println!("\r{}> {}", message.sender_name, content);
+                            if let Some(content) = &message.content {
+                                println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
                             }
                         }
                     }
                     Some(ActorEvent::IntermediateMessageGenerated(message)) => {
-                        if let Some(content) = message.content {
-                            println!("\r[working] {}> {}", message.sender_name, content);
+                        if let Some(content) = &message.content {
+                            println!("\r[working] {}> {}", message.sender_name, render_content(&message, content, &handles));
                         }
                     }
                     Some(ActorEvent::ApprovalRequested(request)) => {

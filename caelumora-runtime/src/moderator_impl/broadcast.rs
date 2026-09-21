@@ -23,8 +23,9 @@ impl BroadcastModerator {
             let mut routes = self.actors.forward_routes(event, messages);
 
             if !routes.is_empty() {
-                // Pick random actor for response
-                let possible_actors = self.actors.actor_candidates(messages);
+                // Ask every mentioned agent to respond, or else all of them
+                let possible_actors = self.actors.mentioned_responders(event, messages)
+                    .unwrap_or_else(|| self.actors.actor_candidates(messages));
                 for id in possible_actors {
                     let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
                     routes.push((id, request_response_event));

@@ -1,3 +1,4 @@
+use caelumora_model::actor::ActorId;
 use caelumora_model::meta::Metadata;
 use caelumora_model::session::{ChannelId, SessionId};
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,19 @@ pub struct RenameSessionRequest {
 pub struct ChannelResponse {
     pub id: ChannelId,
     pub name: String,
-    pub participants: Vec<String>,
+    /// All participants, in no particular order, with the handles they are
+    /// `@`-mentioned by - used by the web UI for the member list, completion
+    /// and to render the `mentions` of a message.
+    pub members: Vec<ChannelMemberResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChannelMemberResponse {
+    pub id: ActorId,
+    pub name: String,
+    /// `None` if the participant cannot be mentioned.
+    pub handle: Option<String>,
+    pub kind: String,
 }
 
 #[derive(Debug, Deserialize)]

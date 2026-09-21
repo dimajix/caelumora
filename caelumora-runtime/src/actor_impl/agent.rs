@@ -528,7 +528,7 @@ impl AgentActor {
                             self.perceive(turn_context, messages, &event.context, &event.security).await;
                         }
                         rx.commit().await?;
-                        Ok(Some(ActorState::Sleeping))
+                        Ok(Some(self.state_after_sleep()))
                     }
                     // Channel is closed
                     None => Ok(None)
@@ -536,8 +536,21 @@ impl AgentActor {
             }
             maybe_global = global_rx.recv() => {
                 self.handle_global_event(maybe_global, output).await;
-                Ok(Some(ActorState::Sleeping))
+                Ok(Some(self.state_after_sleep()))
             }
+        }
+    }
+
+    /// The state to continue with after `handle_sleep` consumed an event. A
+    /// `wakeup()` while `handle_sleep` was blocked on its inputs has already
+    /// moved the processing state to `Idle`; returning a hard `Sleeping` would
+    /// overwrite that and put the agent straight back to sleep - so a
+    /// mentioned agent would perceive the message waking it, then ignore the
+    /// `ResponseRequested` that follows.
+    fn state_after_sleep(&self) -> ActorState {
+        match self.processing_state.load() {
+            ActorState::Idle => ActorState::Idle,
+            _ => ActorState::Sleeping,
         }
     }
 

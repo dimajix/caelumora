@@ -11,10 +11,23 @@ export interface SessionResponse {
   name: string;
 }
 
+/** Serialized `ActorId`: `"None"` or an object like `{ "Agent": "<uuid>" }`. */
+export type ActorId = string | Record<string, string>;
+
+/** A participant of a channel. */
+export interface ChannelMember {
+  id: ActorId;
+  name: string;
+  /** The handle it is `@`-mentioned by, or null if it cannot be mentioned. */
+  handle: string | null;
+  kind: string;
+}
+
 export interface ChannelResponse {
   id: string;
   name: string;
-  participants: string[];
+  /** All participants, in no particular order. */
+  members: ChannelMember[];
 }
 
 export interface ToolCall {
@@ -37,6 +50,8 @@ export interface Message {
   timestamp?: string;
   tool_calls?: ToolCall[];
   tool_results?: ToolResult[];
+  /** Participants addressed by `@`-mentions, resolved by the server. */
+  mentions?: ActorId[];
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;

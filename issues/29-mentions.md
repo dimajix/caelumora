@@ -1,6 +1,6 @@
 # 29 — Addressing participants with @-mentions
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -114,3 +114,39 @@ context that a message was addressed to them.
 - **2026-09-21** — Issue created. A mention overrides the moderator's choice of
   responders rather than restricting delivery; resolved to `ActorId`s at send
   time; UI rendering and `@` completion included.
+- **2026-09-21** — Implemented. Decisions taken along the way:
+  - Handles are derived from names (`caelumora_model::mention::handle_of`),
+    not stored. Uniqueness is *not* enforced: a handle shared by several
+    participants is logged as a warning when the channel starts, and
+    mentioning it addresses all of them. Rejecting at join time would have
+    made channels from existing templates fail to start.
+  - Resolution happens in `ChannelLoop::handle_actor_event`, before recording,
+    history and routing; results are stored in `Message::mentions`. Text in
+    backticks and `@` preceded by a handle character or `.` (emails) do not
+    count.
+  - Only user-written mentions are routed (`ModeratorActors::mentioned_responders`),
+    for all three moderators; round-robin does not advance its rotation for a
+    mention. Agent mentions are resolved for display only. Agents therefore
+    get no system prompt about handles yet.
+  - Waking: `ChannelLoop` wakes mentioned sleeping agents before routing.
+    This exposed a race in `AgentActor::handle_sleep`, which returned a hard
+    `Sleeping` and so overwrote a `wakeup()` that happened while it was
+    blocked; it now keeps `Idle` if woken (`state_after_sleep`). The same race
+    affected the existing wakeup on every REST/TUI message.
+  - REST: `ChannelResponse` gained `members` (id, name, handle, kind);
+    `participants` is unchanged for compatibility. Web UI highlights resolved
+    mentions via a remark plugin and offers completion on `@` (arrow keys,
+    Enter/Tab, Escape). TUI highlights resolved mentions; no completion there.
+  - Verified end to end against the REST server with the `sassy-session`
+    template: `@sassy` / `@jonathan` got exactly that agent's answer, two
+    mentions got both. The web UI was type-checked, linted and built, but not
+    exercised in a browser.
+  - Not done: the shared completion popup with `/` commands from
+    [28](28-user-commands.md) — 28 does not exist yet; the popup in
+    `ChatView` is the place to extend.
+- **2026-09-21** — REST response simplified: `ChannelResponse.participants`
+  removed, `members` now lists *all* participants (approvers included) with
+  `handle: Option<String>` — `null` where a participant cannot be mentioned.
+  `ChannelLoop::members()` no longer sorts; the order is arbitrary (it comes
+  from a `HashMap`) and sorting by name is left to the client, which the web
+  UI does.

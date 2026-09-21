@@ -43,6 +43,12 @@ pub struct Message {
     /// broadcasts (the user-facing/audit trail).
     #[serde(default)]
     pub internal: bool,
+    /// Participants addressed by `@`-mentions in `content`, resolved once
+    /// when the message entered the channel (see `crate::mention`). Stored
+    /// rather than re-parsed so that a later rename cannot change whom a past
+    /// message addressed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentions: Vec<ActorId>,
     // Usage statistics
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u64>,
@@ -71,6 +77,7 @@ impl Default for Message {
             timestamp: Utc::now(),
             metadata: HashMap::new(),
             internal: false,
+            mentions: Vec::new(),
             prompt_tokens: None,
             completion_tokens: None,
             prompt_duration: None,

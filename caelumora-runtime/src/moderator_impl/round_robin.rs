@@ -23,7 +23,13 @@ impl RoundRobinModerator {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
-            if !routes.is_empty() {
+            if let Some(mentioned) = self.actors.mentioned_responders(event, messages) {
+                // Mentioned agents respond out of turn; the rotation is left as it is
+                for id in mentioned {
+                    let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
+                    routes.push((id, request_response_event));
+                }
+            } else if !routes.is_empty() {
                 // Pick the next actor for response in round-robin order
                 let mut possible_actors = self.actors.actor_candidates(messages);
                 possible_actors.sort_unstable_by_key(|id| id.id());

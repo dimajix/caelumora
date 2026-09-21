@@ -25,7 +25,13 @@ impl RandomModerator {
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             let mut routes = self.actors.forward_routes(event, messages);
 
-            if !routes.is_empty() {
+            if let Some(mentioned) = self.actors.mentioned_responders(event, messages) {
+                // Mentioned agents respond instead of a random one
+                for id in mentioned {
+                    let request_response_event = event.forward_with_event(ActorEvent::ResponseRequested);
+                    routes.push((id, request_response_event));
+                }
+            } else if !routes.is_empty() {
                 // Pick random actor for response
                 let possible_actors = self.actors.actor_candidates(messages);
                 if let Some(id) = possible_actors.choose(&mut self.rng) {

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import type {
   ApprovalRequest,
+  ChannelMember,
   ChannelResponse,
   Envelope,
   Message,
@@ -18,6 +19,7 @@ import {api} from '../api';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
+import {mentionedHandles, mentionQueryAt} from '../mention';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -26,6 +28,8 @@ function cn(...inputs: ClassValue[]) {
 function formatArguments(args: unknown): string {
   return typeof args === 'string' ? args : JSON.stringify(args);
 }
+
+type MentionableMember = ChannelMember & {handle: string};
 
 interface ChatViewProps {
   sessionId: string;
@@ -43,6 +47,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // `@`-completion: the caret position the suggestions were computed for, the
+  // highlighted suggestion, and the query the user dismissed with Escape.
+  const [caret, setCaret] = useState(0);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [dismissedMention, setDismissedMention] = useState<number | null>(null);
+
+  // The server returns members in no particular order.
+  const members: ChannelMember[] = [...(channel?.members ?? [])].sort((l, r) => l.name.localeCompare(r.name));
+  const mentionQuery = mentionQueryAt(inputText, caret);
+  const suggestions: MentionableMember[] = mentionQuery && mentionQuery.start !== dismissedMention
+    ? members.filter((m): m is MentionableMember => {
+        const query = mentionQuery.query.toLowerCase();
+        return !!m.handle && (m.handle.startsWith(query) || m.name.toLowerCase().includes(query));
+      })
+    : [];
 
   useEffect(() => {
     loadMessages();
@@ -162,6 +182,44 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     }
   };
 
+  const updateInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputText(e.target.value);
+    setCaret(e.target.selectionStart ?? e.target.value.length);
+    setSuggestionIndex(0);
+  };
+
+  const selectMention = (member: MentionableMember) => {
+    if (!mentionQuery) return;
+    const before = inputText.slice(0, mentionQuery.start);
+    const after = inputText.slice(caret).replace(/^\s*/, ' ');
+    const inserted = `@${member.handle}`;
+    const newCaret = before.length + inserted.length + 1;
+    setInputText(before + inserted + after);
+    setCaret(newCaret);
+    setSuggestionIndex(0);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(newCaret, newCaret);
+    });
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSuggestionIndex(i => (i + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSuggestionIndex(i => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      selectMention(suggestions[Math.min(suggestionIndex, suggestions.length - 1)]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setDismissedMention(mentionQuery?.start ?? null);
+    }
+  };
+
   const handleStopGeneration = async () => {
     try {
       await api.cancelChannel(sessionId, channelId);
@@ -222,7 +280,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 {msg.sender_name || msg.role}
               </div>
               
-              {msg.content && <MarkdownMessage content={msg.content} invert={msg.role === 'User'} />}
+              {msg.content && (
+                <MarkdownMessage
+                  content={msg.content}
+                  invert={msg.role === 'User'}
+                  mentions={mentionedHandles(msg, members)}
+                />
+              )}
 
               {msg.tool_calls && msg.tool_calls.length > 0 && (
                 <div className="mt-2 space-y-2">
@@ -320,14 +384,51 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
 
         <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
           <form onSubmit={handleSendMessage} className="flex space-x-2">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Type your message..."
-              disabled={isSending}
-              className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-transparent dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="relative flex-1 flex">
+              {suggestions.length > 0 && (
+                <ul
+                  role="listbox"
+                  className="absolute bottom-full left-0 mb-1 w-64 max-h-60 overflow-y-auto z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md shadow-lg py-1"
+                >
+                  {suggestions.map((member, idx) => (
+                    <li
+                      key={member.handle + idx}
+                      role="option"
+                      aria-selected={idx === suggestionIndex}
+                      onMouseDown={(e) => { e.preventDefault(); selectMention(member); }}
+                      onMouseEnter={() => setSuggestionIndex(idx)}
+                      className={cn(
+                        "px-3 py-1.5 cursor-pointer flex items-baseline justify-between gap-2",
+                        idx === suggestionIndex
+                          ? "bg-blue-600 text-white"
+                          : "text-gray-800 dark:text-gray-200"
+                      )}
+                    >
+                      <span className="text-sm truncate">{member.name}</span>
+                      <span className={cn("text-xs font-mono", idx === suggestionIndex ? "text-blue-100" : "text-gray-500 dark:text-gray-400")}>
+                        @{member.handle}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputText}
+                onChange={updateInput}
+                onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? inputText.length)}
+                onKeyDown={handleInputKeyDown}
+                onBlur={() => setDismissedMention(mentionQuery?.start ?? null)}
+                onFocus={() => setDismissedMention(null)}
+                placeholder="Type your message... (@ to mention)"
+                disabled={isSending}
+                role="combobox"
+                aria-expanded={suggestions.length > 0}
+                aria-autocomplete="list"
+                className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-transparent dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
             <button
               type="submit"
               disabled={isSending || isGenerating || !inputText.trim()}
@@ -356,10 +457,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             <h3 className="font-semibold uppercase text-xs tracking-wider">Channel Members</h3>
           </div>
           <div className="space-y-2">
-            {channel?.participants.map((name, idx) => (
+            {members.map((member, idx) => (
               <div key={idx} className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{name}</span>
+                <span className="text-sm text-gray-700 dark:text-gray-300">{member.name}</span>
+                {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500">@{member.handle}</span>}
               </div>
             ))}
           </div>

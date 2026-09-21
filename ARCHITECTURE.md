@@ -73,6 +73,11 @@ Moderators control how messages are routed and who is allowed to respond. Implem
 *   **Round Robin**: Cycles through participants in a fixed order.
 *   **Random**: Picks a random participant to respond.
 
+#### `@`-Mentions
+A user can address participants directly with `@handle` (e.g. `@sassy` for "Sassy"). A handle is the participant's name lowercased, with every run of other characters collapsed into `-` (`caelumora_model::mention`). The `ChannelLoop` resolves mentions once, as a message enters the channel, and stores the resolved `ActorId`s in `Message::mentions`; nothing downstream re-parses the text, so a later rename cannot change whom a past message addressed. Unknown handles stay plain text, and text in backticks is ignored.
+
+A mention changes who is asked to respond, not who receives the message: every participant still gets it, but every moderator (via the shared `ModeratorActors::mentioned_responders`) sends `ResponseRequested` to exactly the mentioned agents instead of applying its own policy. Mentioned agents that are asleep are woken first. Only mentions written by a user are routed; mentions in agent responses are resolved and rendered but do not steer the moderator, so agents cannot address each other in an unbounded loop. The REST API lists each channel's `members` in no particular order, each with its handle (`null` for participants that cannot be mentioned, such as approvers); the web UI sorts them by name and uses them for the member list, `@` completion and highlighting.
+
 ## Controllers and State Management
 
 Caelumora uses `Controller` types (e.g., `SessionController`, `AgentController`) for managing the live state of entities. 
