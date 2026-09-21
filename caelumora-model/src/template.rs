@@ -73,7 +73,11 @@ fn default_moderator() -> String {
 }
 
 impl ChannelTemplate {
-    pub async fn instantiate(&self, context: &SessionContext, session_participants: &[Participant]) -> TemplateResult<Channel> {
+    /// Builds the channel. `session_participants` pairs each participant of
+    /// the session with its name in the session template, which is what
+    /// `self.participants` refers to - not the user's or agent's own name: the
+    /// template's "user" is whoever the session was created for.
+    pub async fn instantiate(&self, context: &SessionContext, session_participants: &[(String, Participant)]) -> TemplateResult<Channel> {
         let mut participants = Vec::new();
 
         for name in &self.participants {
@@ -83,13 +87,10 @@ impl ChannelTemplate {
                     strategy: ApprovalStrategy::Any,
                 })
             } else {
-                session_participants.iter().find(|p| {
-                    match p {
-                        Participant::User(u) => u.username == *name,
-                        Participant::Agent(a) => a.metadata.name == *name,
-                        Participant::Approver(_) => false,
-                    }
-                }).cloned().ok_or_else(|| TemplateError::ParticipantNotFound(name.clone()))?
+                session_participants.iter()
+                    .find(|(template_name, _)| template_name == name)
+                    .map(|(_, participant)| participant.clone())
+                    .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone()))?
             };
             participants.push(participant);
         }
@@ -134,14 +135,19 @@ impl SessionTemplate {
     pub async fn instantiate(&self, name:String, context:&SessionContext, mapping: HashMap<String, ParticipantId>) -> TemplateResult<Session> {
         let now = Utc::now();
 
+        let mut named_participants = Vec::new();
         let mut participants = Vec::new();
-        for participant in &self.participants {
-            participants.push(participant.instantiate(context, &mapping).await?);
+        for template in &self.participants {
+            let participant = template.instantiate(context, &mapping).await?;
+            if let Some(name) = template.name() {
+                named_participants.push((name.to_string(), participant.clone()));
+            }
+            participants.push(participant);
         }
 
         let mut channels = Vec::new();
         for channel in &self.channels {
-            channels.push(channel.instantiate(context, &participants).await?)
+            channels.push(channel.instantiate(context, &named_participants).await?)
         }
 
         let security_attributes = SecurityAttributes {
@@ -182,6 +188,14 @@ pub enum ParticipantTemplate {
 }
 
 impl ParticipantTemplate {
+    /// The name channels use to refer to this participant, if it has one.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            ParticipantTemplate::User { name } | ParticipantTemplate::Agent { name, .. } => Some(name),
+            ParticipantTemplate::Approver => None,
+        }
+    }
+
     pub async fn instantiate(&self, context:&SessionContext, mapping: &HashMap<String, ParticipantId>) -> TemplateResult<Participant> {
         let participant = match self {
             ParticipantTemplate::User { name } => {
@@ -225,5 +239,56 @@ impl ParticipantTemplate {
             }
         };
         Ok(participant)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::security::SecurityContext;
+    use crate::store::EntityStore;
+    use crate::store_impl::memory::MemoryStore;
+    use crate::user::{User, UserId};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn channels_refer_to_participants_by_their_template_name() {
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let alice = User {
+            id: UserId::new(),
+            username: "alice".to_string(),
+            email: String::new(),
+            roles: Vec::new(),
+            security: SecurityContext::default(),
+        };
+        store.create_user(&SecurityContext::default(), &alice).await.unwrap();
+
+        let template = SessionTemplate {
+            id: SessionTemplateId(Uuid::new_v4()),
+            metadata: Metadata::default(),
+            scope: ScopeTemplate::SessionScope,
+            participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
+            channels: vec![ChannelTemplate {
+                name: "main".to_string(),
+                moderator: "broadcast".to_string(),
+                participants: vec!["user".to_string()],
+            }],
+        };
+        let context = SessionContext {
+            id: Default::default(),
+            owner: alice.id,
+            security: SecurityContext::default(),
+            entity_store: store,
+        };
+        let mapping = HashMap::from([("user".to_string(), ParticipantId::UserId(alice.id))]);
+
+        let session = template.instantiate("s".to_string(), &context, mapping).await
+            .expect("the template's \"user\" is alice, whatever her username");
+
+        let users: Vec<_> = session.channels[0].participants.iter()
+            .filter_map(|p| match p { Participant::User(u) => Some(u.id), _ => None })
+            .collect();
+        assert_eq!(users, vec![alice.id]);
     }
 }
