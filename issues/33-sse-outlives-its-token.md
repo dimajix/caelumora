@@ -57,3 +57,9 @@ that carries the actual conversation.
 - **2026-09-22** — Split off from [31](31-session-renewal-from-ui.md), which
   covers renewing the session from the UI; this covers the stream that
   ignores the result.
+- **2026-09-22** — Prerequisite identified: ending a stream is only
+  acceptable once a reconnect can restore what was missed, which is
+  [34](34-snapshot-on-stream-connect.md). The "reconnect cost" consideration
+  above is answered there — by a snapshot on connect rather than by event
+  ids — so 34 should come first.
+
