@@ -42,6 +42,12 @@ export const api = {
     return res.json();
   },
 
+  /** Renews the session; the server sets fresh cookies when one is due. */
+  async refresh(): Promise<void> {
+    const res = await request('/auth/refresh', {method: 'POST'});
+    await ensureOk(res, 'Failed to renew the session');
+  },
+
   async logout(): Promise<void> {
     await fetch(`${API_BASE}/auth/logout`, {method: 'POST', credentials: 'same-origin'});
   },

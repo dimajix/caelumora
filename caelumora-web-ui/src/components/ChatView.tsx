@@ -25,6 +25,7 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles, mentionQueryAt} from '../mention';
+import {loadDraft, saveDraft} from '../session';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -65,7 +66,8 @@ interface ChatViewProps {
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
-  const [inputText, setInputText] = useState('');
+  // Restored from session storage, so a forced re-login does not lose it.
+  const [inputText, setInputText] = useState(() => loadDraft(channelId));
   const [isSending, setIsSending] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
@@ -181,6 +183,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage, isGenerating]);
+
+  useEffect(() => {
+    saveDraft(channelId, inputText);
+  }, [channelId, inputText]);
 
   const loadMessages = async () => {
     try {

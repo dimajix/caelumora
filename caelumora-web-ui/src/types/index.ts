@@ -9,6 +9,8 @@ export interface ChannelId {
 export interface UserResponse {
   id: string;
   username: string;
+  /** Lifetime of a session token in seconds; how often the UI renews. */
+  token_lifetime_secs: number;
 }
 
 export interface SessionResponse {

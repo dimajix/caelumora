@@ -5,6 +5,7 @@ import {Login} from './components/Login';
 import {ErrorBanner} from './components/ErrorBanner';
 import {api} from './api';
 import {reportError, setErrorReporter, type ReportedError} from './errors';
+import {useSessionKeepAlive} from './session';
 import type {UserResponse} from './types';
 
 function App() {
@@ -19,6 +20,10 @@ function App() {
   }, []);
 
   const dismissError = (id: number) => setErrors(prev => prev.filter(e => e.id !== id));
+
+  // Keeps a session alive while the tab is visible, so that watching a
+  // channel without sending anything does not end it (issue 31).
+  useSessionKeepAlive(user?.token_lifetime_secs);
 
   useEffect(() => {
     api.setUnauthorizedHandler(() => setUser(null));

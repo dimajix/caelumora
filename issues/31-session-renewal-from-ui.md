@@ -1,6 +1,6 @@
 # 31 — An open web UI loses its session after 15 minutes without requests
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access management
 
 ## The problem
@@ -91,3 +91,33 @@ and can be done separately.
 - **2026-09-21** — Issue created after [10](10-user-authentication.md) was
   implemented: token renewal happens only on requests, and SSE traffic does
   not count as one.
+- **2026-09-22** — Implemented. Decisions:
+  - **Idle means "no visible tab".** The UI renews on a timer while its tab
+    is visible and stops while it is hidden, catching up as soon as it is
+    shown again. A forgotten tab in the background therefore still ends
+    after one token lifetime.
+  - **`POST /auth/refresh`** rather than pinging `/auth/me`. The work is
+    `require_auth`'s either way, but `/auth/me` asks the `UserManager` on
+    every call to answer with a name, so pinging it would tie the number of
+    provider lookups to the ping frequency instead of the token lifetime -
+    which would matter for [27](27-ldap-user-backend.md). `refresh` takes no
+    body, answers `204`, and is distinguishable in the log.
+  - **How the UI knows when to renew:** a second cookie,
+    `caelumora_session_expires`, without `HttpOnly`, holding the expiry as a
+    unix timestamp. The token itself stays unreadable, so its `exp` cannot
+    be read from JavaScript; a body field alone would go stale across
+    reloads and would not show a renewal another tab made. The login and
+    `/auth/me` responses additionally carry `token_lifetime_secs` as a
+    fallback and to compute the interval. `nextRefreshDelay` clamps the
+    delay so that a missing or stale cookie cannot turn into a busy loop.
+  - **Drafts** are kept per channel in `sessionStorage` and restored when
+    the channel is opened again, so a forced re-login no longer loses what
+    was typed.
+  - **Streams that outlive their token** split off into
+    [33](33-sse-outlives-its-token.md): it is a server-side change and
+    interacts with what happens to events during a reconnect.
+  - Verified against the REST server with a 20-second lifetime: login sets
+    both cookies, `refresh` on a fresh token answers `204` without setting
+    any, and past half the lifetime it sets both again with a later expiry.
+    The UI's timer was not exercised in a browser.
+

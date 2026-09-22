@@ -173,4 +173,11 @@ without it treats every authenticated user as the same channel participant.
     `SecurityManager`. Other users still write through the channel's first
     `UserActor` (`ChannelLoop::user_actor()`), see
     [09](09-creating-channels.md) / [11](11-agent-ownership.md).
+- **2026-09-22** — Idle defined, via [31](31-session-renewal-from-ui.md): a
+  session stays alive while a *visible* tab renews it (`POST /auth/refresh`
+  on a timer), and ends one token lifetime after the last visible tab is
+  gone. The expiry is published to the UI in a second, non-`HttpOnly` cookie
+  `caelumora_session_expires`; the token itself stays unreadable. What is
+  still unbounded is an open event stream, which is authenticated only when
+  it connects - [33](33-sse-outlives-its-token.md).
 
