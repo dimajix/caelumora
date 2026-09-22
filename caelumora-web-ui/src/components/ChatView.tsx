@@ -13,6 +13,7 @@ import type {
   ApprovalRequest,
   ChannelMember,
   ChannelResponse,
+  ChannelSnapshot,
   Envelope,
   Message,
   PlanStepEvent,
@@ -74,6 +75,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [streamingSender, setStreamingSender] = useState<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
+  // The snapshot holds the end of the history; older messages on request.
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // `@`-completion: the caret position the suggestions were computed for, the
@@ -93,9 +97,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     : [];
 
   useEffect(() => {
-    loadMessages();
-    loadChannel();
-    const eventSource = api.getEventSource(sessionId, channelId);
+    // The stream itself delivers the state it starts from, so there is no
+    // window between loading the history and subscribing in which a message
+    // could be missed (issue 34).
+    const eventSource = api.getEventSource(sessionId, channelId, {snapshot: true});
+
+    eventSource.addEventListener('snapshot', (event) => {
+      try {
+        const snapshot: ChannelSnapshot = JSON.parse(event.data);
+        setMessages(snapshot.messages);
+        setChannel(snapshot.channel);
+        setHasMore(snapshot.has_more);
+        setStreamingMessage(null);
+        setStreamingSender(null);
+        setIsGenerating(false);
+      } catch (e) {
+        reportError('Failed to read the channel state', e);
+      }
+    });
 
     eventSource.onmessage = (event) => {
       try {
@@ -112,6 +131,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         } else if (actorEvent.CompleteMessageGenerated) {
           setMessages(prev => {
             const newMsg = actorEvent.CompleteMessageGenerated!;
+            // A message can arrive twice: in the snapshot and as an event.
+            if (newMsg.id && prev.some(m => m.id === newMsg.id)) return prev;
             if (newMsg.tool_results && newMsg.tool_results.length > 0) {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.some(tc => newMsg.tool_results?.some(tr => tr.id === tc.id))) {
@@ -188,24 +209,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     saveDraft(channelId, inputText);
   }, [channelId, inputText]);
 
-  const loadMessages = async () => {
+  /** Replaces the snapshot's tail with the channel's full history. */
+  const loadFullHistory = async () => {
+    setIsLoadingHistory(true);
     try {
       const data = await api.getMessages(sessionId, channelId);
-      setMessages(data);
-      setStreamingMessage(null);
-      setStreamingSender(null);
-      setIsGenerating(false);
+      setMessages(prev => {
+        // Keep anything that arrived after the history was read.
+        const known = new Set(data.map(m => m.id));
+        return [...data, ...prev.filter(m => !m.id || !known.has(m.id))];
+      });
+      setHasMore(false);
     } catch (error) {
-      reportError('Failed to load messages', error);
-    }
-  };
-
-  const loadChannel = async () => {
-    try {
-      const data = await api.getChannel(sessionId, channelId);
-      setChannel(data);
-    } catch (error) {
-      reportError('Failed to load channel details', error);
+      reportError('Failed to load earlier messages', error);
+    } finally {
+      setIsLoadingHistory(false);
     }
   };
 
@@ -302,6 +320,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           </div>
         )}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {hasMore && (
+            <div className="text-center">
+              <button
+                onClick={loadFullHistory}
+                disabled={isLoadingHistory}
+                className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+              >
+                {isLoadingHistory ? 'Loading…' : 'Load earlier messages'}
+              </button>
+            </div>
+          )}
           {messages.reduce((acc: Message[], msg) => {
             // Logic to merge tool calls and results
             if (msg.tool_results && msg.tool_results.length > 0) {

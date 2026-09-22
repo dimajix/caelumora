@@ -55,6 +55,14 @@ export interface ToolResult {
   status?: ToolResultStatus;
 }
 
+/** The state of a channel when an event stream connects (issue 34). */
+export interface ChannelSnapshot {
+  channel: ChannelResponse;
+  messages: Message[];
+  /** Whether the history is longer than the snapshot; the rest comes over REST. */
+  has_more: boolean;
+}
+
 export interface Message {
   id?: string;
   role: 'User' | 'Assistant' | 'System' | 'Tool';

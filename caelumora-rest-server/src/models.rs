@@ -1,4 +1,5 @@
 use caelumora_model::actor::ActorId;
+use caelumora_model::message::Message;
 use caelumora_model::meta::Metadata;
 use caelumora_model::session::{ChannelId, SessionId};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,43 @@ pub struct SessionResponse {
     pub id: SessionId,
     pub name: String,
     pub metadata: Metadata,
+}
+
+/// Whether an event stream starts with a snapshot of the current state
+/// (issue 34). Off by default, so a client that does not want one does not
+/// pay for it.
+#[derive(Debug, Default, Deserialize)]
+pub struct StreamOptions {
+    #[serde(default)]
+    pub snapshot: bool,
+}
+
+/// The state of a channel when a stream connects: its members and the end of
+/// its history. Older messages are fetched over REST - `has_more` says there
+/// are some.
+#[derive(Debug, Serialize)]
+pub struct ChannelSnapshot {
+    pub channel: ChannelResponse,
+    pub messages: Vec<Message>,
+    pub has_more: bool,
+}
+
+/// The state of the system when a global stream connects.
+///
+/// Unfiltered for now: every user sees every session, which is issue 11. The
+/// snapshot must go through the same check as the REST endpoints once that
+/// exists.
+#[derive(Debug, Serialize)]
+pub struct GlobalSnapshot {
+    pub sessions: Vec<SessionSnapshot>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionSnapshot {
+    pub id: SessionId,
+    pub name: String,
+    pub metadata: Metadata,
+    pub channels: Vec<ChannelResponse>,
 }
 
 #[derive(Debug, Deserialize)]

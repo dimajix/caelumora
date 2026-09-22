@@ -10,7 +10,7 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
 use std::sync::Arc;
 
-mod channels;
+pub mod channels;
 mod events;
 mod sessions;
 mod templates;

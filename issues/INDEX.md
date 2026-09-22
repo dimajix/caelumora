@@ -57,7 +57,7 @@ against it, and what came out of the last attempt.
 | [07](07-session-deletion-audit.md) | in progress | Deletion works since `540e482`; what remains open is whether and how a deletion is recorded. |
 | [08](08-retry-and-edit-past-answers.md) | open | A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one. |
 | [09](09-creating-channels.md) | open | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
-| [34](34-snapshot-on-stream-connect.md) | open | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
+| [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [30](30-user-actor-for-authenticated-user.md) | open | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 
 ## Identity and access management

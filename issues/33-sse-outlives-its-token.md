@@ -62,4 +62,7 @@ that carries the actual conversation.
   [34](34-snapshot-on-stream-connect.md). The "reconnect cost" consideration
   above is answered there — by a snapshot on connect rather than by event
   ids — so 34 should come first.
+- **2026-09-22** — [34](34-snapshot-on-stream-connect.md) is done: a
+  reconnecting client can now ask for a snapshot and lose nothing, so the
+  prerequisite for ending streams at a token's expiry is in place.
 

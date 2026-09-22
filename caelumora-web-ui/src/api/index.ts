@@ -137,8 +137,14 @@ export const api = {
     return res.json();
   },
 
-  getEventSource(sessionId: string, channelId: string): EventSource {
-    return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`);
+  /**
+   * The channel's event stream. With `snapshot`, it starts with a `snapshot`
+   * event carrying the current state, so that nothing that happens while the
+   * stream is being established is missed.
+   */
+  getEventSource(sessionId: string, channelId: string, options?: {snapshot?: boolean}): EventSource {
+    const query = options?.snapshot ? '?snapshot=true' : '';
+    return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events${query}`);
   },
 
   async respondToApproval(sessionId: string, channelId: string, approvalId: string, agentId: string, approved: boolean): Promise<void> {

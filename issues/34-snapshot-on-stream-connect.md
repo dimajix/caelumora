@@ -1,6 +1,6 @@
 # 34 — An event stream starts in the middle: no snapshot, and a gap before it
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -113,3 +113,36 @@ snapshot as the fallback.
   [33](33-sse-outlives-its-token.md): ending streams at the token's expiry
   is only acceptable if a reconnect restores the state, and the same gap
   already exists today between loading the history and opening the stream.
+- **2026-09-22** — Implemented. Decisions:
+  - **Opt-in** via `?snapshot=true` on both streams, and the snapshot is a
+    *named* SSE event (`event: snapshot`); the events that follow stay
+    unnamed. A client that does not ask sees exactly what it saw before -
+    verified.
+  - **Subscribe first, read the state second**, in both handlers. Duplicates
+    are part of the contract; the web UI drops a message whose id it already
+    has.
+  - **20 messages** per channel snapshot (`SNAPSHOT_MESSAGES`), with
+    `has_more`; older ones stay behind `GET .../messages`, which the web UI
+    offers as "Load earlier messages". A real pagination ("older than this
+    message") was not built - nobody needs it yet.
+  - **On overflow** (`Lagged`) the channel stream sends a fresh snapshot
+    instead of the previous comment, but only to clients that asked for
+    snapshots. The global stream cannot do the same: its `EventBus` drops on
+    the *sending* side (`Event dropped due to full buffer`), so a client
+    cannot tell. Changing that would mean changing the `EventBus`, which is
+    out of scope here.
+  - **The global snapshot is unfiltered**, as the REST endpoints are:
+    [11](11-agent-ownership.md) decides who may see which session, and the
+    snapshot must then go through the same check. Written down in the code
+    as well. A running session is described by its live channels, a stopped
+    one by what the store holds.
+  - **The web UI's `ChatView`** no longer loads the history and the channel
+    separately; both come from the snapshot, which closes the gap that
+    existed between those two calls. The sidebar still does not use the
+    global stream - that is [35](35-sidebar-live-updates.md).
+  - Verified against the REST server: the global stream's snapshot lists the
+    session with its channel and members; after 25 messages the channel
+    snapshot carries messages 6 to 25 with `has_more: true`, followed by the
+    live events; without the parameter the stream is byte-for-byte the old
+    one.
+

@@ -1,11 +1,11 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, SendApprovalRequest, SendMessageRequest};
+use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
 use crate::error::ApiError;
 use crate::routes::channel_of;
-use axum::{extract::State, http::StatusCode};
+use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
 use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
@@ -50,7 +50,12 @@ pub async fn get_channel(
     Ok(Json(channel_response(&channel)))
 }
 
-fn channel_response(channel: &ChannelLoop) -> ChannelResponse {
+/// How many messages a snapshot carries: the end of the conversation, which
+/// is what a client needs to show it. Everything older is fetched over REST
+/// (`GET .../messages`), which `has_more` tells the client to do.
+const SNAPSHOT_MESSAGES: usize = 20;
+
+pub fn channel_response(channel: &ChannelLoop) -> ChannelResponse {
     ChannelResponse {
         id: channel.id(),
         name: channel.name(),
@@ -76,9 +81,31 @@ pub async fn get_channel_messages(
     Ok(Json(messages))
 }
 
+/// The state of `channel` right now, for a stream that starts with a
+/// snapshot (issue 34).
+async fn channel_snapshot(channel: &ChannelLoop) -> ChannelSnapshot {
+    let (messages, has_more) = recent_messages(channel.history().await);
+    ChannelSnapshot { channel: channel_response(channel), messages, has_more }
+}
+
+/// The end of a history, and whether it was cut.
+fn recent_messages(history: Vec<Message>) -> (Vec<Message>, bool) {
+    let has_more = history.len() > SNAPSHOT_MESSAGES;
+    let start = history.len().saturating_sub(SNAPSHOT_MESSAGES);
+    (history.into_iter().skip(start).collect(), has_more)
+}
+
+/// The snapshot as an SSE event. Named, so that clients that do not know it
+/// (and the events that follow, which stay unnamed) are unaffected.
+async fn snapshot_event(channel: &ChannelLoop) -> Event {
+    let snapshot = channel_snapshot(channel).await;
+    Event::default().event("snapshot").data(serde_json::to_string(&snapshot).unwrap_or_default())
+}
+
 pub async fn join_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    Query(options): Query<StreamOptions>,
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let session_id = SessionId(id);
@@ -87,23 +114,38 @@ pub async fn join_channel(
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
     let channel = channel_of(&session_loop, channel_id)?;
 
+    // Subscribe *before* reading the state: nothing that happens while the
+    // snapshot is assembled is lost. The price is that an event can arrive
+    // twice - once in the snapshot, once as an event - which clients drop by
+    // message id.
     let receiver = channel.subscribe();
-    let stream = BroadcastStream::new(receiver);
+    let snapshot = if options.snapshot { Some(snapshot_event(&channel).await) } else { None };
 
-    let sse_stream = stream.map(move |res| {
-        match res {
-            Ok(envelope) => {
-                let event_json = serde_json::to_string(&envelope).unwrap_or_default();
-                Ok(Event::default().data(event_json))
-            }
-            // The only error: this client fell behind and events were dropped.
-            Err(e) => {
-                tracing::warn!("SSE client of channel {} lost events: {}", channel_id, e);
-                Ok(Event::default().comment(format!("events lost: {}", e)))
+    let with_snapshot = options.snapshot;
+    let updates = BroadcastStream::new(receiver).then(move |res| {
+        let channel = channel.clone();
+        async move {
+            match res {
+                Ok(envelope) => {
+                    let event_json = serde_json::to_string(&envelope).unwrap_or_default();
+                    Ok(Event::default().data(event_json))
+                }
+                // The only error: this client fell behind and events were
+                // dropped. A client that asked for snapshots gets a fresh one
+                // - "here is the state" instead of "something is missing".
+                Err(e) => {
+                    tracing::warn!("SSE client of channel {} lost events: {}", channel_id, e);
+                    if with_snapshot {
+                        Ok(snapshot_event(&channel).await)
+                    } else {
+                        Ok(Event::default().comment(format!("events lost: {}", e)))
+                    }
+                }
             }
         }
     });
 
+    let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
     Ok(Sse::new(sse_stream))
 }
 
@@ -168,4 +210,40 @@ pub async fn send_approval(
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::message::MessageId;
+
+    fn history(count: usize) -> Vec<Message> {
+        (0..count).map(|i| Message {
+            id: MessageId::new(),
+            content: Some(format!("message {i}")),
+            ..Message::default()
+        }).collect()
+    }
+
+    #[test]
+    fn a_snapshot_carries_the_end_of_the_history() {
+        let (messages, has_more) = recent_messages(history(SNAPSHOT_MESSAGES + 5));
+
+        assert_eq!(messages.len(), SNAPSHOT_MESSAGES);
+        assert!(has_more, "the client has to fetch the older ones over REST");
+        assert_eq!(messages.first().unwrap().content.as_deref(), Some("message 5"));
+        assert_eq!(messages.last().unwrap().content.as_deref(), Some(&format!("message {}", SNAPSHOT_MESSAGES + 4)[..]));
+    }
+
+    #[test]
+    fn a_short_history_is_complete() {
+        let (messages, has_more) = recent_messages(history(3));
+        assert_eq!(messages.len(), 3);
+        assert!(!has_more);
+
+        let (messages, has_more) = recent_messages(Vec::new());
+        assert!(messages.is_empty());
+        assert!(!has_more);
+    }
 }

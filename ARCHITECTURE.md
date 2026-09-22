@@ -99,6 +99,12 @@ The `EventBus` (in `caelumora-runtime`) provides a centralized mechanism for obs
 *   **Subscriptions**: Clients can subscribe to specific `SubscriptionTopic`s (e.g., `All`, `Session(id)`, `Agent(id)`) to receive relevant `GlobalEvent`s via asynchronous channels.
 *   **Decoupling**: The `EventBus` allows components like the REST server or TUI to react to state changes without being tightly coupled to the controllers.
 
+### Streams and their snapshot
+
+The REST server exposes two server-sent event streams: the global one (`GET /events`, carrying `GlobalEvent`s) and a channel's (`GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s). Both accept `?snapshot=true` and then begin with a named `snapshot` event describing the state they start from — the channel's members plus the last 20 messages (with `has_more`, older ones over `GET .../messages`), or every session with its channels (issue 34).
+
+The order matters: the server subscribes *first* and reads the state afterwards, so nothing that happens while the snapshot is assembled is lost. The price is that an event may arrive twice, once in the snapshot and once as an event; clients drop duplicates by `MessageId` or entity id. When a client falls behind and the channel's broadcast buffer drops events, a client that asked for snapshots is sent a fresh one instead of a note that something is missing. The global snapshot is unfiltered for now — every user sees every session, which is [11](issues/11-agent-ownership.md).
+
 ## Logging
 
 All crates log through `tracing`; records from dependencies that still use `log` are forwarded into it. Binaries install the subscriber with `caelumora_runtime::logging::init`: `RUST_LOG` selects the records, `AppConfig`'s `logging` section the format (`text`, the default, or `json`) and an optional file. The REST server logs to stderr, the TUI to `local/tui.log` so that log lines do not break its prompt.
