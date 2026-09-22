@@ -72,6 +72,7 @@ against it, and what came out of the last attempt.
 | [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 | [31](31-session-renewal-from-ui.md) | open | The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input. |
+| [33](33-sse-outlives-its-token.md) | open | An open server-sent event stream is authenticated once, when it connects, and keeps delivering after its token has expired or its user was removed. |
 
 ## Tools and approvals
 
