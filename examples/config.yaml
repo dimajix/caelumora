@@ -12,3 +12,9 @@ persistence:
 #users:
 #  providers:
 #    - type: accept_any
+
+# Log format and destination; what is logged is selected with RUST_LOG.
+# Defaults: text, to stderr (REST server) or local/tui.log (TUI).
+#logging:
+#  format: json
+#  file: "local/server.log"

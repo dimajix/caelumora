@@ -213,6 +213,7 @@ pub async fn require_auth(State(auth): State<Arc<Auth>>, mut request: Request, n
         None
     };
 
+    tracing::Span::current().record("user_id", tracing::field::display(user));
     request.extensions_mut().insert(AuthenticatedUser { id: user });
     let mut response = next.run(request).await;
     if let Some(cookie) = renewed {

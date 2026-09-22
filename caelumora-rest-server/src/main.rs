@@ -5,8 +5,8 @@ use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use std::sync::Arc;
+use caelumora_runtime::logging::{self, LogTarget};
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod auth;
 mod data;
@@ -34,14 +34,6 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    
-    tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,tower_http=debug,axum::rejection=trace".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
 
     let config = if let Some(config_path) = args.config {
         AppConfig::load(config_path)?
@@ -49,6 +41,8 @@ async fn main() -> anyhow::Result<()> {
     else {
         AppConfig::default()
     };
+
+    logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
     let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let state_store = config.create_state_store(security_manager.clone())?;
@@ -82,7 +76,18 @@ async fn main() -> anyhow::Result<()> {
         state_store,
     });
 
-    let app = routes::create_router(state).layer(TraceLayer::new_for_http());
+    // One span per request. `user_id` is filled in by `auth::require_auth`,
+    // `span_id` by handlers that start an envelope chain in a channel.
+    let trace_layer = TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
+        tracing::info_span!(
+            "request",
+            method = %request.method(),
+            uri = %request.uri(),
+            user_id = tracing::field::Empty,
+            span_id = tracing::field::Empty,
+        )
+    });
+    let app = routes::create_router(state).layer(trace_layer);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
     tracing::info!(

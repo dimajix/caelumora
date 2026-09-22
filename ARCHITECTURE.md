@@ -99,6 +99,18 @@ The `EventBus` (in `caelumora-runtime`) provides a centralized mechanism for obs
 *   **Subscriptions**: Clients can subscribe to specific `SubscriptionTopic`s (e.g., `All`, `Session(id)`, `Agent(id)`) to receive relevant `GlobalEvent`s via asynchronous channels.
 *   **Decoupling**: The `EventBus` allows components like the REST server or TUI to react to state changes without being tightly coupled to the controllers.
 
+## Logging
+
+All crates log through `tracing`; records from dependencies that still use `log` are forwarded into it. Binaries install the subscriber with `caelumora_runtime::logging::init`: `RUST_LOG` selects the records, `AppConfig`'s `logging` section the format (`text`, the default, or `json`) and an optional file. The REST server logs to stderr, the TUI to `local/tui.log` so that log lines do not break its prompt.
+
+A message crosses several tasks — REST handler, `UserActor`, `ChannelLoop`, moderator, `AgentActor` — connected by channels, so `tracing`'s span nesting alone cannot follow it. The ids of the `EventContext` do: every span that works on an envelope carries them as fields named like the `EventContext` fields (`span_id`, `event_id`, `correlation_id`, `depth`). There are three kinds of span:
+
+*   `request` — one REST request, with `method`, `uri`, the authenticated `user_id`, and the `span_id` of the envelopes the request started (`UserActor::send_message` builds the envelopes and returns it).
+*   `envelope` — handling one envelope in the `ChannelLoop` or an idle agent, with session, channel, sender and event kind.
+*   `turn` — one iteration of an agent's cognitive cycle, with agent and state and the ids of the turn's `EventContext`; an idle or sleeping agent runs in an `agent` span instead.
+
+Searching the log for one `span_id` therefore finds the request, the routing and the agent's turn that answered it. Message content appears only at `trace` level.
+
 ## Security Model
 
 Security in Caelumora is handled through a combination of context and explicit checks.

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
-use log::{debug, info};
+use tracing::{debug, info};
 use std::mem;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
@@ -100,7 +100,7 @@ impl Actor for MessageProcessorActor {
 
         loop {
             let Some(event) = rx.recv().await else { break };
-            debug!("MessageProcessorActor {} received event: {:?}", self.id(), event);
+            debug!("MessageProcessorActor {} received {}", self.id(), event.describe());
 
             last_security = Some(event.security.clone());
             last_context = Some(event.context.clone());

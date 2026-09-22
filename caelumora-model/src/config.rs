@@ -107,6 +107,29 @@ impl Default for AuthConfig {
     }
 }
 
+/// Format of log output.
+#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    /// Human-readable lines.
+    #[default]
+    Text,
+    /// One JSON object per line, for log collectors.
+    Json,
+}
+
+/// Where and how a binary writes its log (issue 01). Which records are
+/// written is controlled by `RUST_LOG`, not here.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct LoggingConfig {
+    pub format: LogFormat,
+    /// Log file to append to. Without one, each binary uses its own default:
+    /// the REST server writes to stderr, the TUI to `local/tui.log` so the
+    /// log does not interfere with its prompt.
+    pub file: Option<PathBuf>,
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
@@ -114,6 +137,8 @@ pub struct AppConfig {
     pub users: Option<UsersConfig>,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 impl AppConfig {
@@ -188,7 +213,7 @@ impl AppConfig {
             .into_iter()
             .map(|config| match config {
                 UserProviderConfig::AcceptAny => {
-                    log::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
+                    tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
                         Development only - never expose this server to a network.");
                     Arc::new(AcceptAnyUserProvider::new(entity_store.clone())) as Arc<dyn UserProvider>
                 }
@@ -281,6 +306,22 @@ users:
         let users = config.users.expect("users config present");
         assert_eq!(users.providers.len(), 1);
         assert!(matches!(users.providers[0], UserProviderConfig::AcceptAny));
+    }
+
+    #[test]
+    fn test_load_config_logging() {
+        let config: AppConfig = serde_yaml::from_str("persistence: {}").unwrap();
+        assert_eq!(config.logging.format, LogFormat::Text);
+        assert!(config.logging.file.is_none());
+
+        let yaml = r#"
+logging:
+  format: json
+  file: "local/server.log"
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.logging.format, LogFormat::Json);
+        assert_eq!(config.logging.file, Some(PathBuf::from("local/server.log")));
     }
 
     #[test]

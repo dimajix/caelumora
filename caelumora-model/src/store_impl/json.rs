@@ -9,7 +9,7 @@ use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{info, warn};
+use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -243,7 +243,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.personality_path(id);
-        info!("Reading personality template from {}", path.display());
+        debug!("Reading personality template from {}", path.display());
         let loaded = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent_template", id.to_string())
     }
@@ -301,7 +301,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.personality_path(value.id);
-        info!("Writing personality template to {}", path.display());
+        debug!("Writing personality template to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -324,7 +324,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.session_template_path(&value.metadata.name);
-        info!("Writing session template to {}", path.display());
+        debug!("Writing session template to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -359,7 +359,7 @@ impl EntityStore for JsonFileStore {
         if path.exists() {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
         }
-        info!("Creating agent at {}", path.display());
+        debug!("Creating agent at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -375,7 +375,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.agent_path(id);
-        info!("Reading agent from {}", path.display());
+        debug!("Reading agent from {}", path.display());
         let loaded = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
         require_entity(loaded, "agent", id.to_string())
     }
@@ -406,7 +406,7 @@ impl EntityStore for JsonFileStore {
                 id: value.id.to_string(),
             });
         }
-        info!("Updating agent at {}", path.display());
+        debug!("Updating agent at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -426,7 +426,7 @@ impl EntityStore for JsonFileStore {
         if path.exists() {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
         }
-        info!("Creating session at {}", path.display());
+        debug!("Creating session at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -442,7 +442,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.session_path(id);
-        info!("Reading session from {}", path.display());
+        debug!("Reading session from {}", path.display());
         let loaded = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
         require_entity(loaded, "session", id.to_string())
     }
@@ -458,7 +458,7 @@ impl EntityStore for JsonFileStore {
                 id: value.id.to_string(),
             });
         }
-        info!("Updating session at {}", path.display());
+        debug!("Updating session at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -479,7 +479,7 @@ impl EntityStore for JsonFileStore {
 
         if let Some(session) = &session {
             for channel in &session.channels {
-                info!("Deleting channel {} of session {}", channel.id, id);
+                debug!("Deleting channel {} of session {}", channel.id, id);
                 delete_if_exists(&self.channel_state_path(channel.id))?;
                 delete_dir_if_exists(&self.agent_channel_state_dir(channel.id))?;
             }
@@ -507,7 +507,7 @@ impl EntityStore for JsonFileStore {
         if path.exists() {
             return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
         }
-        info!("Creating user at {}", path.display());
+        debug!("Creating user at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -520,7 +520,7 @@ impl EntityStore for JsonFileStore {
 
     async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         let path = self.user_path(id);
-        info!("Reading user from {}", path.display());
+        debug!("Reading user from {}", path.display());
         let loaded = read_json_opt::<Persisted<User>>(&path)?.map(|p| p.value);
         require_entity(loaded, "user", id.to_string())
     }
@@ -543,7 +543,7 @@ impl EntityStore for JsonFileStore {
         if !path.exists() {
             return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
         }
-        info!("Updating user at {}", path.display());
+        debug!("Updating user at {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -559,7 +559,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.component_path(id);
-        info!("Reading component from {}", path.display());
+        debug!("Reading component from {}", path.display());
         let loaded = read_json_opt::<Persisted<ComponentDescriptor>>(&path)?.map(|p| p.value);
         require_entity(loaded, "component", id.to_string())
     }
@@ -579,7 +579,7 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::PermissionDenied);
         }
         let path = self.component_path(&value.id);
-        info!("Writing component to {}", path.display());
+        debug!("Writing component to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -603,14 +603,14 @@ impl EntityStore for JsonFileStore {
 impl StateStore for JsonFileStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
-        info!("Reading agent channel state from {}", path.display());
+        debug!("Reading agent channel state from {}", path.display());
         let loaded = read_json_opt::<Persisted<AgentChannelState>>(&path)?.map(|p| p.value);
         Ok(loaded.unwrap_or_default())
     }
 
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
-        info!("Writing agent channel state to {}", path.display());
+        debug!("Writing agent channel state to {}", path.display());
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(to_backend_error)?;
         }
@@ -626,14 +626,14 @@ impl StateStore for JsonFileStore {
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
-        info!("Reading agent state from {}", path.display());
+        debug!("Reading agent state from {}", path.display());
         let loaded = read_json_opt::<Persisted<AgentState>>(&path)?.map(|p| p.value);
         Ok(loaded.unwrap_or_default())
     }
 
     async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
-        info!("Writing agent state to {}", path.display());
+        debug!("Writing agent state to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -646,14 +646,14 @@ impl StateStore for JsonFileStore {
 
     async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
         let path = self.session_state_path(session_id);
-        info!("Reading session state from {}", path.display());
+        debug!("Reading session state from {}", path.display());
         let loaded = read_json_opt::<Persisted<SessionState>>(&path)?.map(|p| p.value);
         Ok(loaded.unwrap_or_default())
     }
 
     async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
         let path = self.session_state_path(session_id);
-        info!("Writing session state to {}", path.display());
+        debug!("Writing session state to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {
@@ -666,7 +666,7 @@ impl StateStore for JsonFileStore {
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let path = self.channel_state_path(channel_id);
-        info!("Reading channel state from {}", path.display());
+        debug!("Reading channel state from {}", path.display());
         let loaded = read_json_opt::<Persisted<ChannelState>>(&path)?.map(|p| p.value);
         loaded.ok_or(StoreError::NotFound {
             entity: "channel_state",
@@ -676,7 +676,7 @@ impl StateStore for JsonFileStore {
 
     async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()> {
         let path = self.channel_state_path(channel_id);
-        info!("Writing channel state to {}", path.display());
+        debug!("Writing channel state to {}", path.display());
         write_json_atomic(
             &path,
             &Persisted {

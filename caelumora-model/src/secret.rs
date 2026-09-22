@@ -50,7 +50,7 @@ impl SecretManager {
                 Ok(Some(value)) => return Ok(value),
                 Ok(None) => continue,
                 Err(e) => {
-                    log::warn!("Secret provider failed while looking up '{}': {}", key, e);
+                    tracing::warn!("Secret provider failed while looking up '{}': {}", key, e);
                     continue;
                 }
             }

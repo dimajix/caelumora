@@ -20,8 +20,8 @@ use caelumora_runtime::component_impl::tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
-use env_logger::WriteStyle;
-use log::{info, LevelFilter};
+use caelumora_runtime::logging::{self, LogTarget};
+use tracing::info;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::collections::HashMap;
@@ -30,15 +30,6 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-fn init_logging() {
-    let mut builder = env_logger::Builder::new();
-
-    builder
-        .filter(None, LevelFilter::Info)
-        .write_style(WriteStyle::Always)
-        .init();
-}
 
 fn create_component_config(system_prompt: &str, enable_extended_planning: bool) -> ComponentConfig {
     // create_plan_tool contributes its own planning-nudge SystemPromptProvider
@@ -271,9 +262,9 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             }
                             continue;
                         }
-                        info!("dispatch: input msg={:?}", input.to_string());
                         let _ = channel.wakeup().await;
-                        user_actor.send_message(input.to_string()).await?;
+                        let span_id = user_actor.send_message(input.to_string()).await?;
+                        tracing::debug!(span_id = %span_id, "Message sent");
                     }
                     Some(Err(ReadlineError::Interrupted)) => {
                         println!("CTRL-C");
@@ -334,14 +325,15 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    init_logging();
-
     let config = if let Some(config_path) = args.config {
         AppConfig::load(config_path)?
     }
     else {
         AppConfig::default()
     };
+
+    // Into a file by default: log lines on the terminal would break the prompt.
+    logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
     let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let state_store = config.create_state_store(security_manager.clone())?;

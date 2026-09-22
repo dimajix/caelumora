@@ -10,7 +10,7 @@ use caelumora_model::channel::{ChannelController, Participant};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use chrono::{DateTime, Duration, Utc};
-use log::{info, warn};
+use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;

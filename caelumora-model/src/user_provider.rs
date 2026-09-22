@@ -118,16 +118,16 @@ impl UserManager {
                 Ok(Some(user)) => return Ok(user),
                 Ok(None) => continue,
                 Err(AuthError::InvalidCredentials) => {
-                    log::info!("Authentication of '{}' failed: invalid {}", username, credential.kind());
+                    tracing::info!("Authentication of '{}' failed: invalid {}", username, credential.kind());
                     return Err(AuthError::InvalidCredentials);
                 }
                 Err(e) => {
-                    log::error!("User provider {:?} failed while authenticating '{}': {}", provider, username, e);
+                    tracing::error!("User provider {:?} failed while authenticating '{}': {}", provider, username, e);
                     return Err(e);
                 }
             }
         }
-        log::info!("Authentication of '{}' failed: no provider knows the user", username);
+        tracing::info!("Authentication of '{}' failed: no provider knows the user", username);
         Err(AuthError::InvalidCredentials)
     }
 

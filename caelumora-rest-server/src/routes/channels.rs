@@ -122,10 +122,16 @@ pub async fn send_message(
             if !channel.wakeup().await.is_ok() {
                 return Ok(StatusCode::INTERNAL_SERVER_ERROR);
             }
-            if !user_actor.send_message(payload.content).await.is_ok() {
-                return Ok(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-            return Ok(StatusCode::OK);
+            return match user_actor.send_message(payload.content).await {
+                Ok(span_id) => {
+                    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+                    Ok(StatusCode::OK)
+                }
+                Err(e) => {
+                    tracing::error!("Cannot send message to channel {}: {}", channel_id, e);
+                    Ok(StatusCode::INTERNAL_SERVER_ERROR)
+                }
+            };
         }
     }
 
@@ -164,10 +170,16 @@ pub async fn send_approval(
                 id: ApprovalId(payload.approval_id),
                 agent_id: AgentId(payload.agent_id),
             };
-            if !user_actor.send_approval(response, payload.approved).await.is_ok() {
-                return Ok(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-            return Ok(StatusCode::OK);
+            return match user_actor.send_approval(response, payload.approved).await {
+                Ok(span_id) => {
+                    tracing::Span::current().record("span_id", tracing::field::display(span_id));
+                    Ok(StatusCode::OK)
+                }
+                Err(e) => {
+                    tracing::error!("Cannot send approval to channel {}: {}", channel_id, e);
+                    Ok(StatusCode::INTERNAL_SERVER_ERROR)
+                }
+            };
         }
     }
 

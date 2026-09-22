@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolParameters};
-use log::warn;
+use tracing::warn;
 use rmcp::model::CallToolRequestParam;
 use rmcp::service::RunningService;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;

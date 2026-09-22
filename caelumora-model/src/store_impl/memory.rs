@@ -6,7 +6,7 @@ use crate::session::{Session, SessionId, SessionState};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use async_trait::async_trait;
-use log::info;
+use tracing::info;
 use std::collections::HashMap;
 use std::sync::RwLock;
 

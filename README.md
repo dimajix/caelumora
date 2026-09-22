@@ -51,6 +51,8 @@ cargo test
 cargo run -p caelumora-tui
 ```
 
+The TUI writes its log to `local/tui.log`.
+
 ### Running the REST Server
 
 ```bash
@@ -64,6 +66,11 @@ username and password and must never be enabled on a server reachable from a
 network. Session tokens are signed with the secret `CAELUMORA_JWT_SECRET`
 (at least 32 bytes, e.g. in `local/secrets.json`); without it, every restart
 logs everybody out.
+
+Logging goes to stderr. Use `RUST_LOG` to select what is logged, e.g.
+`RUST_LOG=info,caelumora_runtime=debug`; the `logging` section of the config
+switches to JSON or to a file. At `debug`, every line concerning one message
+carries the same `span_id`.
 
 ## License
 

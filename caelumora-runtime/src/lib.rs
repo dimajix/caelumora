@@ -4,6 +4,7 @@ pub mod moderator;
 pub mod runtime;
 pub mod llm;
 pub mod llm_impl;
+pub mod logging;
 pub mod recorder;
 pub mod event;
 pub mod tool;

@@ -15,7 +15,7 @@ use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
-use log::{debug, info, warn};
+use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -240,16 +240,28 @@ impl ChannelLoop {
 
     async fn handle_actor_event(&self, maybe_event: Option<Envelope>, actors: &Arc<HashMap<ActorId,ActorHandle>>) -> bool {
         if let Some(event) = maybe_event {
-            debug!("Received actor event {:?}", event);
-            let event = self.resolve_mentions(event);
-            self.record_receive_event(&event).await;
-            self.append_history(&event).await;
-            self.route_event(actors, event).await;
-            //self.state_store.
+            let span = crate::logging::envelope_span(&event.context, event.event.kind());
+            self.process_envelope(event, actors).instrument(span).await;
             false
         } else {
             true
         }
+    }
+
+    async fn process_envelope(&self, event: Envelope, actors: &Arc<HashMap<ActorId,ActorHandle>>) {
+        match event.event {
+            // One per streamed chunk: far finer than per message.
+            ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) => {
+                trace!("Received {}", event.describe())
+            }
+            _ => debug!("Received {}", event.describe()),
+        }
+        // The full envelope carries message content: trace level only.
+        trace!("Envelope: {:?}", event);
+        let event = self.resolve_mentions(event);
+        self.record_receive_event(&event).await;
+        self.append_history(&event).await;
+        self.route_event(actors, event).await;
     }
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, _actors: &Arc<HashMap<ActorId, ActorHandle>>) {
@@ -384,9 +396,8 @@ impl ChannelLoop {
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = span_id;
             target_event.context.span_depth = span_depth;
-            debug!("Routing event from {:?} to {:?}", target_event.context.sender_id, target_id);
             if let Some(actor) = actors.get(&target_id) {
-                debug!("route_messages: send event {} from={} to to={target_id}", event_desc, target_event.context.sender_id);
+                debug!(to = %target_id, "Forwarding {}", event_desc);
                 self.record_send_event(&target_event).await;
                 if let Err(e) = actor.sender.try_send(target_event) {
                     match e {

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
-use log::warn;
+use tracing::warn;
 use std::any::Any;
 use std::fmt::Debug;
 use std::mem;
@@ -79,6 +79,12 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.plan = None;
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
+    }
+
+    /// The event context of the current turn: carries the ids (`span_id`,
+    /// `correlation_id`) that tie the turn to the envelope that started it.
+    pub fn event_context(&self) -> &EventContext {
+        &self.agent_channel_state.turn_event_context
     }
 
     pub fn finish_turn(&mut self) {
@@ -190,22 +196,22 @@ impl<'a> TurnContext<'a> {
     }
 
     pub async fn store_agent_state(&self, state_store: &Arc<dyn StateStore>) {
-        if let Err(_e) = state_store
+        if let Err(e) = state_store
             .put_agent_state(self.agent_id, self.agent_state)
             .await
         {
             warn!(
-                "Cannot store agent state of agent {}", self.agent_id
+                "Cannot store agent state of agent {}: {}", self.agent_id, e
             )
         }
     }
     pub async fn store_channel_state(&self, state_store: &Arc<dyn StateStore>) {
-        if let Err(_e) = state_store
+        if let Err(e) = state_store
             .put_agent_channel_state(self.agent_id, self.channel_id, self.agent_channel_state)
             .await
         {
             warn!(
-                "Cannot store agent channel state of agent {}", self.agent_id
+                "Cannot store agent channel state of agent {}: {}", self.agent_id, e
             )
         }
     }

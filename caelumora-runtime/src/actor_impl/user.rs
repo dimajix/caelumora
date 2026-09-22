@@ -12,7 +12,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserController, UserId};
 use chrono::Utc;
-use log::{debug, info, warn};
+use tracing::{debug, info, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -76,7 +76,7 @@ impl UserActor {
     /// Sends a message from this user into the channel.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
-    /// caused by the message carries as well.
+    /// caused by the message carries as well (see `crate::logging`).
     pub async fn send_message(&self, message: String) -> anyhow::Result<Uuid> {
         let msg = Message {
             role: MessageRole::User,
@@ -155,7 +155,7 @@ impl UserActor {
     ) -> Result<bool> {
         match maybe_envelope {
             Some(envelope) => {
-                debug!("UserActor {} sends {} (span {})", self.id(), envelope.describe(), envelope.context.span_id);
+                debug!(span_id = %envelope.context.span_id, "UserActor {} sends {}", self.id(), envelope.event.kind());
                 tx.send(envelope)
                     .await
                     .context(format!("UserActor {} failed to forward user message", self.id))?;

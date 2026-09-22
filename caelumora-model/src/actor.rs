@@ -86,6 +86,27 @@ pub enum ActorEvent {
 }
 
 impl ActorEvent {
+    /// The variant's name, for logs - never the payload, which may carry
+    /// message content.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ActorEvent::ApprovalRequested(_) => "ApprovalRequested",
+            ActorEvent::ApprovalGranted(_) => "ApprovalGranted",
+            ActorEvent::ApprovalDenied(_) => "ApprovalDenied",
+            ActorEvent::ApprovalTimedOut(_) => "ApprovalTimedOut",
+            ActorEvent::ResponseRequested => "ResponseRequested",
+            ActorEvent::ResponseStarted => "ResponseStarted",
+            ActorEvent::PartialMessageGenerated(_) => "PartialMessageGenerated",
+            ActorEvent::CompleteMessageGenerated(_) => "CompleteMessageGenerated",
+            ActorEvent::FullResponseGenerated(_) => "FullResponseGenerated",
+            ActorEvent::WakeupRequested => "WakeupRequested",
+            ActorEvent::IntermediatePartialGenerated(_) => "IntermediatePartialGenerated",
+            ActorEvent::IntermediateMessageGenerated(_) => "IntermediateMessageGenerated",
+            ActorEvent::PlanStepStarted { .. } => "PlanStepStarted",
+            ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
+        }
+    }
+
     pub fn from_message_event(event: MessageEvent) -> Self {
         match event {
             MessageEvent::Partial(msg) => {

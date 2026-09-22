@@ -4,7 +4,7 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use dashmap::DashMap;
-use log::warn;
+use tracing::warn;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

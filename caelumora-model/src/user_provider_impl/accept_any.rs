@@ -74,7 +74,7 @@ impl UserProvider for AcceptAnyUserProvider {
         };
         self.store.create_user(&Self::context(), &user).await
             .map_err(|e| AuthError::Backend(e.to_string()))?;
-        log::warn!("AcceptAnyUserProvider created user '{}' ({}) without verifying any credential", user.username, user.id);
+        tracing::warn!("AcceptAnyUserProvider created user '{}' ({}) without verifying any credential", user.username, user.id);
         Ok(Some(user))
     }
 }

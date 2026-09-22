@@ -170,7 +170,7 @@ impl SessionManager {
         let loop_for_task = session_loop.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = loop_for_task.run().await {
-                log::error!("Session loop for {} failed: {}", id, e);
+                tracing::error!("Session loop for {} failed: {}", id, e);
             }
         });
         self.handles.insert(id, handle);

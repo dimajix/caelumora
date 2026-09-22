@@ -1,6 +1,6 @@
 # 01 — Improve logging
 
-**Status:** open
+**Status:** done
 **Area:** Observability
 
 ## The problem
@@ -52,3 +52,39 @@ code-reading exercise.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-22** — Implemented. Decisions:
+  - `tracing` everywhere: `log` removed from `caelumora-model`,
+    `caelumora-runtime` and `caelumora-tui` (and `env_logger` from the TUI);
+    the unused `tracing-subscriber` dependency removed from the three client
+    crates, since libraries must not choose a subscriber. Records from
+    dependencies still using `log` are bridged by `tracing-subscriber`.
+  - One setup for all binaries, `caelumora_runtime::logging::init`:
+    `RUST_LOG` filters; `AppConfig.logging` picks `text` (default) or `json`
+    and an optional file. REST server logs to stderr, TUI to
+    `local/tui.log`.
+  - Correlation through the existing `EventContext` ids rather than
+    `tracing` span parenting (which does not cross channels) and without
+    OpenTelemetry. Spans carry them under their own names: `span_id`,
+    `event_id`, `correlation_id`, `depth`. An intermediate version named the
+    log field `trace` and, briefly, reused the message id as `span_id`; both
+    were dropped as misleading - a field keeps the meaning it has in
+    `EventContext`.
+  - To get the `span_id` back to the REST handler, `UserActor` now works with
+    envelopes on both of its internal channels: `send_message` /
+    `send_approval` build the envelopes (so their sender and security context
+    are always the actor's own) and return the `span_id`; the two envelopes
+    of one message share it. The outgoing side became an optional
+    `subscribe()` with `try_send`: before, `actor_tx.send().await` on a queue
+    of 100 that the REST server never read would, after 100 routed events,
+    have stalled the actor's loop and with it everything the user sent.
+  - Spans: `request` (method, uri, `user_id`, `span_id`), `envelope` (in
+    `ChannelLoop` and for events received by an idle agent), `turn` / `agent`
+    for each iteration of the agent loop.
+  - Levels: per-message and per-store-operation logs moved from `info` to
+    `debug` (JSON store reads/writes, "Starting generating messages",
+    `wakeup()`, tool execution); streamed chunks to `trace`; "Too many
+    iterations" to `warn`. Full envelopes (with content) only at `trace`.
+  - Verified against the REST server: one `span_id` from the request span
+    finds 25 lines from REST handler through channel, moderator and the
+    agent's turn to its answer; no message content in the `debug` log.
+

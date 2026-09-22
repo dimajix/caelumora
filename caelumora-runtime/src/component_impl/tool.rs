@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::tool::{Tool, ToolParameters};
-use log::info;
+use tracing::info;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;

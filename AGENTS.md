@@ -73,6 +73,16 @@ an obvious approach was already rejected.
 *   Prefer `tokio` for async primitives (e.g., `Mutex`, `RwLock`, `mpsc`).
 *   Traits with async methods should use `#[async_trait]` if they need to be object-safe or if you are working in a part of the codebase already using it. Note: Many internal traits use `BoxStream` for streaming responses.
 
+### Logging
+*   **Frontend**: `tracing` in every crate. Libraries never install a subscriber; binaries call `caelumora_runtime::logging::init`.
+*   **Levels**:
+    *   `error!` only for failures that abort an operation.
+    *   `warn!` for degraded-but-continuing (an MCP server that failed discovery, a queue that dropped an event).
+    *   `info!` for lifecycle transitions (a channel or actor starting or stopping, a session created).
+    *   `debug!` for per-event detail. Anything that happens once per message or per store operation is `debug!` at most; once per streamed chunk is `trace!`.
+*   **Content**: message text, prompts and tool arguments only at `trace!`. At `debug!` and above, log ids, event kinds (`ActorEvent::kind`, `Envelope::describe`) and sizes. Credentials, tokens and cookies are never logged at any level.
+*   **Correlation**: ids belong on spans, not repeated in messages. Work on an envelope runs in `logging::envelope_span`; its fields are named after the `EventContext` fields (`span_id`, `event_id`, `correlation_id`, `depth`), so one `span_id` finds everything a message caused.
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -96,5 +106,5 @@ an obvious approach was already rejected.
 ## Agent-Specific Tips
 *   When adding new components, remember to register them in the appropriate `ComponentRegistry`.
 *   If you modify `caelumora-model`, ensure compatibility with `caelumora-runtime`.
-*   Use the `log` crate for debugging (`debug!`, `info!`, `warn!`, `error!`).
+*   Log through `tracing` (`tracing::{debug, info, warn, error, trace}`), never through `log` or `println!`. See *Logging* below.
 *   When changing the REST API in `caelumora-rest-server`, ensure compatibilizy with `caelumora-web-ui`

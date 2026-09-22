@@ -21,7 +21,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
 use futures::stream::BoxStream;
-use log::{info, warn};
+use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -230,7 +230,7 @@ impl AgentActor {
             event_security.next(self.id),
         );
 
-        info!("Starting generating messages for agent {} {}", self.id, agent_name);
+        debug!("Starting generating messages for agent {} {}", self.id, agent_name);
         turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
 
         // Initialize next turn
@@ -485,17 +485,21 @@ impl AgentActor {
             maybe_event = rx.recv() => {
                 match maybe_event {
                     Some(event) => {
-                        let next = match event.event {
-                            ActorEvent::FullResponseGenerated(messages) => {
-                                self.perceive(turn_context, messages, &event.context, &event.security).await;
-                                Some(ActorState::Idle)
-                            }
-                            ActorEvent::ResponseRequested => {
-                                self.request_response(turn_context, &event.context, &event.security, output).await?;
-                                Some(ActorState::Planning)
-                            }
-                            _ => Some(ActorState::Idle),
-                        };
+                        let span = crate::logging::envelope_span(&event.context, event.event.kind());
+                        let next = async {
+                            debug!("Received {}", event.describe());
+                            Ok::<_, anyhow::Error>(match event.event {
+                                ActorEvent::FullResponseGenerated(messages) => {
+                                    self.perceive(turn_context, messages, &event.context, &event.security).await;
+                                    Some(ActorState::Idle)
+                                }
+                                ActorEvent::ResponseRequested => {
+                                    self.request_response(turn_context, &event.context, &event.security, output).await?;
+                                    Some(ActorState::Planning)
+                                }
+                                _ => Some(ActorState::Idle),
+                            })
+                        }.instrument(span).await?;
                         rx.commit().await?;
                         Ok(next)
                     }
@@ -506,6 +510,34 @@ impl AgentActor {
             maybe_global = global_rx.recv() => {
                 self.handle_global_event(maybe_global, output).await;
                 Ok(Some(ActorState::Idle))
+            }
+        }
+    }
+
+    /// The span one iteration of the run loop executes in. Waiting states get
+    /// an `agent` span; the states of a turn get a `turn` span carrying the
+    /// ids of the envelope that started the turn, so the turn can be found by
+    /// the same `span_id` as the REST request and the channel dispatch.
+    fn state_span(&self, state: ActorState, turn_context: &TurnContext<'_>) -> Span {
+        let agent = self.agent_controller.name();
+        match state {
+            ActorState::Idle | ActorState::Sleeping => {
+                tracing::info_span!("agent", agent_id = %self.agent_id, agent = %agent, state = ?state)
+            }
+            _ => {
+                let ctx = turn_context.event_context();
+                tracing::info_span!(
+                    "turn",
+                    agent_id = %self.agent_id,
+                    agent = %agent,
+                    state = ?state,
+                    session_id = %ctx.session_id,
+                    channel_id = %ctx.channel_id,
+                    span_id = %ctx.span_id,
+                    event_id = %ctx.event_id,
+                    correlation_id = %ctx.correlation_id,
+                    depth = ctx.span_depth,
+                )
             }
         }
     }
@@ -703,7 +735,7 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
 
         if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
-            info!("Too many iterations, stopping agent {} {}", self.id, agent_name);
+            warn!("Too many iterations, stopping agent {} {}", self.id, agent_name);
             return Ok(ActorState::Reflecting);
         }
         self.loop_count.fetch_add(1, Ordering::SeqCst);
@@ -881,7 +913,7 @@ impl AgentActor {
             output,
         ).await?;
         turn_context.finish_turn();
-        info!("Finished generating messages for agent {} {}", self.id, agent_name);
+        debug!("Finished generating messages for agent {} {}", self.id, agent_name);
 
         // Use requested state
         Ok(turn_context.take_requested_state().unwrap_or(ActorState::Idle))
@@ -938,7 +970,8 @@ impl Actor for AgentActor {
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
-            let next_state = match current_state {
+            let span = self.state_span(current_state, &turn_context);
+            let next_state = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle => {
                     self.handle_idle(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
@@ -954,7 +987,7 @@ impl Actor for AgentActor {
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*output).await?),
                 ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
-            };
+            }) }.instrument(span).await?;
 
             turn_context.store_agent_state(&self.state_store).await;
             turn_context.store_channel_state(&self.state_store).await;
@@ -981,7 +1014,8 @@ impl Actor for AgentActor {
     }
 
     async fn wakeup(&self) -> Result<()> {
-        info!(
+        // Called for every agent on every user message, sleeping or not.
+        debug!(
             "Waking up agent {} {}",
             self.id,
             self.agent_controller.name()

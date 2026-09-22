@@ -5,7 +5,7 @@ use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
-use log::info;
+use tracing::debug;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
@@ -96,7 +96,7 @@ impl DefaultToolExecutor {
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolResult<ToolCallResult> {
         let security = &context.security_context();
-        info!(
+        debug!(
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
             call.function_name,
             security.initiator_id,
