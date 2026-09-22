@@ -146,6 +146,9 @@ Caelumora supports a mechanism for manual user approval of sensitive or impactfu
     5.  **Resumption**: The `AgentActor` receives the response, restores its state, executes the tool calls (if granted), and resumes its cognitive cycle. 
     6.  **Message Queueing**: Any messages received while the agent is in the `WaitingForApproval` state are queued and processed sequentially after the agent resumes, ensuring context integrity.
 
+*   **Policy before approval**: a call the `SecurityManager` does not permit (`ActionType::CallTool`, via `ToolExecutor::is_permitted`) is refused before any approval is requested, so users are not asked about calls that would be refused anyway. `execute` checks again.
+*   **Every call ends with a result the model can act on** (issue 15). A successful call's result is the tool's output. Every other outcome is given to the model as a JSON object `{"status": ..., "message": ...}` whose message says what happened and what to do next — `denied` (by a user), `forbidden` (by policy, without the reason, which stays in the log), `timed_out` (no approval in time), `invalid_arguments`, `failed` (with the tool's error) and `unknown_tool` (with the tools that do exist). The same status is stored as `ToolCallResult::status`, so the UI and an audit trail can tell refusals and failures from results. The wording lives in `crate::tool` (`ToolError::to_result`, `denied_result`, `timed_out_result`, `forbidden_result`).
+
 ## Storage and Persistence
 
 Caelumora uses a tiered storage approach to separate static definitions, dynamic identities, and runtime state.

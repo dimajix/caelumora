@@ -19,7 +19,7 @@ use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StateStore;
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
@@ -271,28 +271,31 @@ impl AgentActor {
             // TODO: Check for cancellation!
 
             // Try to execute tool if no result is available so far...
+            // What the model is given for each outcome is decided in
+            // `crate::tool` (issue 15): the tool's result, or a JSON object
+            // saying what happened and what to do next.
             if c.result.is_none() {
-                match c.status {
+                let outcome = match c.status {
                     ApprovalStatus::Approved => {
                         match self.tool_executor.execute(&c.tool_call, turn_context).await {
-                            Ok(r) => {
-                                c.result = Some(r.content);
-                            }
+                            Ok(r) => Some((ToolResultStatus::Ok, r.content)),
                             Err(e) => {
-                                warn!("Tool execution failed: {}", e);
-                                c.result = Some(format!("Error: {}", e));
+                                warn!("Tool call '{}' failed: {}", c.tool_call.function_name, e);
+                                let available: Vec<String> = self.tool_executor.tools().into_iter().map(|t| t.name).collect();
+                                Some(e.to_result(&available))
                             }
                         }
                     }
-                    ApprovalStatus::Denied => {
-                        c.result = Some("Tool execution denied".to_string());
-                    }
-                    ApprovalStatus::Timeout => {
-                        c.result = Some("Tool execution timed out".to_string());
-                    }
+                    ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
+                    ApprovalStatus::Timeout => Some((ToolResultStatus::TimedOut, crate::tool::timed_out_result())),
                     ApprovalStatus::Pending => {
                         complete = false;
+                        None
                     }
+                };
+                if let Some((status, result)) = outcome {
+                    c.result_status = status;
+                    c.result = Some(result);
                 }
             }
         }
@@ -310,6 +313,7 @@ impl AgentActor {
                     id: c.tool_call.id,
                     tool_name: c.tool_call.function_name,
                     content: c.result.unwrap(),
+                    status: c.result_status,
                 })
             }
             // A tool result is only ever "final" (shown as the real answer)
@@ -715,18 +719,31 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let tools = self.tool_executor.tools();
-        let tool_calls: Vec<ToolCallState> = tool_calls.iter().map(|tc| {
+        let mut states: Vec<ToolCallState> = Vec::with_capacity(tool_calls.len());
+        for tc in tool_calls {
             let tool = tools.iter().find(|t| t.name == tc.function_name);
             let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
             let description = self.tool_executor.describe(tc).unwrap_or("No description".to_string());
-            ToolCallState {
+            let mut state = ToolCallState {
                 id: ApprovalId::new(),
                 status: if approval { ApprovalStatus::Pending } else { ApprovalStatus::Approved },
                 tool_call: tc.clone(),
                 description,
                 result: None,
+                result_status: ToolResultStatus::Ok,
+            };
+            // A call the policy forbids is refused right away rather than
+            // put to a user who could only approve it in vain. The status
+            // then no longer matters: a call with a result is not executed.
+            if !self.tool_executor.is_permitted(tc, turn_context).await {
+                info!("Tool call '{}' by agent {} forbidden by the security manager", tc.function_name, self.id);
+                state.status = ApprovalStatus::Approved;
+                state.result = Some(crate::tool::forbidden_result());
+                state.result_status = ToolResultStatus::Forbidden;
             }
-        }).collect();
+            states.push(state);
+        }
+        let tool_calls = states;
 
         if tool_calls.is_empty() {
             return Ok(());

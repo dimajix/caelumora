@@ -41,10 +41,16 @@ export interface ToolCall {
   arguments: unknown;
 }
 
+/** How a tool call ended; absent means `ok`. */
+export type ToolResultStatus =
+  | 'ok' | 'denied' | 'forbidden' | 'timed_out' | 'invalid_arguments' | 'failed' | 'unknown_tool';
+
 export interface ToolResult {
   id?: string;
   tool_name: string;
+  /** The tool's result, or for any other status a JSON object with `status` and `message`. */
   content: string;
+  status?: ToolResultStatus;
 }
 
 export interface Message {

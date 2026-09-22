@@ -93,11 +93,42 @@ pub struct ToolCall {
     pub arguments: Value
 }
 
+/// How a tool call ended (issue 15). Everything but `Ok` means the tool did
+/// not produce a result, and the model is told why in a form it can act on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolResultStatus {
+    /// The tool ran; `content` is its result.
+    #[default]
+    Ok,
+    /// A user declined the call.
+    Denied,
+    /// The `SecurityManager` does not permit the call.
+    Forbidden,
+    /// No approval arrived in time.
+    TimedOut,
+    /// The tool rejected the arguments.
+    InvalidArguments,
+    /// The tool ran and failed.
+    Failed,
+    /// No tool of that name exists.
+    UnknownTool,
+}
+
+impl ToolResultStatus {
+    pub fn is_ok(&self) -> bool {
+        *self == ToolResultStatus::Ok
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallResult {
     pub id: Option<String>,
     pub tool_name: String,
     pub content: String,
+    /// Omitted when `Ok`, so results stored before it existed read as such.
+    #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
+    pub status: ToolResultStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,7 +137,10 @@ pub struct ToolCallState {
     pub status: ApprovalStatus,
     pub tool_call: ToolCall,
     pub description: String,
-    pub result: Option<String>
+    pub result: Option<String>,
+    /// How the call ended, once `result` is set.
+    #[serde(default)]
+    pub result_status: ToolResultStatus,
 }
 
 #[cfg(test)]

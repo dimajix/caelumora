@@ -6,7 +6,8 @@ import {
   Square,
   Terminal,
   Users,
-  Wrench
+  Wrench,
+  XCircle
 } from 'lucide-react';
 import type {
   ApprovalRequest,
@@ -14,7 +15,9 @@ import type {
   ChannelResponse,
   Envelope,
   Message,
-  PlanStepEvent
+  PlanStepEvent,
+  ToolResult,
+  ToolResultStatus
 } from '../types';
 import {api} from '../api';
 import {reportError} from '../errors';
@@ -25,6 +28,27 @@ import {mentionedHandles, mentionQueryAt} from '../mention';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
+  denied: 'Denied',
+  forbidden: 'Not permitted',
+  timed_out: 'Timed out',
+  invalid_arguments: 'Invalid arguments',
+  failed: 'Failed',
+  unknown_tool: 'Unknown tool',
+};
+
+/** The text to show for a tool result: the message of an unsuccessful one, else the content. */
+function toolResultText(result: ToolResult): string {
+  if (!result.status || result.status === 'ok') return result.content;
+  try {
+    const parsed = JSON.parse(result.content);
+    if (typeof parsed?.message === 'string') return parsed.message;
+  } catch {
+    // Not the JSON object the server writes for unsuccessful results.
+  }
+  return result.content;
 }
 
 function formatArguments(args: unknown): string {
@@ -334,7 +358,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                             <Wrench size={12} className="text-blue-500" />
                             <span>{call.function_name}</span>
                           </div>
-                          {result ? (
+                          {result && result.status && result.status !== 'ok' ? (
+                            <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                              <XCircle size={12} />
+                              <span className="text-[10px] uppercase">{TOOL_STATUS_LABELS[result.status]}</span>
+                            </div>
+                          ) : result ? (
                             <CheckCircle2 size={12} className="text-green-500" />
                           ) : (
                             <div className="flex items-center gap-1">
@@ -352,7 +381,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                                <div className="text-[10px] uppercase opacity-50 mb-1">Result</div>
                                <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded border border-gray-100 dark:border-gray-900">
-                                 {result.content}
+                                 {toolResultText(result)}
                                </pre>
                              </div>
                            )}
