@@ -201,7 +201,7 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
     let user_actor = channel.user_actor()
         .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
 
-    let mut receiver = user_actor.lock_receiver().await;
+    let mut receiver = user_actor.subscribe();
     let mut input_rx = spawn_rustyline_input();
     // Approval id -> agent id, so `/approve <id>`/`/deny <id>` know which
     // agent to answer. Covers both plan proposals and regular tool calls -
@@ -215,8 +215,8 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     loop {
         tokio::select! {
-            maybe_event = receiver.recv() => {
-                match maybe_event {
+            maybe_envelope = receiver.recv() => {
+                match maybe_envelope.map(|envelope| envelope.event) {
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {
                         if let Some(content) = &message.content {
                             println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
