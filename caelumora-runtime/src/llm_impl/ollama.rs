@@ -1,4 +1,4 @@
-use crate::llm::{LLMClient, LLMResult};
+use crate::llm::{LLMClient, LLMError, LLMResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -6,7 +6,7 @@ use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::tool::ToolCall;
 use chrono::Utc;
 use futures::stream::{BoxStream, StreamExt};
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -309,6 +309,24 @@ mod tests {
     }
 }
 
+
+/// The body of an error Ollama sends, as a whole response or as one line of
+/// a stream.
+#[derive(Deserialize)]
+struct OllamaErrorResponse {
+    error: String,
+}
+
+/// The backend's explanation from an error response body: Ollama's `error`
+/// field if there is one, otherwise the start of the body.
+fn backend_error_message(body: &str) -> String {
+    match serde_json::from_str::<OllamaErrorResponse>(body) {
+        Ok(OllamaErrorResponse { error }) => error,
+        Err(_) if body.trim().is_empty() => "no details given".to_string(),
+        Err(_) => body.trim().chars().take(200).collect(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     http: reqwest::Client,
@@ -381,6 +399,7 @@ impl LLMClient for OllamaClient {
 
         let http = self.http.clone();
         let model = self.model.clone();
+        let endpoint = LLMError::redact_endpoint(&self.base_url);
 
         let output = stream! {
             debug!(
@@ -389,21 +408,44 @@ impl LLMClient for OllamaClient {
                 message_ids,
                 url
             );
-            let response = http.post(url).json(&request).send().await?;
-            let mut stream = response.error_for_status()?.bytes_stream();
+            let response = match http.post(url).json(&request).send().await {
+                Ok(response) => response,
+                Err(e) => {
+                    yield Err(LLMError::Connection { endpoint, reason: LLMError::describe_chain(&e) });
+                    return;
+                }
+            };
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                yield Err(LLMError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
+                return;
+            }
+            let mut stream = response.bytes_stream();
 
             let mut full_content = String::new();
             let mut full_reasoning = String::new();
             let mut all_tool_calls = Vec::new();
 
             while let Some(chunk_result) = stream.next().await {
-                let chunk = chunk_result?;
+                let chunk = match chunk_result {
+                    Ok(chunk) => chunk,
+                    Err(e) => {
+                        yield Err(LLMError::Connection { endpoint, reason: LLMError::describe_chain(&e) });
+                        return;
+                    }
+                };
                 // Ollama sends multiple JSON objects, potentially split across chunks or multiple in one chunk
                 // We'll use a simple approach: split by newline (Ollama usually sends one JSON per line)
                 let text = String::from_utf8_lossy(&chunk);
                 for line in text.lines() {
                     if line.trim().is_empty() {
                         continue;
+                    }
+                    // Ollama reports errors that occur mid-stream as `{"error": ...}`.
+                    if let Ok(OllamaErrorResponse { error }) = serde_json::from_str::<OllamaErrorResponse>(line) {
+                        yield Err(LLMError::Backend { endpoint, model, message: error });
+                        return;
                     }
                     match serde_json::from_str::<OllamaChatResponse>(line) {
                         Ok(body) => {
@@ -473,11 +515,14 @@ impl LLMClient for OllamaClient {
                             }
                         },
                         Err(e) => {
-                            warn!("ollama: failed to parse JSON chunk: {} (chunk: {})", e, line);
+                            // The chunk is model output: its content only at trace level.
+                            warn!("ollama: failed to parse a response chunk of {} bytes: {}", line.len(), e);
+                            trace!("ollama: unparseable chunk: {}", line);
                         }
                     }
                 }
             }
+            yield Err(LLMError::InvalidResponse { endpoint, reason: "the response ended without a final message".to_string() });
         };
 
         Box::pin(output)

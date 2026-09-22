@@ -6,6 +6,7 @@ pub mod llm;
 pub mod llm_impl;
 pub mod logging;
 pub mod recorder;
+pub mod error;
 pub mod event;
 pub mod tool;
 pub mod actor;

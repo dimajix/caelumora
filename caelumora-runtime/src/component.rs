@@ -22,6 +22,11 @@ pub enum ComponentError {
     NodeNotFound(String),
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    /// A component of a graph could not be built. Wraps whatever went wrong
+    /// with the component's id and kind, so that the message names the
+    /// offending component on its own (issue 02).
+    #[error("component '{component}' ({kind}) cannot be built: {cause}")]
+    Build { component: String, kind: String, cause: Box<ComponentError> },
 }
 
 pub type ComponentResult<T> = Result<T, ComponentError>;
@@ -222,7 +227,12 @@ impl ComponentContainer {
                 secret_manager: secret_manager.clone(),
             };
 
-            let facets = registry.build(node_config, &context).await?;
+            let facets = registry.build(node_config, &context).await
+                .map_err(|e| ComponentError::Build {
+                    component: id.clone(),
+                    kind: node_config.kind.clone(),
+                    cause: Box::new(e),
+                })?;
             nodes.insert(
                 id.clone(),
                 ComponentNode {

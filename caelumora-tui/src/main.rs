@@ -225,6 +225,9 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             println!("\r[working] {}> {}", message.sender_name, render_content(&message, content, &handles));
                         }
                     }
+                    Some(ActorEvent::TurnFailed { message }) => {
+                        println!("\r[error] An agent could not answer: {}", message);
+                    }
                     Some(ActorEvent::ApprovalRequested(request)) => {
                         pending_approvals.insert(request.id.0, request.agent_id);
                         println!("\r--- Approval requested (id: {}) ---", request.id.0);

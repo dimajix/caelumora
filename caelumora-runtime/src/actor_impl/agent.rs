@@ -494,8 +494,14 @@ impl AgentActor {
                                     Some(ActorState::Idle)
                                 }
                                 ActorEvent::ResponseRequested => {
-                                    self.request_response(turn_context, &event.context, &event.security, output).await?;
-                                    Some(ActorState::Planning)
+                                    match self.request_response(turn_context, &event.context, &event.security, output).await {
+                                        Ok(()) => Some(ActorState::Planning),
+                                        // E.g. a fail-closed context provider: the turn never starts.
+                                        Err(e) => {
+                                            self.fail_turn(turn_context, &e, output).await;
+                                            Some(ActorState::Idle)
+                                        }
+                                    }
                                 }
                                 _ => Some(ActorState::Idle),
                             })
@@ -511,6 +517,38 @@ impl AgentActor {
                 self.handle_global_event(maybe_global, output).await;
                 Ok(Some(ActorState::Idle))
             }
+        }
+    }
+
+    /// Whether `state` belongs to a turn, i.e. an error in it aborts the turn
+    /// rather than the actor.
+    fn is_turn_state(state: ActorState) -> bool {
+        matches!(
+            state,
+            ActorState::Planning
+                | ActorState::ExecutingTools
+                | ActorState::Reflecting
+                | ActorState::Cancelling
+                | ActorState::WaitingForApproval
+        )
+    }
+
+    /// Ends the current turn after `error`: logs the full error, discards the
+    /// turn's unfinished work (pending tool calls, plan, messages not yet
+    /// sent as a final response) and tells the channel with `TurnFailed`, so
+    /// that users see what went wrong instead of a turn that never ends.
+    async fn fail_turn<'a>(&self, turn_context: &mut TurnContext<'a>, error: &anyhow::Error, output: &dyn EventSender) {
+        let agent_name = self.agent_controller.name();
+        tracing::error!("Turn of agent {} {} failed: {:#}", self.id, agent_name, error);
+
+        turn_context.take_tool_calls();
+        turn_context.take_plan();
+        turn_context.finish_turn();
+
+        let message = crate::error::user_message(error)
+            .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
+        if let Err(e) = turn_context.send_event(ActorEvent::TurnFailed { message }, output).await {
+            warn!("Agent {} {} cannot report its failed turn: {:#}", self.id, agent_name, e);
         }
     }
 
@@ -971,7 +1009,7 @@ impl Actor for AgentActor {
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
             let span = self.state_span(current_state, &turn_context);
-            let next_state = async { Ok::<_, anyhow::Error>(match current_state {
+            let result = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle => {
                     self.handle_idle(&mut turn_context, &mut rx, &mut global_rx, &*output).await?
                 }
@@ -987,7 +1025,19 @@ impl Actor for AgentActor {
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn_context, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut turn_context, &*output).await?),
                 ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
-            }) }.instrument(span).await?;
+            }) }.instrument(span.clone()).await;
+
+            // A failure inside a turn ends the turn, not the agent (issue 02).
+            // Errors in the waiting states are the transport's and still end
+            // the actor.
+            let next_state = match result {
+                Ok(next) => next,
+                Err(e) if Self::is_turn_state(current_state) => {
+                    self.fail_turn(&mut turn_context, &e, &*output).instrument(span).await;
+                    Some(ActorState::Idle)
+                }
+                Err(e) => return Err(e),
+            };
 
             turn_context.store_agent_state(&self.state_store).await;
             turn_context.store_channel_state(&self.state_store).await;

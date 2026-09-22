@@ -63,7 +63,10 @@ impl SessionController {
                 let session = Arc::new(session);
                 self.session.store(session.clone());
                 let ctx = SecurityContext::default();
-                self.entity_store.update_session(&ctx, &session).await.expect("failed to update session");
+                if let Err(e) = self.entity_store.update_session(&ctx, &session).await {
+                    // The live name is already updated; only persisting it failed.
+                    tracing::error!("Cannot persist new name of session {}: {}", session.id, e);
+                }
             }
         }
     }

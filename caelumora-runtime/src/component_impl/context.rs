@@ -121,7 +121,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let prompt = descriptor.params.get("prompt")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-                .ok_or_else(|| ComponentError::InvalidConfig(format!("Component '{}' requires 'prompt' parameter", descriptor.id)))?;
+                .ok_or_else(|| ComponentError::InvalidConfig("parameter 'prompt' is missing".to_string()))?;
 
             let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn SystemPromptProvider>(Arc::new(StaticSystemPromptProvider {

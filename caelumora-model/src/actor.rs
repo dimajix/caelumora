@@ -83,6 +83,17 @@ pub enum ActorEvent {
         total_steps: usize,
         description: String,
     },
+    /// The agent's turn was aborted by an error, e.g. an unreachable LLM
+    /// backend or a failing component. The agent is idle again and takes the
+    /// next request. `message` is meant for users: it names what failed (a
+    /// component, an endpoint) but carries no file paths or secret values;
+    /// the full error is in the log under the envelope's `span_id`.
+    ///
+    /// Not part of the conversation: it is shown to users but never written
+    /// to the history, so it does not end up in a model's context.
+    TurnFailed {
+        message: String,
+    },
 }
 
 impl ActorEvent {
@@ -104,6 +115,7 @@ impl ActorEvent {
             ActorEvent::IntermediateMessageGenerated(_) => "IntermediateMessageGenerated",
             ActorEvent::PlanStepStarted { .. } => "PlanStepStarted",
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
+            ActorEvent::TurnFailed { .. } => "TurnFailed",
         }
     }
 
@@ -254,6 +266,9 @@ impl Envelope {
             }
             ActorEvent::PlanStepFinished { step_index, total_steps, .. } => {
                 format!("PlanStepFinished(sender_id={}, sender_name={}, step={}/{})", ctx.sender_id, ctx.sender_name, step_index + 1, total_steps)
+            }
+            ActorEvent::TurnFailed { message } => {
+                format!("TurnFailed(sender_id={}, sender_name={}, message={})", ctx.sender_id, ctx.sender_name, message)
             }
             _ => {
                 format!("{:?}", self.event)

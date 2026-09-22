@@ -105,10 +105,12 @@ impl ToolExecutor for DefaultToolExecutor {
             security.channel_id
         );
 
+        let agent_id = security.caller_id.as_agent_id()
+            .ok_or_else(|| ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)))?;
         let mut _execution = ToolExecution {
             id: Uuid::new_v4(),
             session_id: security.session_id,
-            agent_id: security.caller_id.as_agent_id().unwrap(),
+            agent_id,
             status: ExecutionStatus::PendingApproval,
             started_at: Utc::now(),
             finished_at: None,

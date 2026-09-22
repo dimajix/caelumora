@@ -71,7 +71,10 @@ impl AgentController {
                 let agent = Arc::new(agent);
                 self.agent.store(agent.clone());
                 let ctx = SecurityContext::default();
-                self.entity_store.update_agent(&ctx, &agent).await.expect("failed to update agent");
+                if let Err(e) = self.entity_store.update_agent(&ctx, &agent).await {
+                    // The live name is already updated; only persisting it failed.
+                    tracing::error!("Cannot persist new name of agent {}: {}", agent.id, e);
+                }
             }
         }
     }

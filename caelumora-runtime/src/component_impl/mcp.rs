@@ -252,7 +252,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         MCP_TOOL_PROVIDER_KIND,
         Box::new(|descriptor, context| {
             let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
-                .map_err(|e| ComponentError::InvalidConfig(format!("Invalid '{}' config for component '{}': {}", MCP_TOOL_PROVIDER_KIND, descriptor.id, e)))?;
+                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {}", e)))?;
 
             let secret_manager = context.secret_manager.clone();
             let security_context = context.security_context.clone();

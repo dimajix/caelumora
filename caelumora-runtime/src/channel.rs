@@ -291,7 +291,7 @@ impl ChannelLoop {
         let abort_handle = join_set.spawn(async move {
             let result = actor.run(actor_rx, actor_tx).await;
             if let Err(e) = result {
-                warn!("Failed to spawn actor {}: {}", actor.id(), e)
+                tracing::error!("Actor {} stopped with an error: {:#}", actor.id(), e)
             }
             id
         });

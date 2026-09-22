@@ -224,9 +224,9 @@ impl ParticipantTemplate {
                 } else if let Ok(agent) = context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
                     agent
                 } else {
-                    let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await.expect("failed to get personality");
+                    let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await?;
                     let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.clone());
-                    context.entity_store.create_agent(&context.security, &agent).await.expect("failed to create agent");
+                    context.entity_store.create_agent(&context.security, &agent).await?;
                     agent
                 };
                 Participant::Agent(agent)

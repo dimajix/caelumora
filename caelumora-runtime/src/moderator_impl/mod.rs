@@ -97,6 +97,15 @@ impl ModeratorActors {
         if responders.is_empty() { None } else { Some(responders) }
     }
 
+    /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`,
+    /// which concerns the users watching and none of the other agents.
+    fn route_to_users(&self, event: &Envelope) -> RouteDecision {
+        self.user_actors.iter()
+            .map(|r| (*r.key(), event.clone()))
+            .collect::<Vec<_>>()
+            .into()
+    }
+
     fn route_approval_events(&self, event: &Envelope) -> RouteDecision {
         match &event.event {
             ActorEvent::ApprovalRequested(_) => {
@@ -305,6 +314,21 @@ mod tests {
         let decision = moderator.route(&event).await;
 
         assert_eq!(responders(&decision), vec![agents[2]], "an agent's mention must not override the policy");
+    }
+
+    #[tokio::test]
+    async fn every_moderator_forwards_a_failed_turn_to_the_users_only() {
+        for mut moderator in moderators() {
+            let agents = add_agents(moderator.as_mut());
+            let event = envelope(agents[0], ActorEvent::TurnFailed { message: "boom".to_string() });
+
+            let decision = moderator.route(&event).await;
+
+            // TestActor registers as an agent, so there are no users here:
+            // nothing may be routed to the agents, but the UI broadcast stays.
+            assert!(decision.forwards.is_empty(), "{:?} must not route a failed turn to agents", moderator);
+            assert!(decision.broadcast, "{:?} must broadcast a failed turn", moderator);
+        }
     }
 
     #[test]
