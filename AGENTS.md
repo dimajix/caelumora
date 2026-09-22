@@ -67,6 +67,9 @@ an obvious approach was already rejected.
 *   Use `anyhow::Result` for general application logic, especially in the `runtime` where diverse error types are aggregated.
 *   Use `thiserror` for defining domain-specific error types (e.g., in `caelumora-model`).
 *   Avoid `unwrap()` or `expect()` in production code. Use `?` or handle errors explicitly.
+*   **Messages name what failed.** An error caused by configuration names the component id (and kind) and the parameter; one caused by a remote system names the endpoint (without credentials — see `LLMError::redact_endpoint`). They never contain secret values or file paths, because `caelumora_runtime::error::user_message` shows domain errors (`LLMError`, `ComponentError`, `ToolError`, `TemplateError`, `StoreError` except `Backend`) to users. A new error type meant for users must meet this and be added there; anything else stays in the log.
+*   **Errors in a turn end the turn, not the agent.** `AgentActor` reports them as `ActorEvent::TurnFailed` and returns to `Idle`. Don't let a turn-time error escape `AgentActor::run`.
+*   **REST handlers** return `Result<_, crate::error::ApiError>`, which answers with RFC 9457 problem details (`application/problem+json`, with a stable `code` and the `request_id`). Use `ApiError::internal` for server errors — it logs the full chain and discloses only what `user_message` allows — and the `Json`/`Path` extractors from `crate::error`, so that malformed requests get problem details too. Never map an error to a bare status code.
 
 ### Asynchronous Programming
 *   Caelumora makes heavy use of `async/await`.

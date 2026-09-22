@@ -39,7 +39,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [01](01-improve-logging.md) | done | Two logging frontends (`log` and `tracing`) are used side by side, and the REST handlers, session loop and event bus are nearly silent. |
-| [02](02-better-error-messages.md) | open | Failures lose the context that would make them actionable — which component, which endpoint, which parameter. |
+| [02](02-better-error-messages.md) | done | Failures lose the context that would make them actionable — which component, which endpoint, which parameter. |
 
 ## Persistence
 

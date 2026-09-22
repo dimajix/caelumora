@@ -111,6 +111,15 @@ A message crosses several tasks — REST handler, `UserActor`, `ChannelLoop`, mo
 
 Searching the log for one `span_id` therefore finds the request, the routing and the agent's turn that answered it. Message content appears only at `trace` level.
 
+## Error Handling
+
+Errors carry what failed, and only what may be shown goes to users (issue 02).
+
+*   **Domain errors name their subject.** `ComponentError::Build` wraps every failure of a component graph with the component's id and kind; `LLMError` names the endpoint (credentials stripped), the model and the backend's own explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
+*   **What users may see** is decided in one place, `caelumora_runtime::error::user_message`: it looks through an error chain for a domain error written to be read (`LLMError`, `ComponentError`, `ToolError`, `TemplateError`, `StoreError` other than `Backend`) and returns its message; anything else stays in the log.
+*   **A failing turn ends the turn, not the agent.** If an error occurs while an `AgentActor` is in a turn — an unreachable model, a fail-closed component, a failing tool executor — the agent logs it, discards the turn's unfinished work and emits `ActorEvent::TurnFailed { message }`, then returns to `Idle`. Moderators forward it to the users; it is broadcast to the UI but never written to the history, so it cannot end up in a model's context ([15](issues/15-disallowed-tool-errors-to-llm.md) is about errors the model *should* see).
+*   **REST errors** are RFC 9457 problem details (`application/problem+json`) with two extension members: `code`, a stable identifier (also the last segment of `type`, `urn:caelumora:problem:<code>`), and `request_id`, which also appears as the `x-request-id` header and on the request's log span. Client errors state their cause; server errors state it only if `user_message` allows, and otherwise point to the log. `ensure_session` distinguishes a session that does not exist (`404`) from one that cannot be started (`500`, naming e.g. the broken component).
+
 ## Security Model
 
 Security in Caelumora is handled through a combination of context and explicit checks.

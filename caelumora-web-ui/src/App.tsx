@@ -2,19 +2,30 @@ import {useEffect, useState} from 'react';
 import {Sidebar} from './components/Sidebar';
 import {ChatView} from './components/ChatView';
 import {Login} from './components/Login';
+import {ErrorBanner} from './components/ErrorBanner';
 import {api} from './api';
+import {reportError, setErrorReporter, type ReportedError} from './errors';
 import type {UserResponse} from './types';
 
 function App() {
   // undefined while the session is being checked, null when logged out.
   const [user, setUser] = useState<UserResponse | null | undefined>(undefined);
+  const [errors, setErrors] = useState<ReportedError[]>([]);
+
+  useEffect(() => {
+    // At most a few at a time: older ones are dropped rather than piling up.
+    setErrorReporter(error => setErrors(prev => [...prev.slice(-2), error]));
+    return () => setErrorReporter(null);
+  }, []);
+
+  const dismissError = (id: number) => setErrors(prev => prev.filter(e => e.id !== id));
 
   useEffect(() => {
     api.setUnauthorizedHandler(() => setUser(null));
     api.me()
       .then(setUser)
       .catch((error) => {
-        console.error('Failed to check session', error);
+        reportError('Failed to check the session', error);
         setUser(null);
       });
     return () => api.setUnauthorizedHandler(null);
@@ -28,14 +39,21 @@ function App() {
     }
   };
 
+  let content;
   if (user === undefined) {
-    return <div className="flex h-screen w-full bg-white dark:bg-gray-900" />;
+    content = <div className="flex h-screen w-full bg-white dark:bg-gray-900" />;
+  } else if (user === null) {
+    content = <Login onLogin={setUser} />;
+  } else {
+    // Keyed by user, so nothing of a previous user's view survives a re-login.
+    content = <Workspace key={user.id} user={user} onLogout={handleLogout} />;
   }
-  if (user === null) {
-    return <Login onLogin={setUser} />;
-  }
-  // Keyed by user, so nothing of a previous user's view survives a re-login.
-  return <Workspace key={user.id} user={user} onLogout={handleLogout} />;
+  return (
+    <>
+      <ErrorBanner errors={errors} onDismiss={dismissError} />
+      {content}
+    </>
+  );
 }
 
 interface WorkspaceProps {

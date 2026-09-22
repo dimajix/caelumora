@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type {ChannelResponse, SessionResponse, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
+import {reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 
@@ -57,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const data = await api.getTemplates();
       setTemplates(data);
     } catch (error) {
-      console.error('Failed to load templates', error);
+      reportError('Failed to load templates', error);
     }
   };
 
@@ -66,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const data = await api.getSessions();
       setSessions(data);
     } catch (error) {
-      console.error('Failed to load sessions', error);
+      reportError('Failed to load sessions', error);
     }
   };
 
@@ -79,7 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const sessionChannels = await api.getChannels(sessionId);
         setChannels(prev => ({ ...prev, [sessionId]: sessionChannels }));
       } catch (error) {
-        console.error(`Failed to load channels for session ${sessionId}`, error);
+        reportError(`Failed to load channels for session ${sessionId}`, error);
       }
     }
   };
@@ -88,7 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       const template = templates[0];
       if (!template) {
-        console.error('No session template available');
+        reportError('Cannot create a session', 'no session template is available');
         return;
       }
       const name = `New ${template.metadata.name}`;
@@ -96,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setSessions(prev => [...prev, newSession]);
       toggleSession(newSession.id);
     } catch (error) {
-      console.error('Failed to create session', error);
+      reportError('Failed to create session', error);
     }
   };
 
@@ -113,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const updatedSession = await api.renameSession(sessionId, editingName.trim());
         setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name: updatedSession.name } : s));
       } catch (error) {
-        console.error('Failed to rename session', error);
+        reportError('Failed to rename session', error);
       }
     }
     setEditingSessionId(null);
@@ -145,7 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       });
       onSessionDeleted(sessionId);
     } catch (error) {
-      console.error('Failed to delete session', error);
+      reportError('Failed to delete session', error);
     }
   };
 

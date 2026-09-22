@@ -1,7 +1,9 @@
 use crate::auth::AuthenticatedUser;
+use crate::error::ApiError;
 use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse};
 use crate::state::AppState;
-use axum::{extract::{Path, State}, http::StatusCode, Json};
+use axum::{extract::State, http::StatusCode};
+use crate::error::{Json, Path};
 use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::template::{ParticipantId, SessionTemplateId};
 use std::collections::HashMap;
@@ -12,14 +14,14 @@ pub async fn create_session(
     State(state): State<Arc<AppState>>,
     user: AuthenticatedUser,
     Json(payload): Json<CreateSessionRequest>,
-) -> Result<Json<SessionResponse>, StatusCode> {
+) -> Result<Json<SessionResponse>, ApiError> {
     let ctx = user.security_context();
     let template_id = SessionTemplateId(payload.template_id);
     let template = state.entity_store.list_session_templates(&ctx).await
-        .expect("failed to list templates")
+        .map_err(|e| ApiError::internal("templates_unavailable", "listing the session templates", &e.into()))?
         .into_iter()
         .find(|t| t.id == template_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| ApiError::not_found("template_not_found", format!("Session template {} does not exist", template_id)))?;
 
     let session_id = SessionId(Uuid::new_v4());
     // The logged-in user owns the session and fills its "user" participant.
@@ -36,17 +38,11 @@ pub async fn create_session(
     let mut mapping = HashMap::new();
     mapping.insert("user".to_string(), ParticipantId::UserId(owner));
     let session = template.instantiate(name, &context, mapping).await
-        .map_err(|e| {
-            tracing::error!("Failed to instantiate template {}: {}", template_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(|e| ApiError::internal("template_invalid", &format!("instantiating template '{}'", template.metadata.name), &e.into()))?;
 
     // `create_session` persists the session, emits its lifecycle events, and starts it.
     let session_loop = state.session_manager.create_session(&ctx, session).await
-        .map_err(|e| {
-            tracing::error!("Failed to create session {}: {}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(|e| ApiError::internal("session_start_failed", "starting the new session", &e))?;
 
     let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {
@@ -56,10 +52,10 @@ pub async fn create_session(
     }))
 }
 
-pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, StatusCode> {
+pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
     let ctx = user.security_context();
     let sessions = state.entity_store.list_sessions(&ctx).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
 
     let response = sessions
         .into_iter()
@@ -83,18 +79,18 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>, user: Authenticat
     Ok(Json(response))
 }
 
-pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> StatusCode {
+pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
     let ctx = user.security_context();
 
     // `delete_session` stops the running loop, removes the persisted session (and all of its
     // channels), and emits the corresponding lifecycle events.
     match state.session_manager.delete_session(&ctx, session_id).await {
-        Ok(_) => StatusCode::NO_CONTENT,
-        Err(e) => {
-            tracing::error!("Failed to delete session {}: {}", session_id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if caelumora_runtime::error::is_not_found(&e, "session") => {
+            Err(ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id)))
         }
+        Err(e) => Err(ApiError::internal("session_delete_failed", &format!("deleting session {}", session_id), &e)),
     }
 }
 
@@ -103,7 +99,7 @@ pub async fn rename_session(
     Path(id): Path<Uuid>,
     user: AuthenticatedUser,
     Json(payload): Json<RenameSessionRequest>,
-) -> Result<Json<SessionResponse>, StatusCode> {
+) -> Result<Json<SessionResponse>, ApiError> {
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 

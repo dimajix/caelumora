@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Send,
   Square,
@@ -16,6 +17,7 @@ import type {
   PlanStepEvent
 } from '../types';
 import {api} from '../api';
+import {reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -112,6 +114,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           setStreamingSender(null);
           setIsGenerating(false);
           setCurrentStep(null);
+        } else if (actorEvent.TurnFailed) {
+          // Shown in the chat, but not part of the history: gone on reload.
+          const failed: Message = {
+            role: 'System',
+            content: actorEvent.TurnFailed.message,
+            sender_name: envelope.context.sender_name,
+            turnFailed: true,
+            span_id: envelope.context.span_id,
+          };
+          setMessages(prev => [...prev, failed]);
+          setStreamingMessage(null);
+          setStreamingSender(null);
+          setIsGenerating(false);
+          setCurrentStep(null);
         } else if (actorEvent.PlanStepStarted) {
           setCurrentStep(actorEvent.PlanStepStarted);
         } else if (actorEvent.PlanStepFinished) {
@@ -150,7 +166,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       setStreamingSender(null);
       setIsGenerating(false);
     } catch (error) {
-      console.error('Failed to load messages', error);
+      reportError('Failed to load messages', error);
     }
   };
 
@@ -159,7 +175,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       const data = await api.getChannel(sessionId, channelId);
       setChannel(data);
     } catch (error) {
-      console.error('Failed to load channel details', error);
+      reportError('Failed to load channel details', error);
     }
   };
 
@@ -178,8 +194,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     try {
       await api.sendMessage(sessionId, channelId, text);
     } catch (error) {
-      console.error('Failed to send message', error);
-      // Remove optimistic message on error or show error state
+      reportError('Failed to send message', error);
+      // Give the text back rather than losing it.
+      setInputText(prev => prev || text);
     } finally {
       setIsSending(false);
     }
@@ -227,7 +244,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     try {
       await api.cancelChannel(sessionId, channelId);
     } catch (error) {
-      console.error('Failed to cancel generation', error);
+      reportError('Failed to cancel generation', error);
     }
   };
 
@@ -236,7 +253,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       await api.respondToApproval(sessionId, channelId, approval.id, approval.agent_id, approved);
       setPendingApprovals(prev => prev.filter(a => a.id !== approval.id));
     } catch (e) {
-      console.error('Failed to respond to approval', e);
+      reportError('Failed to respond to approval', e);
     }
   };
 
@@ -269,7 +286,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               }
             }
             return [...acc, msg];
-          }, []).map((msg, idx) => (
+          }, []).map((msg, idx) => msg.turnFailed ? (
+            <div
+              key={idx}
+              role="alert"
+              className="max-w-[80%] p-3 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1">
+                <AlertTriangle size={14} />
+                {msg.sender_name ? `${msg.sender_name} could not answer` : 'The turn failed'}
+              </div>
+              <div className="break-words">{msg.content}</div>
+              {msg.span_id && (
+                <div className="mt-1 text-[10px] font-mono opacity-60">span_id {msg.span_id}</div>
+              )}
+            </div>
+          ) : (
             <div
               key={idx}
               className={cn(

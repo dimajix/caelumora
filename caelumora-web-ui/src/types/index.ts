@@ -57,6 +57,10 @@ export interface Message {
   tool_results?: ToolResult[];
   /** Participants addressed by `@`-mentions, resolved by the server. */
   mentions?: ActorId[];
+  // UI only: a failed turn shown in the chat (never sent by the server as a
+  // message), with the `span_id` under which the error is in the server log.
+  turnFailed?: boolean;
+  span_id?: string;
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -86,6 +90,8 @@ export interface ActorEvent {
   IntermediateMessageGenerated?: Message;
   PlanStepStarted?: PlanStepEvent;
   PlanStepFinished?: PlanStepEvent;
+  /** An agent's turn was aborted by an error; the agent is idle again. */
+  TurnFailed?: { message: string };
 }
 
 export interface EventContext {

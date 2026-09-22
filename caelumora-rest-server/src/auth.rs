@@ -22,7 +22,9 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Router;
+use crate::error::Json;
+use crate::error::ApiError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::AuthConfig;
 use caelumora_model::security::SecurityContext;
@@ -154,10 +156,10 @@ impl AuthenticatedUser {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
-    type Rejection = StatusCode;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<AuthenticatedUser>().copied().ok_or(StatusCode::UNAUTHORIZED)
+        parts.extensions.get::<AuthenticatedUser>().copied().ok_or_else(not_logged_in)
     }
 }
 
@@ -171,8 +173,12 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn not_logged_in() -> ApiError {
+    ApiError::unauthorized("not_authenticated", "Not logged in, or the session has expired")
+}
+
 fn unauthorized(auth: &Auth, had_cookie: bool) -> Response {
-    let mut response = StatusCode::UNAUTHORIZED.into_response();
+    let mut response = not_logged_in().into_response();
     if had_cookie {
         response.headers_mut().insert(SET_COOKIE, auth.tokens.clear_cookie());
     }
@@ -206,7 +212,7 @@ pub async fn require_auth(State(auth): State<Arc<Auth>>, mut request: Request, n
             Err(e) => {
                 // Deny rather than extend a session nobody could vouch for.
                 tracing::error!("Cannot check user {} on token renewal: {}", user, e);
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                return ApiError::unavailable("user_provider_unavailable", "The session cannot be renewed: the user directory is not available").into_response();
             }
         }
     } else {
@@ -245,13 +251,17 @@ async fn login(State(auth): State<Arc<Auth>>, Json(request): Json<LoginRequest>)
                     ([(SET_COOKIE, cookie)], body).into_response()
                 }
                 Err(e) => {
-                    tracing::error!("Cannot issue session token: {}", e);
-                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    ApiError::internal("session_token_failed", "issuing the session token", &e).into_response()
                 }
             }
         }
-        Err(AuthError::InvalidCredentials) => StatusCode::UNAUTHORIZED.into_response(),
-        Err(AuthError::Backend(_)) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(AuthError::InvalidCredentials) => {
+            ApiError::unauthorized("invalid_credentials", "Invalid username or password").into_response()
+        }
+        // The provider's own message may carry paths or hostnames: log only.
+        Err(AuthError::Backend(_)) => {
+            ApiError::unavailable("user_provider_unavailable", "Login is not possible: the user directory is not available").into_response()
+        }
     }
 }
 
@@ -261,11 +271,11 @@ async fn logout(State(auth): State<Arc<Auth>>) -> Response {
     (StatusCode::NO_CONTENT, [(SET_COOKIE, auth.tokens.clear_cookie())]).into_response()
 }
 
-async fn me(State(auth): State<Arc<Auth>>, user: AuthenticatedUser) -> Result<Json<UserResponse>, StatusCode> {
+async fn me(State(auth): State<Arc<Auth>>, user: AuthenticatedUser) -> Result<Json<UserResponse>, ApiError> {
     match auth.users.get_user(user.id).await {
         Ok(Some(u)) => Ok(Json(UserResponse { id: u.id, username: u.username })),
-        Ok(None) => Err(StatusCode::UNAUTHORIZED),
-        Err(_) => Err(StatusCode::SERVICE_UNAVAILABLE),
+        Ok(None) => Err(not_logged_in()),
+        Err(_) => Err(ApiError::unavailable("user_provider_unavailable", "The user directory is not available")),
     }
 }
 

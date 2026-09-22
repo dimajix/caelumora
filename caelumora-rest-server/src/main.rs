@@ -10,6 +10,7 @@ use tower_http::trace::TraceLayer;
 
 mod auth;
 mod data;
+mod error;
 mod models;
 mod routes;
 mod state;
@@ -76,18 +77,23 @@ async fn main() -> anyhow::Result<()> {
         state_store,
     });
 
-    // One span per request. `user_id` is filled in by `auth::require_auth`,
+    // One span per request. `request_id` is filled in by `error::request_id`,
+    // `user_id` by `auth::require_auth`,
     // `span_id` by handlers that start an envelope chain in a channel.
     let trace_layer = TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
         tracing::info_span!(
             "request",
             method = %request.method(),
             uri = %request.uri(),
+            request_id = tracing::field::Empty,
             user_id = tracing::field::Empty,
             span_id = tracing::field::Empty,
         )
     });
-    let app = routes::create_router(state).layer(trace_layer);
+    // The request id is set inside the request span, which is the outer layer.
+    let app = routes::create_router(state)
+        .layer(axum::middleware::from_fn(error::request_id))
+        .layer(trace_layer);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
     tracing::info!(

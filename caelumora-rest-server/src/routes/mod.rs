@@ -1,11 +1,13 @@
 use crate::auth::{require_auth, AuthenticatedUser};
+use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
-    http::StatusCode,
     routing::{delete, get, post},
     Router,
 };
-use caelumora_model::session::SessionId;
+use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_runtime::channel::ChannelLoop;
+use caelumora_runtime::session::SessionLoop;
 use std::sync::Arc;
 
 mod channels;
@@ -17,7 +19,7 @@ pub async fn ensure_session(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
     session_id: SessionId,
-) -> Result<Arc<caelumora_runtime::session::SessionLoop>, StatusCode> {
+) -> Result<Arc<SessionLoop>, ApiError> {
     if let Some(session_loop) = state.session_manager.get_session(session_id) {
         return Ok(session_loop);
     }
@@ -31,9 +33,20 @@ pub async fn ensure_session(
         .load_session(session_id, &security_context)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to load session {}: {}", session_id, e);
-            StatusCode::NOT_FOUND
+            // Only a missing session is "not found"; a session that exists but
+            // cannot start (say, a broken component) is a server error.
+            if caelumora_runtime::error::is_not_found(&e, "session") {
+                ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id))
+            } else {
+                ApiError::internal("session_load_failed", &format!("loading session {}", session_id), &e)
+            }
         })
+}
+
+/// The channel `channel_id` of `session`, or a `404`.
+pub fn channel_of(session: &SessionLoop, channel_id: ChannelId) -> Result<Arc<ChannelLoop>, ApiError> {
+    session.channel_by_id(channel_id)
+        .ok_or_else(|| ApiError::not_found("channel_not_found", format!("Channel {} does not exist in this session", channel_id)))
 }
 
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a
