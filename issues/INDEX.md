@@ -80,6 +80,7 @@ against it, and what came out of the last attempt.
 | [13](13-approval-modes.md) | open | Approvals cannot be remembered — no "always approve" for a scope, no brave mode — so repeated prompts train the user to approve without reading. |
 | [14](14-approval-privilege.md) | open | Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist. |
 | [15](15-disallowed-tool-errors-to-llm.md) | open | A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded. |
+| [32](32-unavailable-tools-invisible-to-model.md) | open | A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed. |
 
 ## User interaction
 
