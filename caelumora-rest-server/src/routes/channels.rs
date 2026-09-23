@@ -146,7 +146,8 @@ pub async fn join_channel(
     });
 
     let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
-    Ok(Sse::new(sse_stream))
+    // The stream ends with the session token that authenticated it (issue 33).
+    Ok(Sse::new(crate::sse::bounded_by_token(&user, sse_stream)))
 }
 
 pub async fn send_message(

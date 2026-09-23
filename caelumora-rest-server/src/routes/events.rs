@@ -29,7 +29,9 @@ pub async fn global_events(
         Ok(Event::default().data(event_json))
     });
 
-    Sse::new(futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates))
+    let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
+    // The stream ends with the session token that authenticated it (issue 33).
+    Sse::new(crate::sse::bounded_by_token(&user, sse_stream))
 }
 
 /// Every session with its channels, as the sessions' events refer to them by

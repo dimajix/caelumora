@@ -13,6 +13,7 @@ mod data;
 mod error;
 mod models;
 mod routes;
+mod sse;
 mod state;
 
 use crate::auth::{Auth, TokenService};

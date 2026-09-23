@@ -1,4 +1,4 @@
-use crate::auth::{require_auth, AuthenticatedUser};
+use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
@@ -67,10 +67,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
-        .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
-        .route("/events", get(events::global_events))
         .route_layer(axum::middleware::from_fn_with_state(state.auth.clone(), require_auth))
         .with_state(state.clone());
 
-    crate::auth::router(state.auth.clone()).merge(protected)
+    // The event streams authenticate like everything else, but do not renew
+    // the session they run on - see `require_stream_auth` (issue 33).
+    let streams = Router::new()
+        .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
+        .route("/events", get(events::global_events))
+        .route_layer(axum::middleware::from_fn_with_state(state.auth.clone(), require_stream_auth))
+        .with_state(state.clone());
+
+    crate::auth::router(state.auth.clone()).merge(protected).merge(streams)
 }

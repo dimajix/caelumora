@@ -95,11 +95,18 @@ impl TokenService {
         })
     }
 
+    /// When a token issued at `now` for a login made at `auth_time` expires:
+    /// one lifetime later, or at the absolute limit of the login, whichever
+    /// comes first.
+    fn expires_at(&self, auth_time: i64, now: i64) -> i64 {
+        (now + self.lifetime).min(auth_time + self.max_session)
+    }
+
     fn issue(&self, user: UserId, auth_time: i64, now: i64) -> anyhow::Result<String> {
         let claims = Claims {
             sub: user.0,
             iat: now,
-            exp: (now + self.lifetime).min(auth_time + self.max_session),
+            exp: self.expires_at(auth_time, now),
             auth_time,
         };
         let mut header = Header::new(Algorithm::HS256);
@@ -136,7 +143,7 @@ impl TokenService {
     /// expiry for the UI to read.
     fn session_cookies(&self, user: UserId, auth_time: i64, now: i64) -> anyhow::Result<[HeaderValue; 2]> {
         let token = self.issue(user, auth_time, now)?;
-        let expires_at = (now + self.lifetime).min(auth_time + self.max_session);
+        let expires_at = self.expires_at(auth_time, now);
         let max_age = expires_at - now;
         Ok([
             self.cookie(SESSION_COOKIE, &token, max_age, true),
@@ -169,12 +176,23 @@ pub struct Auth {
 #[derive(Debug, Clone, Copy)]
 pub struct AuthenticatedUser {
     pub id: UserId,
+    /// When the session token that authenticated this request expires, as a
+    /// unix timestamp - the one this request was renewed to, if it was. A
+    /// long-running response outlives no request of its own to be checked by,
+    /// so it has to end here by itself (issue 33).
+    pub expires_at: i64,
 }
 
 impl AuthenticatedUser {
     /// The security context for actions taken on behalf of this user.
     pub fn security_context(&self) -> SecurityContext {
         SecurityContext::new(ActorId::User(self.id), Default::default(), Default::default())
+    }
+
+    /// How much of the session token is left, from now. Zero once it has
+    /// expired.
+    pub fn expires_in(&self) -> std::time::Duration {
+        std::time::Duration::from_secs((self.expires_at - Utc::now().timestamp()).max(0) as u64)
     }
 }
 
@@ -217,7 +235,23 @@ fn set_cookies(response: &mut Response, cookies: [HeaderValue; 2]) {
 /// Middleware for every route that needs a logged-in user: verifies the
 /// session cookie, renews the token when due, and puts `AuthenticatedUser`
 /// into the request. Answers `401` without a valid token.
-pub async fn require_auth(State(auth): State<Arc<Auth>>, mut request: Request, next: Next) -> Response {
+pub async fn require_auth(State(auth): State<Arc<Auth>>, request: Request, next: Next) -> Response {
+    authenticate(auth, request, next, true).await
+}
+
+/// The same for the event streams, except that it never renews (issue 33).
+///
+/// A stream ends shortly before its token expires and its client reconnects,
+/// so a renewing stream would be a session that renews itself for as long as
+/// anything holds a stream open - a tab in the background, or a client that
+/// is not a browser at all. Streams therefore consume a session rather than
+/// extend it: what keeps one alive is [`refresh`], which the web UI calls
+/// while its tab is visible (issue 31).
+pub async fn require_stream_auth(State(auth): State<Arc<Auth>>, request: Request, next: Next) -> Response {
+    authenticate(auth, request, next, false).await
+}
+
+async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: bool) -> Response {
     let token = session_token(request.headers());
     let Some(claims) = token.as_deref().and_then(|t| auth.tokens.verify(t)) else {
         return unauthorized(&auth, token.is_some());
@@ -225,10 +259,14 @@ pub async fn require_auth(State(auth): State<Arc<Auth>>, mut request: Request, n
     let user = UserId(claims.sub);
     let now = Utc::now().timestamp();
 
-    let renewed = if auth.tokens.needs_renewal(&claims, now) {
+    let mut expires_at = claims.exp;
+    let renewed = if renew && auth.tokens.needs_renewal(&claims, now) {
         match auth.users.get_user(user).await {
             Ok(Some(_)) => match auth.tokens.session_cookies(user, claims.auth_time, now) {
-                Ok(cookies) => Some(cookies),
+                Ok(cookies) => {
+                    expires_at = auth.tokens.expires_at(claims.auth_time, now);
+                    Some(cookies)
+                }
                 Err(e) => {
                     tracing::error!("Cannot renew session token for {}: {}", user, e);
                     None
@@ -249,7 +287,7 @@ pub async fn require_auth(State(auth): State<Arc<Auth>>, mut request: Request, n
     };
 
     tracing::Span::current().record("user_id", tracing::field::display(user));
-    request.extensions_mut().insert(AuthenticatedUser { id: user });
+    request.extensions_mut().insert(AuthenticatedUser { id: user, expires_at });
     let mut response = next.run(request).await;
     if let Some(cookies) = renewed {
         set_cookies(&mut response, cookies);
@@ -551,6 +589,56 @@ mod tests {
         let stranger = auth.tokens.issue(UserId::new(), old, old).unwrap();
         let response = app.oneshot(get_with_cookie("/auth/me", &stranger)).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "renewal checks the provider");
+    }
+
+    #[tokio::test]
+    async fn a_renewed_request_carries_the_new_expiry_into_the_handler() {
+        // What a stream ends at: the expiry of the token the request leaves
+        // with, not of the one it arrived with (issue 33).
+        let providers = accept_any();
+        let auth = auth(providers.clone());
+        let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let app = Router::new()
+            .route("/expires", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
+            .route_layer(axum::middleware::from_fn_with_state(auth.clone(), require_auth))
+            .with_state(auth.clone());
+
+        let expiry_of = |response: Response| async move {
+            let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+            String::from_utf8_lossy(&body).parse::<i64>().unwrap()
+        };
+
+        let now = Utc::now().timestamp();
+        let fresh = auth.tokens.issue(alice.id, now, now).unwrap();
+        let response = app.clone().oneshot(get_with_cookie("/expires", &fresh)).await.unwrap();
+        assert_eq!(expiry_of(response).await, now + 600, "the expiry of the token as it arrived");
+
+        let old = now - 400;
+        let response = app.oneshot(get_with_cookie("/expires", &auth.tokens.issue(alice.id, old, old).unwrap())).await.unwrap();
+        let expires_at = expiry_of(response).await;
+        assert!(expires_at >= now + 599, "renewal moves the expiry along: {expires_at}");
+    }
+
+    #[tokio::test]
+    async fn a_stream_request_consumes_the_session_instead_of_renewing_it() {
+        // Otherwise anything holding a stream open would keep its own session
+        // alive - including a tab nobody is looking at (issues 31, 33).
+        let providers = accept_any();
+        let auth = auth(providers.clone());
+        let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let app = Router::new()
+            .route("/stream", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
+            .route_layer(axum::middleware::from_fn_with_state(auth.clone(), require_stream_auth))
+            .with_state(auth.clone());
+
+        let old = Utc::now().timestamp() - 400;
+        let response = app.oneshot(get_with_cookie("/stream", &auth.tokens.issue(alice.id, old, old).unwrap())).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(cookie_value(&response).is_none(), "a token past half its lifetime is not renewed here");
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body).parse::<i64>().unwrap(), old + 600,
+            "the stream ends with the token it was opened with");
     }
 
     #[tokio::test]
