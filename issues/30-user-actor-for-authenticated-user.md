@@ -1,6 +1,6 @@
 # 30 — Messages come from the channel's first user actor, not from the sender
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -100,3 +100,52 @@ user, which it has.
   in: authentication works, but every message and approval is still sent
   through `ChannelLoop::user_actor()`, i.e. in the name of the channel's first
   user.
+- **2026-09-23** — Implemented. Decisions:
+  - **The actor is looked up by the user.** `ChannelLoop::user_actor()` is
+    gone; `user_actor(UserId)` finds the actor with `ActorId::User(id)`, so
+    "the first user actor" is no longer reachable from anywhere. The TUI
+    passes the id of its own user, which it had all along.
+  - **A non-participant is refused** with `403 not_a_participant` - option 1
+    of the three above. Joining on first write and an explicit join both need
+    actors to be added to a running channel, which is
+    [09](09-creating-channels.md); this issue does not wait for it. Until
+    then a channel's participants are the ones it was created with, and a
+    session is effectively single-user. Sessions created before
+    [10](10-user-authentication.md), whose user participant is some older id,
+    become read-only for everyone - deliberate, and cheaper than guessing who
+    they belonged to.
+  - **`cancel_channel` gets the same participant check.** Cancelling ends the
+    turn of every agent in the channel, so it is an action *in* the channel;
+    there is no reading reason for it.
+  - **Cancel and wakeup additionally need a permission,** `CancelChannel` and
+    `WakeChannel`, checked in `ChannelLoop` rather than in the actors: the
+    permission is about the channel, a per-actor check would have to
+    summarise N answers and could leave a channel half cancelled, and
+    `Actor::cancel`/`wakeup` also run where there is no user at all (channel
+    teardown, mentions, `WakeupRequested`) - a check there would need an
+    invented "system" context, which is how permission checks become
+    decoration. Refusals are `ChannelError::Forbidden`, which
+    `caelumora_runtime::error::is_forbidden` tells apart from a failure.
+  - **Only the deliberate wakeup is checked.** Waking because something is
+    being delivered goes through `ChannelLoop::wake_for_delivery`, which asks
+    nothing: it follows from an action that was already permitted, and a user
+    allowed to write but not to wake could otherwise not write at all. The
+    checked `wakeup` gets its first caller with `/wakeup` from
+    [28](28-user-commands.md).
+  - **The `SecurityManager` now reaches the runtime.** `RuntimeManager::new`
+    built its own `DummySecurityManager` and ignored the one the binaries
+    configure, so every check inside the runtime - including the existing
+    `CallTool` - was answered by a default nobody chose. It is a constructor
+    argument now. Nothing changes in behaviour while
+    [24](24-opa-security-manager.md) leaves `DummySecurityManager` as the only
+    implementation, but a policy can now be plugged in.
+  - Still open, as before: who may *read* a session is
+    [11](11-agent-ownership.md), and which participants may approve is
+    [14](14-approval-privilege.md) - which can now be built, because an
+    approval finally carries the person who made it.
+  - Verified against the REST server with two users: alice creates a session
+    and writes; the history shows her `sender_id` and name. bob, who may see
+    the session, gets `403 not_a_participant` for writing, approving and
+    cancelling; alice cancels successfully. A refusal by the `SecurityManager`
+    itself is covered by a unit test with a deny-all manager - live it cannot
+    be shown, because `DummySecurityManager` allows everything.

@@ -49,3 +49,7 @@ multi-participant channel where not everyone is equally trusted.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-23** — Unblocked by [30](30-user-actor-for-authenticated-user.md):
+  an approval now carries the user who made it (their own `UserActor`), and
+  approvals from non-participants are already refused. Deciding *which*
+  participants may approve is what is left.

@@ -67,6 +67,17 @@ A **Channel** is a specific communication medium within a session (e.g., a chat 
 *   Routing **Envelopes** (events) between actors.
 *   Applying a **Moderator** to control message flow and determine which actor speaks next.
 
+#### Acting in a channel
+
+Whoever writes or approves does so in their own name: `ChannelLoop::user_actor(UserId)` returns *that user's* actor, and every envelope is built by the actor itself, so sender, name and `SecurityContext` follow from it. There is deliberately no way to reach "some" user actor. Someone who is not a participant of a channel has no actor in it and is refused with `403` — until participants can be added to a running channel ([09](issues/09-creating-channels.md)), that means the participants the channel was created with (issue 30).
+
+Two things act on the channel as a whole and therefore ask the `SecurityManager` first, one decision for the whole channel rather than one per actor:
+
+*   `ChannelLoop::cancel` (`ActionType::CancelChannel`) ends the current turn of every actor — the web UI's stop button. It is not a kill: a running tool or model call finishes, the agent reflects, emits `FullResponseGenerated` so observers stop waiting, and returns to a normal state with its history intact.
+*   `ChannelLoop::wakeup` (`ActionType::WakeChannel`) is a *deliberate* wakeup, as `/wakeup` will be ([28](issues/28-user-commands.md)). Waking because something is on its way — a message being delivered, a mention, a `WakeupRequested` — goes through `wake_for_delivery` and asks nothing: it follows from an action that was already permitted, and a user allowed to write but not to wake would otherwise be unable to write.
+
+A refusal is a `ChannelError::Forbidden`, which `caelumora_runtime::error::is_forbidden` recognises so that REST answers `403` rather than `500`; like a refused tool call, it says what was refused and not which rule refused it.
+
 ### Actor and ActorId
 An **Actor** is any entity that can send and receive events in a channel.
 *   **`Actor` trait**: Defines the interface for all actors, including an `async fn run` method.
@@ -136,7 +147,9 @@ Security in Caelumora is handled through a combination of context and explicit c
 
 *   **`SecurityContext`**: Carries information about the initiator and sender of an event, along with the session and channel context.
 *   **`SecurityManager`**: A trait responsible for authorizing actions based on the `SecurityContext`.
-*   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`) used by the `SecurityManager` for policy decisions.
+*   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`, `CancelChannel`) used by the `SecurityManager` for policy decisions.
+
+One `SecurityManager` is built per process and handed to everything that checks: the stores, the `SecretManager` and the `RuntimeManager`, from which the `ToolExecutor` and every `ChannelLoop` take it. It is a constructor argument rather than something built where it is needed, so that a deployment's policy cannot be silently replaced by a default in one corner of the runtime. `DummySecurityManager`, which allows everything, is still the only implementation — [24](issues/24-opa-security-manager.md).
 
 ### Authentication in the REST server
 

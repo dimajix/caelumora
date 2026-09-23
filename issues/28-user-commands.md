@@ -144,3 +144,8 @@ exactly the kind of action an audit trail should contain.
 - **2026-09-21** — Issue created. Commands modelled as components via a
   `CommandProvider` analogous to `ToolProvider`, with separate execute and show
   permissions; `/help` first, `/wakeup` and `/compact` as the next candidates.
+- **2026-09-23** — [30](30-user-actor-for-authenticated-user.md) added
+  `ActionType::WakeChannel`, checked in `ChannelLoop::wakeup`. `/wakeup` is
+  its first caller; until then the permission exists but nothing asks for it.
+  A command's own permissions ("execute command", "show command") are still
+  this issue's to define.
