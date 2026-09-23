@@ -1,6 +1,6 @@
 # 33 — An open event stream outlives the token that authenticated it
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access management
 
 ## The problem
@@ -65,4 +65,44 @@ that carries the actual conversation.
 - **2026-09-22** — [34](34-snapshot-on-stream-connect.md) is done: a
   reconnecting client can now ask for a snapshot and lose nothing, so the
   prerequisite for ending streams at a token's expiry is in place.
-
+- **2026-09-23** — Implemented. Decisions:
+  - **A stream ends five seconds before its token does.** `require_auth`
+    hands the expiry of the token the request leaves with - the renewed one,
+    if it was renewed - to the handler as `AuthenticatedUser::expires_at`,
+    and `sse::bounded_by_token` ends the response there. The margin keeps the
+    reconnect from racing the expiry it was caused by. A token with less than
+    twice the margin left keeps its stream to the very end instead: taking
+    the margin off would leave a stream so short that the client would
+    reconnect into another one just as short.
+  - **The end is announced** by a named `expired` event, so a client can
+    reconnect at once instead of waiting out its retry interval and freezing
+    its output meanwhile. A client that does not know the event sees the
+    stream simply end, as it would anyway.
+  - **Every stream starts with `retry: 3000`,** the SSE field that sets how
+    long a client waits after an *unexpected* break. Without it that delay is
+    whatever the browser defaults to (3 to 5 seconds); with it, it is the
+    server's decision and the same everywhere.
+  - **The user is not re-checked inside a stream.** Ending at `exp` bounds a
+    removed user by one token lifetime, the same as everywhere else, and the
+    reconnect asks the `UserManager` again. A periodic check would put a
+    recurring backend call on every open stream, which
+    [27](27-ldap-user-backend.md) would feel.
+  - **Streams do not renew the session.** Found while verifying: the
+    reconnect is an ordinary request, so `require_auth` renewed on it, and a
+    background tab would have kept itself logged in through its `EventSource`
+    alone - see the correction in [31](31-session-renewal-from-ui.md). The
+    two stream routes now use `require_stream_auth`, which verifies the token
+    but never renews it.
+  - **Events during the gap** are not lost: the web UI reconnects with
+    `?snapshot=true` from [34](34-snapshot-on-stream-connect.md) and drops
+    duplicates by message id. `Last-Event-ID` is therefore not needed.
+  - **The web UI** no longer closes its `EventSource` on every error: while
+    the browser is reconnecting by itself (`readyState === CONNECTING`) it
+    leaves it alone, and only a stream that is really closed triggers the
+    session check that leads to the login page.
+  - Verified against the REST server with a 20-second token lifetime: a
+    stream on a fresh token ran 15 seconds and ended with `expired`, a
+    reconnect with 5 seconds left ran those 5 seconds, the next one answered
+    `401`, and no stream response ever set a cookie. After a `POST
+    /auth/refresh` a stream ran its full 15 seconds again. The UI's
+    reconnect was not exercised in a browser.

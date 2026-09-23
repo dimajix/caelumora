@@ -181,3 +181,11 @@ without it treats every authenticated user as the same channel participant.
   still unbounded is an open event stream, which is authenticated only when
   it connects - [33](33-sse-outlives-its-token.md).
 
+- **2026-09-23** — The definition of idle held up, but only after
+  [33](33-sse-outlives-its-token.md) closed a hole it had opened: streams now
+  end with their token and reconnect, and a reconnect is a request like any
+  other, so it would have renewed the session - a tab in the background would
+  have kept itself logged in without anyone looking at it. Event streams
+  therefore authenticate through `require_stream_auth`, which verifies the
+  token but never renews. "Alive while a visible tab renews it" stands, and
+  now holds for streams as well.

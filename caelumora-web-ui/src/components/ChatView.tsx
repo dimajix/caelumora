@@ -97,12 +97,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     : [];
 
   useEffect(() => {
-    // The stream itself delivers the state it starts from, so there is no
-    // window between loading the history and subscribing in which a message
-    // could be missed (issue 34).
-    const eventSource = api.getEventSource(sessionId, channelId, {snapshot: true});
+    let stopped = false;
+    let current: EventSource | null = null;
 
-    eventSource.addEventListener('snapshot', (event) => {
+    const handleSnapshot = (event: MessageEvent) => {
       try {
         const snapshot: ChannelSnapshot = JSON.parse(event.data);
         setMessages(snapshot.messages);
@@ -114,9 +112,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       } catch (e) {
         reportError('Failed to read the channel state', e);
       }
-    });
+    };
 
-    eventSource.onmessage = (event) => {
+    const handleMessage = (event: MessageEvent) => {
       try {
         const envelope: Envelope = JSON.parse(event.data);
         const actorEvent = envelope.event;
@@ -187,16 +185,41 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       }
     };
 
-    eventSource.onerror = (e) => {
-      console.error('SSE Error', e);
-      eventSource.close();
-      // EventSource does not expose the status code; if the session has
-      // expired, this request's 401 brings up the login page.
-      void api.me();
+    // The stream itself delivers the state it starts from, so there is no
+    // window between loading the history and subscribing in which a message
+    // could be missed (issue 34).
+    const connect = () => {
+      const eventSource = api.getEventSource(sessionId, channelId, {snapshot: true});
+      current = eventSource;
+      eventSource.addEventListener('snapshot', handleSnapshot);
+      eventSource.onmessage = handleMessage;
+
+      // The server ends a stream shortly before the session token that
+      // authenticated it expires (issue 33). Reconnecting at once keeps the
+      // gap invisible: the new request carries the cookie the keep-alive has
+      // renewed, and its snapshot restores what happened in between. Waiting
+      // for the browser's own retry would freeze the output for seconds.
+      eventSource.addEventListener('expired', () => {
+        eventSource.close();
+        if (!stopped) connect();
+      });
+
+      eventSource.onerror = (e) => {
+        // A connection that broke unexpectedly: the browser retries by
+        // itself, so leave it alone as long as it is doing so.
+        if (eventSource.readyState === EventSource.CONNECTING) return;
+        console.error('SSE Error', e);
+        eventSource.close();
+        // EventSource does not expose the status code; if the session has
+        // expired, this request's 401 brings up the login page.
+        void api.me();
+      };
     };
 
+    connect();
     return () => {
-      eventSource.close();
+      stopped = true;
+      current?.close();
     };
   }, [sessionId, channelId]);
 

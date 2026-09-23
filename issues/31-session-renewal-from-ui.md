@@ -121,3 +121,15 @@ and can be done separately.
     any, and past half the lifetime it sets both again with a later expiry.
     The UI's timer was not exercised in a browser.
 
+- **2026-09-23** — Correction from [33](33-sse-outlives-its-token.md). Once a
+  stream ends at its token's expiry, the reconnect it causes is an ordinary
+  request, and `require_auth` renewed the session on it - measured against a
+  server with a 20-second lifetime: the reconnecting stream got fresh cookies
+  every time. A tab in the background would thus have renewed itself
+  indefinitely through its `EventSource` alone, although its own timer was
+  paused, which is exactly what "idle means no visible tab" was chosen to
+  prevent. The event streams now go through `require_stream_auth`, which
+  authenticates but never renews: a stream consumes a session, and what
+  extends one is the `POST /auth/refresh` of a visible tab. The decision
+  above is unchanged; only the server now enforces it instead of relying on
+  the client.
