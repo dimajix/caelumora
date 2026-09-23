@@ -30,6 +30,11 @@ pub enum ActionType<'a> {
     UpdateSession(&'a Session),
     DeleteSession(SessionId),
     ListSessions,
+    /// Ending the current turn of every agent in a channel.
+    CancelChannel(ChannelId),
+    /// Waking a channel's sleeping agents deliberately, as opposed to waking
+    /// them by sending them something.
+    WakeChannel(ChannelId),
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
     GetComponent(&'a str),

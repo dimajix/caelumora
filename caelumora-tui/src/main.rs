@@ -188,9 +188,9 @@ fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, S
     rendered
 }
 
-async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
-    let user_actor = channel.user_actor()
-        .ok_or_else(|| anyhow::anyhow!("Cannot find user actor in main channel"))?;
+async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()> {
+    let user_actor = channel.user_actor(user)
+        .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the main channel"))?;
 
     let mut receiver = user_actor.subscribe();
     let mut input_rx = spawn_rustyline_input();
@@ -265,7 +265,7 @@ async fn run_repl(channel: Arc<ChannelLoop>) -> anyhow::Result<()> {
                             }
                             continue;
                         }
-                        let _ = channel.wakeup().await;
+                        let _ = channel.wake_for_delivery().await;
                         let span_id = user_actor.send_message(input.to_string()).await?;
                         tracing::debug!(span_id = %span_id, "Message sent");
                     }
@@ -347,6 +347,7 @@ async fn main() -> anyhow::Result<()> {
         state_store.clone(),
         entity_store.clone(),
         secret_manager,
+        security_manager.clone(),
     )?);
     let template = setup_templates(&entity_store).await?;
 
@@ -382,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Cannot find main channel in session"))?;
 
     // Start the interactive loop
-    run_repl(channel).await?;
+    run_repl(channel, owner).await?;
     session_manager.stop_session(session_id);
 
     Ok(())

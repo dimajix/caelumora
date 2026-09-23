@@ -249,7 +249,7 @@ mod tests {
     async fn user_actor() -> UserActor {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = RuntimeManager::new(store.clone(), store, secret_manager).unwrap();
+        let runtime = RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new())).unwrap();
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
         let user = User {
             id: UserId::new(),

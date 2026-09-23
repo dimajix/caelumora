@@ -357,7 +357,7 @@ mod tests {
     async fn test_approval_actor_any_strategy() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new())).unwrap(),
         );
 
         let agent_id = AgentId::new();
@@ -456,7 +456,7 @@ mod tests {
     async fn test_approval_actor_dynamic_membership() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new())).unwrap(),
         );
 
         let session_id = SessionId::new();
@@ -561,7 +561,7 @@ mod tests {
     async fn test_approval_actor_leave_decision() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new())).unwrap(),
         );
 
         let session_id = SessionId::new();

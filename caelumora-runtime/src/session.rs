@@ -76,9 +76,9 @@ impl SessionLoop {
         None
     }
 
-    pub async fn cancel_channel(&self, channel_id: ChannelId) -> Result<()> {
+    pub async fn cancel_channel(&self, channel_id: ChannelId, context: &SecurityContext) -> Result<()> {
         if let Some(c) = self.channel_by_id(channel_id) {
-            c.cancel().await?;
+            c.cancel(context).await?;
             Ok(())
         } else {
             Err(anyhow!("Channel not found"))
@@ -256,7 +256,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager).unwrap())
+        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new())).unwrap())
     }
 
     fn make_session(name: &str) -> Session {

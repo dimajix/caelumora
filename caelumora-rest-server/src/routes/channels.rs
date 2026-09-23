@@ -161,8 +161,8 @@ pub async fn send_message(
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     
     let channel = channel_of(&session, channel_id)?;
-    let user_actor = user_actor_of(&channel)?;
-    channel.wakeup().await
+    let user_actor = user_actor_of(&channel, &user)?;
+    channel.wake_for_delivery().await
         .map_err(|e| ApiError::internal("channel_wakeup_failed", "waking the channel's agents", &e))?;
     let span_id = user_actor.send_message(payload.content).await
         .map_err(|e| ApiError::internal("message_not_sent", "sending the message", &e))?;
@@ -170,10 +170,16 @@ pub async fn send_message(
     Ok(StatusCode::OK)
 }
 
-/// The user actor through which the REST API acts in `channel`.
-fn user_actor_of(channel: &ChannelLoop) -> Result<Arc<UserActor>, ApiError> {
-    channel.user_actor()
-        .ok_or_else(|| ApiError::conflict("no_user_participant", format!("Channel {} has no user participant to act through", channel.id())))
+/// The actor the authenticated user acts through in `channel` (issue 30).
+///
+/// Whoever writes or approves does so in their own name, so someone who is
+/// not a participant of the channel has no actor here and is refused. Until
+/// participants can be added to a running channel ([09](issues/09-creating-channels.md)),
+/// that means the participants a channel was created with.
+fn user_actor_of(channel: &ChannelLoop, user: &AuthenticatedUser) -> Result<Arc<UserActor>, ApiError> {
+    channel.user_actor(user.id).ok_or_else(|| {
+        ApiError::forbidden("not_a_participant", format!("You are not a participant of channel {}", channel.id()))
+    })
 }
 
 pub async fn cancel_channel(
@@ -185,10 +191,24 @@ pub async fn cancel_channel(
     let channel_id = ChannelId(cid);
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    channel_of(&session, channel_id)?;
-    session.cancel_channel(channel_id).await
-        .map_err(|e| ApiError::internal("cancel_failed", "cancelling the channel", &e))?;
+    // Cancelling ends the turn of every agent in the channel, so it is an
+    // action in the channel like writing into it - participants only.
+    let channel = channel_of(&session, channel_id)?;
+    user_actor_of(&channel, &user)?;
+    session.cancel_channel(channel_id, &user.security_context()).await
+        .map_err(cancel_error)?;
     Ok(StatusCode::OK)
+}
+
+/// A refused cancel is an answer, not a failure: `403` with what `user_message`
+/// discloses, which for a `ChannelError` is the refusal itself.
+fn cancel_error(error: anyhow::Error) -> ApiError {
+    if caelumora_runtime::error::is_forbidden(&error) {
+        let detail = caelumora_runtime::error::user_message(&error)
+            .unwrap_or_else(|| "Cancelling this channel is not permitted".to_string());
+        return ApiError::forbidden("cancel_forbidden", detail);
+    }
+    ApiError::internal("cancel_failed", "cancelling the channel", &error)
 }
 
 pub async fn send_approval(
@@ -202,7 +222,7 @@ pub async fn send_approval(
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     let channel = channel_of(&session, channel_id)?;
-    let user_actor = user_actor_of(&channel)?;
+    let user_actor = user_actor_of(&channel, &user)?;
     let response = ApprovalResponse {
         id: ApprovalId(payload.approval_id),
         agent_id: AgentId(payload.agent_id),

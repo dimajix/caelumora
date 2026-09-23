@@ -78,6 +78,11 @@ impl ApiError {
         Self::new(StatusCode::CONFLICT, code, detail)
     }
 
+    /// The caller is logged in, but may not do this.
+    pub fn forbidden(code: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, code, detail)
+    }
+
     /// A server error caused by `error` while doing `action` (e.g. "loading
     /// the session"). Logs the full error chain; the response discloses only
     /// what `user_message` allows.

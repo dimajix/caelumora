@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Something that may not be done in a channel.
+#[derive(Debug, thiserror::Error)]
+pub enum ChannelError {
+    /// The `SecurityManager` refused the action. Deliberately silent about
+    /// which rule refused it and about what the caller would have to be
+    /// instead - like a refused tool call (issue 15).
+    #[error("{action} channel {channel} is not permitted")]
+    Forbidden { action: &'static str, channel: ChannelId },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
     NameChanged(String),

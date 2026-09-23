@@ -12,7 +12,7 @@ use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{DummySecurityManager, SecurityManager};
+use caelumora_model::security::SecurityManager;
 use caelumora_model::store::{EntityStore, StateStore};
 use std::sync::Arc;
 
@@ -71,18 +71,21 @@ impl ActorRuntime {
 }
 
 impl RuntimeManager {
+    /// The runtime everything in a process shares. `security_manager` is the
+    /// one the whole process was configured with: it decides tool calls and
+    /// what may be done to a channel, so it must be the same instance the
+    /// stores were built with, not a second one made up here.
     pub fn new(
         state_store: Arc<dyn StateStore>,
         entity_store: Arc<dyn EntityStore>,
         secret_manager: Arc<SecretManager>,
+        security_manager: Arc<dyn SecurityManager>,
     ) -> Result<Self> {
         let mut component_registry = ComponentRegistry::new(entity_store.clone());
         history::register(&mut component_registry);
         context::register(&mut component_registry);
         tool::register(&mut component_registry);
         mcp::register(&mut component_registry);
-
-        let security_manager = Arc::new(DummySecurityManager::new());
 
         let event_bus = Arc::new(EventBus::new());
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));

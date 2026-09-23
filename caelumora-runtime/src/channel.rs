@@ -9,12 +9,14 @@ use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, Participant};
+use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, Participant};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
+use caelumora_model::security::{ActionType, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::user::UserId;
 use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
 use std::collections::HashMap;
@@ -134,19 +136,54 @@ impl ChannelLoop {
         self.channel.update_name(new_name).await;
     }
 
-    pub async fn cancel(&self) -> Result<()> {
+    /// Ends the current turn of every actor in the channel, on behalf of
+    /// `context`'s initiator.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `CancelChannel`; the channel is then untouched. Deliberately one
+    /// decision for the whole channel: a per-actor one could leave half of it
+    /// cancelled (issue 30).
+    pub async fn cancel(&self, context: &SecurityContext) -> Result<()> {
+        self.check(context, ActionType::CancelChannel(self.id), "cancelling").await?;
         self.processing_state.store(ActorState::Cancelling.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.cancel().await?;
         }
         Ok(())
     }
-    pub async fn wakeup(&self) -> Result<()> {
+
+    /// Wakes the channel's sleeping actors because someone asked for it -
+    /// a `/wakeup` and nothing else.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `WakeChannel`.
+    pub async fn wakeup(&self, context: &SecurityContext) -> Result<()> {
+        self.check(context, ActionType::WakeChannel(self.id), "waking the agents of").await?;
+        self.wake_for_delivery().await
+    }
+
+    /// Wakes the channel's actors because something is on its way to them:
+    /// a message, a mention, a `WakeupRequested`. That is the consequence of
+    /// an action already permitted, so it carries no permission of its own -
+    /// otherwise a user allowed to write but not to wake could not write.
+    pub async fn wake_for_delivery(&self) -> Result<()> {
         self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.wakeup().await?;
         }
         Ok(())
+    }
+
+    /// Asks the `SecurityManager` about `action`, turning a refusal into a
+    /// `ChannelError::Forbidden` that names what was refused, not why.
+    async fn check(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
+        if self.runtime_manager.security_manager().check(context, action).await {
+            return Ok(());
+        }
+        info!("Refused {} channel {} for {}", what, self.id, context.initiator_id);
+        Err(ChannelError::Forbidden { action: what, channel: self.id }.into())
     }
 
     pub fn actor_names(&self) -> Vec<String> {
@@ -187,11 +224,16 @@ impl ChannelLoop {
         self.actors.values().find(|c| c.name() == name).map(|c| c.clone())
     }
 
-    pub fn user_actor(&self) -> Option<Arc<UserActor>> {
-        self.actors.values().find_map(|actor| {
-            let any_actor: Arc<dyn Any + Send + Sync> = actor.clone();
-            Arc::downcast::<UserActor>(any_actor).ok()
-        })
+    /// The actor `user` acts through in this channel, or `None` if they are
+    /// not a participant of it.
+    ///
+    /// Every envelope is built by the actor itself, so this is what decides
+    /// whose name a message or an approval carries: there is deliberately no
+    /// way to reach "some" user actor (issue 30).
+    pub fn user_actor(&self, user: UserId) -> Option<Arc<UserActor>> {
+        let actor = self.actor_by_id(ActorId::User(user))?;
+        let any_actor: Arc<dyn Any + Send + Sync> = actor;
+        Arc::downcast::<UserActor>(any_actor).ok()
     }
 
     async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
@@ -346,7 +388,7 @@ impl ChannelLoop {
 
     async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
         if matches!(event.event, ActorEvent::WakeupRequested) {
-            let _ = self.wakeup().await;
+            let _ = self.wake_for_delivery().await;
         }
         self.wake_mentioned(&event).await;
 
@@ -439,5 +481,89 @@ impl ChannelLoop {
         let mut recorder = self.recorder.lock().await;
         recorder.record_receive(&event).await;
         drop(recorder);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::{DummySecurityManager, SecurityAttributes, SecurityManager};
+    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::user::User;
+
+    /// Refuses everything, to see that a refusal reaches the caller.
+    #[derive(Debug)]
+    struct DenyAll;
+
+    #[async_trait::async_trait]
+    impl SecurityManager for DenyAll {
+        async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
+            false
+        }
+    }
+
+    fn user(username: &str) -> User {
+        User {
+            id: UserId::new(),
+            username: username.to_string(),
+            email: String::new(),
+            roles: Vec::new(),
+            security: SecurityContext::default(),
+        }
+    }
+
+    async fn channel_with(participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> ChannelLoop {
+        let store = Arc::new(MemoryStore::new());
+        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security).unwrap());
+        let channel = Channel::new(
+            SessionId::new(),
+            "main".to_string(),
+            "broadcast".to_string(),
+            participants,
+            SecurityAttributes::default(),
+        );
+        ChannelLoop::new(channel, runtime).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn every_user_has_their_own_actor_and_a_stranger_has_none() {
+        let alice = user("alice");
+        let bob = user("bob");
+        let channel = channel_with(
+            vec![Participant::User(alice.clone()), Participant::User(bob.clone())],
+            Arc::new(DummySecurityManager::new()),
+        ).await;
+
+        for participant in [&alice, &bob] {
+            let actor = channel.user_actor(participant.id).expect("a participant has an actor");
+            assert_eq!(actor.id(), ActorId::User(participant.id));
+            assert_eq!(actor.name(), participant.username, "the actor writes in this user's name");
+        }
+        assert!(channel.user_actor(UserId::new()).is_none(), "someone who is not a participant has no actor");
+    }
+
+    #[tokio::test]
+    async fn cancelling_and_waking_deliberately_ask_the_security_manager() {
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let participants = vec![Participant::User(alice)];
+
+        let refused = channel_with(participants.clone(), Arc::new(DenyAll)).await;
+        for error in [
+            refused.cancel(&context).await.expect_err("cancelling is refused"),
+            refused.wakeup(&context).await.expect_err("waking is refused"),
+        ] {
+            assert!(crate::error::is_forbidden(&error), "the caller can tell a refusal from a failure: {error}");
+            assert!(!error.to_string().contains("DenyAll"), "a refusal does not disclose the rule: {error}");
+        }
+        // Waking because something is on its way is not a wakeup of its own:
+        // it follows from an action that was permitted.
+        refused.wake_for_delivery().await.expect("delivering does not ask");
+
+        let allowed = channel_with(participants, Arc::new(DummySecurityManager::new())).await;
+        allowed.cancel(&context).await.expect("permitted");
+        allowed.wakeup(&context).await.expect("permitted");
     }
 }

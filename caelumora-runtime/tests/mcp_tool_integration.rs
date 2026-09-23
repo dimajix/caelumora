@@ -69,7 +69,7 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 async fn build_container(url: &str) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager).unwrap();
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new())).unwrap();
     let actor_runtime = runtime_manager.new_actor_runtime();
 
     let config = ComponentConfig {
@@ -141,7 +141,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager).unwrap();
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new())).unwrap();
     let actor_runtime = runtime_manager.new_actor_runtime();
 
     let ref_config = ComponentConfig {
