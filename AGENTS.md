@@ -106,6 +106,19 @@ an obvious approach was already rejected.
 6.  **Refactor**: Ensure the code is clean and well-documented.
 7.  **Record**: If the change resolves or advances an issue, update its status in *both* `issues/INDEX.md` and the issue file, and append a dated entry under `## History`. If it uncovered something new, open an issue for it rather than leaving it in a comment.
 
+### Architecture decisions
+Architecture questions are discussed before they are implemented: where a
+method lives, which object owns a responsibility, how context reaches the
+code that needs it, new types or layers. Lay out the options with their
+trade-offs, give a recommendation, and wait for the decision. Proposals from
+the maintainer are to be assessed honestly, not just accepted.
+
+Prefer the clean structural solution over a pragmatic shortcut, even when it
+touches more code — and say what it costs. Glue code that feels awkward (one
+object making another act on its behalf, a parameter that only works around
+missing ownership) is a sign that something sits on the wrong object; raise
+it rather than building around it.
+
 ### Branches
 Until further notice, work and commit directly on `main`. Do not create
 feature branches unless asked to.
