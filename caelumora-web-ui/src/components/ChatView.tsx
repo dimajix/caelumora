@@ -643,7 +643,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 onBlur={() => setDismissedMention(suggestionStart)}
                 onFocus={() => setDismissedMention(null)}
                 placeholder="Type your message... (@ to mention, / for commands)"
-                disabled={isSending}
+                // Read-only rather than disabled while sending: a disabled
+                // field loses the focus, and the user would have to click
+                // back into it for the next message.
+                readOnly={isSending}
+                aria-busy={isSending}
                 role="combobox"
                 aria-expanded={suggestions.length > 0}
                 aria-autocomplete="list"
