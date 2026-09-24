@@ -119,6 +119,15 @@ object making another act on its behalf, a parameter that only works around
 missing ownership) is a sign that something sits on the wrong object; raise
 it rather than building around it.
 
+Solve problems along the patterns the codebase already has before inventing
+new ones: a new capability that resembles an existing one is built the same
+way (commands like tools: a `…Provider` component facet, an `…Executor` that
+receives ready providers and checks permissions). When a proposal adds a
+second implementation of something that exists, look for differences between
+the two that have no reason — naming, construction, error handling — and
+propose aligning them, in whichever direction is the better one. A deliberate
+difference is fine, but say why it exists.
+
 ### Branches
 Until further notice, work and commit directly on `main`. Do not create
 feature branches unless asked to.
