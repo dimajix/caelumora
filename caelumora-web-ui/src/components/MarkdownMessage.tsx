@@ -78,7 +78,7 @@ export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content, class
         return (
           <span
             className={cn(
-              'rounded px-1 font-semibold no-underline',
+              'rounded-sm px-1 font-semibold no-underline',
               invert
                 ? 'bg-white/20 text-white'
                 : 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200'
@@ -102,7 +102,7 @@ export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content, class
           ? 'prose-pre:bg-black/20 prose-pre:border prose-pre:border-white/20'
           : 'prose-pre:bg-gray-100 dark:prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700',
         'prose-code:before:content-none prose-code:after:content-none',
-        'prose-a:break-words break-words',
+        'prose-a:wrap-break-word wrap-break-word',
         className
       )}
     >

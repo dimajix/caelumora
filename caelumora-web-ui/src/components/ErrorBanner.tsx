@@ -20,14 +20,14 @@ export const ErrorBanner: React.FC<ErrorBannerProps> = ({ errors, onDismiss }) =
         >
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="break-words">{error.message}</div>
+            <div className="wrap-break-word">{error.message}</div>
             {error.requestId && (
               <div className="mt-1 text-[10px] font-mono opacity-60">request_id {error.requestId}</div>
             )}
           </div>
           <button
             onClick={() => onDismiss(error.id)}
-            className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900"
+            className="p-0.5 rounded-sm hover:bg-red-100 dark:hover:bg-red-900"
             title="Dismiss"
           >
             <X size={14} />

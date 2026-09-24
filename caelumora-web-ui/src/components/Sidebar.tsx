@@ -181,14 +181,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   className="flex-1 flex items-center p-2 truncate"
                 >
                   {expandedSessions[session.id] ? (
-                    <ChevronDown size={16} className="mr-2 flex-shrink-0" />
+                    <ChevronDown size={16} className="mr-2 shrink-0" />
                   ) : (
-                    <ChevronRight size={16} className="mr-2 flex-shrink-0" />
+                    <ChevronRight size={16} className="mr-2 shrink-0" />
                   )}
                   {editingSessionId === session.id ? (
                     <input
                       autoFocus
-                      className="flex-1 bg-gray-700 text-white px-1 rounded outline-none border border-blue-500 min-w-0"
+                      className="flex-1 bg-gray-700 text-white px-1 rounded-sm outline-hidden border border-blue-500 min-w-0"
                       value={editingName}
                       onChange={(e) => setEditingName(e.target.value)}
                       onBlur={() => handleNameSave(session.id)}

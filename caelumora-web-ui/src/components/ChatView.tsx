@@ -378,7 +378,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 <AlertTriangle size={14} />
                 {msg.sender_name ? `${msg.sender_name} could not answer` : 'The turn failed'}
               </div>
-              <div className="break-words">{msg.content}</div>
+              <div className="wrap-break-word">{msg.content}</div>
               {msg.span_id && (
                 <div className="mt-1 text-[10px] font-mono opacity-60">span_id {msg.span_id}</div>
               )}
@@ -387,7 +387,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             <div
               key={idx}
               className={cn(
-                "max-w-[80%] p-3 rounded-lg shadow-sm",
+                "max-w-[80%] p-3 rounded-lg shadow-xs",
                 msg.role === 'User' 
                   ? "ml-auto bg-blue-600 text-white rounded-br-none" 
                   : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600"
@@ -410,7 +410,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                   {msg.tool_calls.map((call, cidx) => {
                     const result = msg.tool_results?.find(r => r.id === call.id);
                     return (
-                      <div key={cidx} className="bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600 overflow-hidden">
+                      <div key={cidx} className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
                         <div className="bg-gray-100 dark:bg-gray-900 px-2 py-1 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
                           <div className="flex items-center gap-2 text-xs font-mono">
                             <Wrench size={12} className="text-blue-500" />
@@ -438,7 +438,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                            {result && (
                              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                                <div className="text-[10px] uppercase opacity-50 mb-1">Result</div>
-                               <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded border border-gray-100 dark:border-gray-900">
+                               <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">
                                  {toolResultText(result)}
                                </pre>
                              </div>
@@ -452,7 +452,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             </div>
           ))}
           {(isGenerating || streamingMessage) && (
-            <div className="max-w-[80%] p-3 rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
+            <div className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
               <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
                 <span>{streamingSender || 'Assistant'}</span>
                 {isGenerating ? (
@@ -477,12 +477,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               Tool Execution Approval Required
             </h4>
             {pendingApprovals.map(approval => (
-              <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-sm p-4">
+              <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-xs p-4">
                 <div className="flex items-center justify-between mb-2">
                    <div className="text-xs font-mono font-bold text-gray-500">{approval.tool_call.function_name}</div>
                    <div className="text-[10px] text-gray-400">ID: {approval.id}</div>
                 </div>
-                <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded mb-4 overflow-x-auto">
+                <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
                   {formatArguments(approval.tool_call.arguments)}
                 </pre>
                 <div className="flex gap-2">
@@ -548,7 +548,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 role="combobox"
                 aria-expanded={suggestions.length > 0}
                 aria-autocomplete="list"
-                className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-transparent dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-transparent dark:text-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <button
