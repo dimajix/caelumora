@@ -149,7 +149,8 @@ impl ChannelLoop {
     /// decision for the whole channel: a per-actor one could leave half of it
     /// cancelled (issue 30).
     pub async fn cancel(&self, context: &SecurityContext) -> Result<()> {
-        self.check(context, ActionType::CancelChannel(self.id), "cancelling").await?;
+        let channel = self.channel.load();
+        self.check(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
         self.processing_state.store(ActorState::Cancelling.into(), Ordering::SeqCst);
         for actor in self.actors.values() {
             actor.cancel().await?;
@@ -165,7 +166,8 @@ impl ChannelLoop {
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
     /// `WakeChannel`.
     pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
-        self.check(context, ActionType::WakeChannel(self.id), "waking the agents of").await?;
+        let channel = self.channel.load();
+        self.check(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let asleep = self.actors.values()
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name())
@@ -181,7 +183,8 @@ impl ChannelLoop {
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
     /// `WakeChannel`; an error if `actor` is not in this channel.
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
-        self.check(context, ActionType::WakeChannel(self.id), "waking the agents of").await?;
+        let channel = self.channel.load();
+        self.check(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let actor = self.actors.get(&actor)
             .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
         let was_asleep = actor.state() == ActorState::Sleeping;

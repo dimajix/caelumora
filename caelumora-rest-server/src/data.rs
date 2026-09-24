@@ -19,9 +19,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     let ctx = SecurityContext::default();
 
     // 1. Ensure user exists
-    let user = if let Ok(u) = store.find_user_by_name(&ctx, username).await {
-        u
-    } else {
+    if store.find_user_by_name(&ctx, username).await.is_err() {
         let user = User {
                 id: UserId(Uuid::new_v4()),
                 username: username.to_string(),
@@ -30,8 +28,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 security: SecurityContext::default(),
             };
         store.create_user(&ctx, &user).await?;
-        user
-    };
+    }
 
     // 2. Ensure personalities exist
     let jonathan = if let Ok(p) = store.find_personality_by_name(&ctx, "jonathan-assistant", &Scope::GlobalScope).await {
@@ -65,7 +62,6 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             metadata: Metadata {
                 name: "simple-session".to_string(),
                 scope: Scope::GlobalScope,
-                owner: user.id,
                 description: "Simple user+assistant session".to_string(),
             },
             scope: ScopeTemplate::SessionScope,
@@ -86,6 +82,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 ],
             }],
             commands: Default::default(),
+            security_attributes: Default::default(),
         };
         store.put_session_template(&ctx, &template_a).await?;
     }
@@ -96,7 +93,6 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             metadata: Metadata {
                 name: "sassy-session".to_string(),
                 scope: Scope::GlobalScope,
-                owner: user.id,
                 description: "Sassy user+assistant session".to_string(),
             },
             scope: ScopeTemplate::SessionScope,
@@ -123,6 +119,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 ],
             }],
             commands: Default::default(),
+            security_attributes: Default::default(),
         };
         store.put_session_template(&ctx, &template_b).await?;
     }
@@ -139,6 +136,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec![],
         tags: vec![STAGE_PERCEIVE.to_string()],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
         id: "context".to_string(),
@@ -147,6 +145,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec!["system-prompt".to_string()],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
         id: "context-appender".to_string(),
@@ -155,6 +154,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec![],
         tags: vec![STAGE_PERCEIVE.to_string()],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
         id: "system-prompt".to_string(),
@@ -163,6 +163,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec![],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
         id: "create-plan-tool".to_string(),
@@ -171,6 +172,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec![],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
         id: "calculator-tool".to_string(),
@@ -179,6 +181,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec![],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
         id: "stop-tool".to_string(),
@@ -187,6 +190,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         deps: vec![],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
     });
 
     Personality {
@@ -194,9 +198,9 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         metadata: Metadata {
             name: name.to_string(),
             scope: Scope::GlobalScope,
-            owner: UserId::default(),
             description: description.to_string(),
         },
         components,
+        security_attributes: Default::default(),
     }
 }

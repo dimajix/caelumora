@@ -8,10 +8,13 @@ use crate::template::{SessionTemplate, SessionTemplateId};
 use async_trait::async_trait;
 use tracing::info;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use crate::security::{ActionType, DummySecurityManager, SecurityManager};
+use crate::store_impl::access::Access;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MemoryStore {
+    security_manager: Arc<dyn SecurityManager>,
     personalities: RwLock<HashMap<PersonalityId, Personality>>,
     session_templates: RwLock<HashMap<String, SessionTemplate>>,
     agents: RwLock<HashMap<AgentId, Agent>>,
@@ -24,10 +27,38 @@ pub struct MemoryStore {
     components: RwLock<HashMap<String, ComponentDescriptor>>,
 }
 
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self::with_security_manager(Arc::new(DummySecurityManager::new()))
+    }
+}
+
 impl MemoryStore {
+    /// A store that permits everything - for tests and throwaway setups.
     pub fn new() -> Self {
-        info!("Creating memory store");
         Self::default()
+    }
+
+    /// A store that asks `security_manager` about every access to an entity.
+    pub fn with_security_manager(security_manager: Arc<dyn SecurityManager>) -> Self {
+        info!("Creating memory store");
+        Self {
+            security_manager,
+            personalities: Default::default(),
+            session_templates: Default::default(),
+            agents: Default::default(),
+            sessions: Default::default(),
+            users: Default::default(),
+            agent_states: Default::default(),
+            agent_channel_states: Default::default(),
+            session_states: Default::default(),
+            channel_states: Default::default(),
+            components: Default::default(),
+        }
+    }
+
+    fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
+        Access::new(self.security_manager.as_ref(), ctx)
     }
 
     fn read_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> StoreResult<R>
@@ -61,83 +92,90 @@ use crate::user::{User, UserId};
 #[async_trait]
 impl EntityStore for MemoryStore {
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.personalities, |v| v.clone())?;
-        require_entity(values.get(&id).cloned(), "agent_template", id.to_string())
+        let found = self.read_lock(&self.personalities, |v| v.get(&id).cloned())?;
+        self.access(ctx).read(found, |a| ActionType::GetPersonality(a), "agent_template", id.to_string()).await
     }
 
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.personalities, |v| v.clone())?;
+        self.access(ctx).allow(ActionType::FindPersonality).await?;
         require_entity(
-            values
-                .values()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope))
-                .cloned(),
+            self.list_personalities(ctx).await?
+                .into_iter()
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
             "agent_template",
             name.to_string(),
         )
     }
 
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        let _ = ctx; // Placeholder for security check
-        self.read_lock(&self.personalities, |v| v.values().cloned().collect())
+        let access = self.access(ctx);
+        access.allow(ActionType::ListPersonalities).await?;
+        let all = self.read_lock(&self.personalities, |v| v.values().cloned().collect())?;
+        Ok(access.filter(all, |a| ActionType::GetPersonality(a)).await)
     }
 
     async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.personalities, |v| v.get(&value.id).cloned())?;
+        self.access(ctx).put(
+            stored.as_ref(), value,
+            |a| ActionType::GetPersonality(a), |a| ActionType::CreatePersonality(a), |a| ActionType::UpdatePersonality(a),
+            "agent_template", value.id.to_string(),
+        ).await?;
         self.write_lock(&self.personalities, |v| {
             v.insert(value.id, value.clone());
         })
     }
 
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.personalities, |v| v.get(&id).cloned())?;
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetPersonality(a), |a| ActionType::DeletePersonality(a)).await? {
+            return Ok(false);
+        }
         self.write_lock(&self.personalities, |v| v.remove(&id).is_some())
     }
 
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.session_templates, |v| v.clone())?;
+        self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
         require_entity(
-            values
-                .values()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope))
-                .cloned(),
+            self.list_session_templates(ctx).await?
+                .into_iter()
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
             "session_template",
             name.to_string(),
         )
     }
 
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        let _ = ctx; // Placeholder for security check
-        self.read_lock(&self.session_templates, |v| v.values().cloned().collect())
+        let access = self.access(ctx);
+        access.allow(ActionType::ListSessionTemplates).await?;
+        let all = self.read_lock(&self.session_templates, |v| v.values().cloned().collect())?;
+        Ok(access.filter(all, |a| ActionType::GetSessionTemplate(a)).await)
     }
 
     async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.session_templates, |v| v.get(&value.metadata.name).cloned())?;
+        self.access(ctx).put(
+            stored.as_ref(), value,
+            |a| ActionType::GetSessionTemplate(a), |a| ActionType::CreateSessionTemplate(a), |a| ActionType::UpdateSessionTemplate(a),
+            "session_template", value.id.to_string(),
+        ).await?;
         self.write_lock(&self.session_templates, |v| {
             v.insert(value.metadata.name.clone(), value.clone());
         })
     }
 
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        let _ = ctx; // Placeholder for security check
-        self.write_lock(&self.session_templates, |v| {
-            let key = v
-                .values()
-                .find(|t| t.id == id)
-                .map(|t| t.metadata.name.clone());
-            match key {
-                Some(name) => v.remove(&name).is_some(),
-                None => false,
-            }
-        })
+        let stored = self.read_lock(&self.session_templates, |v| v.values().find(|t| t.id == id).cloned())?;
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetSessionTemplate(a), |a| ActionType::DeleteSessionTemplate(a)).await? {
+            return Ok(false);
+        }
+        let Some(template) = stored else { return Ok(false) };
+        self.write_lock(&self.session_templates, |v| v.remove(&template.metadata.name).is_some())
     }
 
     // Agents (durable definitions)
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        self.access(ctx).create(value, |a| ActionType::CreateAgent(a)).await?;
         self.write_lock(&self.agents, |v| {
             if v.contains_key(&value.id) {
                 return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
@@ -148,41 +186,34 @@ impl EntityStore for MemoryStore {
     }
 
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.agents, |v| v.clone())?;
-        require_entity(values.get(&id).cloned(), "agent", id.to_string())
+        let found = self.read_lock(&self.agents, |v| v.get(&id).cloned())?;
+        self.access(ctx).read(found, |a| ActionType::GetAgent(a), "agent", id.to_string()).await
     }
 
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.agents, |v| v.clone())?;
+        let access = self.access(ctx);
+        access.allow(ActionType::FindAgent).await?;
+        let all = self.read_lock(&self.agents, |v| v.values().cloned().collect())?;
         require_entity(
-            values
-                .values()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope))
-                .cloned(),
+            access.filter(all, |a| ActionType::GetAgent(a)).await
+                .into_iter()
+                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
             "agent",
             name.to_string(),
         )
     }
 
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.agents, |v| v.get(&value.id).cloned())?;
+        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetAgent(a), |a| ActionType::UpdateAgent(a), "agent", value.id.to_string()).await?;
         self.write_lock(&self.agents, |v| {
-            if !v.contains_key(&value.id) {
-                return Err(StoreError::NotFound {
-                    entity: "agent",
-                    id: value.id.to_string(),
-                });
-            }
             v.insert(value.id, value.clone());
-            Ok(())
-        })?
+        })
     }
 
     // Sessions (durable definitions)
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        self.access(ctx).create(value, |a| ActionType::CreateSession(a)).await?;
         self.write_lock(&self.sessions, |v| {
             if v.contains_key(&value.id) {
                 return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
@@ -193,27 +224,23 @@ impl EntityStore for MemoryStore {
     }
 
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.sessions, |v| v.clone())?;
-        require_entity(values.get(&id).cloned(), "session", id.to_string())
+        let found = self.read_lock(&self.sessions, |v| v.get(&id).cloned())?;
+        self.access(ctx).read(found, |a| ActionType::GetSession(a), "session", id.to_string()).await
     }
 
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.sessions, |v| v.get(&value.id).cloned())?;
+        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::UpdateSession(a), "session", value.id.to_string()).await?;
         self.write_lock(&self.sessions, |v| {
-            if !v.contains_key(&value.id) {
-                return Err(StoreError::NotFound {
-                    entity: "session",
-                    id: value.id.to_string(),
-                });
-            }
             v.insert(value.id, value.clone());
-            Ok(())
-        })?
+        })
     }
 
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.sessions, |v| v.get(&id).cloned())?;
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
+            return Ok(false);
+        }
         let removed = self.write_lock(&self.sessions, |v| v.remove(&id))?;
 
         if let Some(session) = &removed {
@@ -236,9 +263,10 @@ impl EntityStore for MemoryStore {
     }
 
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.sessions, |v| v.values().cloned().collect())?;
-        Ok(values)
+        let access = self.access(ctx);
+        access.allow(ActionType::ListSessions).await?;
+        let all = self.read_lock(&self.sessions, |v| v.values().cloned().collect())?;
+        Ok(access.filter(all, |a| ActionType::GetSession(a)).await)
     }
 
     // Users
@@ -284,25 +312,34 @@ impl EntityStore for MemoryStore {
     }
 
     async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.components, |v| v.clone())?;
-        require_entity(values.get(id).cloned(), "component", id.to_string())
+        let found = self.read_lock(&self.components, |v| v.get(id).cloned())?;
+        self.access(ctx).read(found, |a| ActionType::GetComponent(a), "component", id.to_string()).await
     }
 
     async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
-        let _ = ctx; // Placeholder for security check
-        self.read_lock(&self.components, |v| v.values().cloned().collect())
+        let access = self.access(ctx);
+        access.allow(ActionType::ListComponents).await?;
+        let all = self.read_lock(&self.components, |v| v.values().cloned().collect())?;
+        Ok(access.filter(all, |a| ActionType::GetComponent(a)).await)
     }
 
     async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.components, |v| v.get(&value.id).cloned())?;
+        self.access(ctx).put(
+            stored.as_ref(), value,
+            |a| ActionType::GetComponent(a), |a| ActionType::CreateComponent(a), |a| ActionType::UpdateComponent(a),
+            "component", value.id.clone(),
+        ).await?;
         self.write_lock(&self.components, |v| {
             v.insert(value.id.clone(), value.clone());
         })
     }
 
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        let _ = ctx; // Placeholder for security check
+        let stored = self.read_lock(&self.components, |v| v.get(id).cloned())?;
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetComponent(a), |a| ActionType::DeleteComponent(a)).await? {
+            return Ok(false);
+        }
         self.write_lock(&self.components, |v| v.remove(id).is_some())
     }
 }
@@ -368,6 +405,7 @@ mod tests {
 
     fn make_personality(name: &str, scope: Scope) -> Personality {
         Personality {
+            security_attributes: Default::default(),
             id: PersonalityId(Uuid::new_v4()),
             metadata: Metadata {
                 name: name.to_string(),
@@ -380,6 +418,7 @@ mod tests {
 
     fn make_session_template(name: &str, scope: Scope) -> SessionTemplate {
         SessionTemplate {
+            security_attributes: Default::default(),
             commands: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {

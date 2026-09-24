@@ -31,7 +31,6 @@ impl Scope {
 pub struct Metadata {
     pub name: String,
     pub scope: Scope,
-    pub owner: UserId,
     pub description: String,
 }
 

@@ -3,6 +3,7 @@ use crate::channel::{ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityManager;
+use crate::store_impl::access::Access;
 use crate::session::{Session, SessionId, SessionState};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -34,6 +35,10 @@ impl JsonFileStore {
         };
         store.ensure_layout()?;
         Ok(store)
+    }
+
+    fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
+        Access::new(self.security_manager.as_ref(), ctx)
     }
 
     fn ensure_layout(&self) -> StoreResult<()> {
@@ -239,19 +244,14 @@ use crate::security::{ActionType, SecurityContext};
 #[async_trait]
 impl EntityStore for JsonFileStore {
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        if !self.security_manager.check(ctx, ActionType::GetPersonality(id)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.personality_path(id);
         debug!("Reading personality template from {}", path.display());
         let loaded = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "agent_template", id.to_string())
+        self.access(ctx).read(loaded, |a| ActionType::GetPersonality(a), "agent_template", id.to_string()).await
     }
 
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        if !self.security_manager.check(ctx, ActionType::FindPersonality).await {
-            return Err(StoreError::PermissionDenied);
-        }
+        self.access(ctx).allow(ActionType::FindPersonality).await?;
         let templates = self.list_personalities(ctx).await?;
         require_entity(
             templates
@@ -263,19 +263,17 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        if !self.security_manager.check(ctx, ActionType::ListPersonalities).await {
-            return Err(StoreError::PermissionDenied);
-        }
-        Ok(read_all_from_dir::<Persisted<Personality>>(&self.personality_dir())?
+        let access = self.access(ctx);
+        access.allow(ActionType::ListPersonalities).await?;
+        let all = read_all_from_dir::<Persisted<Personality>>(&self.personality_dir())?
             .into_iter()
             .map(|p| p.value)
-            .collect())
+            .collect();
+        Ok(access.filter(all, |a| ActionType::GetPersonality(a)).await)
     }
 
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        if !self.security_manager.check(ctx, ActionType::FindSessionTemplate).await {
-            return Err(StoreError::PermissionDenied);
-        }
+        self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
         let templates = self.list_session_templates(ctx).await?;
         require_entity(
             templates
@@ -287,20 +285,23 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        if !self.security_manager.check(ctx, ActionType::ListSessionTemplates).await {
-            return Err(StoreError::PermissionDenied);
-        }
-        Ok(read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir())?
+        let access = self.access(ctx);
+        access.allow(ActionType::ListSessionTemplates).await?;
+        let all = read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir())?
             .into_iter()
             .map(|p| p.value)
-            .collect())
+            .collect();
+        Ok(access.filter(all, |a| ActionType::GetSessionTemplate(a)).await)
     }
 
     async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::PutPersonality(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.personality_path(value.id);
+        let stored = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
+        self.access(ctx).put(
+            stored.as_ref(), value,
+            |a| ActionType::GetPersonality(a), |a| ActionType::CreatePersonality(a), |a| ActionType::UpdatePersonality(a),
+            "agent_template", value.id.to_string(),
+        ).await?;
         debug!("Writing personality template to {}", path.display());
         write_json_atomic(
             &path,
@@ -313,17 +314,22 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        if !self.security_manager.check(ctx, ActionType::DeletePersonality(id)).await {
-            return Err(StoreError::PermissionDenied);
+        let path = self.personality_path(id);
+        let stored = read_json_opt::<Persisted<Personality>>(&path)?.map(|p| p.value);
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetPersonality(a), |a| ActionType::DeletePersonality(a)).await? {
+            return Ok(false);
         }
-        delete_if_exists(&self.personality_path(id))
+        delete_if_exists(&path)
     }
 
     async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::PutSessionTemplate(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.session_template_path(&value.metadata.name);
+        let stored = read_json_opt::<Persisted<SessionTemplate>>(&path)?.map(|p| p.value);
+        self.access(ctx).put(
+            stored.as_ref(), value,
+            |a| ActionType::GetSessionTemplate(a), |a| ActionType::CreateSessionTemplate(a), |a| ActionType::UpdateSessionTemplate(a),
+            "session_template", value.id.to_string(),
+        ).await?;
         debug!("Writing session template to {}", path.display());
         write_json_atomic(
             &path,
@@ -336,14 +342,13 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        if !self.security_manager.check(ctx, ActionType::DeleteSessionTemplate(id)).await {
-            return Err(StoreError::PermissionDenied);
-        }
-        let template = self
-            .list_session_templates(ctx).await?
+        let template = read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir())?
             .into_iter()
+            .map(|p| p.value)
             .find(|t| t.id == id);
-
+        if !self.access(ctx).delete(template.as_ref(), |a| ActionType::GetSessionTemplate(a), |a| ActionType::DeleteSessionTemplate(a)).await? {
+            return Ok(false);
+        }
         match template {
             Some(t) => delete_if_exists(&self.session_template_path(&t.metadata.name)),
             None => Ok(false),
@@ -352,9 +357,7 @@ impl EntityStore for JsonFileStore {
 
     // Agents (durable definitions)
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::CreateAgent(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
+        self.access(ctx).create(value, |a| ActionType::CreateAgent(a)).await?;
         let path = self.agent_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
@@ -371,24 +374,22 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        if !self.security_manager.check(ctx, ActionType::GetAgent(id)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.agent_path(id);
         debug!("Reading agent from {}", path.display());
         let loaded = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "agent", id.to_string())
+        self.access(ctx).read(loaded, |a| ActionType::GetAgent(a), "agent", id.to_string()).await
     }
 
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
-        if !self.security_manager.check(ctx, ActionType::FindAgent).await {
-            return Err(StoreError::PermissionDenied);
-        }
-        let agents = read_all_from_dir::<Persisted<Agent>>(&self.agents_dir())?;
+        let access = self.access(ctx);
+        access.allow(ActionType::FindAgent).await?;
+        let agents = read_all_from_dir::<Persisted<Agent>>(&self.agents_dir())?
+            .into_iter()
+            .map(|p| p.value)
+            .collect();
         require_entity(
-            agents
+            access.filter(agents, |a| ActionType::GetAgent(a)).await
                 .into_iter()
-                .map(|p| p.value)
                 .find(|a| a.metadata.name == name && scope.contains(&a.metadata.scope)),
             "agent",
             name.to_string(),
@@ -396,16 +397,9 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::UpdateAgent(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.agent_path(value.id);
-        if !path.exists() {
-            return Err(StoreError::NotFound {
-                entity: "agent",
-                id: value.id.to_string(),
-            });
-        }
+        let stored = read_json_opt::<Persisted<Agent>>(&path)?.map(|p| p.value);
+        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetAgent(a), |a| ActionType::UpdateAgent(a), "agent", value.id.to_string()).await?;
         debug!("Updating agent at {}", path.display());
         write_json_atomic(
             &path,
@@ -419,9 +413,7 @@ impl EntityStore for JsonFileStore {
 
     // Sessions (durable definitions)
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::CreateSession(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
+        self.access(ctx).create(value, |a| ActionType::CreateSession(a)).await?;
         let path = self.session_path(value.id);
         if path.exists() {
             return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
@@ -438,26 +430,16 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        if !self.security_manager.check(ctx, ActionType::GetSession(id)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.session_path(id);
         debug!("Reading session from {}", path.display());
         let loaded = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "session", id.to_string())
+        self.access(ctx).read(loaded, |a| ActionType::GetSession(a), "session", id.to_string()).await
     }
 
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::UpdateSession(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.session_path(value.id);
-        if !path.exists() {
-            return Err(StoreError::NotFound {
-                entity: "session",
-                id: value.id.to_string(),
-            });
-        }
+        let stored = read_json_opt::<Persisted<Session>>(&path)?.map(|p| p.value);
+        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::UpdateSession(a), "session", value.id.to_string()).await?;
         debug!("Updating session at {}", path.display());
         write_json_atomic(
             &path,
@@ -470,12 +452,12 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        if !self.security_manager.check(ctx, ActionType::DeleteSession(id)).await {
-            return Err(StoreError::PermissionDenied);
-        }
-
-        // Load the session first so we can clean up the state files of all its channels.
+        // Loaded first: for the check, and to clean up the state files of
+        // all its channels.
         let session = read_json_opt::<Persisted<Session>>(&self.session_path(id))?.map(|p| p.value);
+        if !self.access(ctx).delete(session.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
+            return Ok(false);
+        }
 
         if let Some(session) = &session {
             for channel in &session.channels {
@@ -493,12 +475,13 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        if !self.security_manager.check(ctx, ActionType::ListSessions).await {
-            return Err(StoreError::PermissionDenied);
-        }
-        let dir = self.sessions_dir();
-        let sessions: Vec<Persisted<Session>> = read_all_from_dir(&dir)?;
-        Ok(sessions.into_iter().map(|p| p.value).collect())
+        let access = self.access(ctx);
+        access.allow(ActionType::ListSessions).await?;
+        let sessions = read_all_from_dir::<Persisted<Session>>(&self.sessions_dir())?
+            .into_iter()
+            .map(|p| p.value)
+            .collect();
+        Ok(access.filter(sessions, |a| ActionType::GetSession(a)).await)
     }
 
     // Users (durable definitions)
@@ -555,30 +538,30 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
-        if !self.security_manager.check(ctx, ActionType::GetComponent(id)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.component_path(id);
         debug!("Reading component from {}", path.display());
         let loaded = read_json_opt::<Persisted<ComponentDescriptor>>(&path)?.map(|p| p.value);
-        require_entity(loaded, "component", id.to_string())
+        self.access(ctx).read(loaded, |a| ActionType::GetComponent(a), "component", id.to_string()).await
     }
 
     async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
-        if !self.security_manager.check(ctx, ActionType::ListComponents).await {
-            return Err(StoreError::PermissionDenied);
-        }
-        Ok(read_all_from_dir::<Persisted<ComponentDescriptor>>(&self.components_dir())?
+        let access = self.access(ctx);
+        access.allow(ActionType::ListComponents).await?;
+        let all = read_all_from_dir::<Persisted<ComponentDescriptor>>(&self.components_dir())?
             .into_iter()
             .map(|p| p.value)
-            .collect())
+            .collect();
+        Ok(access.filter(all, |a| ActionType::GetComponent(a)).await)
     }
 
     async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        if !self.security_manager.check(ctx, ActionType::PutComponent(value)).await {
-            return Err(StoreError::PermissionDenied);
-        }
         let path = self.component_path(&value.id);
+        let stored = read_json_opt::<Persisted<ComponentDescriptor>>(&path)?.map(|p| p.value);
+        self.access(ctx).put(
+            stored.as_ref(), value,
+            |a| ActionType::GetComponent(a), |a| ActionType::CreateComponent(a), |a| ActionType::UpdateComponent(a),
+            "component", value.id.clone(),
+        ).await?;
         debug!("Writing component to {}", path.display());
         write_json_atomic(
             &path,
@@ -591,10 +574,12 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        if !self.security_manager.check(ctx, ActionType::DeleteComponent(id)).await {
-            return Err(StoreError::PermissionDenied);
+        let path = self.component_path(id);
+        let stored = read_json_opt::<Persisted<ComponentDescriptor>>(&path)?.map(|p| p.value);
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetComponent(a), |a| ActionType::DeleteComponent(a)).await? {
+            return Ok(false);
         }
-        delete_if_exists(&self.component_path(id))
+        delete_if_exists(&path)
     }
 }
 
@@ -699,6 +684,7 @@ mod tests {
 
     fn make_personality() -> Personality {
         Personality {
+            security_attributes: Default::default(),
             id: PersonalityId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "assistant".to_string(),
@@ -711,6 +697,7 @@ mod tests {
 
     fn make_session_template() -> SessionTemplate {
         SessionTemplate {
+            security_attributes: Default::default(),
             commands: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {

@@ -76,6 +76,7 @@ async fn build_container(url: &str) -> ComponentContainer {
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
+            security_attributes: Default::default(),
             id: "test-echo".to_string(),
             kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
             params: json!({ "url": url }),
@@ -132,6 +133,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .put_component(
             &SecurityContext::default(),
             &ComponentDescriptor {
+                security_attributes: Default::default(),
                 id: "shared-echo".to_string(),
                 kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
                 params: json!({ "url": url }),
@@ -149,6 +151,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
+            security_attributes: Default::default(),
             id: "github-tool".to_string(),
             kind: caelumora_runtime::component::PRECONFIGURED_REF_KIND.to_string(),
             params: json!({ "id": "shared-echo" }),

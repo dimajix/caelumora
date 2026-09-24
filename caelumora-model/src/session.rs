@@ -2,7 +2,7 @@ pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::meta::Metadata;
-use crate::security::{SecurityAttributes, SecurityContext};
+use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::EntityStore;
 use crate::user::UserId;
 use arc_swap::ArcSwap;
@@ -122,6 +122,12 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,
+}
+
+impl Secured for Session {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

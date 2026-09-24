@@ -4,7 +4,7 @@ use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::{Message, MessageContext, MessageHistory};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
-use crate::security::{SecurityAttributes, SecurityContext};
+use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
 use crate::store::EntityStore;
 use crate::tool::ToolCallState;
@@ -102,6 +102,20 @@ pub struct Personality {
     /// extended planning is just another tool a personality opts into.
     #[serde(default)]
     pub components: ComponentConfig,
+    #[serde(default)]
+    pub security_attributes: SecurityAttributes,
+}
+
+impl Secured for Personality {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
+}
+
+impl Secured for Agent {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
 }
 
 
@@ -120,8 +134,11 @@ impl Agent {
     pub fn new(name:String, scope:Scope, personality: &Personality, mut security_context: SecurityContext) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
         security_context.caller_id = ActorId::Agent(agent_id);
+        // Owned by whoever created it; the agent itself contributes, so that
+        // it may read its own definition (issue 11).
         let security_attributes = SecurityAttributes {
-            owner_id: ActorId::Agent(agent_id),
+            owner_id: security_context.initiator_id,
+            contributors: vec![ActorId::Agent(agent_id)],
         };
         Agent {
             id: agent_id,

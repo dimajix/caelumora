@@ -87,6 +87,7 @@ pub fn default_commands() -> ComponentConfig {
         deps: Vec::new(),
         tags: Vec::new(),
         fail_policy: Default::default(),
+        security_attributes: Default::default(),
     };
     ComponentConfig {
         component_nodes: vec![builtin("help", HELP_COMMAND_KIND), builtin("wakeup", WAKEUP_COMMAND_KIND)],

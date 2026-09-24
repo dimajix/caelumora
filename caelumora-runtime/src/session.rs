@@ -402,6 +402,7 @@ mod tests {
         let mut session = make_session("clashing");
         session.commands = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
+                security_attributes: Default::default(),
                 id: "help".to_string(),
                 kind: HELP_COMMAND_KIND.to_string(),
                 params: serde_json::Value::Null,

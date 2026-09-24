@@ -340,6 +340,7 @@ mod tests {
 
     fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {
         ComponentDescriptor {
+            security_attributes: Default::default(),
             id: id.to_string(),
             kind: kind.to_string(),
             params,

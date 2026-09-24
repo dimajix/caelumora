@@ -1,3 +1,4 @@
+use crate::security::{Secured, SecurityAttributes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,6 +33,17 @@ pub struct ComponentDescriptor {
     pub tags: Vec<String>,
     #[serde(default)]
     pub fail_policy: ComponentFailPolicy,
+    /// Who may use and change a preconfigured component (issue 11). Only
+    /// meaningful for descriptors kept in the `EntityStore`; those inside a
+    /// personality are covered by the personality's attributes.
+    #[serde(default)]
+    pub security_attributes: SecurityAttributes,
+}
+
+impl Secured for ComponentDescriptor {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]

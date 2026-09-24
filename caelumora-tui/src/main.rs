@@ -52,6 +52,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
             deps: Vec::new(),
             tags: Vec::new(),
             fail_policy: ComponentFailPolicy::FailOpen,
+            security_attributes: Default::default(),
         },
         ComponentDescriptor {
             id: "history-appender".to_string(),
@@ -60,6 +61,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
             deps: Vec::new(),
             tags: vec![STAGE_PERCEIVE.to_string()],
             fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
         },
         ComponentDescriptor {
             id: "context-appender".to_string(),
@@ -68,6 +70,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
             deps: Vec::new(),
             tags: vec![STAGE_PERCEIVE.to_string()],
             fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
         },
         ComponentDescriptor {
             id: "context".to_string(),
@@ -76,6 +79,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
             deps: context_deps,
             tags: Vec::new(),
             fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
         },
     ];
 
@@ -92,6 +96,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
             deps: Vec::new(),
             tags: Vec::new(),
             fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
         });
     }
 
@@ -108,6 +113,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str, enable
             ..Metadata::default()
         },
         components: create_component_config(system_prompt, enable_extended_planning),
+        security_attributes: Default::default(),
     }
 }
 
@@ -165,6 +171,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
             }
         ],
         commands: Default::default(),
+        security_attributes: Default::default(),
     };
     store.put_session_template(&ctx, &template).await?;
 

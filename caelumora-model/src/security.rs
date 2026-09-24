@@ -1,40 +1,49 @@
 use crate::actor::ActorId;
-use crate::agent::{Agent, AgentId, Personality, PersonalityId};
-use crate::channel::ChannelId;
-use crate::component::ComponentDescriptor;
-use crate::session::Session;
 use crate::session::SessionId;
-use crate::template::{SessionTemplate, SessionTemplateId};
+use crate::channel::ChannelId;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+/// Everything the `SecurityManager` is asked about.
+///
+/// An action on a stored entity carries that entity's `SecurityAttributes`,
+/// so that a policy can decide by owner and contributors (issue 11) without
+/// being handed the entity itself: `Get`, `Update` and `Delete` carry the
+/// attributes as stored - never those of a new value, which the caller
+/// controls - and `Create` those of the entity to be created. `Find` and
+/// `List` ask whether the caller may search at all; the result is then
+/// filtered with `Get` for every entity in it.
 #[derive(Debug, Clone, Copy)]
 pub enum ActionType<'a> {
-    GetPersonality(PersonalityId),
+    GetPersonality(&'a SecurityAttributes),
     FindPersonality,
     ListPersonalities,
-    PutPersonality(&'a Personality),
-    DeletePersonality(PersonalityId),
+    CreatePersonality(&'a SecurityAttributes),
+    UpdatePersonality(&'a SecurityAttributes),
+    DeletePersonality(&'a SecurityAttributes),
+    GetSessionTemplate(&'a SecurityAttributes),
     FindSessionTemplate,
     ListSessionTemplates,
-    PutSessionTemplate(&'a SessionTemplate),
-    DeleteSessionTemplate(SessionTemplateId),
-    CreateAgent(&'a Agent),
-    GetAgent(AgentId),
+    CreateSessionTemplate(&'a SecurityAttributes),
+    UpdateSessionTemplate(&'a SecurityAttributes),
+    DeleteSessionTemplate(&'a SecurityAttributes),
+    CreateAgent(&'a SecurityAttributes),
+    GetAgent(&'a SecurityAttributes),
     FindAgent,
-    UpdateAgent(&'a Agent),
-    CreateSession(&'a Session),
-    GetSession(SessionId),
-    UpdateSession(&'a Session),
-    DeleteSession(SessionId),
+    UpdateAgent(&'a SecurityAttributes),
+    CreateSession(&'a SecurityAttributes),
+    GetSession(&'a SecurityAttributes),
+    UpdateSession(&'a SecurityAttributes),
+    DeleteSession(&'a SecurityAttributes),
     ListSessions,
-    /// Ending the current turn of every agent in a channel.
-    CancelChannel(ChannelId),
+    /// Ending the current turn of every agent in a channel, carrying the
+    /// channel's attributes.
+    CancelChannel(&'a SecurityAttributes),
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
-    WakeChannel(ChannelId),
+    WakeChannel(&'a SecurityAttributes),
     /// Seeing that a user command exists - in `/help` and in completion.
     /// Keyed by the command's name, without the slash (issue 28).
     ShowCommand(&'a str),
@@ -42,15 +51,37 @@ pub enum ActionType<'a> {
     ExecuteCommand(&'a str),
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
-    GetComponent(&'a str),
+    GetComponent(&'a SecurityAttributes),
     ListComponents,
-    PutComponent(&'a ComponentDescriptor),
-    DeleteComponent(&'a str),
+    CreateComponent(&'a SecurityAttributes),
+    UpdateComponent(&'a SecurityAttributes),
+    DeleteComponent(&'a SecurityAttributes),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Who an entity belongs to - what a policy decides by (issue 11).
+///
+/// The owner may do everything with it; contributors may read and use it -
+/// the participants of a session, say - but not change or delete it. An
+/// entity without an owner (`ActorId::None`, as in anything stored before
+/// owners were recorded) belongs to the system. Richer access lists are
+/// issue 23.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SecurityAttributes {
     pub owner_id: ActorId,
+    #[serde(default)]
+    pub contributors: Vec<ActorId>,
+}
+
+impl SecurityAttributes {
+    /// Attributes of an entity owned by `owner`, without contributors.
+    pub fn owned_by(owner: ActorId) -> Self {
+        Self { owner_id: owner, contributors: Vec::new() }
+    }
+}
+
+/// An entity that carries `SecurityAttributes`.
+pub trait Secured {
+    fn security_attributes(&self) -> &SecurityAttributes;
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

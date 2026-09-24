@@ -1,8 +1,9 @@
+use crate::actor::ActorId;
 use crate::agent::Agent;
 use crate::approval::Approver;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
-use crate::security::SecurityAttributes;
+use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
 use crate::store::EntityStore;
 use crate::user::User;
@@ -150,6 +151,12 @@ pub struct Channel {
     pub security_attributes: SecurityAttributes,
 }
 
+impl Secured for Channel {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
+}
+
 impl Channel {
     pub fn new(session_id: SessionId, name: String, moderator: String, participants: Vec<Participant>, security_attributes: SecurityAttributes) -> Self {
         let id = ChannelId(Uuid::new_v4());
@@ -184,4 +191,29 @@ pub enum Participant {
     User(User),
     Agent(Agent),
     Approver(Approver),
+}
+
+impl Participant {
+    pub fn actor_id(&self) -> ActorId {
+        match self {
+            Participant::User(user) => ActorId::User(user.id),
+            Participant::Agent(agent) => ActorId::Agent(agent.id),
+            Participant::Approver(approver) => ActorId::Approver(approver.id.0),
+        }
+    }
+}
+
+/// The attributes of a session or channel owned by `owner` with these
+/// participants: its users and agents contribute - they read it and act in
+/// it - while only the owner may change or delete it (issue 11). Approvers
+/// act on behalf of users and need no access of their own.
+pub fn participant_attributes(owner: ActorId, participants: &[Participant]) -> SecurityAttributes {
+    let mut contributors: Vec<ActorId> = Vec::new();
+    for participant in participants {
+        let id = participant.actor_id();
+        if matches!(participant, Participant::User(_) | Participant::Agent(_)) && id != owner && !contributors.contains(&id) {
+            contributors.push(id);
+        }
+    }
+    SecurityAttributes { owner_id: owner, contributors }
 }

@@ -1,6 +1,6 @@
 use crate::agent::{AgentId, PersonalityId};
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
-use crate::channel::{Channel, Participant};
+use crate::channel::{participant_attributes, Channel, Participant};
 use crate::component::ComponentConfig;
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::actor::ActorId;
-use crate::security::SecurityAttributes;
+use crate::security::{Secured, SecurityAttributes};
 use crate::store::StoreError;
 use crate::user::UserId;
 use std::collections::HashMap;
@@ -104,9 +104,7 @@ impl ChannelTemplate {
             }));
         }
 
-        let security_attributes = SecurityAttributes {
-            owner_id: ActorId::User(context.owner)
-        };
+        let security_attributes = participant_attributes(ActorId::User(context.owner), &participants);
 
         Ok(Channel::new(
             context.id,
@@ -130,11 +128,19 @@ pub struct SessionTemplate {
     pub scope: ScopeTemplate,
     pub participants: Vec<ParticipantTemplate>,
     pub channels: Vec<ChannelTemplate>,
+    #[serde(default)]
+    pub security_attributes: SecurityAttributes,
     /// User commands of sessions made from this template, in addition to the
     /// global ones from `AppConfig` (issue 28) - for commands that belong to
     /// what the session is for, such as an integration it uses.
     #[serde(default)]
     pub commands: ComponentConfig,
+}
+
+impl Secured for SessionTemplate {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
 }
 
 impl SessionTemplate {
@@ -156,15 +162,12 @@ impl SessionTemplate {
             channels.push(channel.instantiate(context, &named_participants).await?)
         }
 
-        let security_attributes = SecurityAttributes {
-            owner_id: ActorId::User(context.owner)
-        };
+        let security_attributes = participant_attributes(ActorId::User(context.owner), &participants);
 
         let session = Session {
             id: context.id,
             metadata: Metadata {
                 name,
-                owner: context.owner,
                 scope: self.scope.instantiate(context),
                 description: self.metadata.description.clone(),
                 ..Metadata::default()
@@ -272,6 +275,7 @@ mod tests {
         store.create_user(&SecurityContext::default(), &alice).await.unwrap();
 
         let template = SessionTemplate {
+            security_attributes: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata::default(),
             scope: ScopeTemplate::SessionScope,
