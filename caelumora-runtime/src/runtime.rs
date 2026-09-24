@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, CommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
+use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, ComponentRegistry, ComponentResult};
 use crate::component_impl::{command, context, history, mcp, tool};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -110,8 +110,13 @@ impl ActorRuntime {
         self.runtime.runtime_manager.controller_manager()
     }
 
-    pub fn new_tool_executor(&self, tool_providers: Vec<Arc<dyn ToolProvider>>) -> Box<dyn ToolExecutor> {
-        Box::new(DefaultToolExecutor::new(self.security_manager(), tool_providers))
+    /// An executor for the tools `providers` contribute.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if two of them provide a tool of the
+    /// same name.
+    pub fn new_tool_executor(&self, providers: Vec<ComponentImpl<dyn ToolProvider>>) -> ComponentResult<Box<dyn ToolExecutor>> {
+        Ok(Box::new(DefaultToolExecutor::new(self.security_manager(), providers)?))
     }
 
     /// The user commands of the actor's session. Only a `UserActor` runs

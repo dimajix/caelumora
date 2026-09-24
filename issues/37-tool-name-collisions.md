@@ -1,6 +1,6 @@
 # 37 — Two tools of the same name: the first one silently wins
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -53,3 +53,11 @@ other — which is the hardest kind of error to trace back.
 
 - **2026-09-24** — Opened while aligning tools and commands (issue 28):
   commands refuse duplicate names, tools resolve them by order.
+- **2026-09-24** — Done. `DefaultToolExecutor::new` and
+  `ActorRuntime::new_tool_executor` take `Vec<ComponentImpl<dyn ToolProvider>>`
+  and return a `ComponentResult`; a tool name provided by two components is a
+  `ComponentError::InvalidConfig` naming the tool and both component ids,
+  which ends `AgentActor::new` and so the session start. The check is the
+  same one `CommandExecutor::new` makes. The personalities stored in
+  `local/entity_store` and the ones the REST server and the TUI set up were
+  checked: none collides, so nothing that started before fails now.

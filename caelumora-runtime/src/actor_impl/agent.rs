@@ -96,8 +96,7 @@ impl AgentActor {
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
-        let tool_executor = actor_runtime
-            .new_tool_executor(tool_providers.into_iter().map(|p| p.facet).collect());
+        let tool_executor = actor_runtime.new_tool_executor(tool_providers)?;
 
         let state_store = actor_runtime.state_store();
         let mut agent_channel_state = state_store

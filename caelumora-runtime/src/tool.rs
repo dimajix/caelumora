@@ -1,4 +1,5 @@
 use crate::actor::TurnContext;
+use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
 use caelumora_model::security::{ActionType, SecurityManager};
@@ -144,14 +145,33 @@ pub struct DefaultToolExecutor {
 }
 
 impl DefaultToolExecutor {
+    /// An executor for the tools `providers` contribute.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if two of them provide a tool of the
+    /// same name: that is a mistake in the configuration, and resolving it
+    /// by order would make one of them silently unreachable (issue 37) - the
+    /// same rule as for user commands.
     pub fn new(
         security_manager: Arc<dyn SecurityManager>,
-        tool_providers: Vec<Arc<dyn ToolProvider>>,
-    ) -> Self {
-        Self {
-            security_manager,
-            tool_providers,
+        providers: Vec<ComponentImpl<dyn ToolProvider>>,
+    ) -> ComponentResult<Self> {
+        let mut seen: Vec<(String, String)> = Vec::new();
+        for provider in &providers {
+            for tool in provider.facet.tools() {
+                if let Some((_, component)) = seen.iter().find(|(name, _)| *name == tool.name) {
+                    return Err(ComponentError::InvalidConfig(format!(
+                        "tool '{}' is provided by both component '{}' and component '{}'",
+                        tool.name, component, provider.id
+                    )));
+                }
+                seen.push((tool.name, provider.id.clone()));
+            }
         }
+        Ok(Self {
+            security_manager,
+            tool_providers: providers.into_iter().map(|p| p.facet).collect(),
+        })
     }
 }
 
@@ -244,6 +264,7 @@ impl ToolExecutor for DefaultToolExecutor {
 mod tests {
     use super::*;
     use crate::actor::TurnContext;
+use crate::component::{ComponentError, ComponentImpl, ComponentResult};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::agent::AgentState;
@@ -325,7 +346,7 @@ mod tests {
     #[tokio::test]
     async fn the_policy_is_checked_before_approval_and_again_on_execution() {
         let provider = Arc::new(MockToolProvider { requires_approval: true });
-        let executor = DefaultToolExecutor::new(Arc::new(DenyAllSecurityManager), vec![provider]);
+        let executor = DefaultToolExecutor::new(Arc::new(DenyAllSecurityManager), vec![component("tools", provider)]).unwrap();
 
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
@@ -340,7 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_tool_is_reported_as_such() {
-        let executor = DefaultToolExecutor::new(Arc::new(DummySecurityManager::new()), vec![Arc::new(MockToolProvider { requires_approval: false })]);
+        let executor = DefaultToolExecutor::new(Arc::new(DummySecurityManager::new()), vec![component("tools", Arc::new(MockToolProvider { requires_approval: false }))]).unwrap();
         let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(AgentId::new());
@@ -348,6 +369,22 @@ mod tests {
 
         let error = executor.execute(&call("does_not_exist"), &mut context).await.unwrap_err();
         assert!(matches!(error, ToolError::UnknownTool(ref name) if name == "does_not_exist"));
+    }
+
+    fn component(id: &str, facet: Arc<dyn ToolProvider>) -> ComponentImpl<dyn ToolProvider> {
+        ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }
+    }
+
+    #[test]
+    fn two_components_with_a_tool_of_the_same_name_are_a_configuration_error() {
+        let security = Arc::new(DummySecurityManager::new());
+        let same = || Arc::new(MockToolProvider { requires_approval: false });
+        let error = DefaultToolExecutor::new(security.clone(), vec![component("local", same()), component("remote", same())])
+            .expect_err("the second test_tool would be unreachable");
+        let message = error.to_string();
+        assert!(message.contains("'test_tool'") && message.contains("'local'") && message.contains("'remote'"), "{message}");
+
+        DefaultToolExecutor::new(security, vec![component("local", same())]).expect("one provider is fine");
     }
 
     #[test]
@@ -364,7 +401,7 @@ mod tests {
     async fn test_tool_executor() {
         let security_manager = Arc::new(DummySecurityManager::new());
         let provider = Arc::new(MockToolProvider { requires_approval: false });
-        let executor = DefaultToolExecutor::new(security_manager, vec![provider]);
+        let executor = DefaultToolExecutor::new(security_manager, vec![component("tools", provider)]).unwrap();
 
         let call = ToolCall {
             id: Some("call_1".to_string()),
