@@ -90,3 +90,21 @@ pub struct SendApprovalRequest {
     pub agent_id: Uuid,
     pub approved: bool,
 }
+
+/// A user command to run in a channel (issue 28): the name without the slash
+/// and the rest of the input line, which the command parses itself.
+#[derive(Debug, Deserialize)]
+pub struct ExecuteCommandRequest {
+    pub name: String,
+    #[serde(default)]
+    pub args: String,
+}
+
+/// What a command answered. `output` is set only if the answer is for the
+/// caller alone; an answer for the whole channel arrives on the channel's
+/// event stream as a `CommandExecuted`, like everybody else sees it.
+#[derive(Debug, Serialize)]
+pub struct CommandReplyResponse {
+    pub command: String,
+    pub output: Option<String>,
+}

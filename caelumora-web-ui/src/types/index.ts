@@ -77,6 +77,9 @@ export interface Message {
   // message), with the `span_id` under which the error is in the server log.
   turnFailed?: boolean;
   span_id?: string;
+  // UI only: the answer to a user command (never part of the history).
+  // `command` is its name; `private` if only the issuer sees it.
+  commandOutput?: {command: string; private: boolean};
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -111,6 +114,21 @@ export interface ActorEvent {
   PlanStepFinished?: PlanStepEvent;
   /** An agent's turn was aborted by an error; the agent is idle again. */
   TurnFailed?: { message: string };
+  /** A user ran a command whose answer concerns the whole channel (issue 28). */
+  CommandExecuted?: { command: string; output: string };
+}
+
+/** A user command, as `/help` and completion show it (issue 28). */
+export interface Command {
+  name: string;
+  description: string;
+  usage: string | null;
+}
+
+/** What a command answered; `output` only if it was for the caller alone. */
+export interface CommandReply {
+  command: string;
+  output: string | null;
 }
 
 export interface EventContext {

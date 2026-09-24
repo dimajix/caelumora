@@ -67,6 +67,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
+        .route(
+            "/sessions/{id}/channels/{cid}/commands",
+            get(channels::list_commands).post(channels::execute_command),
+        )
         .route_layer(axum::middleware::from_fn_with_state(state.auth.clone(), require_auth))
         .with_state(state.clone());
 

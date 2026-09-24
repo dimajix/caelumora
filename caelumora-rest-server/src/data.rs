@@ -85,6 +85,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                     "assistant".to_string(),
                 ],
             }],
+            commands: Default::default(),
         };
         store.put_session_template(&ctx, &template_a).await?;
     }
@@ -121,6 +122,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                     "Sassy".to_string(),
                 ],
             }],
+            commands: Default::default(),
         };
         store.put_session_template(&ctx, &template_b).await?;
     }

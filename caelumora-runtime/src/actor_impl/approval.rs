@@ -334,6 +334,9 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::CommandSet;
+    use crate::runtime::ChannelRuntime;
+    use caelumora_model::command::default_commands;
     use crate::runtime::RuntimeManager;
     use crate::transport_impl::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::agent::AgentId;
@@ -357,7 +360,7 @@ mod tests {
     async fn test_approval_actor_any_strategy() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new())).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
         );
 
         let agent_id = AgentId::new();
@@ -392,7 +395,8 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor_runtime = runtime_manager.new_actor_runtime();
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandSet::empty(runtime_manager.security_manager())))
+            .new_actor_runtime();
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -456,7 +460,7 @@ mod tests {
     async fn test_approval_actor_dynamic_membership() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new())).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
         );
 
         let session_id = SessionId::new();
@@ -479,7 +483,8 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor_runtime = runtime_manager.new_actor_runtime();
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandSet::empty(runtime_manager.security_manager())))
+            .new_actor_runtime();
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -561,7 +566,7 @@ mod tests {
     async fn test_approval_actor_leave_decision() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new())).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
         );
 
         let session_id = SessionId::new();
@@ -592,7 +597,8 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor_runtime = runtime_manager.new_actor_runtime();
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandSet::empty(runtime_manager.security_manager())))
+            .new_actor_runtime();
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);

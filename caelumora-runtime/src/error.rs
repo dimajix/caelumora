@@ -7,6 +7,7 @@
 //! store backend failure, may carry file paths or other internals and belong
 //! in the log only.
 
+use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::llm::LLMError;
 use crate::tool::ToolError;
@@ -25,6 +26,8 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
         } else if let Some(e) = e.downcast_ref::<ComponentError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ToolError>() {
+            Some(e.to_string())
+        } else if let Some(e) = e.downcast_ref::<CommandError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ChannelError>() {
             Some(e.to_string())
@@ -53,7 +56,10 @@ fn store_message(error: &StoreError) -> Option<String> {
 /// Whether `error` is a refusal by the `SecurityManager` - which a caller
 /// answers with "not allowed", not with "something broke".
 pub fn is_forbidden(error: &anyhow::Error) -> bool {
-    error.chain().any(|e| matches!(e.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. })))
+    error.chain().any(|e| {
+        matches!(e.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. }))
+            || matches!(e.downcast_ref::<CommandError>(), Some(CommandError::Forbidden(_)))
+    })
 }
 
 /// Whether `error` means that an entity of kind `entity` (e.g. "session")

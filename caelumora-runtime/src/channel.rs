@@ -4,7 +4,7 @@ use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
 use crate::moderator::Moderator;
 use crate::recorder::Recorder;
-use crate::runtime::RuntimeManager;
+use crate::runtime::ChannelRuntime;
 use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
@@ -51,7 +51,7 @@ pub struct ChannelLoop {
     id: ChannelId,
     session_id: SessionId,
     channel: Arc<ChannelController>,
-    runtime_manager: Arc<RuntimeManager>,
+    runtime: ChannelRuntime,
     actors: HashMap<ActorId,Arc<dyn Actor>>,
     moderator: Mutex<Box<dyn Moderator>>,
     mentions: MentionDirectory,
@@ -65,11 +65,13 @@ pub struct ChannelLoop {
 }
 
 impl ChannelLoop {
-    pub async fn new(channel: Channel, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+    /// Builds the channel and its actors, whose runtimes `runtime` creates and
+    /// which reach the channel through it once it exists.
+    pub async fn new(channel: Channel, runtime: ChannelRuntime) -> Result<Arc<Self>> {
         let id = channel.id;
         let session_id = channel.session_id;
-        let state_store = runtime_manager.state_store();
-        let mut moderator = runtime_manager.new_moderator(&channel.moderator)?;
+        let state_store = runtime.state_store();
+        let mut moderator = runtime.new_moderator(&channel.moderator)?;
         
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
@@ -82,14 +84,14 @@ impl ChannelLoop {
         };
         let state = Arc::new(Mutex::new(state));
 
-        let recorder = runtime_manager.new_recorder()?;
+        let recorder = runtime.new_recorder()?;
         let (event_tx, _) = broadcast::channel(100);
 
-        let channel_controller = runtime_manager.controller_manager().new_channel_controller(channel);
+        let channel_controller = runtime.controller_manager().new_channel_controller(channel);
 
         let mut actors = HashMap::new();
         for participant in &channel_controller.load().participants {
-            let actor = Self::create_actor(channel_controller.clone(), participant, runtime_manager.clone()).await?;
+            let actor = Self::create_actor(channel_controller.clone(), participant, &runtime).await?;
             let actor: Arc<dyn Actor> = Arc::from(actor);
             moderator.add_actor(actor.clone());
             actors.insert(actor.id(), actor);
@@ -99,11 +101,11 @@ impl ChannelLoop {
             warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", id, handle);
         }
 
-        Ok(Self {
+        let channel_loop = Arc::new(Self {
             id,
             session_id,
             channel: channel_controller,
-            runtime_manager,
+            runtime,
             actors,
             moderator: Mutex::new(moderator),
             mentions,
@@ -114,7 +116,9 @@ impl ChannelLoop {
             event_tx,
             max_route_decisions: 100,
             run_lock: Mutex::new(())
-        })
+        });
+        channel_loop.runtime.attach(&channel_loop);
+        Ok(channel_loop)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
@@ -154,14 +158,36 @@ impl ChannelLoop {
     }
 
     /// Wakes the channel's sleeping actors because someone asked for it -
-    /// a `/wakeup` and nothing else.
+    /// a `/wakeup` and nothing else. Returns the names of the actors that
+    /// were asleep.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
     /// `WakeChannel`.
-    pub async fn wakeup(&self, context: &SecurityContext) -> Result<()> {
+    pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
         self.check(context, ActionType::WakeChannel(self.id), "waking the agents of").await?;
-        self.wake_for_delivery().await
+        let asleep = self.actors.values()
+            .filter(|a| a.state() == ActorState::Sleeping)
+            .map(|a| a.name())
+            .collect();
+        self.wake_for_delivery().await?;
+        Ok(asleep)
+    }
+
+    /// Wakes one actor deliberately, like `wakeup` and under the same
+    /// permission. Returns whether it was asleep.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `WakeChannel`; an error if `actor` is not in this channel.
+    pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
+        self.check(context, ActionType::WakeChannel(self.id), "waking the agents of").await?;
+        let actor = self.actors.get(&actor)
+            .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
+        let was_asleep = actor.state() == ActorState::Sleeping;
+        self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
+        actor.wakeup().await?;
+        Ok(was_asleep)
     }
 
     /// Wakes the channel's actors because something is on its way to them:
@@ -179,7 +205,7 @@ impl ChannelLoop {
     /// Asks the `SecurityManager` about `action`, turning a refusal into a
     /// `ChannelError::Forbidden` that names what was refused, not why.
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
-        if self.runtime_manager.security_manager().check(context, action).await {
+        if self.runtime.security_manager().check(context, action).await {
             return Ok(());
         }
         info!("Refused {} channel {} for {}", what, self.id, context.initiator_id);
@@ -236,8 +262,8 @@ impl ChannelLoop {
         Arc::downcast::<UserActor>(any_actor).ok()
     }
 
-    async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime_manager: Arc<RuntimeManager>) -> Result<Box<dyn Actor>> {
-        let actor_runtime = runtime_manager.new_actor_runtime();
+    async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
+        let actor_runtime = runtime.new_actor_runtime();
         match participant {
             Participant::User(user) => {
                 let actor = UserActor::new(&channel.load(), user.clone(), actor_runtime).await?;
@@ -258,7 +284,7 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
-        let mut global_rx = self.runtime_manager.event_bus().subscribe_channel(self.id);
+        let mut global_rx = self.runtime.event_bus().subscribe_channel(self.id);
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
@@ -487,6 +513,9 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::CommandSet;
+    use crate::runtime::RuntimeManager;
+    use caelumora_model::command::default_commands;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes, SecurityManager};
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -503,6 +532,18 @@ mod tests {
         }
     }
 
+    /// Decides by a rule over the action alone, to refuse one thing and
+    /// allow the rest.
+    #[derive(Debug)]
+    struct Policy(fn(ActionType<'_>) -> bool);
+
+    #[async_trait::async_trait]
+    impl SecurityManager for Policy {
+        async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
+            (self.0)(action)
+        }
+    }
+
     fn user(username: &str) -> User {
         User {
             id: UserId::new(),
@@ -513,10 +554,10 @@ mod tests {
         }
     }
 
-    async fn channel_with(participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> ChannelLoop {
+    async fn channel_with(participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands()).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -524,7 +565,10 @@ mod tests {
             participants,
             SecurityAttributes::default(),
         );
-        ChannelLoop::new(channel, runtime).await.unwrap()
+        let commands = CommandSet::build(&[&default_commands()], &runtime, &SecurityContext::default())
+            .await
+            .unwrap();
+        ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(commands))).await.unwrap()
     }
 
     #[tokio::test]
@@ -565,5 +609,92 @@ mod tests {
         let allowed = channel_with(participants, Arc::new(DummySecurityManager::new())).await;
         allowed.cancel(&context).await.expect("permitted");
         allowed.wakeup(&context).await.expect("permitted");
+    }
+
+    fn command_error(error: &anyhow::Error) -> &crate::command::CommandError {
+        error.downcast_ref().unwrap_or_else(|| panic!("expected a CommandError, got {error:#}"))
+    }
+
+    #[tokio::test]
+    async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
+        let alice = user("alice");
+        // `/wakeup` is hidden from everybody.
+        let policy = Policy(|action| !matches!(action, ActionType::ShowCommand("wakeup")));
+        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(policy)).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let reply = actor.execute_command("help", "").await.expect("/help runs");
+        assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Private, "/help answers the issuer alone");
+        let text = reply.output;
+        assert!(text.contains("/help"), "{text}");
+        assert!(!text.contains("/wakeup"), "a hidden command is not listed: {text}");
+        let names: Vec<String> = actor.visible_commands().await.into_iter().map(|c| c.name).collect();
+        assert_eq!(names, vec!["help"]);
+
+        let error = actor.execute_command("wakeup", "").await.expect_err("hidden");
+        assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "a hidden command looks unknown: {error}");
+        let error = actor.execute_command("help", "wakeup").await.expect_err("hidden");
+        assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "/help does not describe it either: {error}");
+
+        let quiet = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await;
+        assert!(quiet.is_err(), "a private answer is not sent into the channel: {quiet:?}");
+        assert!(channel.history().await.is_empty(), "commands never enter the history");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
+        let alice = user("alice");
+        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(DummySecurityManager::new())).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
+        assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Channel, "the answer goes to the channel");
+        assert_eq!(reply.output, "No agent was asleep.", "and back to the issuer, whom the channel does not route it to");
+
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .expect("the announcement arrives")
+            .unwrap();
+        assert_eq!(envelope.context.sender_id, ActorId::User(alice.id));
+        match envelope.event {
+            ActorEvent::CommandExecuted { command, output } => {
+                assert_eq!(command, "wakeup");
+                assert_eq!(output, "No agent was asleep.");
+            }
+            other => panic!("expected CommandExecuted, got {:?}", other.kind()),
+        }
+        assert!(channel.history().await.is_empty(), "commands never enter the history");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn wakeup_reports_refusals_and_unknown_agents() {
+        let alice = user("alice");
+        let refuse_waking = Policy(|action| !matches!(action, ActionType::WakeChannel(_)));
+        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(refuse_waking)).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let error = actor.execute_command("wakeup", "").await.expect_err("waking is refused");
+        assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "{error}");
+        assert!(crate::error::is_forbidden(&error), "{error}");
+
+        let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand("wakeup")));
+        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(refuse_running)).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
+        assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "visible but not runnable: {error}");
+
+        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(DummySecurityManager::new())).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let error = actor.execute_command("wakeup", "@nobody").await.expect_err("no such agent");
+        assert!(matches!(command_error(&error), crate::command::CommandError::InvalidArguments { .. }), "{error}");
+        let error = actor.execute_command("", "").await.expect_err("empty");
+        assert!(matches!(command_error(&error), crate::command::CommandError::Empty), "{error}");
+        let error = actor.execute_command("nonsense", "").await.expect_err("unknown");
+        assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "{error}");
     }
 }

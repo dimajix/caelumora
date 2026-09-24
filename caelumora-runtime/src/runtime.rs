@@ -1,5 +1,7 @@
-use crate::component::ComponentRegistry;
-use crate::component_impl::{context, history, mcp, tool};
+use crate::channel::ChannelLoop;
+use crate::command::CommandSet;
+use crate::component::{ComponentRegistry, ComponentResult};
+use crate::component_impl::{command, context, history, mcp, tool};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
@@ -11,10 +13,13 @@ use crate::moderator_impl::round_robin::RoundRobinModerator;
 use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
+use caelumora_model::actor::ActorId;
+use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityManager;
+use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStore, StateStore};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 #[derive(Debug)]
 pub struct RuntimeManager {
@@ -26,47 +31,99 @@ pub struct RuntimeManager {
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
+    commands: ComponentConfig,
 }
 
+/// What a channel runs with: the process-wide services of the
+/// `RuntimeManager`, the user commands of its session (issue 28) and a handle
+/// to the channel itself. It is the only source of `ActorRuntime`s, so every
+/// actor lives in exactly one channel and shares its commands and handle.
+#[derive(Debug, Clone)]
+pub struct ChannelRuntime {
+    runtime_manager: Arc<RuntimeManager>,
+    commands: Arc<CommandSet>,
+    // Set once the channel exists (see `attach`). Weak, because the channel
+    // owns its actors and they hold this runtime: a strong reference would
+    // keep a stopped channel alive forever.
+    channel: Arc<OnceLock<Weak<ChannelLoop>>>,
+}
+
+impl ChannelRuntime {
+    /// A runtime for a channel of a session whose user commands are `commands`.
+    pub fn new(runtime_manager: Arc<RuntimeManager>, commands: Arc<CommandSet>) -> Self {
+        Self { runtime_manager, commands, channel: Arc::new(OnceLock::new()) }
+    }
+
+    /// The runtime of an actor of this channel.
+    pub fn new_actor_runtime(&self) -> ActorRuntime {
+        ActorRuntime { runtime: self.clone() }
+    }
+
+    /// Makes `channel` reachable from the runtimes of its actors. Called once
+    /// by `ChannelLoop::new`, as soon as the channel exists.
+    pub(crate) fn attach(&self, channel: &Arc<ChannelLoop>) {
+        let _ = self.channel.set(Arc::downgrade(channel));
+    }
+
+    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
+
+    pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime_manager.state_store() }
+
+    pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
+
+    pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
+
+    pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> { self.runtime_manager.new_moderator(kind) }
+
+    pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
+}
+
+/// What an actor runs with: the process-wide services, and the commands and
+/// the channel of the `ChannelRuntime` that created it.
 #[derive(Debug, Clone)]
 pub struct ActorRuntime {
-    security_manager: Arc<dyn SecurityManager>,
-    state_store: Arc<dyn StateStore>,
-    entity_store: Arc<dyn EntityStore>,
-    secret_manager: Arc<SecretManager>,
-    llm_client: Arc<dyn LLMClient>,
-    component_registry: Arc<ComponentRegistry>,
-    event_bus: Arc<EventBus>,
-    controller_manager: Arc<ControllerManager>,
+    runtime: ChannelRuntime,
 }
 
 impl ActorRuntime {
     pub fn event_bus(&self) -> Arc<EventBus> {
-        self.event_bus.clone()
+        self.runtime.runtime_manager.event_bus()
     }
 
-    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.security_manager.clone() }
+    pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
 
     pub fn llm_client(&self) -> Arc<dyn LLMClient> {
-        self.llm_client.clone()
+        self.runtime.runtime_manager.llm_client.clone()
     }
 
-    pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
+    pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime.runtime_manager.state_store() }
 
-    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.entity_store.clone() }
+    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.runtime.runtime_manager.entity_store() }
 
-    pub fn secret_manager(&self) -> Arc<SecretManager> { self.secret_manager.clone() }
+    pub fn secret_manager(&self) -> Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
-        self.component_registry.clone()
+        self.runtime.runtime_manager.component_registry()
     }
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> {
-        self.controller_manager.clone()
+        self.runtime.runtime_manager.controller_manager()
     }
 
     pub fn new_tool_executor(&self, tool_providers: Vec<Arc<dyn ToolProvider>>) -> Box<dyn ToolExecutor> {
-        Box::new(DefaultToolExecutor::new(self.security_manager.clone(), tool_providers))
+        Box::new(DefaultToolExecutor::new(self.security_manager(), tool_providers))
+    }
+
+    /// The user commands of the actor's session. Only a `UserActor` runs
+    /// them: commands are for people, agents act through tools.
+    pub fn commands(&self) -> Arc<CommandSet> {
+        self.runtime.commands.clone()
+    }
+
+    /// The channel the actor is in, or `None` while the channel is still
+    /// being built or once it is gone.
+    pub fn channel(&self) -> Option<Arc<ChannelLoop>> {
+        self.runtime.channel.get().and_then(Weak::upgrade)
     }
 }
 
@@ -74,18 +131,23 @@ impl RuntimeManager {
     /// The runtime everything in a process shares. `security_manager` is the
     /// one the whole process was configured with: it decides tool calls and
     /// what may be done to a channel, so it must be the same instance the
-    /// stores were built with, not a second one made up here.
+    /// stores were built with, not a second one made up here. `commands` are
+    /// the global user commands (`AppConfig::commands`) - likewise an
+    /// argument, so that a binary cannot drop the configured ones for a
+    /// default.
     pub fn new(
         state_store: Arc<dyn StateStore>,
         entity_store: Arc<dyn EntityStore>,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
+        commands: ComponentConfig,
     ) -> Result<Self> {
         let mut component_registry = ComponentRegistry::new(entity_store.clone());
         history::register(&mut component_registry);
         context::register(&mut component_registry);
         tool::register(&mut component_registry);
         mcp::register(&mut component_registry);
+        command::register(&mut component_registry);
 
         let event_bus = Arc::new(EventBus::new());
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
@@ -99,20 +161,21 @@ impl RuntimeManager {
             component_registry: Arc::new(component_registry),
             event_bus,
             controller_manager,
+            commands,
         })
     }
 
-    pub fn new_actor_runtime(&self) -> ActorRuntime {
-        ActorRuntime {
-            security_manager: self.security_manager.clone(),
-            state_store: self.state_store.clone(),
-            entity_store: self.entity_store.clone(),
-            secret_manager: self.secret_manager.clone(),
-            llm_client: self.llm_client.clone(),
-            component_registry: self.component_registry.clone(),
-            event_bus: self.event_bus.clone(),
-            controller_manager: self.controller_manager.clone(),
-        }
+    /// The user commands of `session`: the global ones and the session's own
+    /// (issue 28), built once for all of its channels, under the security
+    /// context of the session's owner.
+    ///
+    /// # Errors
+    /// A `ComponentError` if a command component cannot be built or two
+    /// provide the same command - the session does not start then.
+    pub async fn new_command_set(&self, session: &Session) -> ComponentResult<CommandSet> {
+        let owner: ActorId = session.security_attributes.owner_id;
+        let security = SecurityContext::new(owner, session.id, Default::default());
+        CommandSet::build(&[&self.commands, &session.commands], self, &security).await
     }
 
     pub fn event_bus(&self) -> Arc<EventBus> {

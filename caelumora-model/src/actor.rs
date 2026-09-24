@@ -94,6 +94,16 @@ pub enum ActorEvent {
     TurnFailed {
         message: String,
     },
+    /// A user ran a command whose answer concerns everybody in the channel,
+    /// e.g. `/wakeup` (issue 28). The envelope's sender is the user who ran
+    /// it; `command` is its name without the slash, `output` what it answered.
+    ///
+    /// Like `TurnFailed`, shown to users and never written to the history:
+    /// commands address the system, not the agents.
+    CommandExecuted {
+        command: String,
+        output: String,
+    },
 }
 
 impl ActorEvent {
@@ -116,6 +126,7 @@ impl ActorEvent {
             ActorEvent::PlanStepStarted { .. } => "PlanStepStarted",
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
             ActorEvent::TurnFailed { .. } => "TurnFailed",
+            ActorEvent::CommandExecuted { .. } => "CommandExecuted",
         }
     }
 
@@ -269,6 +280,9 @@ impl Envelope {
             }
             ActorEvent::TurnFailed { message } => {
                 format!("TurnFailed(sender_id={}, sender_name={}, message={})", ctx.sender_id, ctx.sender_name, message)
+            }
+            ActorEvent::CommandExecuted { command, .. } => {
+                format!("CommandExecuted(sender_id={}, sender_name={}, command={})", ctx.sender_id, ctx.sender_name, command)
             }
             _ => {
                 format!("{:?}", self.event)

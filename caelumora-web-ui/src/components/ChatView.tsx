@@ -2,6 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
   Send,
   Square,
   Terminal,
@@ -14,6 +15,7 @@ import type {
   ChannelMember,
   ChannelResponse,
   ChannelSnapshot,
+  Command,
   Envelope,
   Message,
   PlanStepEvent,
@@ -21,11 +23,12 @@ import type {
   ToolResultStatus
 } from '../types';
 import {api} from '../api';
-import {reportError} from '../errors';
+import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles, mentionQueryAt} from '../mention';
+import {commandQueryAt, parseInput} from '../command';
 import {loadDraft, saveDraft} from '../session';
 
 function cn(...inputs: ClassValue[]) {
@@ -59,6 +62,11 @@ function formatArguments(args: unknown): string {
 
 type MentionableMember = ChannelMember & {handle: string};
 
+/** An entry of the completion list: a member to mention or a command to run. */
+type Suggestion =
+  | {kind: 'mention'; member: MentionableMember}
+  | {kind: 'command'; command: Command};
+
 interface ChatViewProps {
   sessionId: string;
   channelId: string;
@@ -85,16 +93,38 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [caret, setCaret] = useState(0);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [dismissedMention, setDismissedMention] = useState<number | null>(null);
+  // The commands this user may run here, for `/` completion (issue 28).
+  const [commands, setCommands] = useState<Command[]>([]);
 
   // The server returns members in no particular order.
   const members: ChannelMember[] = [...(channel?.members ?? [])].sort((l, r) => l.name.localeCompare(r.name));
   const mentionQuery = mentionQueryAt(inputText, caret);
-  const suggestions: MentionableMember[] = mentionQuery && mentionQuery.start !== dismissedMention
-    ? members.filter((m): m is MentionableMember => {
-        const query = mentionQuery.query.toLowerCase();
-        return !!m.handle && (m.handle.startsWith(query) || m.name.toLowerCase().includes(query));
-      })
-    : [];
+  const commandQuery = commandQueryAt(inputText, caret);
+  // Where the completed token starts; a command always starts at 0.
+  const suggestionStart = commandQuery !== null ? 0 : mentionQuery?.start ?? null;
+  const suggestions: Suggestion[] = suggestionStart === null || suggestionStart === dismissedMention
+    ? []
+    : commandQuery !== null
+      ? commands
+          .filter(c => c.name.startsWith(commandQuery.toLowerCase()))
+          .map(command => ({kind: 'command', command}))
+      : members
+          .filter((m): m is MentionableMember => {
+            const query = (mentionQuery?.query ?? '').toLowerCase();
+            return !!m.handle && (m.handle.startsWith(query) || m.name.toLowerCase().includes(query));
+          })
+          .map(member => ({kind: 'mention', member}));
+
+  useEffect(() => {
+    api.getCommands(sessionId, channelId)
+      .then(setCommands)
+      .catch(error => {
+        // Someone who is not a participant has no commands here - and learns
+        // that when writing; completion is only a help and stays silent.
+        if (error instanceof ApiRequestError && error.status === 403) return;
+        reportError('Failed to load the commands', error);
+      });
+  }, [sessionId, channelId]);
 
   useEffect(() => {
     let stopped = false;
@@ -175,6 +205,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           setStreamingSender(null);
           setIsGenerating(false);
           setCurrentStep(null);
+        } else if (actorEvent.CommandExecuted) {
+          // Like a failed turn: shown, but not part of the history.
+          const notice: Message = {
+            role: 'System',
+            content: actorEvent.CommandExecuted.output,
+            sender_name: envelope.context.sender_name,
+            commandOutput: {command: actorEvent.CommandExecuted.command, private: false},
+          };
+          setMessages(prev => [...prev, notice]);
         } else if (actorEvent.PlanStepStarted) {
           setCurrentStep(actorEvent.PlanStepStarted);
         } else if (actorEvent.PlanStepFinished) {
@@ -264,10 +303,25 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     //const userMsg: Message = { role: 'User', content: text };
     //setMessages(prev => [...prev, userMsg]);
 
+    const input = parseInput(text);
     try {
-      await api.sendMessage(sessionId, channelId, text);
+      if (input.kind === 'command') {
+        const reply = await api.executeCommand(sessionId, channelId, input.name, input.args);
+        // An answer for the whole channel arrives on the stream instead.
+        if (reply.output !== null) {
+          const notice: Message = {
+            role: 'System',
+            content: reply.output,
+            commandOutput: {command: reply.command, private: true},
+          };
+          setMessages(prev => [...prev, notice]);
+        }
+      } else {
+        await api.sendMessage(sessionId, channelId, input.text);
+      }
     } catch (error) {
-      reportError('Failed to send message', error);
+      // The server's detail for a command already names it.
+      reportError(input.kind === 'command' ? 'Command failed' : 'Failed to send message', error);
       // Give the text back rather than losing it.
       setInputText(prev => prev || text);
     } finally {
@@ -279,6 +333,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     setInputText(e.target.value);
     setCaret(e.target.selectionStart ?? e.target.value.length);
     setSuggestionIndex(0);
+  };
+
+  const selectCommand = (command: Command) => {
+    const rest = inputText.slice(caret).replace(/^\S*\s*/, '');
+    const inserted = `/${command.name} `;
+    const newCaret = inserted.length;
+    setInputText(inserted + rest);
+    setCaret(newCaret);
+    setSuggestionIndex(0);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(newCaret, newCaret);
+    });
+  };
+
+  const selectSuggestion = (suggestion: Suggestion) => {
+    if (suggestion.kind === 'command') selectCommand(suggestion.command);
+    else selectMention(suggestion.member);
   };
 
   const selectMention = (member: MentionableMember) => {
@@ -306,10 +378,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       setSuggestionIndex(i => (i - 1 + suggestions.length) % suggestions.length);
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      selectMention(suggestions[Math.min(suggestionIndex, suggestions.length - 1)]);
+      selectSuggestion(suggestions[Math.min(suggestionIndex, suggestions.length - 1)]);
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      setDismissedMention(mentionQuery?.start ?? null);
+      setDismissedMention(suggestionStart);
     }
   };
 
@@ -370,7 +442,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               }
             }
             return [...acc, msg];
-          }, []).map((msg, idx) => msg.turnFailed ? (
+          }, []).map((msg, idx) => msg.commandOutput ? (
+            <div
+              key={idx}
+              className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+                <ChevronRight size={14} />
+                {msg.commandOutput.private
+                  ? <span><span className="font-mono normal-case">/{msg.commandOutput.command}</span> · only visible to you</span>
+                  : <span>{msg.sender_name} ran <span className="font-mono normal-case">/{msg.commandOutput.command}</span></span>}
+              </div>
+              <MarkdownMessage content={msg.content ?? ''} />
+            </div>
+          ) : msg.turnFailed ? (
             <div
               key={idx}
               role="alert"
@@ -514,26 +599,38 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                   role="listbox"
                   className="absolute bottom-full left-0 mb-1 w-64 max-h-60 overflow-y-auto z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md shadow-lg py-1"
                 >
-                  {suggestions.map((member, idx) => (
-                    <li
-                      key={member.handle + idx}
-                      role="option"
-                      aria-selected={idx === suggestionIndex}
-                      onMouseDown={(e) => { e.preventDefault(); selectMention(member); }}
-                      onMouseEnter={() => setSuggestionIndex(idx)}
-                      className={cn(
-                        "px-3 py-1.5 cursor-pointer flex items-baseline justify-between gap-2",
-                        idx === suggestionIndex
-                          ? "bg-blue-600 text-white"
-                          : "text-gray-800 dark:text-gray-200"
-                      )}
-                    >
-                      <span className="text-sm truncate">{member.name}</span>
-                      <span className={cn("text-xs font-mono", idx === suggestionIndex ? "text-blue-100" : "text-gray-500 dark:text-gray-400")}>
-                        @{member.handle}
-                      </span>
-                    </li>
-                  ))}
+                  {suggestions.map((suggestion, idx) => {
+                    const [label, detail, description] = suggestion.kind === 'command'
+                      ? [`/${suggestion.command.name}`, suggestion.command.usage ?? '', suggestion.command.description]
+                      : [suggestion.member.name, `@${suggestion.member.handle}`, null];
+                    return (
+                      <li
+                        key={`${suggestion.kind}:${label}`}
+                        role="option"
+                        aria-selected={idx === suggestionIndex}
+                        onMouseDown={(e) => { e.preventDefault(); selectSuggestion(suggestion); }}
+                        onMouseEnter={() => setSuggestionIndex(idx)}
+                        className={cn(
+                          "px-3 py-1.5 cursor-pointer",
+                          idx === suggestionIndex
+                            ? "bg-blue-600 text-white"
+                            : "text-gray-800 dark:text-gray-200"
+                        )}
+                      >
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className={cn("text-sm truncate", suggestion.kind === 'command' && "font-mono")}>{label}</span>
+                          <span className={cn("text-xs font-mono", idx === suggestionIndex ? "text-blue-100" : "text-gray-500 dark:text-gray-400")}>
+                            {detail}
+                          </span>
+                        </div>
+                        {description && (
+                          <div className={cn("text-xs truncate", idx === suggestionIndex ? "text-blue-100" : "text-gray-500 dark:text-gray-400")}>
+                            {description}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               <input
@@ -543,9 +640,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 onChange={updateInput}
                 onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? inputText.length)}
                 onKeyDown={handleInputKeyDown}
-                onBlur={() => setDismissedMention(mentionQuery?.start ?? null)}
+                onBlur={() => setDismissedMention(suggestionStart)}
                 onFocus={() => setDismissedMention(null)}
-                placeholder="Type your message... (@ to mention)"
+                placeholder="Type your message... (@ to mention, / for commands)"
                 disabled={isSending}
                 role="combobox"
                 aria-expanded={suggestions.length > 0}

@@ -1,4 +1,5 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
+use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::meta::Metadata;
 use crate::security::{SecurityAttributes, SecurityContext};
@@ -114,6 +115,10 @@ pub struct Session {
     pub metadata: Metadata,
     pub participants: Vec<Participant>,
     pub channels: Vec<Channel>,
+    /// The session's own user commands, copied from its template when it was
+    /// created, so that a running session keeps its set (issue 28).
+    #[serde(default)]
+    pub commands: ComponentConfig,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,

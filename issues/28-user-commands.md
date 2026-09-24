@@ -1,6 +1,6 @@
 # 28 — User commands
 
-**Status:** open
+**Status:** in progress
 **Area:** User interaction
 
 ## The problem
@@ -149,3 +149,45 @@ exactly the kind of action an audit trail should contain.
   its first caller; until then the permission exists but nothing asks for it.
   A command's own permissions ("execute command", "show command") are still
   this issue's to define.
+- **2026-09-24** — `/help` and `/wakeup` implemented; `/compact` stays open
+  until [16](16-context-compression.md) provides something to trigger. Three
+  decisions depart from or sharpen the text above:
+  - **Recognised by the frontend, run by the user's actor.** The frontends
+    decide whether a line is a command (`caelumora_model::command::parse_input`,
+    mirrored in the web UI's `command.ts`) and send it to its own REST
+    resource (`GET`/`POST .../commands`); the message API stays plain text.
+    That gives up "recognised in one place" for the lexical rule only —
+    leading `/`, `//` as escape, a few lines per frontend. What a command
+    means, who may run it and what it answers is still decided in one place.
+    The command is run by `UserActor::execute_command`: it always happens on
+    behalf of a particular person, and the actor is what acts for that person,
+    as for messages and approvals — so a channel-wide answer is announced by
+    the actor itself, and only people can run commands. A first version made
+    it a channel operation, `ChannelLoop::execute_command(user, ...)`; that
+    needed the channel to make the user's actor announce the result on its
+    behalf, which showed the method was on the wrong object.
+    To reach its channel and the session's commands the actor needs a way
+    back: a `ChannelRuntime` now sits between `RuntimeManager` and
+    `ChannelLoop`, is the only source of `ActorRuntime`s, and gives each actor
+    the `CommandSet` and a `Weak` handle to its channel.
+  - **Two configuration places.** `AppConfig::commands` for the global set
+    (default `/help` and `/wakeup`, an empty list switches them off) and
+    `SessionTemplate::commands` for commands that belong to what a session
+    is for — an integration, or the prompts of an MCP server offered as
+    commands. Per-channel configuration was considered and rejected: the
+    scenarios for it were either about *who* may run a command, which is
+    `ShowCommand`/`ExecuteCommand`, or could be decided by the command at
+    run time (`/wakeup` in a channel without agents says so). Both sets are
+    built once per session; a name provided twice keeps the session from
+    starting.
+  - **Output.** A private answer goes back to the caller only; a channel-wide
+    one is announced by the issuer's actor as `ActorEvent::CommandExecuted`,
+    which moderators route to users only and which is never stored. It is
+    returned to the caller as well, because the channel does not route an
+    envelope back to its sender — the TUI would otherwise not see its own
+    `/wakeup`.
+
+  The TUI keeps its own `/approve` and `/deny`, which answer an approval by
+  id and are not channel commands; [14](14-approval-privilege.md) is where
+  approving may become one. Whether an executed command is recorded is still
+  [05](05-postgres-event-recorder.md)'s question.

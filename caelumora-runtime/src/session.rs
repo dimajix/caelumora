@@ -1,5 +1,5 @@
 use crate::channel::ChannelLoop;
-use crate::runtime::RuntimeManager;
+use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
@@ -27,10 +27,12 @@ pub struct SessionLoop {
 impl SessionLoop {
     pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let id = session.id;
+        let commands = Arc::new(runtime_manager.new_command_set(&session).await?);
         let mut channels = HashMap::new();
         for channel in &session.channels {
-            let cl = ChannelLoop::new(channel.clone(), runtime_manager.clone()).await?;
-            channels.insert(cl.id(), Arc::new(cl));
+            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone());
+            let cl = ChannelLoop::new(channel.clone(), runtime).await?;
+            channels.insert(cl.id(), cl);
         }
 
         let session_controller = runtime_manager.controller_manager().new_session_controller(session).await?;
@@ -246,6 +248,7 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::command::default_commands;
     use caelumora_model::channel::Channel;
     use caelumora_model::meta::{Metadata, Scope};
     use caelumora_model::secret::SecretManager;
@@ -256,7 +259,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new())).unwrap())
+        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands()).unwrap())
     }
 
     fn make_session(name: &str) -> Session {
@@ -270,6 +273,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
         };
         Session {
+            commands: Default::default(),
             id: session_id,
             metadata: Metadata {
                 name: name.to_string(),

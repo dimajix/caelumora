@@ -52,7 +52,7 @@ impl Moderator for BroadcastModerator {
             ActorEvent::ApprovalTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
-            ActorEvent::TurnFailed { .. } => {
+            ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } => {
                 self.actors.route_to_users(event)
             }
             _ => {

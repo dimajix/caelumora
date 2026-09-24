@@ -206,6 +206,7 @@ pub mod tests {
     #[tokio::test]
     async fn session_controller_persists_new_session() {
         let session = Session {
+            commands: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session".to_string(),
@@ -230,6 +231,7 @@ pub mod tests {
     #[tokio::test]
     async fn list_sessions_works() {
         let session1 = Session {
+            commands: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session1".to_string(),
@@ -243,6 +245,7 @@ pub mod tests {
             security_attributes: SecurityAttributes::default(),
         };
         let session2 = Session {
+            commands: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session2".to_string(),

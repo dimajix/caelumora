@@ -1,4 +1,5 @@
 use crate::actor::Actor;
+use crate::command::{CommandContext, CommandReply};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -6,6 +7,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::ApprovalResponse;
 use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
@@ -105,6 +107,36 @@ impl UserActor {
         let span_id = Uuid::new_v4();
         self.user_tx.send(self.envelope(event, span_id)).await?;
         Ok(span_id)
+    }
+
+    /// Runs the user command `name` with `args` on behalf of this user
+    /// (issue 28). Commands are for people, so only a `UserActor` runs them.
+    ///
+    /// A command answers either this user alone or the whole channel; in the
+    /// latter case this actor announces it as a `CommandExecuted`, in its own
+    /// name. The answer is returned in both cases. Commands never enter the
+    /// history.
+    ///
+    /// # Errors
+    /// A `CommandError` if the command is unknown, refused or fails; an error
+    /// if the channel no longer exists.
+    pub async fn execute_command(&self, name: &str, args: &str) -> anyhow::Result<CommandReply> {
+        let channel = self.actor_runtime.channel()
+            .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
+        let commands = self.actor_runtime.commands();
+        let context = CommandContext { issuer: &self.security_context, channel: &channel, commands: &commands };
+        debug!("UserActor {} runs /{}", self.id, name);
+        let output = commands.execute(name, args, &context).await?;
+        if output.visibility == CommandVisibility::Channel {
+            let event = ActorEvent::CommandExecuted { command: name.to_string(), output: output.text.clone() };
+            self.user_tx.send(self.envelope(event, Uuid::new_v4())).await?;
+        }
+        Ok(CommandReply { command: name.to_string(), output: output.text, visibility: output.visibility })
+    }
+
+    /// The commands this user may see, e.g. for completion.
+    pub async fn visible_commands(&self) -> Vec<Command> {
+        self.actor_runtime.commands().visible(&self.security_context).await
     }
 
     /// Receives the envelopes routed to this user from now on, e.g. for a
@@ -241,7 +273,9 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::RuntimeManager;
+    use caelumora_model::command::default_commands;
+    use crate::command::CommandSet;
+    use crate::runtime::{ChannelRuntime, RuntimeManager};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -249,7 +283,8 @@ mod tests {
     async fn user_actor() -> UserActor {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new())).unwrap();
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands()).unwrap());
+        let runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandSet::empty(runtime.security_manager())));
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
         let user = User {
             id: UserId::new(),

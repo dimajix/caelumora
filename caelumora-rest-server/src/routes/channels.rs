@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, ExecuteCommandRequest, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -11,6 +11,8 @@ use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
+use caelumora_model::command::{Command, CommandVisibility};
+use caelumora_runtime::command::CommandError;
 use caelumora_model::message::Message;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
@@ -211,6 +213,56 @@ fn cancel_error(error: anyhow::Error) -> ApiError {
     ApiError::internal("cancel_failed", "cancelling the channel", &error)
 }
 
+/// The commands the authenticated user may see in the channel, for
+/// completion (issue 28).
+pub async fn list_commands(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<Command>>, ApiError> {
+    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
+    let channel = channel_of(&session, ChannelId(cid))?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    Ok(Json(user_actor.visible_commands().await))
+}
+
+/// Runs a user command in the channel (issue 28). Commands are recognised by
+/// the client - a message that starts with a slash is sent here instead of to
+/// `messages` - and never enter the conversation.
+pub async fn execute_command(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ExecuteCommandRequest>,
+) -> Result<Json<CommandReplyResponse>, ApiError> {
+    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
+    let channel = channel_of(&session, ChannelId(cid))?;
+    let user_actor = user_actor_of(&channel, &user)?;
+    let reply = user_actor.execute_command(&payload.name, &payload.args).await
+        .map_err(command_error)?;
+    // An answer for the whole channel reaches this client on the channel's
+    // stream, like everybody else; returning it here as well would show it twice.
+    let output = (reply.visibility == CommandVisibility::Private).then_some(reply.output);
+    Ok(Json(CommandReplyResponse { command: reply.command, output }))
+}
+
+/// A command that did not run is the user's answer, not a server failure -
+/// except when it failed, which is `500` as for anything else.
+fn command_error(error: anyhow::Error) -> ApiError {
+    let detail = error.to_string();
+    match error.downcast_ref::<CommandError>() {
+        Some(CommandError::Empty | CommandError::Unknown(_)) => ApiError::new(StatusCode::BAD_REQUEST, "unknown_command", detail),
+        Some(CommandError::InvalidArguments { .. }) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_command_arguments", detail),
+        Some(CommandError::Forbidden(_)) => ApiError::forbidden("command_forbidden", detail),
+        _ if caelumora_runtime::error::is_forbidden(&error) => {
+            let detail = caelumora_runtime::error::user_message(&error)
+                .unwrap_or_else(|| "Running this command is not permitted".to_string());
+            ApiError::forbidden("command_forbidden", detail)
+        }
+        _ => ApiError::internal("command_failed", "running the command", &error),
+    }
+}
+
 pub async fn send_approval(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
@@ -266,5 +318,18 @@ mod tests {
         let (messages, has_more) = recent_messages(Vec::new());
         assert!(messages.is_empty());
         assert!(!has_more);
+    }
+
+    #[test]
+    fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {
+        let status = |error: CommandError| command_error(anyhow::Error::new(error)).status();
+        assert_eq!(status(CommandError::Unknown("x".to_string())), StatusCode::BAD_REQUEST);
+        assert_eq!(status(CommandError::Empty), StatusCode::BAD_REQUEST);
+        assert_eq!(status(CommandError::InvalidArguments { command: "x".to_string(), reason: "y".to_string() }), StatusCode::BAD_REQUEST);
+        assert_eq!(status(CommandError::Forbidden("x".to_string())), StatusCode::FORBIDDEN);
+        assert_eq!(status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let refused = anyhow::Error::new(caelumora_model::channel::ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default() });
+        assert_eq!(command_error(refused).status(), StatusCode::FORBIDDEN);
     }
 }

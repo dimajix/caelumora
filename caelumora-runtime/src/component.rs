@@ -1,4 +1,3 @@
-use crate::runtime::ActorRuntime;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
@@ -158,13 +157,14 @@ pub struct ComponentContainer {
 }
 
 impl ComponentContainer {
+    /// Builds the components of `config` in dependency order with the
+    /// factories of `registry`, under `security_context`.
     pub async fn from_config(
         config: &ComponentConfig,
-        actor_runtime: &ActorRuntime,
+        registry: &ComponentRegistry,
+        secret_manager: &Arc<SecretManager>,
         security_context: SecurityContext,
     ) -> ComponentResult<Self> {
-        let registry = actor_runtime.component_registry();
-        let secret_manager = actor_runtime.secret_manager();
 
         let mut indegree: HashMap<String, usize> = HashMap::new();
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();

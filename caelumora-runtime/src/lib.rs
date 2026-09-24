@@ -12,6 +12,7 @@ pub mod tool;
 pub mod actor;
 pub mod actor_impl;
 pub mod channel;
+pub mod command;
 pub mod controller;
 pub mod message;
 pub mod component;

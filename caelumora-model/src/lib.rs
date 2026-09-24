@@ -3,6 +3,7 @@ pub mod macros;
 pub mod agent;
 pub mod approval;
 pub mod channel;
+pub mod command;
 pub mod config;
 pub mod tool;
 pub mod message;

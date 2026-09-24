@@ -1,5 +1,7 @@
 import type {
   ChannelResponse,
+  Command,
+  CommandReply,
   CreateSessionRequest,
   Message,
   SessionResponse,
@@ -111,6 +113,24 @@ export const api = {
       body: JSON.stringify({ content }),
     });
     await ensureOk(res, 'Failed to send message');
+  },
+
+  /** The commands the current user may use in the channel. */
+  async getCommands(sessionId: string, channelId: string): Promise<Command[]> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands`);
+    await ensureOk(res, 'Failed to fetch commands');
+    return res.json();
+  },
+
+  /** Runs a command; an answer for the whole channel arrives on the event stream. */
+  async executeCommand(sessionId: string, channelId: string, name: string, args: string): Promise<CommandReply> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, args }),
+    });
+    await ensureOk(res, 'Failed to run the command');
+    return res.json();
   },
 
   async cancelChannel(sessionId: string, channelId: string): Promise<void> {

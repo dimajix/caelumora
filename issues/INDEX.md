@@ -88,7 +88,7 @@ against it, and what came out of the last attempt.
 
 | No. | Status | Issue |
 |---|---|---|
-| [28](28-user-commands.md) | open | Everything a user types goes to the agents; there is no way to address the system itself with slash commands such as `/help`, `/wakeup` or `/compact`. |
+| [28](28-user-commands.md) | in progress | Everything a user types goes to the agents; there is no way to address the system itself with slash commands such as `/help`, `/wakeup` or `/compact`. |
 | [35](35-sidebar-live-updates.md) | open | The web UI's session list is loaded once and never updated, so sessions and channels created or deleted elsewhere stay invisible until a reload. |
 | [29](29-mentions.md) | done | In a multi-agent channel the user cannot choose who answers; the moderator alone decides, and an `@name` in the text means nothing to it. |
 

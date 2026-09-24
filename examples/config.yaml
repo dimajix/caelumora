@@ -18,3 +18,13 @@ users:
 #logging:
 #  format: json
 #  file: "local/server.log"
+
+# User commands every session has (`/help`, `/wakeup`), as components; a
+# session template can add its own under `commands`. Without this section the
+# built-in ones are used; an empty list switches them off.
+#commands:
+#  component_nodes:
+#    - id: help
+#      kind: help_command
+#    - id: wakeup
+#      kind: wakeup_command

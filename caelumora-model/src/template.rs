@@ -1,6 +1,7 @@
 use crate::agent::{AgentId, PersonalityId};
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::channel::{Channel, Participant};
+use crate::component::ComponentConfig;
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
 use crate::session::{Session, SessionContext};
@@ -129,6 +130,11 @@ pub struct SessionTemplate {
     pub scope: ScopeTemplate,
     pub participants: Vec<ParticipantTemplate>,
     pub channels: Vec<ChannelTemplate>,
+    /// User commands of sessions made from this template, in addition to the
+    /// global ones from `AppConfig` (issue 28) - for commands that belong to
+    /// what the session is for, such as an integration it uses.
+    #[serde(default)]
+    pub commands: ComponentConfig,
 }
 
 impl SessionTemplate {
@@ -165,6 +171,7 @@ impl SessionTemplate {
             },
             participants,
             channels,
+            commands: self.commands.clone(),
             created_at: now,
             updated_at: now,
             security_attributes,
@@ -274,6 +281,7 @@ mod tests {
                 moderator: "broadcast".to_string(),
                 participants: vec!["user".to_string()],
             }],
+            commands: crate::command::default_commands(),
         };
         let context = SessionContext {
             id: Default::default(),
@@ -290,5 +298,12 @@ mod tests {
             .filter_map(|p| match p { Participant::User(u) => Some(u.id), _ => None })
             .collect();
         assert_eq!(users, vec![alice.id]);
+        assert_eq!(session.commands.component_nodes.len(), 2, "the session keeps its template's commands");
+
+        // Sessions stored before sessions had commands still load.
+        let mut stored = serde_json::to_value(&session).unwrap();
+        stored.as_object_mut().unwrap().remove("commands");
+        let loaded: Session = serde_json::from_value(stored).expect("a session without commands loads");
+        assert!(loaded.commands.component_nodes.is_empty());
     }
 }

@@ -331,6 +331,21 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn every_moderator_forwards_an_announced_command_to_the_users_only() {
+        for mut moderator in moderators() {
+            let agents = add_agents(moderator.as_mut());
+            let user = ActorId::User(UserId::new());
+            let event = envelope(user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), output: "Woke b.".to_string() });
+
+            let decision = moderator.route(&event).await;
+
+            // Commands address the system: the agents must not see them.
+            assert!(decision.forwards.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
+            assert!(decision.broadcast, "{:?} must broadcast an announced command", moderator);
+        }
+    }
+
     #[test]
     fn approval_requested_from_agent_is_internal_only() {
         let actors = ModeratorActors::new();

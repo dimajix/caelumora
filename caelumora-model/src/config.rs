@@ -1,3 +1,5 @@
+use crate::command::default_commands;
+use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
 use crate::secret_impl::file::FileSecretProvider;
@@ -130,7 +132,7 @@ pub struct LoggingConfig {
     pub file: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub persistence: Option<PersistenceConfig>,
     pub secrets: Option<SecretsConfig>,
@@ -139,6 +141,25 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    /// The user commands every session has (issue 28), as `CommandProvider`
+    /// components; a session template can add its own. Defaults to `/help`
+    /// and `/wakeup`; an empty `component_nodes` list switches them off.
+    #[serde(default = "default_commands")]
+    pub commands: ComponentConfig,
+}
+
+// Not derived: the commands default to the built-in ones, not to none.
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            persistence: None,
+            secrets: None,
+            users: None,
+            auth: AuthConfig::default(),
+            logging: LoggingConfig::default(),
+            commands: default_commands(),
+        }
+    }
 }
 
 impl AppConfig {
@@ -409,5 +430,15 @@ users:
         let message = err.to_string();
         assert!(message.contains("line"), "error should name the line: {message}");
         assert!(!message.contains("secret_value_xyz"), "error must not quote the input: {message}");
+    }
+
+    #[test]
+    fn the_commands_default_to_the_builtin_ones_and_can_be_switched_off() {
+        let expected = crate::command::default_commands().component_nodes.len();
+        assert_eq!(AppConfig::default().commands.component_nodes.len(), expected);
+        assert_eq!(AppConfig::from_yaml("persistence: {}").unwrap().commands.component_nodes.len(), expected);
+
+        let config = AppConfig::from_yaml("commands:\n  component_nodes: []\n").unwrap();
+        assert!(config.commands.component_nodes.is_empty(), "an explicit empty list means no global commands");
     }
 }

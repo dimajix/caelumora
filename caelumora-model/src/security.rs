@@ -35,6 +35,11 @@ pub enum ActionType<'a> {
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
     WakeChannel(ChannelId),
+    /// Seeing that a user command exists - in `/help` and in completion.
+    /// Keyed by the command's name, without the slash (issue 28).
+    ShowCommand(&'a str),
+    /// Running a user command, keyed by its name.
+    ExecuteCommand(&'a str),
     CallTool(&'a ToolCall),
     ReadSecret(&'a str),
     GetComponent(&'a str),

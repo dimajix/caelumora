@@ -3,6 +3,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_model::agent::Personality;
 use caelumora_model::agent::PersonalityId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
+use caelumora_model::command::{parse_input, UserInput};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::mention::mention_spans;
@@ -163,6 +164,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
                 ],
             }
         ],
+        commands: Default::default(),
     };
     store.put_session_template(&ctx, &template).await?;
 
@@ -207,6 +209,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     loop {
         tokio::select! {
             maybe_envelope = receiver.recv() => {
+                let sender = maybe_envelope.as_ref().map(|e| e.context.sender_name.clone()).unwrap_or_default();
                 match maybe_envelope.map(|envelope| envelope.event) {
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {
                         if let Some(content) = &message.content {
@@ -227,6 +230,9 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     }
                     Some(ActorEvent::TurnFailed { message }) => {
                         println!("\r[error] An agent could not answer: {}", message);
+                    }
+                    Some(ActorEvent::CommandExecuted { command, output }) => {
+                        println!("\r{} ran /{}: {}", sender, command, output);
                     }
                     Some(ActorEvent::ApprovalRequested(request)) => {
                         pending_approvals.insert(request.id.0, request.agent_id);
@@ -265,9 +271,28 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                             }
                             continue;
                         }
-                        let _ = channel.wake_for_delivery().await;
-                        let span_id = user_actor.send_message(input.to_string()).await?;
-                        tracing::debug!(span_id = %span_id, "Message sent");
+                        // `/approve` and `/deny` above are this terminal's own;
+                        // every other command goes to the channel (issue 28).
+                        match parse_input(input) {
+                            UserInput::Command { name, args } => {
+                                match user_actor.execute_command(&name, &args).await {
+                                    // Also for an answer to the whole channel: its
+                                    // announcement is not routed back to its sender.
+                                    Ok(reply) => println!("{}", reply.output),
+                                    Err(e) => {
+                                        tracing::warn!("Command /{} failed: {:#}", name, e);
+                                        let message = caelumora_runtime::error::user_message(&e)
+                                            .unwrap_or_else(|| format!("/{} failed; the details are in local/tui.log", name));
+                                        println!("[error] {}", message);
+                                    }
+                                }
+                            }
+                            UserInput::Message(text) => {
+                                let _ = channel.wake_for_delivery().await;
+                                let span_id = user_actor.send_message(text).await?;
+                                tracing::debug!(span_id = %span_id, "Message sent");
+                            }
+                        }
                     }
                     Some(Err(ReadlineError::Interrupted)) => {
                         println!("CTRL-C");
@@ -348,6 +373,7 @@ async fn main() -> anyhow::Result<()> {
         entity_store.clone(),
         secret_manager,
         security_manager.clone(),
+        config.commands.clone(),
     )?);
     let template = setup_templates(&entity_store).await?;
 

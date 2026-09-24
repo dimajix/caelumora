@@ -88,7 +88,8 @@ impl AgentActor {
 
         let components = ComponentContainer::from_config(
             &personality.components,
-            &actor_runtime,
+            &actor_runtime.component_registry(),
+            &actor_runtime.secret_manager(),
             security_context.clone(),
         )
         .await?;

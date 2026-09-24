@@ -380,6 +380,7 @@ mod tests {
 
     fn make_session_template(name: &str, scope: Scope) -> SessionTemplate {
         SessionTemplate {
+            commands: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {
                 name: name.to_string(),

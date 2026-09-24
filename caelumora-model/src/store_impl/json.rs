@@ -711,6 +711,7 @@ mod tests {
 
     fn make_session_template() -> SessionTemplate {
         SessionTemplate {
+            commands: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "pairing".to_string(),
@@ -863,6 +864,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         let s1 = Session {
+            commands: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session-1".to_string(),
@@ -876,6 +878,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
         };
         let s2 = Session {
+            commands: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session-2".to_string(),
@@ -918,6 +921,7 @@ mod tests {
         };
         let channel_id = channel.id;
         let session = Session {
+            commands: Default::default(),
             id: session_id,
             metadata: Metadata {
                 name: "to-delete".to_string(),
@@ -964,6 +968,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         let s1 = Session {
+            commands: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session-1".to_string(),
