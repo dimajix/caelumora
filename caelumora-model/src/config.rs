@@ -17,7 +17,7 @@ pub enum ConfigError {
     #[error("failed to read config file: {0}")]
     Io(#[from] std::io::Error),
     #[error("failed to parse config: {0}")]
-    Parse(#[from] serde_yaml::Error),
+    Parse(#[from] serde_saphyr::Error),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -142,10 +142,28 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    /// Reads and parses the configuration file at `path`.
+    ///
+    /// # Errors
+    /// `ConfigError::Io` if the file cannot be read, `ConfigError::Parse` if
+    /// it is not a valid configuration.
     pub fn load(path: impl AsRef<Path>) -> ConfigResult<Self> {
         let content = fs::read_to_string(path)?;
-        let config: AppConfig = serde_yaml::from_str(&content)?;
-        Ok(config)
+        Self::from_yaml(&content)
+    }
+
+    /// Parses a configuration from YAML text.
+    ///
+    /// # Errors
+    /// `ConfigError::Parse` if `yaml` is not a valid configuration; the error
+    /// names the line and column.
+    pub fn from_yaml(yaml: &str) -> ConfigResult<Self> {
+        // By default the parser quotes the offending lines of the input in its
+        // error, and a configuration may hold credentials. The location alone
+        // is enough to find the mistake.
+        let mut options = serde_saphyr::Options::default();
+        options.with_snippet = false;
+        Ok(serde_saphyr::from_str_with_options(yaml, options)?)
     }
 
     pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn EntityStore>> {
@@ -239,7 +257,7 @@ persistence:
     json:
       path: "local/template_store"
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         assert!(config.persistence.is_some());
         let p = config.persistence.unwrap();
         match p.state_store {
@@ -255,7 +273,7 @@ persistence:
   state_store:
     memory:
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         assert!(config.persistence.is_some());
         let p = config.persistence.unwrap();
         println!("Deserialized state_store: {:?}", p.state_store);
@@ -270,7 +288,7 @@ persistence:
         let yaml = r#"
 persistence: {}
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         assert!(config.persistence.is_some());
         let p = config.persistence.unwrap();
         assert!(p.state_store.is_none());
@@ -285,7 +303,7 @@ secrets:
       path: "local/secrets.json"
     - type: env
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         let secrets = config.secrets.expect("secrets config present");
         assert_eq!(secrets.providers.len(), 2);
         match &secrets.providers[0] {
@@ -302,7 +320,7 @@ users:
   providers:
     - type: accept_any
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         let users = config.users.expect("users config present");
         assert_eq!(users.providers.len(), 1);
         assert!(matches!(users.providers[0], UserProviderConfig::AcceptAny));
@@ -310,7 +328,7 @@ users:
 
     #[test]
     fn test_load_config_logging() {
-        let config: AppConfig = serde_yaml::from_str("persistence: {}").unwrap();
+        let config = AppConfig::from_yaml("persistence: {}").unwrap();
         assert_eq!(config.logging.format, LogFormat::Text);
         assert!(config.logging.file.is_none());
 
@@ -319,14 +337,14 @@ logging:
   format: json
   file: "local/server.log"
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.logging.format, LogFormat::Json);
         assert_eq!(config.logging.file, Some(PathBuf::from("local/server.log")));
     }
 
     #[test]
     fn test_load_config_auth_defaults_and_overrides() {
-        let config: AppConfig = serde_yaml::from_str("persistence: {}").unwrap();
+        let config = AppConfig::from_yaml("persistence: {}").unwrap();
         assert_eq!(config.auth.token_lifetime_secs, 900);
         assert!(config.auth.secure_cookie);
 
@@ -335,7 +353,7 @@ auth:
   jwt_secret: "OTHER_KEY"
   token_lifetime_secs: 60
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.auth.jwt_secret, "OTHER_KEY");
         assert_eq!(config.auth.token_lifetime_secs, 60);
         assert_eq!(config.auth.max_session_secs, 12 * 60 * 60, "unset fields keep their defaults");
@@ -357,7 +375,7 @@ users:
   providers:
     - type: accept_any
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config = AppConfig::from_yaml(yaml).unwrap();
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
         let manager = config.create_user_manager(store).unwrap();
 
@@ -382,5 +400,14 @@ users:
             .unwrap();
         assert_eq!(value, "value-from-env");
         std::env::remove_var("CAELUMORA_TEST_CONFIG_SECRET");
+    }
+
+    #[test]
+    fn a_malformed_config_names_the_location_but_not_the_content() {
+        let yaml = "auth:\n  secret_value_xyz: [unclosed\n";
+        let err = AppConfig::from_yaml(yaml).expect_err("unclosed flow sequence must not parse");
+        let message = err.to_string();
+        assert!(message.contains("line"), "error should name the line: {message}");
+        assert!(!message.contains("secret_value_xyz"), "error must not quote the input: {message}");
     }
 }

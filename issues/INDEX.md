@@ -106,7 +106,7 @@ against it, and what came out of the last attempt.
 
 | No. | Status | Issue |
 |---|---|---|
-| [36](36-replace-serde-yaml.md) | open | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
+| [36](36-replace-serde-yaml.md) | done | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 
 ## Open architecture questions
 

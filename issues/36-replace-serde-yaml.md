@@ -1,6 +1,6 @@
 # 36 — The configuration is parsed with a crate that is no longer maintained
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -66,3 +66,17 @@ works, which is why this is maintenance and not a bug.
 - **2026-09-24** — Opened during the dependency update (`ed5b3e0`), which
   left `serde_yaml` at `0.9.34+deprecated` because there is no in-place
   upgrade.
+- **2026-09-24** — Done with `serde-saphyr` 1.3, with only its
+  `deserialize` feature. Parsing goes through the new
+  `AppConfig::from_yaml`, which `load` and the unit tests share, so the
+  tests exercise the real parser options. One option had to change: by
+  default the crate renders the offending lines of the input into its error,
+  and a configuration may hold credentials, so `with_snippet` is off — the
+  message keeps line and column ("unclosed bracket '[' at line 2, column
+  21"), and a new test checks that it does not quote the input. Values the
+  parser rejects (an unknown variant) are still named, as they were with
+  `serde_yaml`. All existing config tests passed unchanged and
+  `examples/config.yaml` loads. `ConfigError::Parse` now wraps
+  `serde_saphyr::Error`; the own error type considered above was not
+  introduced, since nothing matches on the variant and the switch touched
+  one line of it.
