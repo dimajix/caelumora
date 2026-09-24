@@ -31,11 +31,23 @@ pub enum ComponentError {
 pub type ComponentResult<T> = Result<T, ComponentError>;
 
 
+/// What a component is built with: the facets of the components it
+/// depends on, and the environment of the whole graph - the security
+/// context it is built under and the secrets it may resolve.
 #[derive(Debug, Clone)]
 pub struct ComponentContext {
     pub deps: HashMap<String, ComponentFacets>,
     pub security_context: SecurityContext,
     pub secret_manager: Arc<SecretManager>,
+}
+
+impl ComponentContext {
+    /// The context a component graph is built in, without dependencies:
+    /// `ComponentContainer::from_config` gives each component this context
+    /// with its own dependencies added.
+    pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>) -> Self {
+        Self { deps: HashMap::new(), security_context, secret_manager }
+    }
 }
 
 #[derive(Default, Debug, Clone)]
@@ -158,12 +170,13 @@ pub struct ComponentContainer {
 
 impl ComponentContainer {
     /// Builds the components of `config` in dependency order with the
-    /// factories of `registry`, under `security_context`.
+    /// factories of `registry`. Each component gets `context` with its own
+    /// dependencies as `deps`; whatever `deps` `context` carries is replaced,
+    /// not merged.
     pub async fn from_config(
         config: &ComponentConfig,
         registry: &ComponentRegistry,
-        secret_manager: &Arc<SecretManager>,
-        security_context: SecurityContext,
+        context: &ComponentContext,
     ) -> ComponentResult<Self> {
 
         let mut indegree: HashMap<String, usize> = HashMap::new();
@@ -221,11 +234,7 @@ impl ComponentContainer {
                 dep_facets.insert(dep_id.clone(), dep_node.facets.clone());
             }
 
-            let context = ComponentContext {
-                deps: dep_facets,
-                security_context: security_context.clone(),
-                secret_manager: secret_manager.clone(),
-            };
+            let context = ComponentContext { deps: dep_facets, ..context.clone() };
 
             let facets = registry.build(node_config, &context).await
                 .map_err(|e| ComponentError::Build {
@@ -323,14 +332,10 @@ mod tests {
     }
 
     fn context_with_session(session_id: SessionId) -> ComponentContext {
-        ComponentContext {
-            deps: HashMap::new(),
-            security_context: SecurityContext {
-                session_id,
-                ..SecurityContext::default()
-            },
-            secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
-        }
+        ComponentContext::new(
+            SecurityContext { session_id, ..SecurityContext::default() },
+            Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
+        )
     }
 
     fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {

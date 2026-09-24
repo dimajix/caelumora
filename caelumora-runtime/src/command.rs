@@ -7,7 +7,7 @@
 //! for, and never enter the conversation.
 
 use crate::channel::ChannelLoop;
-use crate::component::{ComponentContainer, ComponentError, ComponentImpl, ComponentResult};
+use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl, ComponentResult};
 use crate::runtime::RuntimeManager;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
@@ -106,10 +106,10 @@ impl CommandSet {
         security_context: &SecurityContext,
     ) -> ComponentResult<Self> {
         let registry = runtime_manager.component_registry();
-        let secret_manager = runtime_manager.secret_manager();
+        let context = ComponentContext::new(security_context.clone(), runtime_manager.secret_manager());
         let mut providers = Vec::new();
         for config in configs {
-            let container = ComponentContainer::from_config(config, &registry, &secret_manager, security_context.clone()).await?;
+            let container = ComponentContainer::from_config(config, &registry, &context).await?;
             providers.extend(container.get_all::<dyn CommandProvider>(None)?);
         }
         Self::new(runtime_manager.security_manager(), providers)

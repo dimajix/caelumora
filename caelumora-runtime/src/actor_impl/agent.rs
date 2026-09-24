@@ -1,5 +1,5 @@
 use crate::actor::{Actor, TurnContext};
-use crate::component::{ComponentContainer, ComponentImpl};
+use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
@@ -89,8 +89,7 @@ impl AgentActor {
         let components = ComponentContainer::from_config(
             &personality.components,
             &actor_runtime.component_registry(),
-            &actor_runtime.secret_manager(),
-            security_context.clone(),
+            &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager()),
         )
         .await?;
         let context_provider = components.get_all::<dyn ContextProvider>(None)?;
