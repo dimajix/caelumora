@@ -1,6 +1,6 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
-use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse};
+use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse, SessionSnapshot};
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode};
 use crate::error::{Json, Path};
@@ -77,6 +77,27 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>, user: Authenticat
         .collect();
 
     Ok(Json(response))
+}
+
+/// One session with its channels, in the form the global snapshot uses - so
+/// that a client can follow an event that names a session by id alone
+/// (issue 35). Does not start a stopped session.
+pub async fn get_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session = state.entity_store.get_session(&user.security_context(), session_id).await
+        .map_err(|e| {
+            let error = anyhow::Error::new(e);
+            if caelumora_runtime::error::is_not_found(&error, "session") {
+                ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id))
+            } else {
+                ApiError::internal("session_unavailable", &format!("loading session {}", session_id), &error)
+            }
+        })?;
+    Ok(Json(crate::routes::events::describe_session(&state, session)))
 }
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {

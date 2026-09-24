@@ -5,6 +5,7 @@ import type {
   CreateSessionRequest,
   Message,
   SessionResponse,
+  SessionSnapshot,
   SessionTemplate,
   UserResponse
 } from '../types';
@@ -162,9 +163,21 @@ export const api = {
    * event carrying the current state, so that nothing that happens while the
    * stream is being established is missed.
    */
-  getEventSource(sessionId: string, channelId: string, options?: {snapshot?: boolean}): EventSource {
-    const query = options?.snapshot ? '?snapshot=true' : '';
-    return new EventSource(`${API_BASE}/sessions/${sessionId}/channels/${channelId}/events${query}`);
+  /** The event stream of a channel, to open with `openEventStream`. */
+  channelEventsUrl(sessionId: string, channelId: string): string {
+    return `${API_BASE}/sessions/${sessionId}/channels/${channelId}/events`;
+  },
+
+  /** The global event stream (sessions and channels), to open with `openEventStream`. */
+  globalEventsUrl(): string {
+    return `${API_BASE}/events`;
+  },
+
+  /** One session with its channels, as the global snapshot describes it. */
+  async getSession(sessionId: string): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}`);
+    await ensureOk(res, 'Failed to fetch session');
+    return res.json();
   },
 
   async respondToApproval(sessionId: string, channelId: string, approvalId: string, agentId: string, approved: boolean): Promise<void> {

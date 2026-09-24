@@ -29,6 +29,7 @@ import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
+import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
 
 function cn(...inputs: ClassValue[]) {
@@ -127,12 +128,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   }, [sessionId, channelId]);
 
   useEffect(() => {
-    let stopped = false;
-    let current: EventSource | null = null;
-
-    const handleSnapshot = (event: MessageEvent) => {
+    const handleSnapshot = (data: string) => {
       try {
-        const snapshot: ChannelSnapshot = JSON.parse(event.data);
+        const snapshot: ChannelSnapshot = JSON.parse(data);
         setMessages(snapshot.messages);
         setChannel(snapshot.channel);
         setHasMore(snapshot.has_more);
@@ -144,9 +142,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       }
     };
 
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = (data: string) => {
       try {
-        const envelope: Envelope = JSON.parse(event.data);
+        const envelope: Envelope = JSON.parse(data);
         const actorEvent = envelope.event;
         if (actorEvent === 'ResponseStarted') {
           setIsGenerating(true);
@@ -229,39 +227,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     // The stream itself delivers the state it starts from, so there is no
     // window between loading the history and subscribing in which a message
     // could be missed (issue 34).
-    const connect = () => {
-      const eventSource = api.getEventSource(sessionId, channelId, {snapshot: true});
-      current = eventSource;
-      eventSource.addEventListener('snapshot', handleSnapshot);
-      eventSource.onmessage = handleMessage;
-
-      // The server ends a stream shortly before the session token that
-      // authenticated it expires (issue 33). Reconnecting at once keeps the
-      // gap invisible: the new request carries the cookie the keep-alive has
-      // renewed, and its snapshot restores what happened in between. Waiting
-      // for the browser's own retry would freeze the output for seconds.
-      eventSource.addEventListener('expired', () => {
-        eventSource.close();
-        if (!stopped) connect();
-      });
-
-      eventSource.onerror = (e) => {
-        // A connection that broke unexpectedly: the browser retries by
-        // itself, so leave it alone as long as it is doing so.
-        if (eventSource.readyState === EventSource.CONNECTING) return;
-        console.error('SSE Error', e);
-        eventSource.close();
-        // EventSource does not expose the status code; if the session has
-        // expired, this request's 401 brings up the login page.
-        void api.me();
-      };
-    };
-
-    connect();
-    return () => {
-      stopped = true;
-      current?.close();
-    };
+    return openEventStream(api.channelEventsUrl(sessionId, channelId), {
+      onSnapshot: handleSnapshot,
+      onEvent: handleMessage,
+    });
   }, [sessionId, channelId]);
 
 

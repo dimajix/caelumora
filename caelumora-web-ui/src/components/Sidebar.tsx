@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useEffectEvent, useState} from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -10,14 +10,38 @@ import {
   Trash2,
   User
 } from 'lucide-react';
-import type {ChannelResponse, SessionResponse, SessionTemplate, UserResponse} from '../types';
+import type {SessionSnapshot, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
-import {reportError} from '../errors';
+import {ApiRequestError, reportError} from '../errors';
+import {sessionChange} from '../globalEvents';
+import {openEventStream} from '../stream';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** `sessions` with `session` added, or replacing the one with its id. */
+function upsert(sessions: SessionSnapshot[], session: SessionSnapshot): SessionSnapshot[] {
+  return sessions.some(s => s.id === session.id)
+    ? sessions.map(s => (s.id === session.id ? session : s))
+    : [...sessions, session];
+}
+
+/**
+ * Fetches one session with its channels, or `null` if it is gone again -
+ * its `SessionDeleted` then follows or has already arrived.
+ */
+async function fetchSession(sessionId: string): Promise<SessionSnapshot | null> {
+  try {
+    return await api.getSession(sessionId);
+  } catch (error) {
+    if (!(error instanceof ApiRequestError && error.status === 404)) {
+      reportError('Failed to load session', error);
+    }
+    return null;
+  }
 }
 
 interface SidebarProps {
@@ -37,18 +61,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectChannel,
   onSessionDeleted,
 }) => {
-  const [sessions, setSessions] = useState<SessionResponse[]>([]);
+  const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
-  const [channels, setChannels] = useState<Record<string, ChannelResponse[]>>({});
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
 
   useEffect(() => {
-    api.getSessions()
-      .then(setSessions)
-      .catch(error => reportError('Failed to load sessions', error));
     api.getTemplates()
       .then(setTemplates)
       .catch(error => reportError('Failed to load templates', error));
@@ -57,18 +77,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('click', handleClickOutside);
   }, []);
 
-  const toggleSession = async (sessionId: string) => {
-    const isExpanded = !!expandedSessions[sessionId];
-    setExpandedSessions(prev => ({ ...prev, [sessionId]: !isExpanded }));
+  /** Drops a session from the list - deleted here or elsewhere. */
+  const removeSession = (sessionId: string) => {
+    setSessions(prev => prev.filter(s => s.id !== sessionId));
+    setExpandedSessions(prev => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    onSessionDeleted(sessionId);
+  };
 
-    if (!isExpanded && !channels[sessionId]) {
-      try {
-        const sessionChannels = await api.getChannels(sessionId);
-        setChannels(prev => ({ ...prev, [sessionId]: sessionChannels }));
-      } catch (error) {
-        reportError(`Failed to load channels for session ${sessionId}`, error);
-      }
-    }
+  const refreshSession = async (sessionId: string) => {
+    const session = await fetchSession(sessionId);
+    if (session) setSessions(prev => upsert(prev, session));
+  };
+
+  // The stream outlives renders; these always see the current props.
+  const removeSessionFromStream = useEffectEvent((sessionId: string) => removeSession(sessionId));
+  const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
+
+  // The list is the global stream's: its snapshot, then its events (issue
+  // 35). What this tab does itself is shown at once as well; the event that
+  // follows finds it done already.
+  useEffect(() => {
+    return openEventStream(api.globalEventsUrl(), {
+      onSnapshot: (data) => {
+        try {
+          setSessions(JSON.parse(data).sessions);
+        } catch (error) {
+          reportError('Failed to read the sessions', error);
+        }
+      },
+      onEvent: (data) => {
+        let change;
+        try {
+          change = sessionChange(JSON.parse(data));
+        } catch (error) {
+          console.error('Failed to parse a global event', error);
+          return;
+        }
+        if (change.kind === 'remove') {
+          removeSessionFromStream(change.sessionId);
+        } else if (change.kind === 'rename') {
+          const {sessionId, name} = change;
+          setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, name } : s)));
+        } else if (change.kind === 'refresh') {
+          refreshSessionFromStream(change.sessionId);
+        }
+      },
+    });
+  }, []);
+
+  const toggleSession = (sessionId: string) => {
+    setExpandedSessions(prev => ({ ...prev, [sessionId]: !prev[sessionId] }));
   };
 
   const handleCreateSession = async () => {
@@ -80,8 +142,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
       const name = `New ${template.metadata.name}`;
       const newSession = await api.createSession(template.id, name);
-      setSessions(prev => [...prev, newSession]);
-      toggleSession(newSession.id);
+      setExpandedSessions(prev => ({ ...prev, [newSession.id]: true }));
+      await refreshSession(newSession.id);
     } catch (error) {
       reportError('Failed to create session', error);
     }
@@ -119,18 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setOpenMenuId(null);
     try {
       await api.deleteSession(sessionId);
-      setSessions(prev => prev.filter(s => s.id !== sessionId));
-      setChannels(prev => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
-      setExpandedSessions(prev => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
-      onSessionDeleted(sessionId);
+      removeSession(sessionId);
     } catch (error) {
       reportError('Failed to delete session', error);
     }
@@ -216,7 +267,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               
               {expandedSessions[session.id] && (
                 <div className="ml-4 space-y-1">
-                  {channels[session.id]?.map(channel => (
+                  {session.channels.map(channel => (
                     <button
                       key={channel.id}
                       onClick={() => onSelectChannel(session.id, channel.id)}
@@ -229,7 +280,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span className="truncate">{channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`}</span>
                     </button>
                   ))}
-                  {(!channels[session.id] || channels[session.id].length === 0) && (
+                  {session.channels.length === 0 && (
                     <div className="p-2 text-xs text-gray-500 italic">No channels</div>
                   )}
                 </div>

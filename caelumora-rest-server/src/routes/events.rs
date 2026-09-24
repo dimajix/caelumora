@@ -49,15 +49,26 @@ async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Glo
         }
     };
 
-    let sessions = sessions.into_iter().map(|session| {
-        let channels = match state.session_manager.get_session(session.id) {
-            Some(running) => running.channels().iter().map(|c| crate::routes::channels::channel_response(c)).collect(),
-            None => session.channels.iter().map(stored_channel_response).collect(),
-        };
-        session_snapshot(session, channels)
-    }).collect();
+    let sessions = sessions.into_iter().map(|session| describe_session(state, session)).collect();
 
     GlobalSnapshot { sessions }
+}
+
+/// A session with its channels, as the global snapshot and `GET
+/// /sessions/{id}` describe it. A running session is described by its live
+/// state, a stopped one by what the store holds - describing it does not
+/// start it.
+pub(crate) fn describe_session(state: &AppState, session: Session) -> SessionSnapshot {
+    match state.session_manager.get_session(session.id) {
+        Some(running) => {
+            let channels = running.channels().iter().map(|c| crate::routes::channels::channel_response(c)).collect();
+            session_snapshot((**running.get_session()).clone(), channels)
+        }
+        None => {
+            let channels = session.channels.iter().map(stored_channel_response).collect();
+            session_snapshot(session, channels)
+        }
+    }
 }
 
 async fn snapshot_event(state: &Arc<AppState>, user: &AuthenticatedUser) -> Event {

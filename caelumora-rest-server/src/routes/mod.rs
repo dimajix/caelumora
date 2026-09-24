@@ -57,7 +57,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",
-            delete(sessions::delete_session).patch(sessions::rename_session),
+            get(sessions::get_session).delete(sessions::delete_session).patch(sessions::rename_session),
         )
         .route("/sessions/{id}/channels", get(channels::list_channels))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel))

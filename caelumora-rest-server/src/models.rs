@@ -47,6 +47,8 @@ pub struct GlobalSnapshot {
     pub sessions: Vec<SessionSnapshot>,
 }
 
+/// A session with its channels: an entry of the global snapshot, and what
+/// `GET /sessions/{id}` answers.
 #[derive(Debug, Serialize)]
 pub struct SessionSnapshot {
     pub id: SessionId,

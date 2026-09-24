@@ -1,6 +1,6 @@
 # 35 — The session list only changes when the user acts
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -55,3 +55,24 @@ participants working in the same session.
   [34](34-snapshot-on-stream-connect.md): the snapshot makes the global
   stream usable for a client, and using it in the sidebar is a UI change of
   its own.
+- **2026-09-24** — Done. Events that name a session by id are followed
+  with the new `GET /sessions/{id}`, which answers in the snapshot's form
+  (`SessionSnapshot`) through the same `describe_session` and does not start
+  a stopped session — chosen over enriching the events on the wire, which
+  would have made the wire format diverge from `GlobalEvent`, and over
+  re-requesting the whole snapshot on every change. The sidebar takes its
+  state from the global stream's snapshot (the separate `GET /sessions` and
+  the per-session channel fetch on expanding are gone) and applies
+  `sessionChange` (`src/globalEvents.ts`): remove on `SessionDeleted`, rename
+  from `SessionUpdated`, refetch on events that change channels or members,
+  ignore starting and stopping. What the tab does itself still shows at once;
+  the event that follows is idempotent. A session deleted elsewhere while it
+  is open goes through the existing `onSessionDeleted`, which returns the
+  view to the start page.
+  As asked above, both streams now share one `openEventStream`
+  (`src/stream.ts`), extracted from `ChatView` without changing its
+  behaviour. Verified in the browser with two tabs: a session created and
+  renamed in one appears and changes in the other without a reload, and
+  deleting the session open in the other returns it to the start page.
+  Found on the way: the global stream drops events silently when a client
+  falls behind, unlike the channel stream — [38](38-global-stream-loses-events-silently.md).

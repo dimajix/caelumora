@@ -63,6 +63,25 @@ export interface ChannelSnapshot {
   has_more: boolean;
 }
 
+/** A session with its channels: an entry of the global snapshot, and `GET /sessions/{id}`. */
+export interface SessionSnapshot {
+  id: string;
+  name: string;
+  channels: ChannelResponse[];
+}
+
+/** The state of all sessions when the global event stream connects (issue 34). */
+export interface GlobalSnapshot {
+  sessions: SessionSnapshot[];
+}
+
+/**
+ * An event of the global stream, serialized as `{ "<Variant>": value }`: the
+ * value is the session's id, or an array starting with it, e.g.
+ * `{"SessionUpdated": ["<id>", {"NameChanged": "new name"}]}`.
+ */
+export type GlobalEvent = Record<string, unknown>;
+
 export interface Message {
   id?: string;
   role: 'User' | 'Assistant' | 'System' | 'Tool';
