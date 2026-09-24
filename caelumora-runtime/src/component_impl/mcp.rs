@@ -6,7 +6,7 @@ use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolParameters};
 use tracing::warn;
-use rmcp::model::CallToolRequestParam;
+use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -228,11 +228,11 @@ impl ToolProvider for McpToolProvider {
             let auth_header = resolve_auth_header(&self.config.auth, &self.secret_manager, &security_context).await?;
 
             let service = connect(&self.config.url, auth_header).await?;
-            let arguments = params.as_object().cloned();
-            let call = service.call_tool(CallToolRequestParam {
-                name: remote_name.clone().into(),
-                arguments,
-            });
+            let mut request = CallToolRequestParams::new(remote_name.clone());
+            if let Some(arguments) = params.as_object().cloned() {
+                request = request.with_arguments(arguments);
+            }
+            let call = service.call_tool(request);
 
             let result = tokio::time::timeout(Duration::from_secs(self.config.timeout_secs), call).await;
             let _ = service.cancel().await;

@@ -17,10 +17,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
 dashmap = "6.2.1"
 futures = "0.3"
-tower-http = { version = "0.7.0", features = ["trace"] }
-clap = { version = "4.6.1", features = ["derive"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
+clap = { version = "4.6.7", features = ["derive"] }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
-rand = "0.10.1"
+rand = "0.10.3"
 chrono = "0.4.45"
 
 [dev-dependencies]
