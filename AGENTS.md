@@ -106,6 +106,10 @@ an obvious approach was already rejected.
 6.  **Refactor**: Ensure the code is clean and well-documented.
 7.  **Record**: If the change resolves or advances an issue, update its status in *both* `issues/INDEX.md` and the issue file, and append a dated entry under `## History`. If it uncovered something new, open an issue for it rather than leaving it in a comment.
 
+### Branches
+Until further notice, work and commit directly on `main`. Do not create
+feature branches unless asked to.
+
 ## Agent-Specific Tips
 *   When adding new components, remember to register them in the appropriate `ComponentRegistry`.
 *   If you modify `caelumora-model`, ensure compatibility with `caelumora-runtime`.
