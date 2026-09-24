@@ -10,14 +10,23 @@
 //! client has renewed in the meantime (issue 31) - and the snapshot it asks
 //! for restores whatever happened in between (issue 34). A client that is no
 //! longer entitled gets a `401` on that request instead.
+//!
+//! A stream also has to answer a client that falls behind and loses events:
+//! with a fresh snapshot if it asked for one, so that "here is the state"
+//! replaces "something is missing" (issues 34, 38). See [`resync_on_lag`].
 
 use crate::auth::AuthenticatedUser;
 use axum::response::sse::Event;
 use futures::stream::{self, Stream, StreamExt};
+use serde::Serialize;
 use std::convert::Infallible;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::wrappers::BroadcastStream;
 
 /// How long a client waits before reconnecting after the stream broke. Sent
 /// as the SSE `retry` field, because the browser default (3-5 seconds,
@@ -70,6 +79,41 @@ where
         .chain(ending)
 }
 
+/// The events of `receiver` as server-sent events, each serialized as JSON.
+///
+/// When the client falls behind and events are lost, it is sent what
+/// `snapshot` produces, if it asked for snapshots - the state instead of a
+/// gap - and otherwise a comment saying how many were lost. `what` names the
+/// stream in the log.
+pub fn resync_on_lag<T, S, F>(
+    receiver: broadcast::Receiver<T>,
+    what: String,
+    snapshot: Option<S>,
+) -> impl Stream<Item = Result<Event, Infallible>> + Send
+where
+    T: Serialize + Clone + Send + 'static,
+    S: Fn() -> F + Send + Sync + 'static,
+    F: Future<Output = Event> + Send,
+{
+    let snapshot = snapshot.map(Arc::new);
+    BroadcastStream::new(receiver).then(move |item| {
+        let snapshot = snapshot.clone();
+        let what = what.clone();
+        async move {
+            match item {
+                Ok(value) => Ok(Event::default().data(serde_json::to_string(&value).unwrap_or_default())),
+                Err(BroadcastStreamRecvError::Lagged(lost)) => {
+                    tracing::warn!("SSE client of {} fell behind and lost {} events", what, lost);
+                    match snapshot {
+                        Some(snapshot) => Ok(snapshot().await),
+                        None => Ok(Event::default().comment(format!("{} events lost", lost))),
+                    }
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +159,35 @@ mod tests {
         let started = tokio::time::Instant::now();
         wire(&user(60), stream::pending()).await;
         assert_eq!(started.elapsed(), Duration::from_secs(55));
+    }
+
+    /// What `resync_on_lag` sends for three events on a channel with room
+    /// for two, read until the channel closes.
+    async fn after_losing_one(with_snapshot: bool) -> String {
+        let (tx, rx) = broadcast::channel(2);
+        for n in 1..=3 {
+            tx.send(n).unwrap();
+        }
+        drop(tx);
+        let snapshot = with_snapshot.then_some(|| async { Event::default().event("snapshot").data("state") });
+        let events = resync_on_lag(rx, "test".to_string(), snapshot);
+        let body = axum::body::to_bytes(Sse::new(events).into_response().into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_client_that_lost_events_gets_the_state_instead() {
+        let body = after_losing_one(true).await;
+        let snapshot = body.find("event: snapshot").expect("the loss is answered with a snapshot");
+        assert!(snapshot < body.find("data: 2").unwrap(), "before the events that follow: {body}");
+        assert!(body.contains("data: 3") && !body.contains("data: 1"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_client_without_snapshots_is_told_how_many_it_lost() {
+        let body = after_losing_one(false).await;
+        assert!(body.contains(": 1 events lost"), "{body}");
+        assert!(!body.contains("snapshot"), "{body}");
     }
 
     #[tokio::test(start_paused = true)]

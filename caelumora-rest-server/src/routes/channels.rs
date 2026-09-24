@@ -19,7 +19,6 @@ use futures::Stream;
 use futures::StreamExt;
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
 
 pub async fn list_channels(
@@ -123,29 +122,14 @@ pub async fn join_channel(
     let receiver = channel.subscribe();
     let snapshot = if options.snapshot { Some(snapshot_event(&channel).await) } else { None };
 
-    let with_snapshot = options.snapshot;
-    let updates = BroadcastStream::new(receiver).then(move |res| {
-        let channel = channel.clone();
-        async move {
-            match res {
-                Ok(envelope) => {
-                    let event_json = serde_json::to_string(&envelope).unwrap_or_default();
-                    Ok(Event::default().data(event_json))
-                }
-                // The only error: this client fell behind and events were
-                // dropped. A client that asked for snapshots gets a fresh one
-                // - "here is the state" instead of "something is missing".
-                Err(e) => {
-                    tracing::warn!("SSE client of channel {} lost events: {}", channel_id, e);
-                    if with_snapshot {
-                        Ok(snapshot_event(&channel).await)
-                    } else {
-                        Ok(Event::default().comment(format!("events lost: {}", e)))
-                    }
-                }
-            }
+    // A client that falls behind gets a fresh snapshot, if it asked for them.
+    let resync = options.snapshot.then(|| {
+        move || {
+            let channel = channel.clone();
+            async move { snapshot_event(&channel).await }
         }
     });
+    let updates = crate::sse::resync_on_lag(receiver, format!("channel {}", channel_id), resync);
 
     let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
     // The stream ends with the session token that authenticated it (issue 33).

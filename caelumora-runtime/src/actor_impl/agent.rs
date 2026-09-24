@@ -1,4 +1,5 @@
 use crate::actor::{Actor, TurnContext};
+use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
@@ -25,7 +26,7 @@ use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AgentActor {
@@ -481,7 +482,7 @@ impl AgentActor {
         &self,
         turn_context: &mut TurnContext<'a>,
         rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        global_rx: &mut EventSubscription,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         tokio::select! {
@@ -590,7 +591,7 @@ impl AgentActor {
         &self,
         turn_context: &mut TurnContext<'a>,
         rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        global_rx: &mut EventSubscription,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         tokio::select! {
@@ -664,7 +665,7 @@ impl AgentActor {
         &self,
         turn_context: &mut TurnContext<'a>,
         rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut mpsc::Receiver<GlobalEvent>,
+        global_rx: &mut EventSubscription,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         let is_approval_event = |env: &Envelope| {
@@ -1113,6 +1114,7 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
     use crate::component_impl::context::{ContextProvider, StateContextAppender, StateContextProvider};
     use crate::component_impl::history::StateHistoryWriter;
     use crate::component_impl::message::MessageProcessor;

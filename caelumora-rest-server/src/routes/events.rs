@@ -12,7 +12,6 @@ use futures::stream::Stream;
 use futures::StreamExt;
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio_stream::wrappers::ReceiverStream;
 
 pub async fn global_events(
     State(state): State<Arc<AppState>>,
@@ -21,13 +20,19 @@ pub async fn global_events(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     // Subscribe before reading the state, so that nothing that happens while
     // the snapshot is assembled is lost (issue 34).
-    let receiver = state.runtime_manager.event_bus().subscribe_all();
+    let receiver = state.runtime_manager.event_bus().subscribe_all().into_receiver();
     let snapshot = if options.snapshot { Some(snapshot_event(&state, &user).await) } else { None };
 
-    let updates = ReceiverStream::new(receiver).map(|event| {
-        let event_json = serde_json::to_string(&event).unwrap_or_default();
-        Ok(Event::default().data(event_json))
+    // A client that falls behind gets a fresh snapshot, as on a channel's
+    // stream (issue 38).
+    let resync = options.snapshot.then(|| {
+        let state = state.clone();
+        move || {
+            let state = state.clone();
+            async move { snapshot_event(&state, &user).await }
+        }
     });
+    let updates = crate::sse::resync_on_lag(receiver, "the global stream".to_string(), resync);
 
     let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
     // The stream ends with the session token that authenticated it (issue 33).

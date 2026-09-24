@@ -264,7 +264,6 @@ impl ToolExecutor for DefaultToolExecutor {
 mod tests {
     use super::*;
     use crate::actor::TurnContext;
-use crate::component::{ComponentError, ComponentImpl, ComponentResult};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::agent::AgentState;

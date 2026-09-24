@@ -1,6 +1,6 @@
 # 38 — The global event stream loses events without telling the client
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -45,3 +45,18 @@ Both stay wrong until a reload, and nothing hints that a reload is needed.
 
 - **2026-09-24** — Opened while implementing [35](35-sidebar-live-updates.md),
   which made the web UI depend on this stream for its session list.
+- **2026-09-24** — Done with the first option, so that both streams work
+  the same way. Every `EventBus` subscription is a `broadcast` channel of its
+  own (capacity 128, a power of two because broadcast rounds up to one); a
+  subscriber that falls behind loses the oldest events and its receiver gets
+  `Lagged`. `EventBus::subscribe` returns an `EventSubscription` - named to
+  go with `EventBus` and `EventPublisher`; `EventReceiver` was considered and
+  dropped because `transport::EventReceiver` already names the actors'
+  envelope receiver, used next to it in the same code. Its `recv` logs a loss
+  and goes on, so the runtime's own subscribers (`SessionLoop`,
+  `ChannelLoop`, the actors) changed little; the global REST stream takes the
+  raw receiver with `into_receiver`. Both REST streams now answer a loss
+  through the shared `sse::resync_on_lag`: a fresh snapshot for a client that
+  asked for one, otherwise a comment with the number of lost events. The
+  subscriber that is gone is now recognised by the failing broadcast send
+  instead of a failing `try_send`.

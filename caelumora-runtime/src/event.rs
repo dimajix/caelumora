@@ -5,7 +5,8 @@ use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use dashmap::DashMap;
 use tracing::warn;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
@@ -16,9 +17,60 @@ pub enum SubscriptionTopic {
     User(UserId),
 }
 
+/// How many events a subscriber may fall behind before it loses the oldest.
+/// A power of two, because a broadcast channel rounds its capacity up to one.
+const SUBSCRIPTION_CAPACITY: usize = 128;
+
 #[derive(Debug)]
 pub struct EventBus {
-    subscribers: DashMap<SubscriptionTopic, Vec<mpsc::Sender<GlobalEvent>>>,
+    // One sender per subscription, registered under each of its topics. A
+    // broadcast channel rather than an mpsc one: when a subscriber falls
+    // behind, it is its receiver that learns so (`Lagged`), not only the log
+    // (issue 38).
+    subscribers: DashMap<SubscriptionTopic, Vec<broadcast::Sender<GlobalEvent>>>,
+}
+
+/// The events of an `EventBus` subscription.
+///
+/// A subscriber that falls more than `SUBSCRIPTION_CAPACITY` events behind
+/// loses the oldest ones. `recv` notes that in the log and goes on, for
+/// subscribers that have no way to catch up; one that can - a stream that
+/// sends its client a fresh snapshot - takes the receiver with
+/// `into_receiver` and handles `RecvError::Lagged` itself.
+#[derive(Debug)]
+pub struct EventSubscription {
+    rx: broadcast::Receiver<GlobalEvent>,
+}
+
+impl EventSubscription {
+    /// The next event, or `None` once the bus is gone. Lost events are
+    /// logged and skipped.
+    pub async fn recv(&mut self) -> Option<GlobalEvent> {
+        loop {
+            match self.rx.recv().await {
+                Ok(event) => return Some(event),
+                Err(RecvError::Lagged(lost)) => warn!("An event bus subscriber fell behind and lost {} events", lost),
+                Err(RecvError::Closed) => return None,
+            }
+        }
+    }
+
+    /// The next event if one is waiting, like `recv`.
+    pub fn try_recv(&mut self) -> Option<GlobalEvent> {
+        loop {
+            match self.rx.try_recv() {
+                Ok(event) => return Some(event),
+                Err(TryRecvError::Lagged(lost)) => warn!("An event bus subscriber fell behind and lost {} events", lost),
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return None,
+            }
+        }
+    }
+
+    /// The underlying receiver, for a subscriber that handles lost events
+    /// itself.
+    pub fn into_receiver(self) -> broadcast::Receiver<GlobalEvent> {
+        self.rx
+    }
 }
 
 impl EventPublisher for EventBus {
@@ -34,32 +86,32 @@ impl EventBus {
         }
     }
 
-    pub fn subscribe(&self, topics: Vec<SubscriptionTopic>) -> mpsc::Receiver<GlobalEvent> {
-        let (tx, rx) = mpsc::channel(100);
+    pub fn subscribe(&self, topics: Vec<SubscriptionTopic>) -> EventSubscription {
+        let (tx, rx) = broadcast::channel(SUBSCRIPTION_CAPACITY);
 
         for topic in topics {
             self.subscribers.entry(topic).or_default().push(tx.clone());
         }
-        rx
+        EventSubscription { rx }
     }
 
-    pub fn subscribe_all(&self) -> mpsc::Receiver<GlobalEvent> {
+    pub fn subscribe_all(&self) -> EventSubscription {
         self.subscribe(vec![SubscriptionTopic::All])
     }
 
-    pub fn subscribe_session(&self, id: SessionId) -> mpsc::Receiver<GlobalEvent> {
+    pub fn subscribe_session(&self, id: SessionId) -> EventSubscription {
         self.subscribe(vec![SubscriptionTopic::Session(id)])
     }
 
-    pub fn subscribe_channel(&self, id: ChannelId) -> mpsc::Receiver<GlobalEvent> {
+    pub fn subscribe_channel(&self, id: ChannelId) -> EventSubscription {
         self.subscribe(vec![SubscriptionTopic::Channel(id)])
     }
 
-    pub fn subscribe_agent(&self, id: AgentId) -> mpsc::Receiver<GlobalEvent> {
+    pub fn subscribe_agent(&self, id: AgentId) -> EventSubscription {
         self.subscribe(vec![SubscriptionTopic::Agent(id)])
     }
 
-    pub fn subscribe_user(&self, id: UserId) -> mpsc::Receiver<GlobalEvent> {
+    pub fn subscribe_user(&self, id: UserId) -> EventSubscription {
         self.subscribe(vec![SubscriptionTopic::User(id)])
     }
 
@@ -93,29 +145,64 @@ impl EventBus {
 
         for topic in topics_to_notify {
             if let Some(mut senders) = self.subscribers.get_mut(&topic) {
-                senders.retain(|tx: &mpsc::Sender<GlobalEvent>| {
-                    match tx.try_send(event.clone()) {
-                        Ok(_) => true,
-                        Err(e) => {
-                            match e {
-                                mpsc::error::TrySendError::Full(_) => {
-                                    // The channel is full. We keep the subscriber,
-                                    // but we accept that this specific message was dropped.
-                                    warn!("Event dropped due to full buffer for topic {:?}", topic);
-                                    true
-                                }
-                                mpsc::error::TrySendError::Closed(_) => {
-                                    // The receiver is gone! Return false to remove from Vec.
-                                    false
-                                }
-                            }
-                        }
-                    }
-                });
+                // A full channel does not fail the send: it drops the
+                // subscriber's oldest event and tells its receiver. A send
+                // fails only when the receiver is gone, and so does its
+                // subscription.
+                senders.retain(|tx| tx.send(event.clone()).is_ok());
             }
         }
 
         // Periodic cleanup of empty topics could be added here, but DashMap doesn't make it as easy as retain on Mutex<HashMap>.
         // For now, let's keep it simple. Empty Vecs will remain in the DashMap.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn created() -> GlobalEvent {
+        GlobalEvent::SessionCreated(SessionId::new())
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_that_falls_behind_is_told_and_keeps_receiving() {
+        let bus = EventBus::new();
+        let mut receiver = bus.subscribe_all().into_receiver();
+        for _ in 0..SUBSCRIPTION_CAPACITY + 5 {
+            bus.publish(created());
+        }
+
+        assert!(matches!(receiver.recv().await, Err(RecvError::Lagged(5))), "the loss reaches the subscriber");
+        assert!(receiver.recv().await.is_ok(), "and the newest events are still there");
+    }
+
+    #[tokio::test]
+    async fn a_subscription_skips_what_it_lost_and_goes_on() {
+        let bus = EventBus::new();
+        let mut subscription = bus.subscribe_all();
+        for _ in 0..SUBSCRIPTION_CAPACITY + 5 {
+            bus.publish(created());
+        }
+        let deleted = SessionId::new();
+        bus.publish(GlobalEvent::SessionDeleted(deleted));
+
+        let mut received = 0;
+        while let Some(event) = subscription.try_recv() {
+            received += 1;
+            if matches!(event, GlobalEvent::SessionDeleted(id) if id == deleted) {
+                break;
+            }
+        }
+        assert_eq!(received, SUBSCRIPTION_CAPACITY, "the oldest events are lost, the rest arrives in order");
+    }
+
+    #[tokio::test]
+    async fn a_dropped_subscription_is_removed() {
+        let bus = EventBus::new();
+        drop(bus.subscribe_all());
+        bus.publish(created());
+        assert!(bus.subscribers.get(&SubscriptionTopic::All).unwrap().is_empty());
     }
 }

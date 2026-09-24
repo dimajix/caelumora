@@ -58,7 +58,7 @@ against it, and what came out of the last attempt.
 | [08](08-retry-and-edit-past-answers.md) | open | A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one. |
 | [09](09-creating-channels.md) | open | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
-| [38](38-global-stream-loses-events-silently.md) | open | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
+| [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
 | [30](30-user-actor-for-authenticated-user.md) | done | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 
 ## Identity and access management

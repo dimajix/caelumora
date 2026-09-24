@@ -289,9 +289,9 @@ mod tests {
     }
 
     /// Drain every event currently buffered on the receiver.
-    fn drain(rx: &mut tokio::sync::mpsc::Receiver<GlobalEvent>) -> Vec<GlobalEvent> {
+    fn drain(rx: &mut crate::event::EventSubscription) -> Vec<GlobalEvent> {
         let mut out = Vec::new();
-        while let Ok(event) = rx.try_recv() {
+        while let Some(event) = rx.try_recv() {
             out.push(event);
         }
         out

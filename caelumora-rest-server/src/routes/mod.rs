@@ -2,7 +2,7 @@ use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use caelumora_model::session::{ChannelId, SessionId};
