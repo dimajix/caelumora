@@ -102,6 +102,12 @@ against it, and what came out of the last attempt.
 | [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
+## Maintenance
+
+| No. | Status | Issue |
+|---|---|---|
+| [36](36-replace-serde-yaml.md) | open | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
+
 ## Open architecture questions
 
 | No. | Status | Issue |
