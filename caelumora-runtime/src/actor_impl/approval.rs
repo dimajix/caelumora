@@ -334,7 +334,7 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::CommandSet;
+    use crate::command::CommandExecutor;
     use crate::runtime::ChannelRuntime;
     use caelumora_model::command::default_commands;
     use crate::runtime::RuntimeManager;
@@ -395,7 +395,7 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandSet::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime();
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
@@ -483,7 +483,7 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandSet::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime();
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
@@ -597,7 +597,7 @@ mod tests {
         };
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandSet::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime();
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);

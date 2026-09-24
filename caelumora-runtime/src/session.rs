@@ -27,7 +27,7 @@ pub struct SessionLoop {
 impl SessionLoop {
     pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let id = session.id;
-        let commands = Arc::new(runtime_manager.new_command_set(&session).await?);
+        let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
         let mut channels = HashMap::new();
         for channel in &session.channels {
             let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone());
@@ -382,5 +382,35 @@ mod tests {
         );
 
         manager.stop_session(session_id);
+    }
+
+    #[tokio::test]
+    async fn a_session_has_the_global_commands_and_its_own_but_no_name_twice() {
+        use caelumora_model::command::HELP_COMMAND_KIND;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        let runtime = test_runtime();
+        let names = |executor: crate::command::CommandExecutor| async move {
+            executor.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
+        };
+
+        let session = make_session("plain");
+        let executor = runtime.new_command_executor(&session).await.expect("the global commands build");
+        assert_eq!(names(executor).await, vec!["help", "wakeup"]);
+
+        // A second /help from the session's own configuration - with the same
+        // component id, which is fine across the two configurations.
+        let mut session = make_session("clashing");
+        session.commands = ComponentConfig {
+            component_nodes: vec![ComponentDescriptor {
+                id: "help".to_string(),
+                kind: HELP_COMMAND_KIND.to_string(),
+                params: serde_json::Value::Null,
+                deps: Vec::new(),
+                tags: Vec::new(),
+                fail_policy: Default::default(),
+            }],
+        };
+        let error = runtime.new_command_executor(&session).await.expect_err("/help twice");
+        assert!(error.to_string().contains("/help"), "{error}");
     }
 }

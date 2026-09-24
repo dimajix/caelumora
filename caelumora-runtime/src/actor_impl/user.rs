@@ -123,10 +123,10 @@ impl UserActor {
     pub async fn execute_command(&self, name: &str, args: &str) -> anyhow::Result<CommandReply> {
         let channel = self.actor_runtime.channel()
             .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
-        let commands = self.actor_runtime.commands();
-        let context = CommandContext { issuer: &self.security_context, channel: &channel, commands: &commands };
+        let executor = self.actor_runtime.command_executor();
+        let context = CommandContext { issuer: &self.security_context, channel: &channel, executor: &executor };
         debug!("UserActor {} runs /{}", self.id, name);
-        let output = commands.execute(name, args, &context).await?;
+        let output = executor.execute(name, args, &context).await?;
         if output.visibility == CommandVisibility::Channel {
             let event = ActorEvent::CommandExecuted { command: name.to_string(), output: output.text.clone() };
             self.user_tx.send(self.envelope(event, Uuid::new_v4())).await?;
@@ -136,7 +136,7 @@ impl UserActor {
 
     /// The commands this user may see, e.g. for completion.
     pub async fn visible_commands(&self) -> Vec<Command> {
-        self.actor_runtime.commands().visible(&self.security_context).await
+        self.actor_runtime.command_executor().visible(&self.security_context).await
     }
 
     /// Receives the envelopes routed to this user from now on, e.g. for a
@@ -274,7 +274,7 @@ impl Actor for UserActor {
 mod tests {
     use super::*;
     use caelumora_model::command::default_commands;
-    use crate::command::CommandSet;
+    use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
@@ -284,7 +284,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands()).unwrap());
-        let runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandSet::empty(runtime.security_manager())));
+        let runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())));
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
         let user = User {
             id: UserId::new(),

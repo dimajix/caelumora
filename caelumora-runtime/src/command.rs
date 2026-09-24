@@ -1,5 +1,5 @@
 //! User commands (issue 28): `CommandProvider` components contribute
-//! commands, and a session's `CommandSet` finds and runs them on behalf of a
+//! commands, and a session's `CommandExecutor` finds and runs them on behalf of a
 //! user.
 //!
 //! Commands are for people - agents act through tools. They are run by
@@ -7,11 +7,9 @@
 //! for, and never enter the conversation.
 
 use crate::channel::ChannelLoop;
-use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl, ComponentResult};
-use crate::runtime::RuntimeManager;
+use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::component::ComponentConfig;
 use caelumora_model::security::{ActionType, SecurityContext, SecurityManager};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -56,7 +54,7 @@ pub struct CommandContext<'a> {
     /// The issuing user's security context.
     pub issuer: &'a SecurityContext,
     pub channel: &'a ChannelLoop,
-    pub commands: &'a CommandSet,
+    pub executor: &'a CommandExecutor,
 }
 
 /// A component facet contributing user commands, as `ToolProvider`
@@ -83,42 +81,24 @@ struct CommandEntry {
     provider: Arc<dyn CommandProvider>,
 }
 
-/// The commands of one session: the global ones and the session's own,
-/// with the permission checks for seeing and running them.
+/// Finds and runs the commands of one session - the global ones and the
+/// session's own - with the permission checks for seeing and running them,
+/// as `ToolExecutor` does for an agent's tools.
 #[derive(Debug)]
-pub struct CommandSet {
+pub struct CommandExecutor {
     security_manager: Arc<dyn SecurityManager>,
     entries: Vec<CommandEntry>,
 }
 
-impl CommandSet {
-    /// Builds the `CommandProvider` components of each of `configs` - each on
-    /// its own, so that component ids only need to be unique within one
-    /// configuration - and collects their commands.
+impl CommandExecutor {
+    /// An executor for the commands `providers` contribute. Building them is
+    /// up to whoever owns their configuration - for a session's commands,
+    /// `RuntimeManager::new_command_executor`.
     ///
     /// # Errors
-    /// Any component error, and `ComponentError::InvalidConfig` if two
-    /// components provide a command of the same name: that is a mistake in
-    /// the configuration, and resolving it by order would silently hide one.
-    pub async fn build(
-        configs: &[&ComponentConfig],
-        runtime_manager: &RuntimeManager,
-        security_context: &SecurityContext,
-    ) -> ComponentResult<Self> {
-        let registry = runtime_manager.component_registry();
-        let context = ComponentContext::new(security_context.clone(), runtime_manager.secret_manager());
-        let mut providers = Vec::new();
-        for config in configs {
-            let container = ComponentContainer::from_config(config, &registry, &context).await?;
-            providers.extend(container.get_all::<dyn CommandProvider>(None)?);
-        }
-        Self::new(runtime_manager.security_manager(), providers)
-    }
-
-    /// A set of the commands `providers` contribute.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if two of them provide the same name.
+    /// `ComponentError::InvalidConfig` if two of them provide the same name:
+    /// that is a mistake in the configuration, and resolving it by order
+    /// would silently hide one.
     pub fn new(security_manager: Arc<dyn SecurityManager>, providers: Vec<ComponentImpl<dyn CommandProvider>>) -> ComponentResult<Self> {
         let mut entries: Vec<CommandEntry> = Vec::new();
         for provider in providers {
@@ -135,7 +115,7 @@ impl CommandSet {
         Ok(Self { security_manager, entries })
     }
 
-    /// A set without commands.
+    /// An executor without commands.
     pub fn empty(security_manager: Arc<dyn SecurityManager>) -> Self {
         Self { security_manager, entries: Vec::new() }
     }
@@ -206,13 +186,13 @@ mod tests {
     #[tokio::test]
     async fn two_components_with_the_same_command_are_a_configuration_error() {
         let security = Arc::new(DummySecurityManager::new());
-        let error = CommandSet::new(security.clone(), vec![provider("help", "help"), provider("my-help", "help")])
+        let error = CommandExecutor::new(security.clone(), vec![provider("help", "help"), provider("my-help", "help")])
             .expect_err("the second /help would be hidden by the first");
         let message = error.to_string();
         assert!(message.contains("/help") && message.contains("'help'") && message.contains("'my-help'"), "{message}");
 
-        let set = CommandSet::new(security, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
-        let names: Vec<String> = set.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect();
+        let executor = CommandExecutor::new(security, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
+        let names: Vec<String> = executor.visible(&SecurityContext::default()).await.into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
     }
 }

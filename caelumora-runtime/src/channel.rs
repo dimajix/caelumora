@@ -513,7 +513,10 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::CommandSet;
+    use crate::command::CommandExecutor;
+    use crate::component::ComponentImpl;
+    use crate::component_impl::command::{HelpCommandProvider, WakeupCommandProvider};
+    use caelumora_model::component::ComponentFailPolicy;
     use crate::runtime::RuntimeManager;
     use caelumora_model::command::default_commands;
     use caelumora_model::secret::SecretManager;
@@ -565,10 +568,12 @@ mod tests {
             participants,
             SecurityAttributes::default(),
         );
-        let commands = CommandSet::build(&[&default_commands()], &runtime, &SecurityContext::default())
-            .await
-            .unwrap();
-        ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(commands))).await.unwrap()
+        let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
+        let executor = CommandExecutor::new(
+            runtime.security_manager(),
+            vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
+        ).unwrap();
+        ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap()
     }
 
     #[tokio::test]

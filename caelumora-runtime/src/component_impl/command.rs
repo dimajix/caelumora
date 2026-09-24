@@ -33,7 +33,7 @@ impl CommandProvider for HelpCommandProvider {
     }
 
     async fn execute(&self, _name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
-        let visible = context.commands.visible(context.issuer).await;
+        let visible = context.executor.visible(context.issuer).await;
         let wanted = args.trim().trim_start_matches('/');
         if !wanted.is_empty() {
             // Unknown and invisible alike, as for running a command.

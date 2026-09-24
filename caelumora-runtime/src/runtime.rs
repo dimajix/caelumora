@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
-use crate::command::CommandSet;
-use crate::component::{ComponentRegistry, ComponentResult};
+use crate::command::{CommandExecutor, CommandProvider};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::component_impl::{command, context, history, mcp, tool};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -41,7 +41,7 @@ pub struct RuntimeManager {
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     runtime_manager: Arc<RuntimeManager>,
-    commands: Arc<CommandSet>,
+    command_executor: Arc<CommandExecutor>,
     // Set once the channel exists (see `attach`). Weak, because the channel
     // owns its actors and they hold this runtime: a strong reference would
     // keep a stopped channel alive forever.
@@ -50,8 +50,8 @@ pub struct ChannelRuntime {
 
 impl ChannelRuntime {
     /// A runtime for a channel of a session whose user commands are `commands`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, commands: Arc<CommandSet>) -> Self {
-        Self { runtime_manager, commands, channel: Arc::new(OnceLock::new()) }
+    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>) -> Self {
+        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()) }
     }
 
     /// The runtime of an actor of this channel.
@@ -116,8 +116,8 @@ impl ActorRuntime {
 
     /// The user commands of the actor's session. Only a `UserActor` runs
     /// them: commands are for people, agents act through tools.
-    pub fn commands(&self) -> Arc<CommandSet> {
-        self.runtime.commands.clone()
+    pub fn command_executor(&self) -> Arc<CommandExecutor> {
+        self.runtime.command_executor.clone()
     }
 
     /// The channel the actor is in, or `None` while the channel is still
@@ -165,17 +165,25 @@ impl RuntimeManager {
         })
     }
 
-    /// The user commands of `session`: the global ones and the session's own
-    /// (issue 28), built once for all of its channels, under the security
-    /// context of the session's owner.
+    /// The executor for the user commands of `session`: the global ones and
+    /// the session's own (issue 28), built once for all of its channels,
+    /// under the security context of the session's owner.
     ///
     /// # Errors
     /// A `ComponentError` if a command component cannot be built or two
     /// provide the same command - the session does not start then.
-    pub async fn new_command_set(&self, session: &Session) -> ComponentResult<CommandSet> {
+    pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
-        CommandSet::build(&[&self.commands, &session.commands], self, &security).await
+        let context = ComponentContext::new(security, self.secret_manager());
+        let mut providers = Vec::new();
+        // Each configuration on its own, so that component ids only need to
+        // be unique within one of them.
+        for config in [&self.commands, &session.commands] {
+            let container = ComponentContainer::from_config(config, &self.component_registry, &context).await?;
+            providers.extend(container.get_all::<dyn CommandProvider>(None)?);
+        }
+        CommandExecutor::new(self.security_manager(), providers)
     }
 
     pub fn event_bus(&self) -> Arc<EventBus> {

@@ -191,3 +191,11 @@ exactly the kind of action an audit trail should contain.
   id and are not channel commands; [14](14-approval-privilege.md) is where
   approving may become one. Whether an executed command is recorded is still
   [05](05-postgres-event-recorder.md)'s question.
+- **2026-09-24** — Aligned with tools: `CommandSet` is now
+  `CommandExecutor`, the counterpart of `ToolExecutor`, and like it receives
+  ready providers instead of building them from a configuration; building
+  moved to `RuntimeManager::new_command_executor`, which owns the global and
+  the session's configuration. It stays a struct - `ToolExecutor` is a trait,
+  but there is no second implementation of the command side to justify one.
+  Commands already report two components providing the same name; tools do
+  not yet, which is [37](37-tool-name-collisions.md).
