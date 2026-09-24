@@ -118,10 +118,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       try {
         const envelope: Envelope = JSON.parse(event.data);
         const actorEvent = envelope.event;
-        if (actorEvent.ResponseStarted) {
+        if (actorEvent === 'ResponseStarted') {
           setIsGenerating(true);
           setStreamingMessage('');
           setStreamingSender(envelope.context.sender_name || null);
+        } else if (typeof actorEvent === 'string') {
+          // The other payload-less events have nothing to show.
         } else if (actorEvent.PartialMessageGenerated) {
           setIsGenerating(true);
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));

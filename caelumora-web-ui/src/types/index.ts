@@ -83,7 +83,7 @@ export interface Message {
   prompt_duration?: number; // ns
   completion_duration?: number; // ns
   total_duration?: number; // ns
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface PlanStepEvent {
@@ -92,16 +92,19 @@ export interface PlanStepEvent {
   description: string;
 }
 
+/**
+ * Events without a payload. The server sends them as a bare string
+ * (`"ResponseStarted"`), not as an object like the other events.
+ */
+export type UnitActorEvent = 'ResponseRequested' | 'ResponseStarted' | 'WakeupRequested';
+
 export interface ActorEvent {
-  ResponseStarted?: any;
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ApprovalRequested?: ApprovalRequest;
   ApprovalGranted?: ApprovalResponse;
   ApprovalDenied?: ApprovalResponse;
-  ResponseRequested?: any;
   FullResponseGenerated?: Message[];
-  WakeupRequested?: any;
   IntermediatePartialGenerated?: Message;
   IntermediateMessageGenerated?: Message;
   PlanStepStarted?: PlanStepEvent;
@@ -113,7 +116,7 @@ export interface ActorEvent {
 export interface EventContext {
   session_id: string;
   channel_id: string;
-  sender_id: any;
+  sender_id: ActorId;
   sender_name: string;
   event_id: string;
   correlation_id: string;
@@ -123,9 +126,9 @@ export interface EventContext {
 
 export interface Envelope {
   timestamp: string;
-  event: ActorEvent;
+  event: ActorEvent | UnitActorEvent;
   context: EventContext;
-  security: any;
+  security: unknown;
 }
 
 export interface SessionTemplate {

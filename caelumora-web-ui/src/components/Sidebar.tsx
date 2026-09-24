@@ -46,30 +46,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingName, setEditingName] = useState<string>('');
 
   useEffect(() => {
-    loadSessions();
-    loadTemplates();
+    api.getSessions()
+      .then(setSessions)
+      .catch(error => reportError('Failed to load sessions', error));
+    api.getTemplates()
+      .then(setTemplates)
+      .catch(error => reportError('Failed to load templates', error));
     const handleClickOutside = () => setOpenMenuId(null);
     window.addEventListener('click', handleClickOutside);
     return () => window.removeEventListener('click', handleClickOutside);
   }, []);
-
-  const loadTemplates = async () => {
-    try {
-      const data = await api.getTemplates();
-      setTemplates(data);
-    } catch (error) {
-      reportError('Failed to load templates', error);
-    }
-  };
-
-  const loadSessions = async () => {
-    try {
-      const data = await api.getSessions();
-      setSessions(data);
-    } catch (error) {
-      reportError('Failed to load sessions', error);
-    }
-  };
 
   const toggleSession = async (sessionId: string) => {
     const isExpanded = !!expandedSessions[sessionId];
