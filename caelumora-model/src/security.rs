@@ -103,6 +103,14 @@ impl SecurityContext {
             channel_id
         }
     }
+    /// The context of the runtime acting on its own - for work that follows
+    /// from an action already permitted, or that no user started (initial
+    /// data, records kept in step with events). The ownership policy allows
+    /// it everything, so it is used deliberately and never as a fallback.
+    pub fn system() -> Self {
+        Self::new(ActorId::System, SessionId::default(), ChannelId::default())
+    }
+
     pub fn next(&self, caller_id: ActorId) -> Self {
         let mut delegation_ids = self.delegation_ids.clone();
         delegation_ids.push(caller_id);
@@ -136,5 +144,136 @@ impl DummySecurityManager {
 impl SecurityManager for DummySecurityManager {
     async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
         true
+    }
+}
+
+/// The ownership policy (issue 11): what is yours you may do everything
+/// with, what you contribute to you may read and use, what belongs to the
+/// system everybody may read and use - and nobody acts in someone else's
+/// name.
+///
+/// - The system (`ActorId::System`) may do everything.
+/// - Reading - which also covers using, e.g. starting a session from a
+///   template - is allowed to the owner, to contributors, and to everybody
+///   for entities owned by the system or by no one.
+/// - Creating is allowed only with oneself as owner.
+/// - Changing and deleting are the owner's alone.
+/// - Cancelling or waking a channel is allowed to whoever may read it.
+/// - Searching and listing are allowed; their results are filtered by what
+///   the caller may read. Tool calls, secrets and commands are governed
+///   elsewhere for now (approvals, issues 12 and 23).
+///
+/// Who "you" are is the context's initiator: the person an action was
+/// started for, also when an agent carries it out.
+#[derive(Debug, Default)]
+pub struct OwnershipSecurityManager;
+
+impl OwnershipSecurityManager {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn system_owned(attributes: &SecurityAttributes) -> bool {
+        matches!(attributes.owner_id, ActorId::None | ActorId::System)
+    }
+
+    fn may_read(attributes: &SecurityAttributes, me: ActorId) -> bool {
+        Self::system_owned(attributes) || attributes.owner_id == me || attributes.contributors.contains(&me)
+    }
+}
+
+#[async_trait]
+impl SecurityManager for OwnershipSecurityManager {
+    async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
+        let me = context.initiator_id;
+        if me == ActorId::System {
+            return true;
+        }
+        match action {
+            ActionType::GetPersonality(a)
+            | ActionType::GetSessionTemplate(a)
+            | ActionType::GetAgent(a)
+            | ActionType::GetSession(a)
+            | ActionType::GetComponent(a)
+            | ActionType::CancelChannel(a)
+            | ActionType::WakeChannel(a) => Self::may_read(a, me),
+            ActionType::CreatePersonality(a)
+            | ActionType::CreateSessionTemplate(a)
+            | ActionType::CreateAgent(a)
+            | ActionType::CreateSession(a)
+            | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
+            ActionType::UpdatePersonality(a)
+            | ActionType::DeletePersonality(a)
+            | ActionType::UpdateSessionTemplate(a)
+            | ActionType::DeleteSessionTemplate(a)
+            | ActionType::UpdateAgent(a)
+            | ActionType::UpdateSession(a)
+            | ActionType::DeleteSession(a)
+            | ActionType::UpdateComponent(a)
+            | ActionType::DeleteComponent(a) => a.owner_id == me && me != ActorId::None,
+            ActionType::FindPersonality
+            | ActionType::ListPersonalities
+            | ActionType::FindSessionTemplate
+            | ActionType::ListSessionTemplates
+            | ActionType::FindAgent
+            | ActionType::ListSessions
+            | ActionType::ListComponents => true,
+            ActionType::ShowCommand(_)
+            | ActionType::ExecuteCommand(_)
+            | ActionType::CallTool(_)
+            | ActionType::ReadSecret(_) => true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::user::UserId;
+
+    fn user() -> ActorId {
+        ActorId::User(UserId::new())
+    }
+
+    fn context(actor: ActorId) -> SecurityContext {
+        SecurityContext::new(actor, SessionId::default(), ChannelId::default())
+    }
+
+    async fn allows(actor: ActorId, action: ActionType<'_>) -> bool {
+        OwnershipSecurityManager::new().check(&context(actor), action).await
+    }
+
+    #[tokio::test]
+    async fn owners_do_everything_contributors_read_strangers_nothing() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let hers = SecurityAttributes { owner_id: alice, contributors: vec![bob] };
+
+        for action in [ActionType::GetSession(&hers), ActionType::UpdateSession(&hers), ActionType::DeleteSession(&hers)] {
+            assert!(allows(alice, action).await, "{action:?}");
+            assert!(!allows(carol, action).await, "{action:?}");
+        }
+        assert!(allows(bob, ActionType::GetSession(&hers)).await);
+        assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a contributor acts in it");
+        assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
+        assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
+    }
+
+    #[tokio::test]
+    async fn what_belongs_to_the_system_everybody_uses_and_only_the_system_changes() {
+        let alice = user();
+        for shared in [SecurityAttributes::default(), SecurityAttributes::owned_by(ActorId::System)] {
+            assert!(allows(alice, ActionType::GetSessionTemplate(&shared)).await, "stored without an owner, or the system's");
+            assert!(!allows(alice, ActionType::UpdateSessionTemplate(&shared)).await);
+            assert!(allows(ActorId::System, ActionType::UpdateSessionTemplate(&shared)).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn nobody_creates_in_someone_elses_name_and_no_one_at_all_creates() {
+        let (alice, bob) = (user(), user());
+        assert!(allows(alice, ActionType::CreateSession(&SecurityAttributes::owned_by(alice))).await);
+        assert!(!allows(bob, ActionType::CreateSession(&SecurityAttributes::owned_by(alice))).await);
+        assert!(!allows(ActorId::None, ActionType::CreateSession(&SecurityAttributes::default())).await, "an empty context has no rights");
+        assert!(!allows(ActorId::None, ActionType::UpdateSession(&SecurityAttributes::default())).await);
     }
 }

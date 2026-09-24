@@ -28,3 +28,12 @@ users:
 #      kind: help_command
 #    - id: wakeup
 #      kind: wakeup_command
+
+# Who may do what (issue 11). `ownership` - the default - lets owners do
+# everything with their sessions, agents and templates, contributors (e.g.
+# the other participants of a session) read and use them, and everybody use
+# what belongs to the system. `allow_all` allows everything to everybody:
+# tests and single-user development only.
+#security:
+#  type: ownership
+

@@ -59,6 +59,8 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
     error.chain().any(|e| {
         matches!(e.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. }))
             || matches!(e.downcast_ref::<CommandError>(), Some(CommandError::Forbidden(_)))
+            || matches!(e.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied))
+            || matches!(e.downcast_ref::<TemplateError>(), Some(TemplateError::Store(StoreError::PermissionDenied)))
     })
 }
 

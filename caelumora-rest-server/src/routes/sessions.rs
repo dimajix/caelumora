@@ -108,10 +108,7 @@ pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<U
     // channels), and emits the corresponding lifecycle events.
     match state.session_manager.delete_session(&ctx, session_id).await {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
-        Err(e) if caelumora_runtime::error::is_not_found(&e, "session") => {
-            Err(ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id)))
-        }
-        Err(e) => Err(ApiError::internal("session_delete_failed", &format!("deleting session {}", session_id), &e)),
+        Err(e) => Err(crate::routes::session_error(e, session_id, "delete", "deleting")),
     }
 }
 
@@ -124,7 +121,8 @@ pub async fn rename_session(
     let session_id = SessionId(id);
     let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    session_loop.update_name(payload.name).await;
+    session_loop.update_name(&user.security_context(), payload.name).await
+        .map_err(|e| crate::routes::session_error(e, session_id, "rename", "renaming"))?;
 
     let meta =  session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {

@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
-    let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
+    let security_manager = config.create_security_manager();
     let state_store = config.create_state_store(security_manager.clone())?;
     let entity_store = config.create_entity_store(security_manager.clone())?;
     let secret_manager = config.create_secret_manager(security_manager.clone())?;
@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
 /// the secret does not exist, a random key is generated - sessions then do not
 /// survive a restart, which is fine for development and loudly announced.
 async fn jwt_signing_key(secrets: &SecretManager, name: &str) -> anyhow::Result<Vec<u8>> {
-    match secrets.resolve(&SecurityContext::default(), name).await {
+    match secrets.resolve(&SecurityContext::system(), name).await {
         Ok(key) => Ok(key.into_bytes()),
         Err(SecretError::NotFound(_)) => {
             tracing::warn!("Secret '{}' not found: signing session tokens with a random key. \

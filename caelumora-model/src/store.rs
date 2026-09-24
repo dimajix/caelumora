@@ -196,7 +196,7 @@ pub mod tests {
             store.clone()
         );
 
-        controller.update_name("new_name".to_string()).await;
+        controller.update_name(&ctx, "new_name".to_string()).await.unwrap();
 
         let persisted = store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).await.unwrap();
         assert_eq!(persisted.id, agent.id);

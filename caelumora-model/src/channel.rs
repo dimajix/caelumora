@@ -84,7 +84,9 @@ impl ChannelController {
             }
             GlobalEvent::AgentChannelJoined(_, cid, aid) if *cid == self.id => {
                 if let Some(store) = &self.entity_store {
-                    let security = crate::security::SecurityContext::default();
+                    // Keeping the channel in step with an event: the join
+                    // itself was permitted where it happened.
+                    let security = crate::security::SecurityContext::system();
                     if let Ok(agent) = store.get_agent(&security, *aid).await {
                         let mut channel = (**self.channel.load()).clone();
                         if !channel.participants.iter().any(|p| match p {
@@ -110,7 +112,9 @@ impl ChannelController {
             }
             GlobalEvent::UserChannelJoined(_, cid, uid) if *cid == self.id => {
                 if let Some(store) = &self.entity_store {
-                    let security = crate::security::SecurityContext::default();
+                    // Keeping the channel in step with an event: the join
+                    // itself was permitted where it happened.
+                    let security = crate::security::SecurityContext::system();
                     if let Ok(user) = store.get_user(&security, *uid).await {
                         let mut channel = (**self.channel.load()).clone();
                         if !channel.participants.iter().any(|p| match p {

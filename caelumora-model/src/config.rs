@@ -3,7 +3,7 @@ use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
 use crate::secret_impl::file::FileSecretProvider;
-use crate::security::SecurityManager;
+use crate::security::{DummySecurityManager, OwnershipSecurityManager, SecurityManager};
 use crate::store::{EntityStore, StateStore, StoreError};
 use crate::store_impl::json::JsonFileStore;
 use crate::store_impl::memory::MemoryStore;
@@ -61,6 +61,21 @@ pub enum SecretProviderConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SecretsConfig {
     pub providers: Vec<SecretProviderConfig>,
+}
+
+/// Which policy decides what may be done to what (issue 11).
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SecurityConfig {
+    /// Owners do everything with their entities, contributors read and use
+    /// them, what belongs to the system everybody uses
+    /// (`OwnershipSecurityManager`). The default: nothing is open unless a
+    /// deployment says so.
+    #[default]
+    Ownership,
+    /// Everything is allowed to everybody (`DummySecurityManager`) - for
+    /// tests and single-user development setups only.
+    AllowAll,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -146,6 +161,9 @@ pub struct AppConfig {
     /// and `/wakeup`; an empty `component_nodes` list switches them off.
     #[serde(default = "default_commands")]
     pub commands: ComponentConfig,
+    /// The access policy; `ownership` unless configured otherwise.
+    #[serde(default)]
+    pub security: SecurityConfig,
 }
 
 // Not derived: the commands default to the built-in ones, not to none.
@@ -158,6 +176,7 @@ impl Default for AppConfig {
             auth: AuthConfig::default(),
             logging: LoggingConfig::default(),
             commands: default_commands(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -187,15 +206,26 @@ impl AppConfig {
         Ok(serde_saphyr::from_str_with_options(yaml, options)?)
     }
 
+    /// The one `SecurityManager` of the process, as configured.
+    pub fn create_security_manager(&self) -> Arc<dyn SecurityManager> {
+        match self.security {
+            SecurityConfig::Ownership => Arc::new(OwnershipSecurityManager::new()),
+            SecurityConfig::AllowAll => {
+                tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
+                Arc::new(DummySecurityManager::new())
+            }
+        }
+    }
+
     pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn EntityStore>> {
         let store : Arc<dyn EntityStore> = match &self.persistence {
-            None => Arc::new(MemoryStore::new()),
+            None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
             Some(persistence) => {
                 match &persistence.entity_store {
-                    Some(PersistenceBackend::Default) => Arc::new(MemoryStore::new()),
-                    Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::new()),
+                    Some(PersistenceBackend::Default) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
+                    Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
                     Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),
-                    None => Arc::new(MemoryStore::new()),
+                    None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
                 }
             }
         };
@@ -204,13 +234,13 @@ impl AppConfig {
 
     pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn StateStore>> {
         let store : Arc<dyn StateStore> = match &self.persistence {
-            None => Arc::new(MemoryStore::new()),
+            None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
             Some(persistence) => {
                 match &persistence.state_store {
-                    Some(PersistenceBackend::Default) => Arc::new(MemoryStore::new()),
-                    Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::new()),
+                    Some(PersistenceBackend::Default) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
+                    Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
                     Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),
-                    None => Arc::new(MemoryStore::new()),
+                    None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
                 }
             }
         };
@@ -440,5 +470,12 @@ users:
 
         let config = AppConfig::from_yaml("commands:\n  component_nodes: []\n").unwrap();
         assert!(config.commands.component_nodes.is_empty(), "an explicit empty list means no global commands");
+    }
+
+    #[test]
+    fn the_security_policy_defaults_to_ownership() {
+        assert_eq!(AppConfig::default().security, SecurityConfig::Ownership);
+        assert_eq!(AppConfig::from_yaml("persistence: {}").unwrap().security, SecurityConfig::Ownership);
+        assert_eq!(AppConfig::from_yaml("security:\n  type: allow_all\n").unwrap().security, SecurityConfig::AllowAll);
     }
 }

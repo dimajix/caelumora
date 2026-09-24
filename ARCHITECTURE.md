@@ -129,7 +129,7 @@ The `EventBus` (in `caelumora-runtime`) provides a centralized mechanism for obs
 
 The REST server exposes two server-sent event streams: the global one (`GET /events`, carrying `GlobalEvent`s) and a channel's (`GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s). Both accept `?snapshot=true` and then begin with a named `snapshot` event describing the state they start from — the channel's members plus the last 20 messages (with `has_more`, older ones over `GET .../messages`), or every session with its channels (issue 34).
 
-The order matters: the server subscribes *first* and reads the state afterwards, so nothing that happens while the snapshot is assembled is lost. The price is that an event may arrive twice, once in the snapshot and once as an event; clients drop duplicates by `MessageId` or entity id. When a client falls behind and events are lost, a client that asked for snapshots is sent a fresh one instead of a note that something is missing — on both streams, through the shared `sse::resync_on_lag` (issue 38). The global snapshot is unfiltered for now — every user sees every session, which is [11](issues/11-agent-ownership.md).
+The order matters: the server subscribes *first* and reads the state afterwards, so nothing that happens while the snapshot is assembled is lost. The price is that an event may arrive twice, once in the snapshot and once as an event; clients drop duplicates by `MessageId` or entity id. When a client falls behind and events are lost, a client that asked for snapshots is sent a fresh one instead of a note that something is missing — on both streams, through the shared `sse::resync_on_lag` (issue 38). The global snapshot lists the sessions the user may read (issue 11); the events that follow are not filtered yet ([39](issues/39-global-events-not-filtered.md)).
 
 Global events name sessions and channels by id alone. A client follows them with `GET /sessions/{id}`, which answers in the snapshot's own form (`SessionSnapshot`, built by the same `describe_session`, without starting a stopped session). The web UI's session list works that way (issue 35): it takes its state from the global stream's snapshot, removes a session on `SessionDeleted`, takes a new name from `SessionUpdated`, and fetches the session again on any event that changes its channels or their members; starting and stopping are ignored. Both of the web UI's streams go through one `openEventStream` (`src/stream.ts`), so snapshot, reconnect on `expired` and the session check on a broken connection are handled in one place.
 
@@ -164,9 +164,23 @@ Security in Caelumora is handled through a combination of context and explicit c
 
 *   **`SecurityContext`**: Carries information about the initiator and sender of an event, along with the session and channel context.
 *   **`SecurityManager`**: A trait responsible for authorizing actions based on the `SecurityContext`.
-*   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`, `CancelChannel`) used by the `SecurityManager` for policy decisions.
+*   **`ActionType`**: An enumeration of all securable actions (e.g., `GetAgent`, `UpdateSession`, `ListPersonalities`, `CancelChannel`) used by the `SecurityManager` for policy decisions. An action on a stored entity carries the entity's `SecurityAttributes`, not the entity.
 
-One `SecurityManager` is built per process and handed to everything that checks: the stores, the `SecretManager` and the `RuntimeManager`, from which the `ToolExecutor` and every `ChannelLoop` take it. It is a constructor argument rather than something built where it is needed, so that a deployment's policy cannot be silently replaced by a default in one corner of the runtime. `DummySecurityManager`, which allows everything, is still the only implementation — [24](issues/24-opa-security-manager.md).
+One `SecurityManager` is built per process and handed to everything that checks: the stores, the `SecretManager` and the `RuntimeManager`, from which the `ToolExecutor` and every `ChannelLoop` take it. It is a constructor argument rather than something built where it is needed, so that a deployment's policy cannot be silently replaced by a default in one corner of the runtime. Which one is chosen by `AppConfig`'s `security` section: `ownership` (the default) or `allow_all` (`DummySecurityManager`, for tests and development). A policy outside the binary is [24](issues/24-opa-security-manager.md).
+
+### Ownership
+
+Every stored entity — session, channel, agent, personality, session template, preconfigured component — carries `SecurityAttributes`: an `owner_id` and a list of `contributors` (issue 11). It is the one place ownership is recorded. A session and its channels are owned by the user they were created for, with their users and agents as contributors; an agent is owned by whoever created it and contributes to its own definition; initial data belongs to the system. Entities stored before owners were recorded have an empty owner and count as the system's.
+
+The `OwnershipSecurityManager` decides by those attributes and the context's initiator — the person an action was started for, also when an agent carries it out:
+
+*   the owner may do everything, contributors may read and use (writing into a session, cancelling or waking a channel), and what belongs to the system everybody may read and use;
+*   creating is only allowed with oneself as owner, changing and deleting only for the owner;
+*   the runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do everything — deliberately, never as a default: an empty context has no rights.
+
+The stores ask the same way for every entity kind (`store_impl::access`): reads with the attributes as stored, and an entity the caller may not read is reported as not found, so ids cannot be probed; lists are filtered by what the caller may read; changes and deletions are checked against the attributes *as stored*, never those of a new value, which the caller controls; creations against the new entity's. The `EntityStore` trait itself is unchanged. What is not a store call asks first and acts afterwards: `SessionManager::open_session` checks a running session like a stored one, and `delete_session` checks before it stops anything; renaming stores first — which is where it is checked — and changes the live entity only then.
+
+Not decided yet: roles such as an administrator, and richer access lists ([23](issues/23-acls-in-security-attributes.md)); what happens to an owner's entities when the owner is removed (for now they stay); and the global event stream, whose events are not yet filtered by what a user may see ([39](issues/39-global-events-not-filtered.md)).
 
 ### Authentication in the REST server
 

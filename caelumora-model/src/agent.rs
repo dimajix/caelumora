@@ -6,7 +6,7 @@ use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::session::SessionId;
-use crate::store::EntityStore;
+use crate::store::{EntityStore, StoreResult};
 use crate::tool::ToolCallState;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
@@ -57,32 +57,39 @@ impl AgentController {
         self.agent.load().metadata.name.clone()
     }
 
-    pub async fn update_name(&self, new_name: String) {
+    /// Renames the agent on behalf of `ctx`: stored first - which is where
+    /// the permission is checked (issue 11) - and only then changed live and
+    /// announced.
+    ///
+    /// # Errors
+    /// Whatever the store reports; the agent is then unchanged.
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
         let event = AgentUpdateEvent::NameChanged(new_name);
-        self.process_update(&event).await;
+        let agent = self.apply(&event);
+        self.entity_store.update_agent(ctx, &agent).await?;
+        self.agent.store(Arc::new(agent));
         self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.id, event));
+        Ok(())
     }
 
-    async fn process_update(&self, event: &AgentUpdateEvent) {
+    /// The agent with `event` applied, not yet stored anywhere.
+    fn apply(&self, event: &AgentUpdateEvent) -> Agent {
+        let mut agent = (**self.agent.load()).clone();
         match event {
-            AgentUpdateEvent::NameChanged(name) => {
-                let mut agent = (**self.agent.load()).clone();
-                agent.metadata.name = name.clone();
-                let agent = Arc::new(agent);
-                self.agent.store(agent.clone());
-                let ctx = SecurityContext::default();
-                if let Err(e) = self.entity_store.update_agent(&ctx, &agent).await {
-                    // The live name is already updated; only persisting it failed.
-                    tracing::error!("Cannot persist new name of agent {}: {}", agent.id, e);
-                }
-            }
+            AgentUpdateEvent::NameChanged(name) => agent.metadata.name = name.clone(),
         }
+        agent
+    }
+
+    /// Takes over an update made elsewhere - already stored there.
+    fn process_update(&self, event: &AgentUpdateEvent) {
+        self.agent.store(Arc::new(self.apply(event)));
     }
 
     pub async fn process_global_event(&self, event: &GlobalEvent) {
         match event {
             GlobalEvent::AgentUpdated(_, aid, update) if *aid == self.id => {
-                self.process_update(update).await;
+                self.process_update(update);
             }
             _ => {}
         }

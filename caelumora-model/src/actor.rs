@@ -19,6 +19,11 @@ pub enum ActorId {
     User(UserId),
     Agent(AgentId),
     Approver(Uuid),
+    /// The runtime itself, acting on no one's behalf: setting up initial
+    /// data, keeping its own records in step with events. Only ever set
+    /// deliberately, through `SecurityContext::system()` - never the default,
+    /// so that a context nobody filled in has no rights (issue 11).
+    System,
 }
 impl ActorId {
     pub fn id(&self) -> Uuid {
@@ -27,6 +32,7 @@ impl ActorId {
             ActorId::User(id) => {id.0}
             ActorId::Agent(id) => {id.0}
             ActorId::Approver(id) => {*id}
+            ActorId::System => {Uuid::nil()}
         }
     }
 

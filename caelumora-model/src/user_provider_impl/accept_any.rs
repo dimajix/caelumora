@@ -31,8 +31,9 @@ impl AcceptAnyUserProvider {
         Self { store }
     }
 
+    /// The provider keeps its own records: nobody's action, the system's.
     fn context() -> SecurityContext {
-        SecurityContext::default()
+        SecurityContext::system()
     }
 
     fn not_found_as_none(result: Result<User, StoreError>) -> AuthResult<Option<User>> {

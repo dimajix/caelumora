@@ -3,7 +3,7 @@ use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::meta::Metadata;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::store::EntityStore;
+use crate::store::{EntityStore, StoreResult};
 use crate::user::UserId;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
@@ -50,32 +50,40 @@ impl SessionController {
         self.session.load().metadata.name.clone()
     }
 
-    pub async fn update_name(&self, new_name: String) {
+    /// Renames the session on behalf of `ctx`: stored first - which is where
+    /// the permission is checked (issue 11) - and only then changed live and
+    /// announced.
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied` included;
+    /// the session is then unchanged.
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
         let event = SessionUpdateEvent::NameChanged(new_name);
-        self.process_session_update(&event).await;
+        let session = self.apply(&event);
+        self.entity_store.update_session(ctx, &session).await?;
+        self.session.store(Arc::new(session));
         self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event));
+        Ok(())
     }
 
-    async fn process_session_update(&self, event: &SessionUpdateEvent) {
+    /// The session with `event` applied, not yet stored anywhere.
+    fn apply(&self, event: &SessionUpdateEvent) -> Session {
+        let mut session = (**self.session.load()).clone();
         match event {
-            SessionUpdateEvent::NameChanged(name) => {
-                let mut session = (**self.session.load()).clone();
-                session.metadata.name = name.clone();
-                let session = Arc::new(session);
-                self.session.store(session.clone());
-                let ctx = SecurityContext::default();
-                if let Err(e) = self.entity_store.update_session(&ctx, &session).await {
-                    // The live name is already updated; only persisting it failed.
-                    tracing::error!("Cannot persist new name of session {}: {}", session.id, e);
-                }
-            }
+            SessionUpdateEvent::NameChanged(name) => session.metadata.name = name.clone(),
         }
+        session
+    }
+
+    /// Takes over an update made elsewhere - already stored there.
+    fn process_session_update(&self, event: &SessionUpdateEvent) {
+        self.session.store(Arc::new(self.apply(event)));
     }
 
     pub async fn process_global_event(&self, event: &GlobalEvent) {
         match event {
             GlobalEvent::SessionUpdated(sid, update) if *sid == self.id => {
-                self.process_session_update(update).await;
+                self.process_session_update(update);
             }
             GlobalEvent::ChannelCreated(sid, cid) if *sid == self.id => {
                 // TODO: Update internal session state to include the new channel

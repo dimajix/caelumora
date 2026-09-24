@@ -20,27 +20,28 @@ pub async fn ensure_session(
     user: &AuthenticatedUser,
     session_id: SessionId,
 ) -> Result<Arc<SessionLoop>, ApiError> {
-    if let Some(session_loop) = state.session_manager.get_session(session_id) {
-        return Ok(session_loop);
-    }
-
-    let security_context = user.security_context();
-
-    // Not currently running: load it from the store and start it. `load_session` owns
-    // spawning the run loop and emitting the `SessionStarted` event.
+    // The running session, or loaded from the store and started - either way
+    // only if this user may read it (issue 11).
     state
         .session_manager
-        .load_session(session_id, &security_context)
+        .open_session(&user.security_context(), session_id)
         .await
-        .map_err(|e| {
-            // Only a missing session is "not found"; a session that exists but
-            // cannot start (say, a broken component) is a server error.
-            if caelumora_runtime::error::is_not_found(&e, "session") {
-                ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id))
-            } else {
-                ApiError::internal("session_load_failed", &format!("loading session {}", session_id), &e)
-            }
-        })
+        .map_err(|e| session_error(e, session_id, "open", "loading"))
+}
+
+/// The answer for a failure to `act` on session `session_id` (e.g.
+/// "rename"; `doing` is the same as "renaming", for the log). A session that is missing - or that the user may not read,
+/// which is reported the same way - is `404`; one they may read but not
+/// change is `403`; anything else, say a component that cannot be built, is
+/// a server error.
+pub fn session_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: &str) -> ApiError {
+    if caelumora_runtime::error::is_not_found(&error, "session") {
+        ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id))
+    } else if caelumora_runtime::error::is_forbidden(&error) {
+        ApiError::forbidden("session_forbidden", format!("You are not permitted to {} session {}", act, session_id))
+    } else {
+        ApiError::internal("session_failed", &format!("{} session {}", doing, session_id), &error)
+    }
 }
 
 /// The channel `channel_id` of `session`, or a `404`.

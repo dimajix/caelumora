@@ -118,7 +118,8 @@ fn create_personality(name: &str, description: &str, system_prompt: &str, enable
 }
 
 async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<SessionTemplate> {
-    let ctx = SecurityContext::default();
+    // Initial data belongs to the system (issue 11).
+    let ctx = SecurityContext::system();
     let personality_a = create_personality(
         "jonathan-assistant",
         "A helpful and polite assistant",
@@ -370,7 +371,7 @@ async fn main() -> anyhow::Result<()> {
     // Into a file by default: log lines on the terminal would break the prompt.
     logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
-    let security_manager = Arc::new(caelumora_model::security::DummySecurityManager::new());
+    let security_manager = config.create_security_manager();
     let state_store = config.create_state_store(security_manager.clone())?;
     let entity_store = config.create_entity_store(security_manager.clone())?;
     let secret_manager = config.create_secret_manager(security_manager.clone())?;
@@ -386,7 +387,8 @@ async fn main() -> anyhow::Result<()> {
 
     let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
-    let security = SecurityContext::default();
+    // The session is this terminal user's own.
+    let security = SecurityContext::new(ActorId::User(owner), session_id, Default::default());
     if entity_store.get_user(&security, owner).await.is_err() {
         entity_store.create_user(&security, &User {
             id: owner,

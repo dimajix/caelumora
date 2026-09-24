@@ -2,7 +2,9 @@ use crate::channel::ChannelLoop;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{ActionType, SecurityContext};
+use caelumora_model::store::StoreError;
+use tracing::info;
 use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -58,8 +60,13 @@ impl SessionLoop {
         self.session_controller.name()
     }
 
-    pub async fn update_name(&self, new_name: String) {
-        self.session_controller.update_name(new_name).await;
+    /// Renames the session on behalf of `context`.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// session, or whatever else storing it reports.
+    pub async fn update_name(&self, context: &SecurityContext, new_name: String) -> Result<()> {
+        Ok(self.session_controller.update_name(context, new_name).await?)
     }
 
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
@@ -208,6 +215,34 @@ impl SessionManager {
         self.sessions.get(&id).map(|s| s.clone())
     }
 
+    /// The session `id` for `context`: the running one, or loaded from the
+    /// store and started. A running session is asked about like a stored
+    /// one - `GetSession` with its attributes - so that it being in memory is
+    /// no way around the policy (issue 11).
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such session or `context` may
+    /// not read it; whatever loading or starting it reports otherwise.
+    pub async fn open_session(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
+        match self.get_session(id) {
+            Some(session_loop) => {
+                self.may(context, ActionType::GetSession(&session_loop.get_session().security_attributes), id, StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
+                Ok(session_loop)
+            }
+            None => self.load_session(id, context).await,
+        }
+    }
+
+    /// Asks the `SecurityManager` about `action` on session `id`, answering a
+    /// refusal with `refusal`.
+    async fn may(&self, context: &SecurityContext, action: ActionType<'_>, id: SessionId, refusal: StoreError) -> Result<()> {
+        if self.runtime_manager.security_manager().check(context, action).await {
+            return Ok(());
+        }
+        info!("Refused access to session {} for {}", id, context.initiator_id);
+        Err(refusal.into())
+    }
+
     /// Stop a running session's loop without deleting its durable definition.
     pub fn stop_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
         if let Some((_, handle)) = self.handles.remove(&id) {
@@ -221,16 +256,24 @@ impl SessionManager {
     }
 
     /// Stop and permanently delete a session together with all of its channels.
+    ///
+    /// Asked about before anything happens - a refused deletion must not
+    /// stop the session on the way (issue 11).
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such session or `ctx` may not
+    /// read it, `StoreError::PermissionDenied` if they may read but not
+    /// delete it.
     pub async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> Result<bool> {
-        // Capture the channel list before the runtime loop is torn down.
-        let channels: Vec<ChannelId> = if let Some(session_loop) = self.get_session(id) {
-            session_loop.get_session().channels.iter().map(|c| c.id).collect()
-        } else {
-            match self.runtime_manager.entity_store().get_session(ctx, id).await {
-                Ok(session) => session.channels.iter().map(|c| c.id).collect(),
-                Err(_) => Vec::new(),
-            }
+        let session: Session = match self.get_session(id) {
+            Some(session_loop) => (**session_loop.get_session()).clone(),
+            None => self.runtime_manager.entity_store().get_session(ctx, id).await?,
         };
+        let not_found = || StoreError::NotFound { entity: "session", id: id.to_string() };
+        self.may(ctx, ActionType::GetSession(&session.security_attributes), id, not_found()).await?;
+        self.may(ctx, ActionType::DeleteSession(&session.security_attributes), id, StoreError::PermissionDenied).await?;
+        // Captured before the runtime loop is torn down.
+        let channels: Vec<ChannelId> = session.channels.iter().map(|c| c.id).collect();
 
         self.stop_session(id);
 
@@ -413,5 +456,36 @@ mod tests {
         };
         let error = runtime.new_command_executor(&session).await.expect_err("/help twice");
         assert!(error.to_string().contains("/help"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_running_session_is_no_way_around_the_policy() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::user::UserId;
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
+        let manager = SessionManager::new(runtime);
+
+        let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice), contributors: vec![ActorId::User(bob)] };
+        let id = session.id;
+        manager.create_session(&as_user(alice), session).await.expect("alice creates her own session");
+
+        let refused = manager.open_session(&as_user(carol), id).await.expect_err("carol may not see it");
+        assert!(crate::error::is_not_found(&refused, "session"), "not refused - absent: {refused}");
+        manager.open_session(&as_user(bob), id).await.expect("a contributor opens it");
+
+        let refused = manager.delete_session(&as_user(bob), id).await.expect_err("a contributor may not delete it");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(manager.get_session(id).is_some(), "a refused deletion must not stop the session on the way");
+
+        manager.delete_session(&as_user(alice), id).await.expect("the owner deletes it");
+        assert!(manager.get_session(id).is_none());
     }
 }

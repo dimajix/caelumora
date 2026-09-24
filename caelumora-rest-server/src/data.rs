@@ -16,7 +16,9 @@ use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 use caelumora_runtime::component_impl::tool::{CALCULATOR_TOOL_PROVIDER_KIND, CREATE_PLAN_TOOL_PROVIDER_KIND, STOP_TOOL_PROVIDER_KIND};
 
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
-    let ctx = SecurityContext::default();
+    // The initial data belongs to the system: every user may use it, nobody
+    // but the system may change it (issue 11).
+    let ctx = SecurityContext::system();
 
     // 1. Ensure user exists
     if store.find_user_by_name(&ctx, username).await.is_err() {
