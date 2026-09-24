@@ -9,9 +9,9 @@ persistence:
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY
 # username and password - never enable it on a server reachable from a network.
-#users:
-#  providers:
-#    - type: accept_any
+users:
+  providers:
+    - type: accept_any
 
 # Log format and destination; what is logged is selected with RUST_LOG.
 # Defaults: text, to stderr (REST server) or local/tui.log (TUI).
