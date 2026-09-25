@@ -1,7 +1,8 @@
 use crate::actor::{ActorId, ActorState, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
-use crate::message::{Message, MessageContext, MessageHistory};
+use crate::digest::Digest;
+use crate::message::{ContextRef, Message, MessageContext, MessageHistory, MessageId};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -11,7 +12,7 @@ use crate::tool::ToolCallState;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -175,6 +176,14 @@ pub struct AgentChannelState {
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub context: MessageContext,
+    /// Every system prompt the agent was given in this channel, by digest,
+    /// each kept once - what a `ContextRef` in the history points to (issue
+    /// 06).
+    #[serde(default)]
+    pub system_prompts: BTreeMap<Digest, String>,
+    /// The digest of the current turn's system prompt, if it has one.
+    #[serde(default)]
+    pub turn_system_prompt: Option<Digest>,
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
@@ -196,6 +205,38 @@ pub struct AgentChannelState {
     pub turn_security_context: SecurityContext,
     #[serde(default)]
     pub turn_event_context: EventContext
+}
+
+/// What an agent's model saw when it produced a message: the system prompt
+/// of that turn and the messages of its context (issue 06).
+#[derive(Debug, Clone)]
+pub struct SeenContext {
+    pub system_prompt: Option<String>,
+    pub messages: Vec<Message>,
+}
+
+impl AgentChannelState {
+    /// Resolves `reference` in this state, or `None` if what it names is not
+    /// here - a context that is not a prefix of this one, a system prompt
+    /// that was never recorded.
+    pub fn resolve(&self, reference: &ContextRef) -> Option<SeenContext> {
+        let system_prompt = match &reference.system_prompt {
+            Some(digest) => Some(self.system_prompts.get(digest)?.clone()),
+            None => None,
+        };
+        let messages = match &reference.context {
+            Some(digest) => self.context.prefix(digest)?,
+            None => Vec::new(),
+        };
+        Some(SeenContext { system_prompt, messages })
+    }
+
+    /// What the agent saw when it produced the message `id` of its history,
+    /// or `None` if it did not produce it or it cannot be resolved.
+    pub fn seen_context_of(&self, id: MessageId) -> Option<SeenContext> {
+        let entry = self.history.entries().iter().find(|e| e.message.id == id)?;
+        self.resolve(entry.context.as_ref()?)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

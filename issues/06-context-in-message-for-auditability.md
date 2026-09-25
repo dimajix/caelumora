@@ -1,6 +1,6 @@
 # 06 — Persist the context a message was generated from
 
-**Status:** open
+**Status:** in progress
 **Area:** Persistence / Audit
 
 ## The problem
@@ -49,3 +49,56 @@ turns.
 - **2026-09-10** — Issue created from `TODO.md`, where it was phrased as
   *"Put 'context' into message for auditability?"* — the question mark is
   part of it: the design is not settled.
+- **2026-09-25** — First step done, along the maintainer's design: the
+  context is a hash chain, and the history refers to it.
+  - **What was there:** `MessageContext` and `MessageHistory` chained
+    digests, but only over message ids (`id + previous digest`), so a digest
+    named a sequence of ids, not a context - a message changed under the same
+    id kept its digest. `HistoryEntry.context` existed but was never set:
+    the history was filled only through `extend`, which wrote an empty
+    string. The system prompt, assembled per turn by `StateContextProvider`,
+    was neither hashed nor stored. Digests were hex `String`s, with the empty
+    string for "none".
+  - **Now:** a `Digest` type (`[u8; 32]`, hex in JSON). A message's digest
+    covers its content - id, role, sender, content, reasoning, tool calls and
+    results, `internal` - and the previous digest, fed unambiguously with
+    length prefixes behind a version tag (`digest::message_chain`); JSON
+    values are hashed with sorted keys, independent of `serde_json`
+    features. Timestamps, usage statistics, mentions and metadata are left
+    out: they are not what the model saw. `HistoryEntry.context` is an
+    `Option<ContextRef>`: the digest of the context before the message and
+    of the turn's system prompt. Chosen for the prompt: stored separately,
+    deduplicated by its digest (`AgentChannelState::system_prompts`), rather
+    than as entries of the context chain, which would have mixed messages
+    and prompt in one chain. `TurnContext::record_turn` sets both when a
+    turn ends; `AgentChannelState::seen_context_of` resolves them.
+  - **Digests are stored and never recomputed.** A digest is the record of
+    what was sent to the model, not a value to derive again: if the scheme
+    changes (a `v2` of `message_chain`), recomputing on load would silently
+    change every digest the history refers to, while stored digests let old
+    entries keep theirs. The existing local state was developer test data
+    only and was deleted, so no stored format had to be migrated.
+  - **Storage cost:** the context is stored once per agent and channel, as
+    before; a reference is two digests per message; each distinct system
+    prompt is stored once.
+
+  Still open: nothing outside the model reads the references yet - no REST
+  endpoint or UI to ask what an agent saw; the channel's history (the one
+  the UI shows) has no references of its own, the agent's state has to be
+  looked up by the message's sender; and [16](16-context-compression.md)
+  must keep what earlier references point to, since this relies on the
+  context only growing.
+- **2026-09-25** — Requirements for compaction ([16](16-context-compression.md)),
+  from the maintainer's design discussion:
+  - The context digest of a message must name exactly the context that was
+    sent to the model to produce it.
+  - Compaction produces a new context C′ from the old context C. Entries
+    written before keep referring to C; only messages produced afterwards
+    refer to C′ - they really saw only C′. So C has to remain resolvable
+    after compaction: an agent's state will hold several context
+    generations, and resolving a reference has to search all of them
+    (today's `MessageContext::prefix` searches one append-only list).
+  - "C′ came from C" is a relation of its own (e.g. `derived_from`), not the
+    predecessor link of the chain. It is not sent to the model and therefore
+    not part of C′'s digest: two identical contexts get the same digest
+    however they came about.

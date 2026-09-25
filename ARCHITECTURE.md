@@ -56,6 +56,16 @@ The agent cognitive cycle (implemented within `AgentActor`) defines how an agent
 
 The loop is stateful, maintaining an `AgentState` which includes `MessageHistory` and `MessageContext`.
 
+### What an agent saw
+
+For every message an agent produced, it can be told what its model saw when it wrote it (issue 06). Its `AgentChannelState` keeps the `MessageContext` - the messages the model is given - as a chain: every entry has a `Digest` (SHA-256, `caelumora_model::digest`) over its message and the digest before it, so one digest names the whole context up to that point by content. What goes into a message's digest is fixed in one place, `digest::message_chain`, behind a version tag: id, role, sender, content, reasoning, tool calls and results, and whether it is internal - not timestamps, usage statistics, resolved mentions or metadata. JSON values such as tool arguments are hashed with sorted keys, so the digest does not depend on how a value was built or on `serde_json` features.
+
+At the end of a turn, `TurnContext::record_turn` appends the agent's messages to its context and the non-internal ones to its history, each with a `ContextRef`: the digest of the context before the message, and the digest of the turn's system prompt. The system prompt is assembled per turn by `StateContextProvider` and is not part of the context, so it is kept separately in `AgentChannelState::system_prompts`, once per digest. `AgentChannelState::seen_context_of(message)` resolves a reference to the prompt and the messages the model saw; the channel's history identifies the agent by the message's sender.
+
+A digest is a record of what was sent to the model, not a value to derive again: it is stored with its entry and never recomputed. Were the scheme to change, recomputing would silently change every digest the history refers to; stored, old entries keep their digests and only new ones get the new scheme's.
+
+This relies on the context only ever growing: an earlier digest names a prefix of it. Compressing the context ([16](issues/16-context-compression.md)) produces a new context that came from the old one but does not continue it. Entries written before keep referring to the old context, which therefore has to remain resolvable, and only new entries refer to the new one; the link from the new context to the one it came from is a relation of its own, not the predecessor link of the chain, and - since it is not sent to the model - not part of the digest.
+
 ## Session, Channel, and Actor Design
 
 Caelumora uses an actor-based model for communication within sessions.

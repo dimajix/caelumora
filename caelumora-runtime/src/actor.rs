@@ -11,7 +11,7 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::message::Message;
+use caelumora_model::message::{ContextRef, Message};
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -77,6 +77,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
         self.agent_channel_state.plan = None;
+        self.agent_channel_state.turn_system_prompt = None;
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -174,6 +175,28 @@ impl<'a> TurnContext<'a> {
     }
     pub fn extend_state_history(&mut self, messages: Vec<Message>) {
         self.agent_channel_state.history.extend(messages);
+    }
+
+    /// Records `prompt` as this turn's system prompt: kept once per digest,
+    /// so that what the agent saw can be told later (issue 06).
+    pub fn set_system_prompt(&mut self, prompt: &str) {
+        let digest = caelumora_model::digest::system_prompt(prompt);
+        self.agent_channel_state.system_prompts.entry(digest).or_insert_with(|| prompt.to_string());
+        self.agent_channel_state.turn_system_prompt = Some(digest);
+    }
+
+    /// Appends the messages this agent produced in the turn to its context,
+    /// and those that are not internal to its history - each with what it was
+    /// produced from: the context before it and the turn's system prompt
+    /// (issue 06).
+    pub fn record_turn(&mut self, messages: Vec<Message>) {
+        let before = self.agent_channel_state.context.extend(messages.clone());
+        let system_prompt = self.agent_channel_state.turn_system_prompt;
+        for (message, context) in messages.into_iter().zip(before) {
+            if !message.internal {
+                self.agent_channel_state.history.push(message, Some(ContextRef { context, system_prompt }));
+            }
+        }
     }
 
     /// Records what state the turn should land on once `Reflecting` finishes,
@@ -276,5 +299,36 @@ mod tests {
 
         ctx.next_turn(EventContext::default(), SecurityContext::default());
         assert!(ctx.plan().is_none());
+    }
+
+    #[test]
+    fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
+        use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+        use caelumora_model::message::{MessageId, MessageRole};
+
+        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
+        let mut agent_state = AgentState::default();
+        let mut state = AgentChannelState::default();
+        let question = text(MessageRole::User, "What is 2+2?");
+        state.context.push(question.clone());
+
+        let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
+        {
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            turn.set_system_prompt("You are good at sums.");
+            turn.record_turn(vec![first.clone(), second.clone()]);
+        }
+
+        let seen = state.seen_context_of(second.id).expect("the agent produced it");
+        assert_eq!(seen.system_prompt.as_deref(), Some("You are good at sums."));
+        assert_eq!(seen.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![question.id, first.id], "everything before it, its own earlier message included");
+        assert!(state.seen_context_of(question.id).is_none(), "not produced by the agent");
+
+        // The same prompt in another turn is kept once.
+        {
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            turn.set_system_prompt("You are good at sums.");
+        }
+        assert_eq!(state.system_prompts.len(), 1);
     }
 }

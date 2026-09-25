@@ -49,3 +49,11 @@ context is re-sent on every turn.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-25** — Constraint from [06](06-context-in-message-for-auditability.md),
+  which made the context a hash chain the history refers to: compaction
+  must not rewrite the existing context. It produces a new context from
+  it; history entries written before keep referring to the old one, which
+  must stay resolvable, and only messages produced afterwards refer to the
+  new one. The new context's origin is recorded as a relation of its own
+  (not the chain's predecessor link, not part of its digest). Details in
+  06's history.

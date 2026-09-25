@@ -73,9 +73,11 @@ impl ContextProvider for StateContextProvider {
         }
 
         if !system_prompts.is_empty() {
+            let prompt = system_prompts.join("\n\n");
+            state.set_system_prompt(&prompt);
             full_context.push(Message {
                 role: MessageRole::System,
-                content: Some(system_prompts.join("\n\n")),
+                content: Some(prompt),
                 sender_id: ActorId::Agent(state.agent_id),
                 sender_name: state.agent_name.clone(),
                 ..Default::default()

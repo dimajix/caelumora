@@ -2,7 +2,7 @@ use crate::actor::ActorId;
 use crate::tool::{ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha256::Sha256Digest;
+use crate::digest::Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -105,99 +105,143 @@ pub fn format_conversation(messages:&[Message]) -> String {
         .unwrap_or(String::new())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// A message of a `MessageContext`, with the digest of the context up to and
+/// including it (issue 06).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextEntry {
     pub message: Message,
-    pub digest: String
+    pub digest: Digest,
 }
+
+/// The messages an agent's model sees, as a chain: every entry's digest
+/// covers its message and the digest before it, so one digest names the
+/// whole context up to that point by content (see `crate::digest`).
+///
+/// The context is only ever appended to, so every earlier digest names a
+/// prefix of it and that prefix can be recovered (`prefix`). A digest is a
+/// record of what was sent to the model, stored and never recomputed: were
+/// the scheme in `crate::digest` to change, recomputing would silently
+/// change every digest that history entries refer to.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageContext {
-    messages: Vec<ContextEntry>
+    messages: Vec<ContextEntry>,
 }
+
 impl MessageContext {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
         }
     }
-    pub fn digest(&self) -> String {
-        if self.messages.is_empty() { String::new() } else { self.messages.last().unwrap().digest.clone() }
+
+    /// The digest of the whole context, or `None` while it is empty.
+    pub fn digest(&self) -> Option<Digest> {
+        self.messages.last().map(|e| e.digest)
     }
+
     pub fn messages(&self) -> Vec<Message> {
         self.messages.iter().map(|e| {e.message.clone()}).collect()
     }
+
     pub fn last_message_id(&self) -> MessageId {
         self.messages.last().map(|e| e.message.id).unwrap_or_default()
     }
-    pub fn extend(&mut self, msgs: Vec<Message>) {
-        let mut digest = self.digest();
-        let mut prev_id = self.last_message_id();
-        for mut m in msgs.into_iter() {
-            if prev_id != MessageId::default() {
-                m.prev_id = prev_id;
-            }
-            prev_id = m.id;
-            digest = (m.id.to_string() + digest.as_str()).digest();
-            self.messages.push(ContextEntry { message: m, digest: digest.clone() })
-        }
+
+    /// Appends `msgs` and returns, for each of them, the digest of the
+    /// context before it - the context it was produced from.
+    pub fn extend(&mut self, msgs: Vec<Message>) -> Vec<Option<Digest>> {
+        msgs.into_iter().map(|m| self.push(m)).collect()
     }
-    pub fn push(&mut self, mut msg: Message) {
-        let mut digest = self.digest();
+
+    /// Appends `msg` and returns the digest of the context before it.
+    pub fn push(&mut self, mut msg: Message) -> Option<Digest> {
+        let previous = self.digest();
         let prev_id = self.last_message_id();
         if prev_id != MessageId::default() {
             msg.prev_id = prev_id;
         }
-        digest = (msg.id.to_string() + digest.as_str()).digest();
-        self.messages.push(ContextEntry { message: msg, digest: digest })
+        let digest = crate::digest::message_chain(previous.as_ref(), &msg);
+        self.messages.push(ContextEntry { message: msg, digest });
+        previous
+    }
+
+    /// The messages of the context `digest` names: this context up to and
+    /// including the entry with that digest, or `None` if it is not a prefix
+    /// of this context.
+    pub fn prefix(&self, digest: &Digest) -> Option<Vec<Message>> {
+        let end = self.messages.iter().position(|e| e.digest == *digest)?;
+        Some(self.messages[..=end].iter().map(|e| e.message.clone()).collect())
     }
 }
 
+/// What an agent's model saw when it produced a message (issue 06): the
+/// digest of its `MessageContext` before the message - `None` if it was
+/// empty - and of the system prompt of that turn, if there was one. Both are
+/// resolved in the agent's `AgentChannelState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextRef {
+    pub context: Option<Digest>,
+    pub system_prompt: Option<Digest>,
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// A message of a `MessageHistory`: with the digest of the history up to and
+/// including it and, for a message this agent produced, what it was produced
+/// from.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub message: Message,
-    pub context: String,
-    pub digest: String,
+    pub context: Option<ContextRef>,
+    pub digest: Digest,
 }
+
+/// The conversation as it happened - chained like a `MessageContext`, its
+/// digests likewise stored as recorded.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageHistory {
-    messages: Vec<HistoryEntry>
+    messages: Vec<HistoryEntry>,
 }
+
 impl MessageHistory {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
         }
     }
-    pub fn digest(&self) -> String {
-        if self.messages.is_empty() { String::new() } else { self.messages.last().unwrap().digest.clone() }
+
+    /// The digest of the whole history, or `None` while it is empty.
+    pub fn digest(&self) -> Option<Digest> {
+        self.messages.last().map(|e| e.digest)
     }
+
     pub fn messages(&self) -> Vec<Message> {
         self.messages.iter().map(|e| {e.message.clone()}).collect()
     }
+
+    pub fn entries(&self) -> &[HistoryEntry] {
+        &self.messages
+    }
+
     pub fn last_message_id(&self) -> MessageId {
         self.messages.last().map(|e| e.message.id).unwrap_or_default()
     }
+
+    /// Appends messages that were not produced from a context of this
+    /// history's owner - what others said.
     pub fn extend(&mut self, msgs: Vec<Message>) {
-        let mut digest = self.digest();
-        let mut prev_id = self.last_message_id();
-        for mut m in msgs.into_iter() {
-            if prev_id != MessageId::default() {
-                m.prev_id = prev_id;
-            }
-            prev_id = m.id;
-            digest = (m.id.to_string() + digest.as_str()).digest();
-            self.messages.push(HistoryEntry { message: m, context: String::new(), digest: digest.clone() })
+        for m in msgs {
+            self.push(m, None);
         }
     }
-    pub fn push(&mut self, mut msg: Message, context:String) {
-        let mut digest = self.digest();
+
+    /// Appends `msg` with what it was produced from, if known.
+    pub fn push(&mut self, mut msg: Message, context: Option<ContextRef>) {
+        let previous = self.digest();
         let prev_id = self.last_message_id();
         if prev_id != MessageId::default() {
             msg.prev_id = prev_id;
         }
-        digest = (msg.id.to_string() + digest.as_str()).digest();
-        self.messages.push(HistoryEntry { message: msg, context: context, digest: digest })
+        let digest = crate::digest::message_chain(previous.as_ref(), &msg);
+        self.messages.push(HistoryEntry { message: msg, context, digest });
     }
 }
 
@@ -205,6 +249,7 @@ impl MessageHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::digest::message_chain;
     use uuid::Uuid;
 
     fn make_message(id: MessageId) -> Message {
@@ -220,59 +265,37 @@ mod tests {
         }
     }
 
+    fn id(n: u128) -> MessageId {
+        MessageId(Uuid::from_u128(n))
+    }
+
     #[test]
     fn message_context_empty_state() {
         let context = MessageContext::new();
 
-        assert_eq!(context.digest(), String::new());
+        assert_eq!(context.digest(), None);
         assert!(context.messages().is_empty());
     }
 
     #[test]
-    fn message_context_push_updates_recursive_digest() {
-        let message_id = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
-        let message = make_message(message_id);
+    fn message_context_chains_the_digests_of_its_messages() {
+        let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
 
         let mut context = MessageContext::new();
-        context.push(message.clone());
+        let before = context.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
 
-        let expected_digest = message_id.to_string().digest();
-        assert_eq!(context.digest(), expected_digest);
-        assert_eq!(context.messages().len(), 1);
-        assert_eq!(context.messages()[0].id, message.id);
-    }
-
-    #[test]
-    fn message_context_extend_builds_recursive_digest_chain() {
-        let id1 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
-        let id2 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap());
-        let id3 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap());
-        let m1 = make_message(id1);
-        let m2 = make_message(id2);
-        let m3 = make_message(id3);
-
-        let mut context = MessageContext::new();
-        context.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
-
-        let d1 = id1.to_string().digest();
-        let d2 = (id2.to_string() + d1.as_str()).digest();
-        let d3 = (id3.to_string() + d2.as_str()).digest();
-
-        assert_eq!(context.digest(), d3);
-
-        let messages = context.messages();
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].id, m1.id);
-        assert_eq!(messages[1].id, m2.id);
-        assert_eq!(messages[2].id, m3.id);
+        // The chain assigns `prev_id`, which the digest does not cover.
+        let d1 = message_chain(None, &m1);
+        let d2 = message_chain(Some(&d1), &m2);
+        let d3 = message_chain(Some(&d2), &m3);
+        assert_eq!(context.digest(), Some(d3));
+        assert_eq!(before, vec![None, Some(d1), Some(d2)], "each message with the context it came after");
+        assert_eq!(context.messages().iter().map(|m| m.id).collect::<Vec<_>>(), vec![m1.id, m2.id, m3.id]);
     }
 
     #[test]
     fn message_context_extend_matches_repeated_push_digest() {
-        let id1 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap());
-        let id2 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap());
-        let id3 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000013").unwrap());
-        let messages = vec![make_message(id1), make_message(id2), make_message(id3)];
+        let messages = vec![make_message(id(11)), make_message(id(12)), make_message(id(13))];
 
         let mut extend_context = MessageContext::new();
         extend_context.extend(messages.clone());
@@ -283,17 +306,52 @@ mod tests {
         }
 
         assert_eq!(extend_context.digest(), push_context.digest());
-        assert_eq!(extend_context.messages().len(), push_context.messages().len());
+    }
+
+    #[test]
+    fn a_digest_names_the_prefix_it_was_taken_at() {
+        let mut context = MessageContext::new();
+        context.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let at_two = context.digest().unwrap();
+        context.push(make_message(id(3)));
+
+        let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
+        assert_eq!(prefix.iter().map(|m| m.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
+        assert!(context.prefix(&crate::digest::system_prompt("elsewhere")).is_none());
+    }
+
+    #[test]
+    fn digests_are_kept_as_recorded() {
+        let mut context = MessageContext::new();
+        context.extend(vec![make_message(id(1)), make_message(id(2))]);
+
+        // What was recorded stands, even if today's scheme would compute
+        // something else - as it will for anything recorded under an
+        // earlier version of it.
+        let recorded = crate::digest::system_prompt("recorded under another scheme");
+        let mut stored = serde_json::to_value(&context).unwrap();
+        stored["messages"][1]["digest"] = serde_json::Value::String(recorded.to_string());
+        let loaded: MessageContext = serde_json::from_value(stored).unwrap();
+        assert_eq!(loaded.digest(), Some(recorded));
+        assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
+    }
+
+    #[test]
+    fn a_history_keeps_what_its_messages_were_produced_from() {
+        let reference = ContextRef { context: Some(message_chain(None, &make_message(id(9)))), system_prompt: None };
+        let mut history = MessageHistory::new();
+        history.extend(vec![make_message(id(1))]);
+        history.push(make_message(id(2)), Some(reference));
+
+        let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        assert_eq!(loaded.entries()[0].context, None, "said by someone else");
+        assert_eq!(loaded.entries()[1].context, Some(reference));
+        assert_eq!(loaded.digest(), history.digest());
     }
 
     #[test]
     fn message_prev_id_updates() {
-        let id1 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
-        let id2 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap());
-        let id3 = MessageId(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap());
-        let m1 = make_message(id1);
-        let m2 = make_message(id2);
-        let m3 = make_message(id3);
+        let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
 
         let mut context = MessageContext::new();
         context.push(m1.clone());
@@ -301,13 +359,13 @@ mod tests {
 
         let messages = context.messages();
         assert_eq!(messages[0].prev_id, MessageId::default());
-        assert_eq!(messages[1].prev_id, id1);
+        assert_eq!(messages[1].prev_id, id(1));
 
         let mut history = MessageHistory::new();
-        history.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
+        history.extend(vec![m1, m2, m3]);
         let messages = history.messages();
         assert_eq!(messages[0].prev_id, MessageId::default());
-        assert_eq!(messages[1].prev_id, id1);
-        assert_eq!(messages[2].prev_id, id2);
+        assert_eq!(messages[1].prev_id, id(1));
+        assert_eq!(messages[2].prev_id, id(2));
     }
 }

@@ -423,8 +423,7 @@ impl AgentActor {
     /// `channel.history()`) only keeps genuinely final messages.
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
         let messages = turn_context.messages().clone();
-        turn_context.extend_state_context(messages.clone());
-        turn_context.extend_state_history(messages.into_iter().filter(|m| !m.internal).collect());
+        turn_context.record_turn(messages);
     }
 
     fn final_messages(turn_context: &TurnContext) -> Vec<Message> {
