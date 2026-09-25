@@ -1,7 +1,7 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, ComponentRegistry, ComponentResult};
-use crate::component_impl::{command, context, history, mcp, tool};
+use crate::component_impl::{command, context, history, mcp, notes, tool};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
@@ -153,6 +153,7 @@ impl RuntimeManager {
         history::register(&mut component_registry);
         context::register(&mut component_registry);
         tool::register(&mut component_registry);
+        notes::register(&mut component_registry);
         mcp::register(&mut component_registry);
         command::register(&mut component_registry);
 

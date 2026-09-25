@@ -139,7 +139,17 @@ pub async fn get_channel_messages(
 /// snapshot (issue 34).
 async fn channel_snapshot(channel: &ChannelLoop, viewer: &SecurityContext) -> ChannelSnapshot {
     let (messages, has_more) = recent_messages(channel.history().await);
-    ChannelSnapshot { channel: channel_response(channel, viewer).await, messages, has_more }
+    let notes = channel.published_notes().await.unwrap_or_else(|e| {
+        // The conversation can be shown without them.
+        tracing::warn!("Reading the notes of channel {} failed: {:#}", channel.id(), e);
+        Vec::new()
+    });
+    ChannelSnapshot {
+        channel: channel_response(channel, viewer).await,
+        messages,
+        has_more,
+        notes: notes.into_iter().map(Into::into).collect(),
+    }
 }
 
 /// The end of a history, and whether it was cut.

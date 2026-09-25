@@ -69,3 +69,7 @@ Decided on 2026-09-25 (principle 12 in [19](19-memory-tiers.md)):
   as private notes of an agent per channel, with the confidentiality of their
   origin (option 1 of the discussion; principle 12 in
   [19](19-memory-tiers.md)).
+- **2026-09-25** — Notes turned out to belong to the agent as well
+  ([19](19-memory-tiers.md), principle 2): private notes are the second chain
+  of the same mechanism, next to the agent's public notes per channel, and
+  differ only in who may read them.

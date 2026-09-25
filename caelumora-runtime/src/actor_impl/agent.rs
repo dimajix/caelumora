@@ -2,6 +2,7 @@ use crate::actor::{Actor, MessageContextError, TurnContext};
 use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
+use crate::notes::{ChannelNoteReader, NoteReader};
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
@@ -56,6 +57,8 @@ struct AgentActorState {
     agent_id: AgentId,
     agent_channel_state: AgentChannelState,
     agent_state: AgentState,
+    /// What every turn reads other agents' notes through (issue 17).
+    note_reader: Arc<dyn NoteReader>,
 }
 
 impl AgentActorState {
@@ -65,7 +68,7 @@ impl AgentActorState {
             self.agent_channel_state.turn_event_context.sender_name.clone(),
             &mut self.agent_state,
             &mut self.agent_channel_state,
-        )
+        ).with_note_reader(Some(self.note_reader.clone()))
     }
 }
 
@@ -114,6 +117,7 @@ impl AgentActor {
             agent_id,
             agent_channel_state,
             agent_state,
+            note_reader: Arc::new(ChannelNoteReader::new(actor_runtime.clone())),
         });
 
         Ok(AgentActor {
@@ -423,9 +427,20 @@ impl AgentActor {
     /// scaffolding - it needs the full detail to stay coherent. `history`
     /// (the audit/user-facing trail - see `ChannelLoop::append_history` and
     /// `channel.history()`) only keeps genuinely final messages.
-    async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>) {
+    ///
+    /// Notes changed in the turn are published with it: `NotesChanged`
+    /// follows the turn's `FullResponseGenerated`.
+    async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>, output: &dyn EventSender) -> Result<()> {
         let messages = turn_context.messages().clone();
-        turn_context.record_turn(messages);
+        let notes_changed = turn_context.record_turn(messages);
+        turn_context.send_event(
+            ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
+            output,
+        ).await?;
+        if notes_changed {
+            turn_context.send_event(ActorEvent::NotesChanged { notes: turn_context.notes() }, output).await?;
+        }
+        Ok(())
     }
 
     fn final_messages(turn_context: &TurnContext) -> Vec<Message> {
@@ -642,16 +657,11 @@ impl AgentActor {
         turn_context: &mut TurnContext<'a>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        self.reflect(turn_context).await;
-
-        // Always signal the end of the turn, even with no final messages -
+        // Always signals the end of the turn, even with no final messages -
         // a plan cancelled before any step produced a visible answer still
         // has to tell observers (e.g. the web UI) that generation stopped,
         // the same way handle_reflecting does unconditionally.
-        turn_context.send_event(
-            ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
-            output,
-        ).await?;
+        self.reflect(turn_context, output).await?;
         turn_context.finish_turn();
 
         info!("Agent {} {} finished cancelling", self.id, self.agent_controller.name());
@@ -962,12 +972,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
-        self.reflect(turn_context).await;
-
-        turn_context.send_event(
-            ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
-            output,
-        ).await?;
+        self.reflect(turn_context, output).await?;
         turn_context.finish_turn();
         debug!("Finished generating messages for agent {} {}", self.id, agent_name);
 

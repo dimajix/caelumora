@@ -2,6 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
   ChevronRight,
+  NotebookPen,
   Scale,
   ScrollText,
   Send,
@@ -18,7 +19,9 @@ import type {
   Envelope,
   Message,
   PlanStepEvent,
+  PublishedNotes,
 } from '../types';
+import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
@@ -52,6 +55,8 @@ interface ChatViewProps {
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
+  const [notes, setNotes] = useState<PublishedNotes[]>([]);
+  const [sideTab, setSideTab] = useState<'members' | 'notes'>('members');
   // Restored from session storage, so a forced re-login does not lose it.
   const [inputText, setInputText] = useState(() => loadDraft(channelId));
   const [isSending, setIsSending] = useState(false);
@@ -112,6 +117,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         const snapshot: ChannelSnapshot = JSON.parse(data);
         setMessages(snapshot.messages);
         setChannel(snapshot.channel);
+        setNotes(snapshot.notes ?? []);
         setHasMore(snapshot.has_more);
         setStreamingMessage(null);
         setStreamingSender(null);
@@ -193,6 +199,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, notice]);
+        } else if (actorEvent.NotesChanged) {
+          const changed: PublishedNotes = {
+            agent_id: envelope.context.sender_id,
+            name: envelope.context.sender_name,
+            notes: actorEvent.NotesChanged.notes,
+          };
+          const key = JSON.stringify(changed.agent_id);
+          setNotes(prev => [...prev.filter(group => JSON.stringify(group.agent_id) !== key), changed]);
         } else if (actorEvent.PlanStepStarted) {
           setCurrentStep(actorEvent.PlanStepStarted);
         } else if (actorEvent.PlanStepFinished) {
@@ -585,10 +599,27 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       ) : (
       <div className="w-64 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block">
         <div className="p-4">
-          <div className="flex items-center space-x-2 mb-4 text-gray-500 dark:text-gray-400">
-            <Users size={18} />
-            <h3 className="font-semibold uppercase text-xs tracking-wider">Channel Members</h3>
+          <div className="flex items-center gap-1 mb-4 text-gray-500 dark:text-gray-400" role="tablist">
+            <button
+              role="tab"
+              aria-selected={sideTab === 'members'}
+              onClick={() => setSideTab('members')}
+              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'members' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
+            >
+              <Users size={16} />
+              <h3 className="font-semibold uppercase text-xs tracking-wider">Members</h3>
+            </button>
+            <button
+              role="tab"
+              aria-selected={sideTab === 'notes'}
+              onClick={() => setSideTab('notes')}
+              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'notes' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
+            >
+              <NotebookPen size={16} />
+              <h3 className="font-semibold uppercase text-xs tracking-wider">Notes</h3>
+            </button>
           </div>
+          {sideTab === 'notes' ? <NotesList notes={notes} /> : (<>
           {channel && (
             <div
               className="flex items-center gap-2 mb-4 text-xs text-gray-500 dark:text-gray-400"
@@ -608,6 +639,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               </div>
             ))}
           </div>
+          </>)}
         </div>
       </div>
       )}

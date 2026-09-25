@@ -35,6 +35,23 @@ pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
     pub messages: Vec<Message>,
     pub has_more: bool,
+    /// The notes every agent of the channel published (issue 17); changes
+    /// follow as `NotesChanged` events.
+    pub notes: Vec<PublishedNotesResponse>,
+}
+
+/// The notes one agent published in a channel.
+#[derive(Debug, Serialize)]
+pub struct PublishedNotesResponse {
+    pub agent_id: ActorId,
+    pub name: String,
+    pub notes: Vec<caelumora_model::note::Note>,
+}
+
+impl From<caelumora_runtime::notes::PublishedNotes> for PublishedNotesResponse {
+    fn from(published: caelumora_runtime::notes::PublishedNotes) -> Self {
+        Self { agent_id: published.agent, name: published.name, notes: published.notes }
+    }
 }
 
 /// The state of the system when a global stream connects.

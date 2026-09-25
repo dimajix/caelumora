@@ -108,7 +108,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [16](16-context-compression.md) | open | History and context grow without bound; nothing decides what to drop before the model's context window is exceeded. |
-| [17](17-information-sharing-within-session.md) | open | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
+| [17](17-information-sharing-within-session.md) | in progress | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
 | [18](18-knowledge-sharing.md) | open | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
 | [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
 | [47](47-prompt-parts-with-provenance.md) | done | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |

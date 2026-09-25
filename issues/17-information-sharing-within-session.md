@@ -1,6 +1,6 @@
 # 17 — Sharing information within a single session
 
-**Status:** open
+**Status:** in progress
 **Area:** Context & knowledge
 
 ## The problem
@@ -44,20 +44,28 @@ principles (points 2-6, 9, 11) this follows. Requires phase 0:
 [47](47-prompt-parts-with-provenance.md) and [48](48-shared-digest-chain.md).
 
 **Phase 1 - notes within a channel**
-- [ ] 4. Model: a note chain in `ChannelState`, on the chain type of
-  [48](48-shared-digest-chain.md). Entries are "note" or "revoke N"; a new
-  version is a revocation plus a note. Each records its provenance: agent,
-  triggering message, context digest. The current notes are the chain read
-  from start to head.
-- [ ] 5. Writing: a tool provider with `note` and `revoke_note`. Only the
-  channel's own entries can be revoked.
-- [ ] 6. Reading in the own channel: a `PromptProvider` contributing the
-  current notes as a `BeforeTurnInput` part
+- [x] 4. Model: a public note chain per agent and channel in
+  `AgentChannelState`, on the chain type of [48](48-shared-digest-chain.md).
+  Entries are "note" or "revoke N"; a new version is a revocation plus a
+  note. Each records its provenance: the message it follows, context digest.
+  The current notes are the chain read from start to head.
+- [x] 5. Writing: a component `notes` with the tools `note` and
+  `revoke_note`. Changes are kept in the turn state and taken over into the
+  agent's chain in `record_turn`, when the turn completes; a failed turn
+  leaves no notes (a cancelled one keeps those of what it recorded). Only the author revokes, checked when the
+  tool is called, an error returned to the model otherwise. `NotesChanged`
+  tells the UIs.
+- [x] 6. Reading in the own channel: the `notes` component's `PromptProvider`
+  contributes the current public notes of all agents in the channel, read
+  from their states (a read-only access given to the turn, as
+  `Actor::message_context` reads from the `StateStore`), as a
+  `BeforeTurnInput` part
   ([47](47-prompt-parts-with-provenance.md)), so changing notes do not
   invalidate the prompt cache; recorded with every answer through its
   `PromptRef`.
-- [ ] 7. Web UI: a notes panel per channel, read-only, showing who wrote a
-  note and in reply to which message.
+- [x] 7. Web UI: a notes panel per channel, read-only, grouped by agent,
+  showing in reply to which message a note was written; notes in the channel
+  snapshot, changes live through `NotesChanged`.
 
 **Phase 2 - across channels**
 - [ ] 8. `ReadChannel(&attributes)` checked by the `SecurityManager`, with the
@@ -103,3 +111,40 @@ principles (points 2-6, 9, 11) this follows. Requires phase 0:
   before the turn's input ([47](47-prompt-parts-with-provenance.md)), not
   through the system prompt, because many models put the system prompt first
   and any change to it invalidates the prompt cache.
+- **2026-09-25** — Before implementing phase 1: notes belong to the agent
+  that wrote them and are published in a channel, rather than belonging to
+  the channel ([19](19-memory-tiers.md), principles 2, 3, 3a). Plan steps 4-7
+  adjusted: chains per agent in `AgentChannelState`, taken over when the turn
+  completes, only the author revokes, read from the agents' states.
+- **2026-09-25** — Phase 1 implemented (steps 4-7):
+  - `caelumora_model::note`: `NoteChain` on `Chain`, entries
+    `NoteChange::Note { id, text }` or `Revoke { id }` with the message they
+    follow, the context digest and the time; `current()` reads the chain,
+    `next_id()` never gives a number twice. Digest scheme
+    `caelumora.note-chain.v1` (change and anchor, not the time).
+    `AgentChannelState` has `notes` and `turn_notes`.
+  - Note numbers are small integers per agent, not UUIDs, because a model
+    has to repeat them to revoke.
+  - `TurnContext::note`, `revoke_note` (own current notes, or one noted in
+    the same turn, which is then simply dropped) and `notes`; `record_turn`
+    takes the changes over after the turn's last message **in the history**
+    (not the context, whose last entry may be an internal step - branching
+    will look notes up by a message of the history). A cancelled turn keeps
+    the notes of what it recorded, like its messages; only a failed turn,
+    which records nothing, leaves none - a deviation from the plan text,
+    which said cancelled turns leave none too.
+  - `ActorEvent::NotesChanged { notes }` after `FullResponseGenerated`,
+    routed to users only.
+  - Reading: `caelumora_runtime::notes::{NoteReader, ChannelNoteReader,
+    PublishedNotes}` and `ChannelLoop::published_notes`, reading the agents'
+    states from the `StateStore`; `PromptProvider::get_prompt` now takes the
+    `TurnContext`. The `notes` component (tools and `BeforeTurnInput` prompt
+    part) is part of the seeded personalities; the context provider depends
+    on it.
+  - REST: the channel snapshot has `notes` per agent. Web UI: a "Notes" tab
+    next to "Members", grouped by agent, updated live.
+  - Verified in the browser with `mentions-session`: Sassy noted a fact with
+    the tool, the note appeared live in the tab; Jonathan's context showed
+    the system prompt first and Sassy's note as a user message right before
+    his input; Sassy revoked the note and noted a new version (#2), and after
+    a reload the tab showed only #2.

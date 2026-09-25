@@ -186,6 +186,18 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     e.finish()
 }
 
+/// The digest of a chain of note changes ending in `change`, made after
+/// message `after`, whose predecessor chain has the digest `previous`
+/// (issue 17). It covers what a reader of the notes learns - the change and
+/// where in the conversation it was made - not when it was written.
+pub fn note_chain(previous: Option<&Digest>, change: &crate::note::NoteChange, after: crate::message::MessageId) -> Digest {
+    let mut e = Encoder::new("caelumora.note-chain.v1");
+    e.opt_digest(previous);
+    e.json(&to_json(change));
+    e.bytes(after.0.as_bytes());
+    e.finish()
+}
+
 /// The digest of a prompt part: the system prompt, or any other text an
 /// agent's model is given besides the conversation (issue 47).
 pub fn prompt(prompt: &str) -> Digest {

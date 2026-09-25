@@ -110,6 +110,13 @@ pub enum ActorEvent {
         command: String,
         output: String,
     },
+    /// The sender's notes in the channel changed (issue 17): its notes as
+    /// they stand now. Sent when a turn that changed them completes; shown to
+    /// users, never written to the history. Other agents read notes when
+    /// their turn starts.
+    NotesChanged {
+        notes: Vec<crate::note::Note>,
+    },
 }
 
 impl ActorEvent {
@@ -133,6 +140,7 @@ impl ActorEvent {
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
             ActorEvent::TurnFailed { .. } => "TurnFailed",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
+            ActorEvent::NotesChanged { .. } => "NotesChanged",
         }
     }
 
@@ -289,6 +297,9 @@ impl Envelope {
             }
             ActorEvent::CommandExecuted { command, .. } => {
                 format!("CommandExecuted(sender_id={}, sender_name={}, command={})", ctx.sender_id, ctx.sender_name, command)
+            }
+            ActorEvent::NotesChanged { notes } => {
+                format!("NotesChanged(sender_id={}, sender_name={}, notes={})", ctx.sender_id, ctx.sender_name, notes.len())
             }
             _ => {
                 format!("{:?}", self.event)

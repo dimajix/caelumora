@@ -65,6 +65,25 @@ export interface ChannelSnapshot {
   messages: Message[];
   /** Whether the history is longer than the snapshot; the rest comes over REST. */
   has_more: boolean;
+  /** The notes every agent of the channel published (issue 17). */
+  notes: PublishedNotes[];
+}
+
+/** A note as it stands (issue 17). */
+export interface Note {
+  /** Its number in the agent's notes. */
+  id: number;
+  text: string;
+  /** The message it follows. */
+  after: string;
+  written_at: string;
+}
+
+/** The notes one agent published in a channel. */
+export interface PublishedNotes {
+  agent_id: ActorId;
+  name: string;
+  notes: Note[];
 }
 
 /** A session with its channels: an entry of the global snapshot, and `GET /sessions/{id}`. */
@@ -151,6 +170,8 @@ export interface ActorEvent {
   TurnFailed?: { message: string };
   /** A user ran a command whose answer concerns the whole channel (issue 28). */
   CommandExecuted?: { command: string; output: string };
+  /** The sender's notes changed; its notes as they stand now (issue 17). */
+  NotesChanged?: { notes: Note[] };
 }
 
 /** A user command, as `/help` and completion show it (issue 28). */

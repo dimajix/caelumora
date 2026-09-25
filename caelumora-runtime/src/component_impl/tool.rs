@@ -50,7 +50,7 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self) -> Result<String> {
+    async fn get_prompt(&self, _context: &TurnContext) -> Result<String> {
         Ok(PLANNING_SYSTEM_PROMPT.to_string())
     }
 }
@@ -440,7 +440,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
-        let prompt = CreatePlanToolProvider.get_prompt().await.expect("prompt should be available");
+        let mut agent_state = caelumora_model::agent::AgentState::default();
+        let mut state = caelumora_model::agent::AgentChannelState::default();
+        let turn = TurnContext::new(Default::default(), String::new(), &mut agent_state, &mut state);
+        let prompt = CreatePlanToolProvider.get_prompt(&turn).await.expect("prompt should be available");
         assert_eq!(prompt, PLANNING_SYSTEM_PROMPT);
     }
 

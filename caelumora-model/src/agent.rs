@@ -3,6 +3,7 @@ use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::digest::Digest;
 use crate::message::{ContextRef, Message, MessageContext, MessageHistory, MessageId, PromptRef};
+use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -176,6 +177,13 @@ pub struct AgentChannelState {
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub context: MessageContext,
+    /// The notes the agent published in this channel (issue 17).
+    #[serde(default)]
+    pub notes: NoteChain,
+    /// Changes to them made in the current turn, taken over into `notes`
+    /// when the turn completes and discarded if it does not.
+    #[serde(default)]
+    pub turn_notes: Vec<NoteChange>,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).

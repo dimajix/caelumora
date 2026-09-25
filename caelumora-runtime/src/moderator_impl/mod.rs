@@ -76,7 +76,7 @@ impl<P: ResponderPolicy> Moderator for PolicyModerator<P> {
             ActorEvent::ApprovalTimedOut(_) => {
                 self.actors.route_approval_events(event)
             }
-            ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } => {
+            ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::NotesChanged { .. } => {
                 self.actors.route_to_users(event)
             }
             _ => {

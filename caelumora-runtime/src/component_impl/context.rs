@@ -35,7 +35,8 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     fn position(&self) -> PromptPosition {
         PromptPosition::Start
     }
-    async fn get_prompt(&self) -> Result<String>;
+    /// The part for the turn `context` is about to start; empty for none.
+    async fn get_prompt(&self, context: &TurnContext) -> Result<String>;
 }
 
 #[async_trait]
@@ -72,7 +73,7 @@ impl PromptProvider for StaticPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self) -> Result<String> {
+    async fn get_prompt(&self, _context: &TurnContext) -> Result<String> {
         Ok(self.prompt.clone())
     }
 }
@@ -92,7 +93,7 @@ impl ContextProvider for StateContextProvider {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
         for provider in &self.prompt_providers {
-            let prompt = provider.get_prompt().await?.trim().to_string();
+            let prompt = provider.get_prompt(state).await?.trim().to_string();
             if prompt.is_empty() {
                 continue;
             }

@@ -244,6 +244,23 @@ impl ChannelLoop {
             .collect()
     }
 
+    /// The notes every agent of the channel published (issue 17), read from
+    /// their states in the `StateStore`: notes of finished turns only.
+    pub async fn published_notes(&self) -> Result<Vec<crate::notes::PublishedNotes>> {
+        let mut published = Vec::new();
+        for actor in self.actors.values() {
+            let ActorId::Agent(agent_id) = actor.id() else { continue };
+            let state = self.state_store.get_agent_channel_state(agent_id, self.id).await?;
+            published.push(crate::notes::PublishedNotes {
+                agent: actor.id(),
+                name: actor.name(),
+                notes: state.notes.current(),
+                digest: state.notes.digest(),
+            });
+        }
+        Ok(published)
+    }
+
     fn is_mentionable(id: ActorId) -> bool {
         matches!(id, ActorId::User(_) | ActorId::Agent(_))
     }

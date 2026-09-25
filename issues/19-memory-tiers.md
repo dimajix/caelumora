@@ -66,25 +66,29 @@ before defining the tiers themselves, because they cannot be added afterwards.
      only through explicit retraction, with limits;
    - effects outside the system ([20](20-transactional-effects.md)): not at
      all.
-2. **Notes of a channel branch with it.** A channel's notes form a chain like
-   its history: entries only appended, each with a digest over its
-   predecessor, branching like the message tree. The *active chain* is the
-   one on the channel's active branch. Switching branches switches the notes;
-   a regenerated answer does not see what the abandoned one noted.
-3. **Other channels of the session read the active chain directly.** No
-   separate step to share. Only notes of finished turns are visible, never
-   those of a turn still running. *Session memory* is therefore not a store
-   of its own but a view: the union of the active note chains of all channels
-   of the session. Everyone can read everything, but every entry belongs to
-   exactly one channel, the one that wrote it, so there are no two writers of
-   one entry and no write conflicts.
-3a. **Revoking is part of the chain.** A channel revokes an entry by
+2. **Notes belong to the agent that wrote them and are published in a
+   channel.** Every agent keeps, per channel it takes part in, a chain of
+   *public notes* (and one of private notes, point 12): entries only
+   appended, each with a digest over its predecessor, stored in its
+   `AgentChannelState` next to its history and context. The agent is the only
+   writer; the channel is where the notes were published, which decides the
+   branch they belong to and the confidentiality they carry. The chains branch
+   like the message tree: switching branches switches the notes, and a
+   regenerated answer does not see what the abandoned one noted.
+3. **Others read the active chains directly.** No separate step to share.
+   Notes are taken over into the agent's state only when its turn completes,
+   so only notes of finished turns are ever visible. The notes of a channel
+   are the active public chains of all agents in it; *session memory* is not a
+   store of its own but a view: the active public chains of all agents in all
+   channels of the session. Everyone can read everything, but every entry has
+   exactly one writer, so there are no write conflicts.
+3a. **Revoking is part of the chain.** An agent revokes one of its entries by
    appending "revoke N"; a new version is a revocation plus a new entry. The
-   current state is the active chain read from start to head. Only the owning
-   channel may revoke, and only entries on its active path. A revocation
-   branches like everything else: forking before it makes the entry valid
-   again in the new branch. The digest of the head covers revocations, so a
-   reader's reference also names what had been revoked when it read.
+   current state is the active chain read from start to head. Only the author
+   may revoke, and only entries on its active path. A revocation branches like
+   everything else: forking before it makes the entry valid again in the new
+   branch. The digest of the head covers revocations, so a reader's reference
+   also names what had been revoked when it read.
 4. **Reading across channels is an effect.** For the channel that wrote the
    notes, another channel's read cannot be undone by branching. For the
    reader it is an input, like a tool result, and is recorded as such.
@@ -159,9 +163,12 @@ before defining the tiers themselves, because they cannot be added afterwards.
    channel.
 
 12. **An agent has private knowledge across its channels, bounded by
-   confidentiality.** Besides the shared notes of a channel, every agent keeps
-   private notes per channel, in its `AgentChannelState`; they branch with
-   the channel like the agent's history. *Agent session memory* is the union
+   confidentiality.** Besides its public notes, every agent keeps a chain of
+   private notes per channel, in its `AgentChannelState` - the same mechanism
+   as point 2, differing only in who may read it; they branch with the channel
+   like the agent's history. Two chains rather than a visibility flag per
+   entry, so that the digest of the public chain does not reveal that private
+   entries exist. *Agent session memory* is the union
    of an agent's active private chains across its channels, readable only by
    the agent. Every private note carries the security attributes of the
    channel it was written in and appears in another channel only if that
@@ -182,9 +189,9 @@ follows the branch of the conversation it came from.
 | **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest ([47](47-prompt-parts-with-provenance.md)). | turn | transient | - |
 | **Model input** | What one call of the model is given: prompt parts, context and the turn's messages; reconstructable through `ContextRef`. Still called "context" in code ([50](50-turn-context-naming.md)). | one call | transient | - |
 | **Turn state** | Scratch, plan, pending tool calls, the turn's messages. | agent in channel | turn | discarded |
-| **Notes** | Entries in a channel's note chain, with provenance ([17](17-information-sharing-within-session.md)). | channel | session | yes |
-| **Session memory** | The union of the active note chains of all channels of a session; a view. | session | session | per channel |
-| **Private notes** | An agent's own note chain in one channel, with that channel's confidentiality ([51](51-agent-private-notes.md)). | agent in channel | session | yes |
+| **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes ([17](17-information-sharing-within-session.md)). | agent in channel | session | yes |
+| **Session memory** | The union of the active public note chains of all agents in all channels of a session; a view. | session | session | per channel |
+| **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent, with that channel's confidentiality ([51](51-agent-private-notes.md)). | agent in channel | session | yes |
 | **Agent session memory** | The union of an agent's active private note chains; a view, only for the agent, each note only where its confidentiality allows. | agent in session | session | per channel |
 | **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](18-knowledge-sharing.md)). | agent | permanent | no |
 | **Shared knowledge** | Knowledge shared by several agents or users ([18](18-knowledge-sharing.md)). | group / global | permanent | no |
@@ -291,3 +298,11 @@ built on the commit of point 7.
   channel that carry the confidentiality of their origin (principle 12,
   [51](51-agent-private-notes.md), phase 2b). Renaming "context" for the
   model input in `TurnContext` was deferred to [50](50-turn-context-naming.md).
+- **2026-09-25** — Corrected before implementing phase 1: notes belong to
+  the **agent** that wrote them, not to the channel; the channel is where they
+  are published (branch and confidentiality). Principles 2, 3, 3a and 12 and
+  the terms were changed accordingly: public and private notes are two chains
+  of one mechanism per agent and channel in `AgentChannelState`, the agent is
+  the only writer and taken over when its turn completes, only the author
+  revokes, and the notes of a channel and session memory are views over the
+  agents' public chains.
