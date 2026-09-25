@@ -1,6 +1,6 @@
 # 48 — History and context duplicate one structure, and notes would be a third copy
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -48,3 +48,14 @@ the tree a single change that history, context and notes all get at once.
 
 - **2026-09-25** — Issue created as step 2 of phase 0 of the order of work
   recorded in [19](19-memory-tiers.md).
+- **2026-09-25** — Implemented in `caelumora-model/src/chain.rs`:
+  `Chain<E: ChainEntry>` with `push_with` (the entry is built from the digest
+  before it, so each entry type keeps its own digest scheme), `digest`,
+  `entries`, `last` and `prefix`. It serialises as the plain list of its
+  entries (`#[serde(transparent)]`), so the stored form of `MessageContext`
+  and `MessageHistory` (`{"messages": [...]}`) is unchanged.
+  `MessageContext` and `MessageHistory` keep their interface; what they share
+  as chains of messages - the `message_chain` digest and `prev_id` - is one
+  private helper over a `MessageEntry` trait. No change in behaviour: all
+  tests pass unchanged, including the one that edits stored digests in the
+  JSON.

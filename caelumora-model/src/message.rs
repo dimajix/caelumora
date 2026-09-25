@@ -2,6 +2,7 @@ use crate::actor::ActorId;
 use crate::tool::{ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::chain::{Chain, ChainEntry};
 use crate::digest::Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -113,38 +114,73 @@ pub struct ContextEntry {
     pub digest: Digest,
 }
 
+impl ChainEntry for ContextEntry {
+    fn digest(&self) -> &Digest {
+        &self.digest
+    }
+}
+
+/// An entry of a chain of messages.
+trait MessageEntry: ChainEntry {
+    fn message(&self) -> &Message;
+}
+
+impl MessageEntry for ContextEntry {
+    fn message(&self) -> &Message {
+        &self.message
+    }
+}
+
+/// Appends `msg` to `chain` as the entry `make` builds from it and its
+/// digest, and returns the digest before it. The message's `prev_id` becomes
+/// the chain's last message - so it is per chain: the same message has
+/// different predecessors in different chains.
+fn push_message<E: MessageEntry>(chain: &mut Chain<E>, mut msg: Message, make: impl FnOnce(Message, Digest) -> E) -> Option<Digest> {
+    let prev_id = last_message_id_of(chain);
+    if prev_id != MessageId::default() {
+        msg.prev_id = prev_id;
+    }
+    chain.push_with(|previous| {
+        let digest = crate::digest::message_chain(previous, &msg);
+        make(msg, digest)
+    })
+}
+
+fn messages_of<E: MessageEntry>(chain: &Chain<E>) -> Vec<Message> {
+    chain.entries().iter().map(|e| e.message().clone()).collect()
+}
+
+fn last_message_id_of<E: MessageEntry>(chain: &Chain<E>) -> MessageId {
+    chain.last().map(|e| e.message().id).unwrap_or_default()
+}
+
 /// The messages an agent's model sees, as a chain: every entry's digest
 /// covers its message and the digest before it, so one digest names the
-/// whole context up to that point by content (see `crate::digest`).
+/// whole context up to that point by content (see `crate::chain`).
 ///
 /// The context is only ever appended to, so every earlier digest names a
-/// prefix of it and that prefix can be recovered (`prefix`). A digest is a
-/// record of what was sent to the model, stored and never recomputed: were
-/// the scheme in `crate::digest` to change, recomputing would silently
-/// change every digest that history entries refer to.
+/// prefix of it and that prefix can be recovered (`prefix`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageContext {
-    messages: Vec<ContextEntry>,
+    messages: Chain<ContextEntry>,
 }
 
 impl MessageContext {
     pub fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-        }
+        Self::default()
     }
 
     /// The digest of the whole context, or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
-        self.messages.last().map(|e| e.digest)
+        self.messages.digest()
     }
 
     pub fn messages(&self) -> Vec<Message> {
-        self.messages.iter().map(|e| {e.message.clone()}).collect()
+        messages_of(&self.messages)
     }
 
     pub fn last_message_id(&self) -> MessageId {
-        self.messages.last().map(|e| e.message.id).unwrap_or_default()
+        last_message_id_of(&self.messages)
     }
 
     /// Appends `msgs` and returns, for each of them, the digest of the
@@ -154,19 +190,12 @@ impl MessageContext {
     }
 
     /// Appends `msg` and returns the digest of the context before it.
-    pub fn push(&mut self, mut msg: Message) -> Option<Digest> {
-        let previous = self.digest();
-        let prev_id = self.last_message_id();
-        if prev_id != MessageId::default() {
-            msg.prev_id = prev_id;
-        }
-        let digest = crate::digest::message_chain(previous.as_ref(), &msg);
-        self.messages.push(ContextEntry { message: msg, digest });
-        previous
+    pub fn push(&mut self, msg: Message) -> Option<Digest> {
+        push_message(&mut self.messages, msg, |message, digest| ContextEntry { message, digest })
     }
 
     pub fn entries(&self) -> &[ContextEntry] {
-        &self.messages
+        self.messages.entries()
     }
 
     /// The messages of the context `digest` names: this context up to and
@@ -178,8 +207,7 @@ impl MessageContext {
 
     /// The entries of the context `digest` names, like [`Self::prefix`].
     pub fn prefix_entries(&self, digest: &Digest) -> Option<&[ContextEntry]> {
-        let end = self.messages.iter().position(|e| e.digest == *digest)?;
-        Some(&self.messages[..=end])
+        self.messages.prefix(digest)
     }
 }
 
@@ -215,35 +243,44 @@ pub struct HistoryEntry {
     pub digest: Digest,
 }
 
-/// The conversation as it happened - chained like a `MessageContext`, its
-/// digests likewise stored as recorded.
+impl ChainEntry for HistoryEntry {
+    fn digest(&self) -> &Digest {
+        &self.digest
+    }
+}
+
+impl MessageEntry for HistoryEntry {
+    fn message(&self) -> &Message {
+        &self.message
+    }
+}
+
+/// The conversation as it happened - a chain like a `MessageContext`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageHistory {
-    messages: Vec<HistoryEntry>,
+    messages: Chain<HistoryEntry>,
 }
 
 impl MessageHistory {
     pub fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-        }
+        Self::default()
     }
 
     /// The digest of the whole history, or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
-        self.messages.last().map(|e| e.digest)
+        self.messages.digest()
     }
 
     pub fn messages(&self) -> Vec<Message> {
-        self.messages.iter().map(|e| {e.message.clone()}).collect()
+        messages_of(&self.messages)
     }
 
     pub fn entries(&self) -> &[HistoryEntry] {
-        &self.messages
+        self.messages.entries()
     }
 
     pub fn last_message_id(&self) -> MessageId {
-        self.messages.last().map(|e| e.message.id).unwrap_or_default()
+        last_message_id_of(&self.messages)
     }
 
     /// Appends messages that were not produced from a context of this
@@ -255,14 +292,8 @@ impl MessageHistory {
     }
 
     /// Appends `msg` with what it was produced from, if known.
-    pub fn push(&mut self, mut msg: Message, context: Option<ContextRef>) {
-        let previous = self.digest();
-        let prev_id = self.last_message_id();
-        if prev_id != MessageId::default() {
-            msg.prev_id = prev_id;
-        }
-        let digest = crate::digest::message_chain(previous.as_ref(), &msg);
-        self.messages.push(HistoryEntry { message: msg, context, digest });
+    pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
+        push_message(&mut self.messages, msg, |message, digest| HistoryEntry { message, context, digest });
     }
 }
 

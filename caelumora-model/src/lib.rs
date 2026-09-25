@@ -5,6 +5,7 @@ pub mod approval;
 pub mod channel;
 pub mod command;
 pub mod config;
+pub mod chain;
 pub mod digest;
 pub mod tool;
 pub mod message;
