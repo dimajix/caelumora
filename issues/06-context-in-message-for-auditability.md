@@ -102,3 +102,29 @@ turns.
     predecessor link of the chain. It is not sent to the model and therefore
     not part of C′'s digest: two identical contexts get the same digest
     however they came about.
+- **2026-09-25** — REST endpoint:
+  `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`,
+  answering the system prompt and the messages the agent's model saw, with
+  the two digests its history recorded.
+  - **Addressed by message, through the actor that produced it.** Asking by
+    context digest was considered - the UI would need the reference in the
+    message itself, which it is not: it lives in the producing agent's
+    history. The same message is in every participant's history, but only
+    one agent produced it, so the operation belongs to the actor, not the
+    channel: `Actor::message_context(caller, message_id)`, with a default
+    answer `NotRecorded` that only `AgentActor` overrides. One method and one
+    endpoint deliver context and system prompt together.
+  - **Who may see it:** a new `ActionType::ReadAgentContext` with the agent's
+    attributes; under the ownership policy the agent's owner alone. Channel
+    contributors see the conversation, not the agent's system prompt,
+    internal steps and tool results.
+  - The agent reads its state from the `StateStore` (written after every
+    step) because its running loop holds the in-memory state.
+  - Errors: `403 context_forbidden`, `404 context_not_recorded`,
+    `404 context_unavailable`, `404 actor_not_found`; `MessageContextError`
+    is shown to users through `user_message`.
+
+  Still open: showing it in the web UI (a separate step), and
+  [16](16-context-compression.md), which must keep earlier contexts
+  resolvable.
+

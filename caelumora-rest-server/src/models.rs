@@ -110,3 +110,17 @@ pub struct CommandReplyResponse {
     pub command: String,
     pub output: Option<String>,
 }
+
+/// What an agent's model saw when it produced a message (issue 06): the
+/// system prompt of that turn and the messages of its context, in the order
+/// they were sent, with the digests its history recorded for them.
+#[derive(Debug, Serialize)]
+pub struct MessageContextResponse {
+    pub message_id: caelumora_model::message::MessageId,
+    pub actor_id: ActorId,
+    pub context_digest: Option<caelumora_model::digest::Digest>,
+    pub system_prompt_digest: Option<caelumora_model::digest::Digest>,
+    pub system_prompt: Option<String>,
+    pub messages: Vec<Message>,
+}
+

@@ -351,4 +351,11 @@ mod tests {
         actor.handle_actor_envelope(Some(envelope_from(agent)));
         assert!(actor.subscriber.lock().unwrap().is_none(), "a closed subscriber is removed");
     }
+
+    #[tokio::test]
+    async fn a_user_has_no_message_context() {
+        let actor = user_actor().await;
+        let result = actor.message_context(&SecurityContext::default(), MessageId::new()).await;
+        assert!(matches!(result, Err(crate::actor::MessageContextError::NotRecorded { .. })));
+    }
 }

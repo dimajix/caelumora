@@ -211,6 +211,8 @@ pub struct AgentChannelState {
 /// of that turn and the messages of its context (issue 06).
 #[derive(Debug, Clone)]
 pub struct SeenContext {
+    /// The digests the history recorded for the message.
+    pub reference: ContextRef,
     pub system_prompt: Option<String>,
     pub messages: Vec<Message>,
 }
@@ -228,14 +230,20 @@ impl AgentChannelState {
             Some(digest) => self.context.prefix(digest)?,
             None => Vec::new(),
         };
-        Some(SeenContext { system_prompt, messages })
+        Some(SeenContext { reference: *reference, system_prompt, messages })
+    }
+
+    /// What the history recorded the message `id` was produced from, or
+    /// `None` if this agent did not produce it (or it was before references
+    /// were recorded).
+    pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
+        self.history.entries().iter().find(|e| e.message.id == id)?.context
     }
 
     /// What the agent saw when it produced the message `id` of its history,
     /// or `None` if it did not produce it or it cannot be resolved.
     pub fn seen_context_of(&self, id: MessageId) -> Option<SeenContext> {
-        let entry = self.history.entries().iter().find(|e| e.message.id == id)?;
-        self.resolve(entry.context.as_ref()?)
+        self.resolve(&self.recorded_context_of(id)?)
     }
 }
 

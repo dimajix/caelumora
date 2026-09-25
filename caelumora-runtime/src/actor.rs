@@ -11,7 +11,8 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::message::{ContextRef, Message};
+use caelumora_model::message::{ContextRef, Message, MessageId};
+use caelumora_model::agent::SeenContext;
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -46,6 +47,33 @@ pub trait Actor: Any + Debug + Send + Sync {
     async fn cancel(&self) -> Result<()> {
         Ok(())
     }
+
+    /// What this actor's model saw when it produced the message `message`:
+    /// its context and system prompt (issue 06), on behalf of `caller`.
+    /// Only agents have one; every other actor answers `NotRecorded`.
+    ///
+    /// # Errors
+    /// `MessageContextError::Forbidden` if `caller` may not read it,
+    /// `NotRecorded` if this actor did not produce the message,
+    /// `Unavailable` if what was recorded cannot be resolved any more.
+    async fn message_context(&self, _caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
+        Err(MessageContextError::NotRecorded { actor: self.id(), message })
+    }
+}
+
+/// Why a message's context cannot be shown. The messages are meant for users
+/// (see `crate::error::user_message`).
+#[derive(Debug, thiserror::Error)]
+pub enum MessageContextError {
+    #[error("You are not permitted to see what {actor} saw")]
+    Forbidden { actor: ActorId },
+    #[error("No context is recorded for message {message} by {actor}")]
+    NotRecorded { actor: ActorId, message: MessageId },
+    #[error("The context of message {message} by {actor} is no longer available")]
+    Unavailable { actor: ActorId, message: MessageId },
+    /// Reading the actor's state failed; the cause is in the log.
+    #[error("The context of message {message} by {actor} cannot be read")]
+    Failed { actor: ActorId, message: MessageId },
 }
 
 

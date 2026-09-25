@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, ExecuteCommandRequest, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -13,7 +13,8 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_runtime::command::CommandError;
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, MessageId};
+use caelumora_runtime::actor::MessageContextError;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
 use futures::StreamExt;
@@ -247,6 +248,42 @@ fn command_error(error: anyhow::Error) -> ApiError {
     }
 }
 
+/// What the actor `aid` saw when it produced message `mid` (issue 06): its
+/// context and system prompt. The actor answers: only the agent that
+/// produced a message has a context for it.
+pub async fn message_context(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid, mid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<MessageContextResponse>, ApiError> {
+    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
+    let channel = channel_of(&session, ChannelId(cid))?;
+    let actor = channel.actor_ids().into_iter()
+        .find(|actor| actor.id() == aid)
+        .and_then(|actor| channel.actor_by_id(actor))
+        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
+    let seen = actor.message_context(&user.security_context(), MessageId(mid)).await
+        .map_err(message_context_error)?;
+    Ok(Json(MessageContextResponse {
+        message_id: MessageId(mid),
+        actor_id: actor.id(),
+        context_digest: seen.reference.context,
+        system_prompt_digest: seen.reference.system_prompt,
+        system_prompt: seen.system_prompt,
+        messages: seen.messages,
+    }))
+}
+
+fn message_context_error(error: MessageContextError) -> ApiError {
+    let detail = error.to_string();
+    match error {
+        MessageContextError::Forbidden { .. } => ApiError::forbidden("context_forbidden", detail),
+        MessageContextError::NotRecorded { .. } => ApiError::not_found("context_not_recorded", detail),
+        MessageContextError::Unavailable { .. } => ApiError::not_found("context_unavailable", detail),
+        MessageContextError::Failed { .. } => ApiError::internal("context_failed", "reading the context", &anyhow::Error::new(error)),
+    }
+}
+
 pub async fn send_approval(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
@@ -315,5 +352,16 @@ mod tests {
 
         let refused = anyhow::Error::new(caelumora_model::channel::ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default() });
         assert_eq!(command_error(refused).status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn a_context_that_cannot_be_shown_says_why() {
+        let actor = caelumora_model::actor::ActorId::None;
+        let message = MessageId::new();
+        let status = |error| message_context_error(error).status();
+        assert_eq!(status(MessageContextError::Forbidden { actor }), StatusCode::FORBIDDEN);
+        assert_eq!(status(MessageContextError::NotRecorded { actor, message }), StatusCode::NOT_FOUND);
+        assert_eq!(status(MessageContextError::Unavailable { actor, message }), StatusCode::NOT_FOUND);
+        assert_eq!(status(MessageContextError::Failed { actor, message }), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

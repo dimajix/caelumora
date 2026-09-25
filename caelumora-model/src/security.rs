@@ -31,6 +31,10 @@ pub enum ActionType<'a> {
     DeleteSessionTemplate(&'a SecurityAttributes),
     CreateAgent(&'a SecurityAttributes),
     GetAgent(&'a SecurityAttributes),
+    /// Reading what an agent's model saw when it produced a message - its
+    /// system prompt, internal messages and tool results included (issue
+    /// 06). Carries the agent's attributes.
+    ReadAgentContext(&'a SecurityAttributes),
     FindAgent,
     UpdateAgent(&'a SecurityAttributes),
     CreateSession(&'a SecurityAttributes),
@@ -160,7 +164,9 @@ impl SecurityManager for DummySecurityManager {
 ///   template - is allowed to the owner, to contributors, and to everybody
 ///   for entities owned by the system or by no one.
 /// - Creating is allowed only with oneself as owner.
-/// - Changing and deleting are the owner's alone.
+/// - Changing and deleting are the owner's alone, and so is reading what an
+///   agent saw: its context holds more than the conversation - its system
+///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
@@ -211,6 +217,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::UpdateSessionTemplate(a)
             | ActionType::DeleteSessionTemplate(a)
             | ActionType::UpdateAgent(a)
+            | ActionType::ReadAgentContext(a)
             | ActionType::UpdateSession(a)
             | ActionType::DeleteSession(a)
             | ActionType::UpdateComponent(a)
@@ -258,6 +265,8 @@ mod tests {
         }
         assert!(allows(bob, ActionType::GetSession(&hers)).await);
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a contributor acts in it");
+        assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
+        assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
     }
