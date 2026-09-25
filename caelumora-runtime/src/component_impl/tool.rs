@@ -1,6 +1,6 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::component_impl::context::SystemPromptProvider;
+use crate::component_impl::context::PromptProvider;
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ pub const CREATE_PLAN_TOOL_PROVIDER_KIND: &str = "create_plan_tool";
 
 pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 
-/// System prompt contributed by `CreatePlanToolProvider`'s `SystemPromptProvider`
+/// System prompt contributed by `CreatePlanToolProvider`'s `PromptProvider`
 /// impl, nudging the model towards `create_plan` for anything non-trivial.
 /// Composed alongside the personality's own system prompt by
 /// `StateContextProvider` once per turn - it stays for the whole turn
@@ -41,7 +41,7 @@ steps, skip `create_plan` entirely and just answer directly.";
 /// the submission is inherently "approved" - it parses the plan and either
 /// stores it on `TurnContext` as a fresh plan, or, if one is already in
 /// progress, appends the new steps to it (see `execute` below). Also
-/// implements `SystemPromptProvider` to contribute `PLANNING_SYSTEM_PROMPT` -
+/// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT` -
 /// see the `context` node's `deps` in whatever `ComponentConfig` wires this
 /// component in (e.g. `caelumora-tui/src/main.rs`), which must list this
 /// component's id so `StateContextProvider` picks up the prompt.
@@ -49,7 +49,7 @@ steps, skip `create_plan` entirely and just answer directly.";
 pub struct CreatePlanToolProvider;
 
 #[async_trait]
-impl SystemPromptProvider for CreatePlanToolProvider {
+impl PromptProvider for CreatePlanToolProvider {
     async fn get_prompt(&self) -> Result<String> {
         Ok(PLANNING_SYSTEM_PROMPT.to_string())
     }
@@ -500,7 +500,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         Box::new(|_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CreatePlanToolProvider));
-            facets.insert::<dyn SystemPromptProvider>(Arc::new(CreatePlanToolProvider));
+            facets.insert::<dyn PromptProvider>(Arc::new(CreatePlanToolProvider));
             Ok(facets)
         }),
     );

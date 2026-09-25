@@ -9,7 +9,7 @@ use std::fmt::Debug;
 define_id!(MessageId);
 
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -165,23 +165,44 @@ impl MessageContext {
         previous
     }
 
+    pub fn entries(&self) -> &[ContextEntry] {
+        &self.messages
+    }
+
     /// The messages of the context `digest` names: this context up to and
     /// including the entry with that digest, or `None` if it is not a prefix
     /// of this context.
     pub fn prefix(&self, digest: &Digest) -> Option<Vec<Message>> {
-        let end = self.messages.iter().position(|e| e.digest == *digest)?;
-        Some(self.messages[..=end].iter().map(|e| e.message.clone()).collect())
+        Some(self.prefix_entries(digest)?.iter().map(|e| e.message.clone()).collect())
     }
+
+    /// The entries of the context `digest` names, like [`Self::prefix`].
+    pub fn prefix_entries(&self, digest: &Digest) -> Option<&[ContextEntry]> {
+        let end = self.messages.iter().position(|e| e.digest == *digest)?;
+        Some(&self.messages[..=end])
+    }
+}
+
+/// A prompt part an agent's model was given besides the conversation - the
+/// system prompt, notes, ... (issue 47): the digest of its text, the role it
+/// was given as, and the entry of the context it followed, `None` if it came
+/// before everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromptRef {
+    pub text: Digest,
+    pub role: MessageRole,
+    pub after: Option<Digest>,
 }
 
 /// What an agent's model saw when it produced a message (issue 06): the
 /// digest of its `MessageContext` before the message - `None` if it was
-/// empty - and of the system prompt of that turn, if there was one. Both are
-/// resolved in the agent's `AgentChannelState`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// empty - and the prompt parts of that turn, each where it was placed
+/// (issue 47). Resolved in the agent's `AgentChannelState`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
     pub context: Option<Digest>,
-    pub system_prompt: Option<Digest>,
+    #[serde(default)]
+    pub prompts: Vec<PromptRef>,
 }
 
 /// A message of a `MessageHistory`: with the digest of the history up to and
@@ -317,7 +338,7 @@ mod tests {
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
         assert_eq!(prefix.iter().map(|m| m.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
-        assert!(context.prefix(&crate::digest::system_prompt("elsewhere")).is_none());
+        assert!(context.prefix(&crate::digest::prompt("elsewhere")).is_none());
     }
 
     #[test]
@@ -328,7 +349,7 @@ mod tests {
         // What was recorded stands, even if today's scheme would compute
         // something else - as it will for anything recorded under an
         // earlier version of it.
-        let recorded = crate::digest::system_prompt("recorded under another scheme");
+        let recorded = crate::digest::prompt("recorded under another scheme");
         let mut stored = serde_json::to_value(&context).unwrap();
         stored["messages"][1]["digest"] = serde_json::Value::String(recorded.to_string());
         let loaded: MessageContext = serde_json::from_value(stored).unwrap();
@@ -338,10 +359,10 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { context: Some(message_chain(None, &make_message(id(9)))), system_prompt: None };
+        let reference = ContextRef { context: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new() };
         let mut history = MessageHistory::new();
         history.extend(vec![make_message(id(1))]);
-        history.push(make_message(id(2)), Some(reference));
+        history.push(make_message(id(2)), Some(reference.clone()));
 
         let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         assert_eq!(loaded.entries()[0].context, None, "said by someone else");

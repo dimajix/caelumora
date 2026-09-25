@@ -33,10 +33,10 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 fn create_component_config(system_prompt: &str, enable_extended_planning: bool) -> ComponentConfig {
-    // create_plan_tool contributes its own planning-nudge SystemPromptProvider
+    // create_plan_tool contributes its own planning-nudge PromptProvider
     // (see CreatePlanToolProvider in caelumora-runtime), so the "context" node
     // needs to depend on it too - StateContextProvider only picks up
-    // SystemPromptProviders declared among its own deps - whenever it's wired in.
+    // PromptProviders declared among its own deps - whenever it's wired in.
     let mut context_deps = vec!["system-prompt".to_string()];
     if enable_extended_planning {
         context_deps.push("create-plan-tool".to_string());

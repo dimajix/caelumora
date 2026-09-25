@@ -310,8 +310,8 @@ fn command_error(error: anyhow::Error) -> ApiError {
     }
 }
 
-/// What the actor `aid` saw when it produced message `mid` (issue 06): its
-/// context and system prompt. The actor answers: only the agent that
+/// What the actor `aid` saw when it produced message `mid` (issues 06, 47):
+/// its context with the prompt parts where they were placed. The actor answers: only the agent that
 /// produced a message has a context for it.
 pub async fn message_context(
     State(state): State<Arc<AppState>>,
@@ -330,9 +330,7 @@ pub async fn message_context(
         message_id: MessageId(mid),
         actor_id: actor.id(),
         context_digest: seen.reference.context,
-        system_prompt_digest: seen.reference.system_prompt,
-        system_prompt: seen.system_prompt,
-        messages: seen.messages,
+        items: seen.items.into_iter().map(Into::into).collect(),
     }))
 }
 

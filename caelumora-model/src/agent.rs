@@ -2,7 +2,7 @@ use crate::actor::{ActorId, ActorState, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::digest::Digest;
-use crate::message::{ContextRef, Message, MessageContext, MessageHistory, MessageId};
+use crate::message::{ContextRef, Message, MessageContext, MessageHistory, MessageId, PromptRef};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -176,14 +176,14 @@ pub struct AgentChannelState {
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub context: MessageContext,
-    /// Every system prompt the agent was given in this channel, by digest,
-    /// each kept once - what a `ContextRef` in the history points to (issue
-    /// 06).
+    /// Every prompt part the agent was given in this channel - the system
+    /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
+    /// in the history point to (issues 06, 47).
     #[serde(default)]
-    pub system_prompts: BTreeMap<Digest, String>,
-    /// The digest of the current turn's system prompt, if it has one.
+    pub prompts: BTreeMap<Digest, String>,
+    /// The prompt parts of the current turn, where they were placed.
     #[serde(default)]
-    pub turn_system_prompt: Option<Digest>,
+    pub turn_prompts: Vec<PromptRef>,
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
@@ -207,37 +207,58 @@ pub struct AgentChannelState {
     pub turn_event_context: EventContext
 }
 
-/// What an agent's model saw when it produced a message: the system prompt
-/// of that turn and the messages of its context (issue 06).
+/// What an agent's model saw when it produced a message (issues 06, 47):
+/// the messages of its context and the prompt parts of that turn, in the
+/// order the model was given them.
 #[derive(Debug, Clone)]
 pub struct SeenContext {
     /// The digests the history recorded for the message.
     pub reference: ContextRef,
-    pub system_prompt: Option<String>,
-    pub messages: Vec<Message>,
+    pub items: Vec<SeenItem>,
+}
+
+/// One element of a [`SeenContext`].
+#[derive(Debug, Clone)]
+pub enum SeenItem {
+    Prompt { digest: Digest, role: crate::message::MessageRole, text: String },
+    Message(Message),
 }
 
 impl AgentChannelState {
-    /// Resolves `reference` in this state, or `None` if what it names is not
-    /// here - a context that is not a prefix of this one, a system prompt
-    /// that was never recorded.
+    /// Resolves `reference` in this state: the context prefix it names, with
+    /// every prompt part inserted after the entry it followed. `None` if what
+    /// it names is not here - a context that is not a prefix of this one, a
+    /// prompt that was never recorded, or one whose entry is not in the
+    /// prefix.
     pub fn resolve(&self, reference: &ContextRef) -> Option<SeenContext> {
-        let system_prompt = match &reference.system_prompt {
-            Some(digest) => Some(self.system_prompts.get(digest)?.clone()),
-            None => None,
+        let entries = match &reference.context {
+            Some(digest) => self.context.prefix_entries(digest)?,
+            None => &[],
         };
-        let messages = match &reference.context {
-            Some(digest) => self.context.prefix(digest)?,
-            None => Vec::new(),
+        let prompt = |p: &PromptRef| -> Option<SeenItem> {
+            Some(SeenItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone() })
         };
-        Some(SeenContext { reference: *reference, system_prompt, messages })
+        let mut items = Vec::with_capacity(entries.len() + reference.prompts.len());
+        for p in reference.prompts.iter().filter(|p| p.after.is_none()) {
+            items.push(prompt(p)?);
+        }
+        for entry in entries {
+            items.push(SeenItem::Message(entry.message.clone()));
+            for p in reference.prompts.iter().filter(|p| p.after == Some(entry.digest)) {
+                items.push(prompt(p)?);
+            }
+        }
+        if items.len() != entries.len() + reference.prompts.len() {
+            return None;
+        }
+        Some(SeenContext { reference: reference.clone(), items })
     }
 
     /// What the history recorded the message `id` was produced from, or
     /// `None` if this agent did not produce it (or it was before references
     /// were recorded).
     pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
-        self.history.entries().iter().find(|e| e.message.id == id)?.context
+        self.history.entries().iter().find(|e| e.message.id == id)?.context.clone()
     }
 
     /// What the agent saw when it produced the message `id` of its history,
@@ -267,5 +288,42 @@ mod tests {
         
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(ActorState::from(decoded.processing_state.load()), ActorState::WaitingForApproval);
+    }
+
+    #[test]
+    fn prompt_parts_are_resolved_where_they_were_placed() {
+        use crate::digest::prompt;
+        use crate::message::MessageRole;
+        let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
+        let mut state = AgentChannelState::default();
+        let (earlier, question) = (text("earlier"), text("question"));
+        let after_earlier = state.context.push(earlier.clone());
+        assert_eq!(after_earlier, None);
+        let before_question = state.context.push(question.clone());
+        let whole = state.context.digest();
+        for part in ["system", "notes"] {
+            state.prompts.insert(prompt(part), part.to_string());
+        }
+        let reference = ContextRef {
+            context: whole,
+            prompts: vec![
+                PromptRef { text: prompt("system"), role: MessageRole::System, after: None },
+                PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },
+            ],
+        };
+
+        let seen = state.resolve(&reference).expect("everything it names is here");
+        let order: Vec<String> = seen.items.iter().map(|item| match item {
+            SeenItem::Prompt { text, .. } => format!("prompt:{text}"),
+            SeenItem::Message(m) => m.content.clone().unwrap_or_default(),
+        }).collect();
+        assert_eq!(order, ["prompt:system", "earlier", "prompt:notes", "question"]);
+
+        let mut elsewhere = reference.clone();
+        elsewhere.prompts[1].after = Some(prompt("not an entry"));
+        assert!(state.resolve(&elsewhere).is_none(), "a part after an entry that is not in the prefix");
+        let mut forgotten = reference;
+        forgotten.prompts[0].text = prompt("never recorded");
+        assert!(state.resolve(&forgotten).is_none(), "a part whose text was not kept");
     }
 }

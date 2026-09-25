@@ -243,7 +243,7 @@ impl AgentActor {
 
     /// Calls the LLM for one turn step. `create_plan_tool` (when wired in)
     /// contributes its own planning nudge into `turn_context.context` as a
-    /// `SystemPromptProvider`, composed by `StateContextProvider` once per
+    /// `PromptProvider`, composed by `StateContextProvider` once per
     /// turn - nothing plan-specific needs handling here.
     async fn call_llm<'a>(
         &self,
@@ -1143,7 +1143,7 @@ impl Actor for AgentActor {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
-    use crate::component_impl::context::{ContextProvider, StateContextAppender, StateContextProvider};
+    use crate::component_impl::context::{ContextProvider, PromptPosition, StateContextAppender, StateContextProvider, StaticPromptProvider};
     use crate::component_impl::history::StateHistoryWriter;
     use crate::component_impl::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
@@ -1221,6 +1221,40 @@ mod tests {
             .expect("context provider should succeed");
         assert_eq!(turn_context.context().len(), 1);
         assert_eq!(turn_context.context()[0].id, input[0].id);
+    }
+
+    #[tokio::test]
+    async fn prompt_parts_go_where_their_position_says_and_only_the_conversation_is_stored() {
+        let agent_id = AgentId::new();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut agent_state = AgentState::default();
+        let provider = StateContextProvider {
+            prompt_providers: vec![
+                Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }),
+                Arc::new(StaticPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }),
+            ],
+        };
+        let contents = |turn: &TurnContext| turn.context().iter()
+            .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
+            .collect::<Vec<_>>();
+
+        let mut turn_context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_state, &mut agent_channel_state);
+        let mut earlier = make_message("earlier");
+        earlier.role = MessageRole::User;
+        let mut question = make_message("question");
+        question.role = MessageRole::User;
+        turn_context.extend_state_context(vec![earlier, question]);
+        provider.current_context(&mut turn_context).await.unwrap();
+        assert_eq!(contents(&turn_context), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
+            "the system prompt first, the notes before the turn's input");
+        assert_eq!(turn_context.state_context().len(), 2, "prompt parts are never stored in the context");
+
+        // A turn without new input - the newest message is the agent's own.
+        let mut own = make_message("my answer");
+        own.sender_id = ActorId::Agent(agent_id);
+        turn_context.extend_state_context(vec![own]);
+        provider.current_context(&mut turn_context).await.unwrap();
+        assert_eq!(contents(&turn_context).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
     }
 
     fn make_plan_state(steps: Vec<&str>) -> PlanState {
@@ -1316,8 +1350,9 @@ mod tests {
 
     #[test]
     fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_resolve() {
-        use caelumora_model::digest::system_prompt;
-        use caelumora_model::message::ContextRef;
+        use caelumora_model::agent::SeenItem;
+        use caelumora_model::digest::prompt;
+        use caelumora_model::message::{ContextRef, MessageRole, PromptRef};
 
         let actor = ActorId::Agent(AgentId::new());
         let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
@@ -1327,15 +1362,20 @@ mod tests {
         state.history.extend(vec![question.clone()]);
         let answer = text("answer");
         let before = state.context.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { context: before, system_prompt: None }));
+        state.history.push(answer.clone(), Some(ContextRef { context: before, prompts: Vec::new() }));
 
         let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
-        assert_eq!(seen.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![question.id]);
+        let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
+            SeenItem::Message(m) => Some(m.id),
+            SeenItem::Prompt { .. } => None,
+        }).collect();
+        assert_eq!(ids, vec![question.id]);
         assert!(matches!(context_of(&state, actor, question.id), Err(MessageContextError::NotRecorded { .. })), "someone else wrote it");
 
-        // A reference to a system prompt that was never kept cannot be resolved.
+        // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
-        state.history.push(lost.clone(), Some(ContextRef { context: before, system_prompt: Some(system_prompt("gone")) }));
+        let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
+        state.history.push(lost.clone(), Some(ContextRef { context: before, prompts: vec![gone] }));
         assert!(matches!(context_of(&state, actor, lost.id), Err(MessageContextError::Unavailable { .. })));
     }
 }

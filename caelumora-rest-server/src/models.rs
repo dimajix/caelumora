@@ -142,16 +142,33 @@ pub struct CommandReplyResponse {
     pub output: Option<String>,
 }
 
-/// What an agent's model saw when it produced a message (issue 06): the
-/// system prompt of that turn and the messages of its context, in the order
-/// they were sent, with the digests its history recorded for them.
+/// What an agent's model saw when it produced a message (issues 06, 47):
+/// the messages of its context and the prompt parts of that turn, in the
+/// order the model was given them, with the digest of the context.
 #[derive(Debug, Serialize)]
 pub struct MessageContextResponse {
     pub message_id: caelumora_model::message::MessageId,
     pub actor_id: ActorId,
     pub context_digest: Option<caelumora_model::digest::Digest>,
-    pub system_prompt_digest: Option<caelumora_model::digest::Digest>,
-    pub system_prompt: Option<String>,
-    pub messages: Vec<Message>,
+    pub items: Vec<SeenItemResponse>,
+}
+
+/// One element of a `MessageContextResponse`.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SeenItemResponse {
+    /// A prompt part - the system prompt, notes, ... - and the role it was
+    /// given as.
+    Prompt { digest: caelumora_model::digest::Digest, role: caelumora_model::message::MessageRole, text: String },
+    Message { message: Message },
+}
+
+impl From<caelumora_model::agent::SeenItem> for SeenItemResponse {
+    fn from(item: caelumora_model::agent::SeenItem) -> Self {
+        match item {
+            caelumora_model::agent::SeenItem::Prompt { digest, role, text } => SeenItemResponse::Prompt { digest, role, text },
+            caelumora_model::agent::SeenItem::Message(message) => SeenItemResponse::Message { message },
+        }
+    }
 }
 

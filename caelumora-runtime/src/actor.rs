@@ -11,7 +11,8 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::message::{ContextRef, Message, MessageId};
+use caelumora_model::digest::Digest;
+use caelumora_model::message::{ContextRef, Message, MessageId, MessageRole, PromptRef};
 use caelumora_model::agent::SeenContext;
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
@@ -84,6 +85,18 @@ pub enum MessageContextError {
 }
 
 
+/// An element of the context a `ContextProvider` hands a turn (issue 47):
+/// the conversation, with the prompt parts placed where the provider wants
+/// them. The provider decides where each part goes; the turn records it.
+#[derive(Debug, Clone)]
+pub enum ContextItem {
+    /// An entry of the stored context, with the digest it has there.
+    Conversation { message: Message, digest: Digest },
+    /// A prompt part - the system prompt, notes, ... - that is not part of
+    /// the conversation, given to the model in `role`.
+    Prompt { role: MessageRole, text: String },
+}
+
 #[derive(Debug)]
 pub struct TurnContext<'a> {
     pub agent_id: AgentId,
@@ -112,7 +125,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
         self.agent_channel_state.plan = None;
-        self.agent_channel_state.turn_system_prompt = None;
+        self.agent_channel_state.turn_prompts.clear();
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -146,8 +159,36 @@ impl<'a> TurnContext<'a> {
         context
     }
 
-    pub fn set_context(&mut self, context: Vec<Message>) {
-        self.agent_channel_state.turn_context = context;
+    /// Sets the context of the turn: the messages the model is given, in
+    /// order. Every prompt part is kept by digest and recorded with the
+    /// entry it follows, so that what the agent saw can be told later
+    /// (issues 06, 47); where it goes is the caller's decision.
+    pub fn set_context(&mut self, items: Vec<ContextItem>) {
+        let mut messages = Vec::with_capacity(items.len());
+        let mut prompts = Vec::new();
+        let mut after = None;
+        for item in items {
+            match item {
+                ContextItem::Conversation { message, digest } => {
+                    messages.push(message);
+                    after = Some(digest);
+                }
+                ContextItem::Prompt { role, text } => {
+                    let digest = caelumora_model::digest::prompt(&text);
+                    self.agent_channel_state.prompts.entry(digest).or_insert_with(|| text.clone());
+                    prompts.push(PromptRef { text: digest, role, after });
+                    messages.push(Message {
+                        role,
+                        content: Some(text),
+                        sender_id: ActorId::Agent(self.agent_id),
+                        sender_name: self.agent_name.clone(),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+        self.agent_channel_state.turn_context = messages;
+        self.agent_channel_state.turn_prompts = prompts;
     }
 
     pub fn push_message(&mut self, message: Message) {
@@ -205,6 +246,13 @@ impl<'a> TurnContext<'a> {
     pub fn state_context(&self) -> Vec<Message> {
         self.agent_channel_state.context.messages()
     }
+    /// The stored context as items for [`Self::set_context`], each with its
+    /// digest.
+    pub fn stored_context(&self) -> Vec<ContextItem> {
+        self.agent_channel_state.context.entries().iter()
+            .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest })
+            .collect()
+    }
     pub fn extend_state_context(&mut self, messages: Vec<Message>) {
         self.agent_channel_state.context.extend(messages);
     }
@@ -212,24 +260,16 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.history.extend(messages);
     }
 
-    /// Records `prompt` as this turn's system prompt: kept once per digest,
-    /// so that what the agent saw can be told later (issue 06).
-    pub fn set_system_prompt(&mut self, prompt: &str) {
-        let digest = caelumora_model::digest::system_prompt(prompt);
-        self.agent_channel_state.system_prompts.entry(digest).or_insert_with(|| prompt.to_string());
-        self.agent_channel_state.turn_system_prompt = Some(digest);
-    }
-
     /// Appends the messages this agent produced in the turn to its context,
     /// and those that are not internal to its history - each with what it was
-    /// produced from: the context before it and the turn's system prompt
-    /// (issue 06).
+    /// produced from: the context before it and the turn's prompt parts
+    /// (issues 06, 47).
     pub fn record_turn(&mut self, messages: Vec<Message>) {
         let before = self.agent_channel_state.context.extend(messages.clone());
-        let system_prompt = self.agent_channel_state.turn_system_prompt;
+        let prompts = self.agent_channel_state.turn_prompts.clone();
         for (message, context) in messages.into_iter().zip(before) {
             if !message.internal {
-                self.agent_channel_state.history.push(message, Some(ContextRef { context, system_prompt }));
+                self.agent_channel_state.history.push(message, Some(ContextRef { context, prompts: prompts.clone() }));
             }
         }
     }
@@ -338,7 +378,7 @@ mod tests {
 
     #[test]
     fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
-        use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+        use caelumora_model::agent::{AgentChannelState, AgentId, AgentState, SeenItem};
         use caelumora_model::message::{MessageId, MessageRole};
 
         let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
@@ -348,22 +388,29 @@ mod tests {
         state.context.push(question.clone());
 
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
+        let system = || ContextItem::Prompt { role: MessageRole::System, text: "You are good at sums.".to_string() };
         {
             let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
-            turn.set_system_prompt("You are good at sums.");
+            let mut items = vec![system()];
+            items.extend(turn.stored_context());
+            turn.set_context(items);
+            assert_eq!(turn.context().len(), 2, "the prompt is given to the model as a message");
             turn.record_turn(vec![first.clone(), second.clone()]);
         }
 
         let seen = state.seen_context_of(second.id).expect("the agent produced it");
-        assert_eq!(seen.system_prompt.as_deref(), Some("You are good at sums."));
-        assert_eq!(seen.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![question.id, first.id], "everything before it, its own earlier message included");
+        let order: Vec<String> = seen.items.iter().map(|item| match item {
+            SeenItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
+            SeenItem::Message(m) => m.content.clone().unwrap_or_default(),
+        }).collect();
+        assert_eq!(order, ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
         assert!(state.seen_context_of(question.id).is_none(), "not produced by the agent");
 
         // The same prompt in another turn is kept once.
         {
             let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
-            turn.set_system_prompt("You are good at sums.");
+            turn.set_context(vec![system()]);
         }
-        assert_eq!(state.system_prompts.len(), 1);
+        assert_eq!(state.prompts.len(), 1);
     }
 }

@@ -222,14 +222,20 @@ export interface ApprovalResponse {
   agent_id: string;
 }
 
-/** What an agent's model saw when it produced a message (issue 06). */
+/** A prompt part the model was given besides the conversation (issue 47). */
+export interface SeenPrompt {
+  kind: 'prompt';
+  digest: string;
+  role: Message['role'];
+  text: string;
+}
+
+/** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {
   message_id: string;
   actor_id: ActorId;
   context_digest: string | null;
-  system_prompt_digest: string | null;
-  system_prompt: string | null;
-  /** The messages of the context, in the order they were sent. */
-  messages: Message[];
+  /** The messages of the context and the prompt parts, in the order the model was given them. */
+  items: (SeenPrompt | {kind: 'message'; message: Message})[];
 }
 

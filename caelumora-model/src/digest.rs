@@ -1,5 +1,5 @@
 //! Content digests (issue 06): SHA-256 hashes that identify what an agent
-//! saw - a chain of messages, a system prompt - by their content.
+//! saw - a chain of messages, a prompt - by their content.
 //!
 //! A `Digest` is written as 64 lowercase hex digits, in JSON as well, so that
 //! stored state stays readable. What goes into a digest is defined here, in
@@ -186,9 +186,10 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     e.finish()
 }
 
-/// The digest of a system prompt.
-pub fn system_prompt(prompt: &str) -> Digest {
-    let mut e = Encoder::new("caelumora.system-prompt.v1");
+/// The digest of a prompt part: the system prompt, or any other text an
+/// agent's model is given besides the conversation (issue 47).
+pub fn prompt(prompt: &str) -> Digest {
+    let mut e = Encoder::new("caelumora.prompt.v1");
     e.str(prompt);
     e.finish()
 }
@@ -206,7 +207,7 @@ mod tests {
 
     #[test]
     fn a_digest_reads_back_what_it_writes() {
-        let digest = system_prompt("You are helpful.");
+        let digest = prompt("You are helpful.");
         let text = digest.to_string();
         assert_eq!(text.len(), 64);
         assert_eq!(text.parse::<Digest>().unwrap(), digest);
@@ -230,7 +231,7 @@ mod tests {
     #[test]
     fn the_predecessor_is_part_of_the_digest() {
         let m = message("hello");
-        let a = system_prompt("a");
+        let a = prompt("a");
         assert_ne!(message_chain(None, &m), message_chain(Some(&a), &m));
     }
 

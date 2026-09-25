@@ -1,10 +1,11 @@
 // What an agent's model saw when it produced a message (issue 41): the
-// system prompt of that turn and the messages of its context, in the order
-// they were sent - including internal steps and tool results the chat hides.
+// messages of its context and the prompt parts of that turn, in the order the
+// model was given them (issue 47) - including internal steps and tool
+// results the chat hides.
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, Message, MessageContextResponse} from '../types';
+import type {ChannelMember, Message, MessageContextResponse, SeenPrompt} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
@@ -58,6 +59,40 @@ const DigestLine: React.FC<{label: string; digest: string | null}> = ({label, di
   </div>
 );
 
+/** What the panel shows, in order: prompt parts, and runs of messages with their tool results merged. */
+type Row = SeenPrompt | {kind: 'message'; message: Message};
+
+function rowsOf(items: MessageContextResponse['items']): Row[] {
+  const rows: Row[] = [];
+  let run: Message[] = [];
+  const flush = () => {
+    rows.push(...mergeToolResults(run).map(message => ({kind: 'message' as const, message})));
+    run = [];
+  };
+  for (const item of items) {
+    if (item.kind === 'message') {
+      run.push(item.message);
+    } else {
+      flush();
+      rows.push(item);
+    }
+  }
+  flush();
+  return rows;
+}
+
+const PromptView: React.FC<{prompt: SeenPrompt; leading: boolean}> = ({prompt, leading}) => (
+  <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm">
+    <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
+      {leading && prompt.role === 'System' ? 'System prompt' : `Prompt part (as ${prompt.role.toLowerCase()} message)`}
+    </summary>
+    <div className="px-3 pb-2">
+      <DigestLine label="Digest" digest={prompt.digest} />
+    </div>
+    <pre className="px-3 pb-3 whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-300">{prompt.text}</pre>
+  </details>
+);
+
 interface ContextPanelProps {
   sessionId: string;
   channelId: string;
@@ -93,8 +128,13 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
     return () => { current = false; };
   }, [sessionId, channelId, actor, message.id, key]);
 
-  const messages = context ? mergeToolResults(context.messages) : [];
-  const hidden = showAll ? 0 : Math.max(0, messages.length - SHOWN_AT_FIRST);
+  const rows = context ? rowsOf(context.items) : [];
+  // Prompt parts before everything - the system prompt - stay on top; the
+  // rest is shortened to its end.
+  const leading = rows.findIndex(row => row.kind !== 'prompt');
+  const pinned = leading === -1 ? rows.length : leading;
+  const rest = rows.slice(pinned);
+  const hidden = showAll ? 0 : Math.max(0, rest.length - SHOWN_AT_FIRST);
 
   return (
     <div className="w-[28rem] max-w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
@@ -109,7 +149,6 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {context && (
           <div className="space-y-0.5">
             <DigestLine label="Context" digest={context.context_digest} />
-            <DigestLine label="System prompt" digest={context.system_prompt_digest} />
           </div>
         )}
       </div>
@@ -119,12 +158,9 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {!context && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
         {context && (
           <>
-            <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm">
-              <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">System prompt</summary>
-              <pre className="px-3 pb-3 whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-300">
-                {context.system_prompt ?? 'None'}
-              </pre>
-            </details>
+            {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
+              <PromptView key={row.digest} prompt={row} leading />
+            ))}
             {hidden > 0 && (
               <div className="text-center">
                 <button
@@ -135,19 +171,21 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
                 </button>
               </div>
             )}
-            {messages.slice(hidden).map((msg, idx) => (
+            {rest.slice(hidden).map((row, idx) => row.kind === 'prompt' ? (
+              <PromptView key={`${row.digest}-${idx}`} prompt={row} leading={false} />
+            ) : (
               <MessageView
-                key={msg.id ?? idx}
-                message={msg}
+                key={row.message.id ?? idx}
+                message={row.message}
                 members={members}
                 className="max-w-full"
                 badges={[
-                  ...(msg.internal ? ['internal'] : []),
-                  ...(msg.role === 'Tool' ? ['tool result'] : []),
+                  ...(row.message.internal ? ['internal'] : []),
+                  ...(row.message.role === 'Tool' ? ['tool result'] : []),
                 ]}
               />
             ))}
-            {messages.length === 0 && (
+            {rest.length === 0 && (
               <div className="text-sm text-gray-500 dark:text-gray-400">The context was empty.</div>
             )}
           </>

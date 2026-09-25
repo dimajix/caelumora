@@ -87,6 +87,7 @@ against it, and what came out of the last attempt.
 | [14](14-approval-privilege.md) | open | Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist. |
 | [15](15-disallowed-tool-errors-to-llm.md) | done | A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded. |
 | [32](32-unavailable-tools-invisible-to-model.md) | open | A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed. |
+| [49](49-plan-step-system-messages.md) | open | Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache. |
 | [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
 
 ## User interaction
@@ -110,7 +111,7 @@ against it, and what came out of the last attempt.
 | [17](17-information-sharing-within-session.md) | open | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
 | [18](18-knowledge-sharing.md) | open | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
 | [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
-| [47](47-prompt-parts-with-provenance.md) | open | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |
+| [47](47-prompt-parts-with-provenance.md) | done | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |
 | [48](48-shared-digest-chain.md) | open | History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 

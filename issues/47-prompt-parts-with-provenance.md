@@ -1,6 +1,6 @@
 # 47 — Prompt parts are placed and recorded on two separate paths
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -117,3 +117,30 @@ The discussion on 2026-09-25 settled the division of responsibilities: the
   [19](19-memory-tiers.md). Notes in phase 1 of
   [17](17-information-sharing-within-session.md) are a `BeforeTurnInput`
   part.
+- **2026-09-25** — Implemented as described, with one change: a prompt part
+  records the **role** it was given as (`ContextItem::Prompt { role, text }`,
+  `PromptRef { text, role, after }`). Some models merge every system message
+  into the system prompt and handle it first, so a part in the middle of the
+  context cannot be a system message: `StateContextProvider` gives `Start`
+  parts as a system message and `BeforeTurnInput` parts as a user message.
+  The role mapping therefore does not wait for per-backend logic (Ollama,
+  the only backend, passes roles on unchanged).
+  - `PromptProvider` has `position()` (default `Start`); the kind
+    `static_system_prompt_provider` keeps its name, so stored personalities
+    keep working, and takes the parameter `position` (`start` or
+    `before_turn_input`). The struct is now `StaticPromptProvider`.
+  - `digest::system_prompt` is `digest::prompt`, scheme
+    `caelumora.prompt.v1`. `SeenContext` holds ordered `items`
+    (`SeenItem::Prompt` or `SeenItem::Message`); `MessageContext` exposes
+    `entries()` and `prefix_entries()`.
+  - REST: the message context answers `items`, each
+    `{kind: "prompt", digest, role, text}` or `{kind: "message", message}`,
+    instead of `system_prompt`, `system_prompt_digest` and `messages`. The
+    web UI's context panel shows prompt parts where they were given, a
+    leading system prompt pinned on top.
+  - Verified in the browser: the context panel of a new answer shows the
+    system prompt with its digest, then the question; the REST response has
+    the new shape.
+  - Found on the way: plan step instructions are system messages in the
+    middle of a turn and have the same problem; opened as
+    [49](49-plan-step-system-messages.md).

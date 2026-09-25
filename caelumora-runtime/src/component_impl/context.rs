@@ -1,19 +1,40 @@
-use crate::actor::TurnContext;
+use crate::actor::{ContextItem, TurnContext};
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::message::Message;
-use caelumora_model::message::MessageRole;
+use caelumora_model::message::{Message, MessageRole};
+use serde::Deserialize;
 use std::sync::Arc;
 
 pub const STATE_CONTEXT_APPENDER_KIND: &str = "state_context_appender";
 pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
 pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
 
+/// Where a prompt part goes in the context (issue 47).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptPosition {
+    /// Before everything, as the system prompt. Many models put it first
+    /// and cache what follows it, so it should rarely change.
+    #[default]
+    Start,
+    /// Transiently before the newest message of the turn, never stored in
+    /// the context - for what changes often, such as notes. Given as a user
+    /// message: some models merge every system message into the system
+    /// prompt and move it to the front, where it would invalidate the cache.
+    BeforeTurnInput,
+}
+
+/// Contributes a prompt part: the system prompt, or other text the model is
+/// given besides the conversation. `StateContextProvider` composes the parts
+/// of the providers it depends on, by position.
 #[async_trait]
-pub trait SystemPromptProvider: Send + Sync + std::fmt::Debug {
+pub trait PromptProvider: Send + Sync + std::fmt::Debug {
+    fn position(&self) -> PromptPosition {
+        PromptPosition::Start
+    }
     async fn get_prompt(&self) -> Result<String>;
 }
 
@@ -41,52 +62,64 @@ impl MessageProcessor for StateContextAppender {
 impl PerceiveInProcessor for StateContextAppender {}
 
 #[derive(Debug)]
-pub struct StaticSystemPromptProvider {
+pub struct StaticPromptProvider {
     pub prompt: String,
+    pub position: PromptPosition,
 }
 
 #[async_trait]
-impl SystemPromptProvider for StaticSystemPromptProvider {
+impl PromptProvider for StaticPromptProvider {
+    fn position(&self) -> PromptPosition {
+        self.position
+    }
     async fn get_prompt(&self) -> Result<String> {
         Ok(self.prompt.clone())
     }
 }
 
+/// The stored context with the prompt parts of `prompt_providers`: those at
+/// `Start` joined into the system prompt before everything, those at
+/// `BeforeTurnInput` joined into one user message before the newest message
+/// of the turn.
 #[derive(Debug)]
 pub struct StateContextProvider {
-    pub prompt_providers: Vec<Arc<dyn SystemPromptProvider>>,
+    pub prompt_providers: Vec<Arc<dyn PromptProvider>>,
 }
 
 #[async_trait]
 impl ContextProvider for StateContextProvider {
     async fn current_context(&self, state: &mut TurnContext) -> Result<()> {
-        let mut full_context = Vec::new();
-
-        // Assemble System Prompt from all providers
-        let mut system_prompts = Vec::new();
+        let mut start = Vec::new();
+        let mut before_input = Vec::new();
         for provider in &self.prompt_providers {
-            let p = provider.get_prompt().await?;
-            let pt = p.trim().to_string();
-            if !pt.is_empty() {
-                system_prompts.push(pt);
+            let prompt = provider.get_prompt().await?.trim().to_string();
+            if prompt.is_empty() {
+                continue;
+            }
+            match provider.position() {
+                PromptPosition::Start => start.push(prompt),
+                PromptPosition::BeforeTurnInput => before_input.push(prompt),
             }
         }
 
-        if !system_prompts.is_empty() {
-            let prompt = system_prompts.join("\n\n");
-            state.set_system_prompt(&prompt);
-            full_context.push(Message {
-                role: MessageRole::System,
-                content: Some(prompt),
-                sender_id: ActorId::Agent(state.agent_id),
-                sender_name: state.agent_name.clone(),
-                ..Default::default()
-            });
+        let mut conversation = state.stored_context();
+        if !before_input.is_empty() {
+            // The newest message is the turn's input - unless the agent wrote
+            // it itself, in a turn that has none (e.g. after `/wakeup`).
+            let own = ActorId::Agent(state.agent_id);
+            let at = match conversation.last() {
+                Some(ContextItem::Conversation { message, .. }) if message.sender_id != own => conversation.len() - 1,
+                _ => conversation.len(),
+            };
+            conversation.insert(at, ContextItem::Prompt { role: MessageRole::User, text: before_input.join("\n\n") });
         }
 
-        // 2. Append history/compacted messages from state
-        full_context.extend(state.state_context());
-        state.set_context(full_context);
+        let mut items = Vec::with_capacity(conversation.len() + 1);
+        if !start.is_empty() {
+            items.push(ContextItem::Prompt { role: MessageRole::System, text: start.join("\n\n") });
+        }
+        items.extend(conversation);
+        state.set_context(items);
 
         Ok(())
     }
@@ -106,7 +139,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         STATE_CONTEXT_PROVIDER_KIND,
         Box::new(|_descriptor, context| {
             let prompt_providers = context.deps.values()
-                .filter_map(|facets| facets.get::<dyn SystemPromptProvider>())
+                .filter_map(|facets| facets.get::<dyn PromptProvider>())
                 .collect();
 
             let mut capabilities = ComponentFacets::empty();
@@ -124,10 +157,16 @@ pub fn register(registry: &mut ComponentRegistry) {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .ok_or_else(|| ComponentError::InvalidConfig("parameter 'prompt' is missing".to_string()))?;
+            let position = match descriptor.params.get("position") {
+                None => PromptPosition::default(),
+                Some(value) => serde_json::from_value(value.clone())
+                    .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string()))?,
+            };
 
             let mut capabilities = ComponentFacets::empty();
-            capabilities.insert::<dyn SystemPromptProvider>(Arc::new(StaticSystemPromptProvider {
-                prompt
+            capabilities.insert::<dyn PromptProvider>(Arc::new(StaticPromptProvider {
+                prompt,
+                position,
             }));
             Ok(capabilities)
         }),
