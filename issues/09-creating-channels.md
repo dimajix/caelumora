@@ -49,3 +49,36 @@ one participant — has nowhere to go.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-25** — Scope and approach decided:
+  - **Split:** adding and removing participants moves to
+    [46](46-channel-participants.md). This issue is about creating and
+    deleting channels. The "done when" point on participants is covered there.
+  - **Structure:** creating and deleting a channel changes the session
+    document, like renaming it: stored first (where the permission is checked),
+    then changed live, then announced. `SessionController` changes the
+    document, and `SessionLoop` starts or stops the `ChannelLoop`. Every
+    channel runs in its own task with an `AbortHandle` (the unused
+    `ChannelHandle`), instead of a `JoinSet` filled once in `run()`.
+  - **Building a channel:** one function builds a channel from participants,
+    adding the approver and deriving the security attributes. It is used by
+    both `ChannelTemplate::instantiate` and the new creation path.
+  - **Participants of a new channel:** chosen from the session's participants.
+    The creator is always included.
+  - **Moderator:** from the request, `round_robin` by default like
+    `ChannelTemplate`.
+  - **Permission:** creating and deleting count as changing the session
+    (`UpdateSession`), so only the owner may do it. Separate actions are
+    introduced only when contributors are to be allowed.
+  - **The last channel** may be deleted; a session without channels is
+    harmless and can get a new one.
+  - **State:** deleting a channel also deletes its channel state and the
+    agents' channel states, through new `delete_…` methods of the
+    `StateStore`. `delete_session` uses them too, since it leaves the same
+    orphans today.
+  - **API and UI:** `POST /sessions/{id}/channels` with
+    `{ name, moderator?, participants }` and
+    `DELETE /sessions/{id}/channels/{cid}`. In the web UI, "+" on a session
+    opens a dialog for name, moderator and participants, and the channel's
+    menu gets "Delete".
+  - Agents creating channels stay out until
+    [12](12-user-and-agent-permissions.md).
