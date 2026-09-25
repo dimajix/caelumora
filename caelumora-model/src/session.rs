@@ -61,8 +61,9 @@ impl SessionController {
         let event = SessionUpdateEvent::NameChanged(new_name);
         let session = self.apply(&event);
         self.entity_store.update_session(ctx, &session).await?;
+        let attributes = session.security_attributes.clone();
         self.session.store(Arc::new(session));
-        self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event));
+        self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event), attributes);
         Ok(())
     }
 

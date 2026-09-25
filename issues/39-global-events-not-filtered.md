@@ -1,6 +1,6 @@
 # 39 — The global event stream is not filtered by what a user may see
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access management
 
 ## The problem
@@ -123,4 +123,39 @@ meant to keep to the people involved.
   - **Events that name no session** (`UserCreated`, `UserUpdated`,
     `UserDeleted`): the web UI does not use them and they reveal which users
     exist; proposed to not send them to users at all for now.
-
+- **2026-09-25** — Decided and done: filtering by the policy, in the bus, not
+  by a set in the stream (A). Maintainer's proposal, refined in discussion:
+  - **Events are published with the attributes of their entity:**
+    `EventPublisher::publish(event, attributes)`. The wrapping into one value
+    (`PublishedEvent`, which implements `Secured`) happens inside the
+    `EventBus`, so it stays encapsulated there; `GlobalEvent` and the wire
+    format are unchanged and the attributes never reach a client - carrying
+    them in every variant would have told clients who else has access.
+    Every publisher has the attributes at hand: the session, channel, agent
+    and user controllers, `SessionLoop` for channels starting and stopping,
+    `SessionManager` for sessions created, started, stopped and deleted -
+    a deletion carries the attributes as they were, since the session is
+    gone afterwards. User events carry attributes owned by the user, so
+    everyone receives only their own; that settles the question of events
+    that name no session without a rule of their own (new
+    `ActionType::GetUser`).
+  - **`EventBus::subscribe_as(context)`** keeps these subscriptions in a list
+    of their own next to the topic subscribers and asks the
+    `SecurityManager` the question the `EntityStore` asks for reading the
+    entity (`GetSession`, `GetAgent`, `GetUser`) - one decision about
+    visibility, not a second notion of it in the stream. No subscriber
+    state, so none of the timing problem of `subscribe_filtered`; other
+    parties' events take no room in a subscription; and once contributors
+    can change (issue 09), each event already carries the current ones.
+  - **One dispatcher task** serves them: `SecurityManager::check` is async,
+    `publish` is sync (also behind `EventPublisher` in the model's
+    controllers). `publish` hands the event over through an unbounded queue,
+    the task asks the policy and sends, in the order events were published;
+    a slow policy (OPA over the network, issue 24) holds up no publisher.
+    It starts with the first `subscribe_as`; subscriptions whose receiver is
+    gone are dropped when a send to them fails.
+  - The global REST stream subscribes with
+    `subscribe_as(user.security_context())` instead of `subscribe_all()`.
+    Topic subscriptions, which the runtime uses, are unchanged; the double
+    delivery noted above for subscriptions with several topics remains a
+    property of those.

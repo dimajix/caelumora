@@ -1,11 +1,13 @@
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use dashmap::DashMap;
 use tracing::warn;
-use tokio::sync::broadcast;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::{broadcast, mpsc};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -21,6 +23,44 @@ pub enum SubscriptionTopic {
 /// A power of two, because a broadcast channel rounds its capacity up to one.
 const SUBSCRIPTION_CAPACITY: usize = 128;
 
+/// An event on its way through the bus, with the attributes of the entity
+/// it is about. Only the bus sees the attributes: subscribers receive the
+/// `GlobalEvent` alone.
+#[derive(Debug, Clone)]
+struct PublishedEvent {
+    event: GlobalEvent,
+    attributes: SecurityAttributes,
+}
+
+impl Secured for PublishedEvent {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.attributes
+    }
+}
+
+impl PublishedEvent {
+    /// What a party must be allowed to receive this event: to read the
+    /// entity it is about - the same question the `EntityStore` asks. A
+    /// channel's events go by the channel's attributes, which there is no
+    /// action of its own for.
+    fn read_action(&self) -> ActionType<'_> {
+        let attributes = self.security_attributes();
+        match self.event {
+            GlobalEvent::AgentCreated(..) | GlobalEvent::AgentUpdated(..) | GlobalEvent::AgentDeleted(..) => ActionType::GetAgent(attributes),
+            GlobalEvent::UserCreated(_) | GlobalEvent::UserUpdated(..) | GlobalEvent::UserDeleted(_) => ActionType::GetUser(attributes),
+            _ => ActionType::GetSession(attributes),
+        }
+    }
+}
+
+/// A subscription made with `subscribe_as`: the context it receives for, and
+/// where its events go.
+#[derive(Debug)]
+struct Party {
+    context: SecurityContext,
+    tx: broadcast::Sender<GlobalEvent>,
+}
+
 #[derive(Debug)]
 pub struct EventBus {
     // One sender per subscription, registered under each of its topics. A
@@ -28,6 +68,13 @@ pub struct EventBus {
     // behind, it is its receiver that learns so (`Lagged`), not only the log
     // (issue 38).
     subscribers: DashMap<SubscriptionTopic, Vec<broadcast::Sender<GlobalEvent>>>,
+    // The subscriptions made with `subscribe_as`, served by one dispatcher
+    // task: the policy is asked asynchronously, and `publish` must not wait
+    // for it. One task, so that every party receives the events in the
+    // order they were published.
+    parties: Arc<Mutex<Vec<Party>>>,
+    dispatcher: OnceLock<mpsc::UnboundedSender<PublishedEvent>>,
+    security_manager: Arc<dyn SecurityManager>,
 }
 
 /// The events of an `EventBus` subscription.
@@ -74,16 +121,69 @@ impl EventSubscription {
 }
 
 impl EventPublisher for EventBus {
-    fn publish(&self, event: GlobalEvent) {
-        self.publish(event);
+    fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes) {
+        self.publish(event, attributes);
     }
 }
 
 impl EventBus {
-    pub fn new() -> Self {
+    /// A bus whose `subscribe_as` subscriptions receive what
+    /// `security_manager` lets their context read.
+    pub fn new(security_manager: Arc<dyn SecurityManager>) -> Self {
         Self {
             subscribers: DashMap::new(),
+            parties: Arc::new(Mutex::new(Vec::new())),
+            dispatcher: OnceLock::new(),
+            security_manager,
         }
+    }
+
+    /// The events `context` may receive: those about entities it may read,
+    /// as the `SecurityManager` decides - the same decision the
+    /// `EntityStore` makes for reading them (issue 39). Nothing else reaches
+    /// the subscription, so other parties' events take no room in it.
+    ///
+    /// Must be called within a Tokio runtime: the first such subscription
+    /// starts the task that serves all of them.
+    pub fn subscribe_as(&self, context: SecurityContext) -> EventSubscription {
+        let (tx, rx) = broadcast::channel(SUBSCRIPTION_CAPACITY);
+        if let Ok(mut parties) = self.parties.lock() {
+            parties.push(Party { context, tx });
+        }
+        self.dispatcher.get_or_init(|| self.start_dispatcher());
+        EventSubscription { rx }
+    }
+
+    fn start_dispatcher(&self) -> mpsc::UnboundedSender<PublishedEvent> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<PublishedEvent>();
+        let parties = self.parties.clone();
+        let security_manager = self.security_manager.clone();
+        tokio::spawn(async move {
+            while let Some(published) = rx.recv().await {
+                // The parties as they are now; the lock is not held while the
+                // policy is asked.
+                let current: Vec<(SecurityContext, broadcast::Sender<GlobalEvent>)> = match parties.lock() {
+                    Ok(parties) => parties.iter().map(|p| (p.context.clone(), p.tx.clone())).collect(),
+                    Err(_) => continue,
+                };
+                let mut gone = Vec::new();
+                for (context, tx) in current {
+                    if !security_manager.check(&context, published.read_action()).await {
+                        continue;
+                    }
+                    // A send fails only when the subscription is gone.
+                    if tx.send(published.event.clone()).is_err() {
+                        gone.push(tx);
+                    }
+                }
+                if !gone.is_empty() {
+                    if let Ok(mut parties) = parties.lock() {
+                        parties.retain(|p| !gone.iter().any(|g| g.same_channel(&p.tx)));
+                    }
+                }
+            }
+        });
+        tx
     }
 
     pub fn subscribe(&self, topics: Vec<SubscriptionTopic>) -> EventSubscription {
@@ -115,7 +215,15 @@ impl EventBus {
         self.subscribe(vec![SubscriptionTopic::User(id)])
     }
 
-    pub fn publish(&self, event: GlobalEvent) {
+    /// Publishes `event` about an entity with these `attributes` (see
+    /// `EventPublisher::publish`): at once to the subscribers of its topics,
+    /// and through the dispatcher to every `subscribe_as` subscription
+    /// allowed to read that entity.
+    pub fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes) {
+        if let Some(dispatcher) = self.dispatcher.get() {
+            let _ = dispatcher.send(PublishedEvent { event: event.clone(), attributes });
+        }
+
         let mut topics_to_notify = vec![SubscriptionTopic::All];
 
         match &event {
@@ -161,6 +269,13 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::security::{DummySecurityManager, OwnershipSecurityManager};
+    use caelumora_model::actor::ActorId;
+    use std::time::Duration;
+
+    fn bus() -> EventBus {
+        EventBus::new(Arc::new(DummySecurityManager::new()))
+    }
 
     fn created() -> GlobalEvent {
         GlobalEvent::SessionCreated(SessionId::new())
@@ -168,10 +283,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_subscriber_that_falls_behind_is_told_and_keeps_receiving() {
-        let bus = EventBus::new();
+        let bus = bus();
         let mut receiver = bus.subscribe_all().into_receiver();
         for _ in 0..SUBSCRIPTION_CAPACITY + 5 {
-            bus.publish(created());
+            bus.publish(created(), Default::default());
         }
 
         assert!(matches!(receiver.recv().await, Err(RecvError::Lagged(5))), "the loss reaches the subscriber");
@@ -180,13 +295,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_subscription_skips_what_it_lost_and_goes_on() {
-        let bus = EventBus::new();
+        let bus = bus();
         let mut subscription = bus.subscribe_all();
         for _ in 0..SUBSCRIPTION_CAPACITY + 5 {
-            bus.publish(created());
+            bus.publish(created(), Default::default());
         }
         let deleted = SessionId::new();
-        bus.publish(GlobalEvent::SessionDeleted(deleted));
+        bus.publish(GlobalEvent::SessionDeleted(deleted), Default::default());
 
         let mut received = 0;
         while let Some(event) = subscription.try_recv() {
@@ -200,9 +315,61 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_subscription_is_removed() {
-        let bus = EventBus::new();
+        let bus = bus();
         drop(bus.subscribe_all());
-        bus.publish(created());
+        bus.publish(created(), Default::default());
         assert!(bus.subscribers.get(&SubscriptionTopic::All).unwrap().is_empty());
+    }
+
+    fn as_user(id: UserId) -> SecurityContext {
+        SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
+    }
+
+    /// Everything that arrives within a short while.
+    async fn drain(subscription: &mut EventSubscription) -> Vec<GlobalEvent> {
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(100), subscription.recv()).await {
+            events.push(event);
+        }
+        events
+    }
+
+    #[tokio::test]
+    async fn a_party_receives_what_it_may_read_and_nothing_else() {
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let mut alices = bus.subscribe_as(as_user(alice));
+        let mut bobs = bus.subscribe_as(as_user(bob));
+        let mut carols = bus.subscribe_as(as_user(carol));
+
+        let hers = SecurityAttributes { owner_id: ActorId::User(alice), contributors: vec![ActorId::User(bob)] };
+        let (session, deleted) = (SessionId::new(), SessionId::new());
+        bus.publish(GlobalEvent::SessionCreated(session), hers.clone());
+        bus.publish(GlobalEvent::ChannelCreated(session, ChannelId::new()), hers.clone());
+        bus.publish(GlobalEvent::SessionDeleted(deleted), hers.clone());
+        bus.publish(GlobalEvent::UserCreated(carol), SecurityAttributes::owned_by(ActorId::User(carol)));
+
+        let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(kinds(drain(&mut alices).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "the owner gets it all, in order - a deletion too");
+        assert_eq!(kinds(drain(&mut bobs).await), ["SessionCreated", "ChannelCreated", "SessionDeleted"], "so does a contributor");
+        assert_eq!(kinds(drain(&mut carols).await), ["UserCreated"], "a stranger only her own user event");
+    }
+
+    #[tokio::test]
+    async fn what_belongs_to_the_system_reaches_every_party() {
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()));
+        let mut someone = bus.subscribe_as(as_user(UserId::new()));
+        bus.publish(GlobalEvent::SessionCreated(SessionId::new()), SecurityAttributes::default());
+        assert_eq!(drain(&mut someone).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_party_is_removed() {
+        let bus = EventBus::new(Arc::new(DummySecurityManager::new()));
+        drop(bus.subscribe_as(as_user(UserId::new())));
+        let mut kept = bus.subscribe_as(as_user(UserId::new()));
+        bus.publish(GlobalEvent::SessionCreated(SessionId::new()), SecurityAttributes::default());
+        drain(&mut kept).await;
+        assert_eq!(bus.parties.lock().unwrap().len(), 1);
     }
 }

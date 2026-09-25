@@ -2,6 +2,7 @@ use crate::agent::{AgentId, AgentUpdateEvent};
 use crate::channel::{ChannelId, ChannelUpdateEvent};
 use crate::session::{SessionId, SessionUpdateEvent};
 use crate::user::{UserId, UserUpdateEvent};
+use crate::security::SecurityAttributes;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,9 +30,12 @@ pub enum GlobalEvent {
 }
 
 pub trait EventPublisher: Send + Sync + std::fmt::Debug {
-    fn publish(&self, event: GlobalEvent);
+    /// Publishes `event` about an entity with these `attributes` - the
+    /// session's, channel's, agent's or user's the event is about (issue 39).
+    /// They decide who may receive it; they are not part of the event.
+    fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes);
 }
 
 impl EventPublisher for () {
-    fn publish(&self, _event: GlobalEvent) {}
+    fn publish(&self, _event: GlobalEvent, _attributes: SecurityAttributes) {}
 }

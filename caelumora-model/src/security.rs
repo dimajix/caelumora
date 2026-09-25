@@ -38,6 +38,9 @@ pub enum ActionType<'a> {
     UpdateSession(&'a SecurityAttributes),
     DeleteSession(&'a SecurityAttributes),
     ListSessions,
+    /// Reading a user, e.g. receiving the events about them; carries
+    /// attributes owned by the user themselves.
+    GetUser(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -195,6 +198,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetAgent(a)
             | ActionType::GetSession(a)
             | ActionType::GetComponent(a)
+            | ActionType::GetUser(a)
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
             ActionType::CreatePersonality(a)

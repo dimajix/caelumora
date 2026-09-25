@@ -20,7 +20,9 @@ pub async fn global_events(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     // Subscribe before reading the state, so that nothing that happens while
     // the snapshot is assembled is lost (issue 34).
-    let receiver = state.runtime_manager.event_bus().subscribe_all().into_receiver();
+    // Only the events about what this user may read (issue 39), decided by
+    // the same policy as reading it through the store.
+    let receiver = state.runtime_manager.event_bus().subscribe_as(user.security_context()).into_receiver();
     let snapshot = if options.snapshot { Some(snapshot_event(&state, &user).await) } else { None };
 
     // A client that falls behind gets a fresh snapshot, as on a channel's

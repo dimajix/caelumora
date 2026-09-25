@@ -154,7 +154,7 @@ impl RuntimeManager {
         mcp::register(&mut component_registry);
         command::register(&mut component_registry);
 
-        let event_bus = Arc::new(EventBus::new());
+        let event_bus = Arc::new(EventBus::new(security_manager.clone()));
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
 
         Ok(Self {

@@ -13,7 +13,7 @@ use caelumora_model::channel::{Channel, ChannelController, ChannelError, Channel
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
-use caelumora_model::security::{ActionType, SecurityContext};
+use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use caelumora_model::user::UserId;
@@ -134,6 +134,11 @@ impl ChannelLoop {
     
     pub fn name(&self) -> String {
         self.channel.name()
+    }
+
+    /// Who the channel belongs to and who contributes to it (issue 11).
+    pub fn security_attributes(&self) -> SecurityAttributes {
+        self.channel.load().security_attributes.clone()
     }
 
     pub async fn update_name(&self, new_name: String) {

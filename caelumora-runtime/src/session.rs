@@ -2,7 +2,7 @@ use crate::channel::ChannelLoop;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{ActionType, SecurityContext};
+use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::store::StoreError;
 use tracing::info;
 use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
@@ -107,7 +107,8 @@ impl SessionLoop {
                 res = join_set.join_next() => {
                     if let Some(res) = res {
                         let channel_id = res?;
-                        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id));
+                        let attributes = self.channels.get(&channel_id).map(|c| c.security_attributes()).unwrap_or_default();
+                        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
                     } else {
                         break;
                     }
@@ -139,7 +140,7 @@ impl SessionLoop {
 
     fn spawn_channel(&self, channel: Arc<ChannelLoop>, join_set: &mut JoinSet<ChannelId>) -> Result<ChannelHandle> {
         let id = channel.id();
-        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStarted(self.id, id));
+        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes());
         let abort_handle = join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()
@@ -173,6 +174,7 @@ impl SessionManager {
     /// run task, and announce that the session has started running.
     async fn spawn_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
         let id = session.id;
+        let attributes = session.security_attributes.clone();
         let session_loop = Arc::new(SessionLoop::new(session, self.runtime_manager.clone()).await?);
         self.sessions.insert(id, session_loop.clone());
 
@@ -184,7 +186,7 @@ impl SessionManager {
         });
         self.handles.insert(id, handle);
 
-        self.runtime_manager.event_bus().publish(GlobalEvent::SessionStarted(id));
+        self.runtime_manager.event_bus().publish(GlobalEvent::SessionStarted(id), attributes);
         Ok(session_loop)
     }
 
@@ -196,9 +198,9 @@ impl SessionManager {
         self.runtime_manager.entity_store().create_session(ctx, &session).await?;
 
         let event_bus = self.runtime_manager.event_bus();
-        event_bus.publish(GlobalEvent::SessionCreated(id));
+        event_bus.publish(GlobalEvent::SessionCreated(id), session.security_attributes.clone());
         for channel in &session.channels {
-            event_bus.publish(GlobalEvent::ChannelCreated(id, channel.id));
+            event_bus.publish(GlobalEvent::ChannelCreated(id, channel.id), channel.security_attributes.clone());
         }
 
         self.spawn_session(session).await
@@ -249,8 +251,9 @@ impl SessionManager {
             handle.abort();
         }
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
-        if removed.is_some() {
-            self.runtime_manager.event_bus().publish(GlobalEvent::SessionStopped(id));
+        if let Some(session_loop) = &removed {
+            let attributes = session_loop.get_session().security_attributes.clone();
+            self.runtime_manager.event_bus().publish(GlobalEvent::SessionStopped(id), attributes);
         }
         removed
     }
@@ -273,17 +276,21 @@ impl SessionManager {
         self.may(ctx, ActionType::GetSession(&session.security_attributes), id, not_found()).await?;
         self.may(ctx, ActionType::DeleteSession(&session.security_attributes), id, StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
-        let channels: Vec<ChannelId> = session.channels.iter().map(|c| c.id).collect();
+        // The events carry the attributes as they were: once deleted, the
+        // session is nowhere to look them up (issue 39).
+        let channels: Vec<(ChannelId, SecurityAttributes)> = session.channels.iter()
+            .map(|c| (c.id, c.security_attributes.clone()))
+            .collect();
 
         self.stop_session(id);
 
         let event_bus = self.runtime_manager.event_bus();
-        for channel_id in &channels {
-            event_bus.publish(GlobalEvent::ChannelDeleted(id, *channel_id));
+        for (channel_id, attributes) in channels {
+            event_bus.publish(GlobalEvent::ChannelDeleted(id, channel_id), attributes);
         }
 
         let removed = self.runtime_manager.entity_store().delete_session(ctx, id).await?;
-        event_bus.publish(GlobalEvent::SessionDeleted(id));
+        event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         Ok(removed)
     }
 }

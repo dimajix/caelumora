@@ -64,7 +64,8 @@ impl ChannelController {
     pub async fn update_name(&self, new_name: String) {
         let event = ChannelUpdateEvent::NameChanged(new_name);
         self.process_channel_update(&event).await;
-        self.event_publisher.publish(GlobalEvent::ChannelUpdated(self.session_id, self.id, event));
+        let attributes = self.channel.load().security_attributes.clone();
+        self.event_publisher.publish(GlobalEvent::ChannelUpdated(self.session_id, self.id, event), attributes);
     }
 
     async fn process_channel_update(&self, event: &ChannelUpdateEvent) {

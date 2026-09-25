@@ -513,7 +513,7 @@ mod tests {
         store.create_user(&caelumora_model::security::SecurityContext::default(), &user1).await.unwrap();
 
         let join_event = GlobalEvent::UserChannelJoined(session_id, channel_id, user1_id);
-        runtime_manager.event_bus().publish(join_event);
+        runtime_manager.event_bus().publish(join_event, Default::default());
 
         // Give some time for the event to be processed
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -633,7 +633,7 @@ mod tests {
 
         // 3. User 2 leaves
         let leave_event = GlobalEvent::UserChannelLeft(session_id, channel_id, user2_id);
-        runtime_manager.event_bus().publish(leave_event);
+        runtime_manager.event_bus().publish(leave_event, Default::default());
 
         // Give some time for the event to be processed
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

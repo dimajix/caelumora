@@ -1,5 +1,6 @@
 use crate::event::{EventPublisher, GlobalEvent};
-use crate::security::SecurityContext;
+use crate::actor::ActorId;
+use crate::security::{SecurityAttributes, SecurityContext};
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -52,7 +53,9 @@ impl UserController {
     pub fn update_username(&self, new_name: String) {
         let event = UserUpdateEvent::NameChanged(new_name);
         self.process_user_update(&event);
-        self.event_publisher.publish(GlobalEvent::UserUpdated(self.id, event));
+        // A user's events are the user's own business (issue 39).
+        let attributes = SecurityAttributes::owned_by(ActorId::User(self.id));
+        self.event_publisher.publish(GlobalEvent::UserUpdated(self.id, event), attributes);
     }
 
     fn process_user_update(&self, event: &UserUpdateEvent) {

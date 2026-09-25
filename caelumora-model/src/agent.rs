@@ -67,8 +67,9 @@ impl AgentController {
         let event = AgentUpdateEvent::NameChanged(new_name);
         let agent = self.apply(&event);
         self.entity_store.update_agent(ctx, &agent).await?;
+        let attributes = agent.security_attributes.clone();
         self.agent.store(Arc::new(agent));
-        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.id, event));
+        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.id, event), attributes);
         Ok(())
     }
 
