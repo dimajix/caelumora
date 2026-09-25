@@ -11,6 +11,7 @@ use crate::actor::MessageContextError;
 use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::llm::LLMError;
+use crate::session::SessionError;
 use crate::tool::ToolError;
 use caelumora_model::channel::ChannelError;
 use caelumora_model::store::StoreError;
@@ -33,6 +34,8 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
         } else if let Some(e) = e.downcast_ref::<MessageContextError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ChannelError>() {
+            Some(e.to_string())
+        } else if let Some(e) = e.downcast_ref::<SessionError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<TemplateError>() {
             match e {

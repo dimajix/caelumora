@@ -241,24 +241,8 @@ impl EntityStore for MemoryStore {
         if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
             return Ok(false);
         }
+        // The state is the `StateStore`'s, which may be another store.
         let removed = self.write_lock(&self.sessions, |v| v.remove(&id))?;
-
-        if let Some(session) = &removed {
-            for channel in &session.channels {
-                let channel_id = channel.id;
-                self.write_lock(&self.channel_states, |v| {
-                    v.remove(&channel_id);
-                })?;
-                self.write_lock(&self.agent_channel_states, |v| {
-                    v.retain(|(_, cid), _| *cid != channel_id);
-                })?;
-            }
-        }
-
-        self.write_lock(&self.session_states, |v| {
-            v.remove(&id);
-        })?;
-
         Ok(removed.is_some())
     }
 
@@ -391,6 +375,21 @@ impl StateStore for MemoryStore {
     async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()> {
         self.write_lock(&self.channel_states, |v| {
             v.insert(channel_id, state.clone());
+        })
+    }
+
+    async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
+        self.write_lock(&self.channel_states, |v| {
+            v.remove(&channel_id);
+        })?;
+        self.write_lock(&self.agent_channel_states, |v| {
+            v.retain(|(_, cid), _| *cid != channel_id);
+        })
+    }
+
+    async fn delete_session_state(&self, session_id: SessionId) -> StoreResult<()> {
+        self.write_lock(&self.session_states, |v| {
+            v.remove(&session_id);
         })
     }
 }

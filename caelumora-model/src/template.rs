@@ -70,7 +70,7 @@ pub struct ChannelTemplate {
 }
 
 fn default_moderator() -> String {
-    "round_robin".to_string()
+    crate::channel::DEFAULT_MODERATOR.to_string()
 }
 
 impl ChannelTemplate {
@@ -96,23 +96,7 @@ impl ChannelTemplate {
             participants.push(participant);
         }
 
-        // Ensure Approver actor is present
-        if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
-            participants.push(Participant::Approver(Approver {
-                id: ApproverId(Uuid::new_v4()),
-                strategy: ApprovalStrategy::Any,
-            }));
-        }
-
-        let security_attributes = participant_attributes(ActorId::User(context.owner), &participants);
-
-        Ok(Channel::new(
-            context.id,
-            self.name.clone(),
-            self.moderator.clone(),
-            participants,
-            security_attributes
-        ))
+        Ok(Channel::build(context.id, ActorId::User(context.owner), self.name.clone(), self.moderator.clone(), participants))
     }
 }
 

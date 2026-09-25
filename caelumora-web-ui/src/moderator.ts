@@ -13,6 +13,12 @@ const MODERATORS: Record<string, ModeratorInfo> = {
   round_robin: {label: 'Round robin', description: 'The agents take turns answering.'},
 };
 
+/** The moderator kinds this UI knows, for choosing one (issue 09). */
+export const MODERATOR_KINDS = Object.keys(MODERATORS);
+
+/** The moderator of a channel that names none - the server's default. */
+export const DEFAULT_MODERATOR = 'round_robin';
+
 /**
  * The label and explanation of a moderator kind. A kind this UI does not
  * know is shown by its name. In every channel, @-mentioned agents answer

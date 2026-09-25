@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, GlobalSnapshot, SessionSnapshot, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, GlobalSnapshot, ParticipantResponse, SessionSnapshot, StreamOptions};
 use crate::state::AppState;
 use axum::{
     extract::{Query, State},
@@ -90,11 +90,25 @@ async fn snapshot_event(state: &Arc<AppState>, user: &AuthenticatedUser) -> Even
 }
 
 fn session_snapshot(session: Session, channels: Vec<ChannelResponse>) -> SessionSnapshot {
+    let participants = session.participants.iter().map(|participant| {
+        let (id, name, kind) = describe_participant(participant);
+        ParticipantResponse { id, name, kind: kind.to_string() }
+    }).collect();
     SessionSnapshot {
         id: session.id,
         name: session.metadata.name.clone(),
         metadata: session.metadata,
         channels,
+        participants,
+    }
+}
+
+/// The id, name and kind of a participant, as the API shows them.
+fn describe_participant(participant: &Participant) -> (caelumora_model::actor::ActorId, String, &'static str) {
+    match participant {
+        Participant::User(u) => (caelumora_model::actor::ActorId::User(u.id), u.username.clone(), "user"),
+        Participant::Agent(a) => (caelumora_model::actor::ActorId::Agent(a.id), a.metadata.name.clone(), "agent"),
+        Participant::Approver(a) => (caelumora_model::actor::ActorId::Approver(a.id.0), "Approver".to_string(), "approver"),
     }
 }
 
@@ -102,11 +116,7 @@ fn session_snapshot(session: Session, channels: Vec<ChannelResponse>) -> Session
 /// than by its actors.
 fn stored_channel_response(channel: &Channel) -> ChannelResponse {
     let members = channel.participants.iter().map(|participant| {
-        let (id, name, kind) = match participant {
-            Participant::User(u) => (caelumora_model::actor::ActorId::User(u.id), u.username.clone(), "user"),
-            Participant::Agent(a) => (caelumora_model::actor::ActorId::Agent(a.id), a.metadata.name.clone(), "agent"),
-            Participant::Approver(a) => (caelumora_model::actor::ActorId::Approver(a.id.0), "Approver".to_string(), "approver"),
-        };
+        let (id, name, kind) = describe_participant(participant);
         let handle = Some(handle_of(&name)).filter(|h| !h.is_empty() && kind != "approver");
         // Not running: there is no actor to ask; opening the channel starts
         // it, and its own snapshot says.

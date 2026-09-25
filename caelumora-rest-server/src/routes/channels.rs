@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -10,6 +10,7 @@ use crate::error::{Json, Path};
 use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
+use caelumora_runtime::session::{ChannelSpec, SessionError};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_runtime::command::CommandError;
@@ -37,6 +38,53 @@ pub async fn list_channels(
         channels.push(channel_response(&channel, &context).await);
     }
     Ok(Json(channels))
+}
+
+/// Creates a channel in the session and starts it (issue 09). Only who may
+/// change the session may do it.
+pub async fn create_channel(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(payload): Json<CreateChannelRequest>,
+) -> Result<Json<ChannelResponse>, ApiError> {
+    let session_id = SessionId(id);
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let context = user.security_context();
+
+    let spec = ChannelSpec { name: payload.name, moderator: payload.moderator, participants: payload.participants };
+    let channel = session.create_channel(&context, spec).await
+        .map_err(|e| channel_error(e, session_id, "create a channel in", "creating a channel in"))?;
+    Ok(Json(channel_response(&channel, &context).await))
+}
+
+/// Stops and deletes a channel of the session, with its history (issue 09).
+pub async fn delete_channel(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let session_id = SessionId(id);
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
+
+    session.delete_channel(&user.security_context(), ChannelId(cid)).await
+        .map_err(|e| channel_error(e, session_id, "delete a channel of", "deleting a channel of"))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The answer for a failure to create or delete a channel: a request that
+/// cannot be met is the client's (`400`, `404`, `409`); refusals and
+/// everything else are answered as for the session.
+fn channel_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: &str) -> ApiError {
+    let detail = error.to_string();
+    match error.downcast_ref::<SessionError>() {
+        Some(SessionError::ChannelNotFound { .. }) => ApiError::not_found("channel_not_found", detail),
+        Some(SessionError::DuplicateChannelName { .. }) => ApiError::conflict("channel_exists", detail),
+        Some(SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. }) => {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_channel", detail)
+        }
+        None => crate::routes::session_error(error, session_id, act, doing),
+    }
 }
 
 pub async fn get_channel(
@@ -129,11 +177,19 @@ pub async fn join_channel(
     let snapshot = if options.snapshot { Some(snapshot_event(&channel, &viewer).await) } else { None };
 
     // A client that falls behind gets a fresh snapshot, if it asked for them.
+    // Held weakly: a deleted channel must be dropped, which closes its event
+    // sender and so ends this stream (issue 09).
+    let channel = Arc::downgrade(&channel);
     let resync = options.snapshot.then(|| {
         move || {
-            let channel = channel.clone();
+            let channel = channel.upgrade();
             let viewer = viewer.clone();
-            async move { snapshot_event(&channel, &viewer).await }
+            async move {
+                match channel {
+                    Some(channel) => snapshot_event(&channel, &viewer).await,
+                    None => Event::default().comment("the channel was deleted"),
+                }
+            }
         }
     });
     let updates = crate::sse::resync_on_lag(receiver, format!("channel {}", channel_id), resync);
@@ -167,7 +223,7 @@ pub async fn send_message(
 ///
 /// Whoever writes or approves does so in their own name, so someone who is
 /// not a participant of the channel has no actor here and is refused. Until
-/// participants can be added to a running channel ([09](issues/09-creating-channels.md)),
+/// participants can be added to a running channel ([46](issues/46-channel-participants.md)),
 /// that means the participants a channel was created with.
 fn user_actor_of(channel: &ChannelLoop, user: &AuthenticatedUser) -> Result<Arc<UserActor>, ApiError> {
     channel.user_actor(user.id).ok_or_else(|| {

@@ -219,7 +219,7 @@ impl RuntimeManager {
             "mentions_only" => Ok(Box::new(PolicyModerator::new(MentionsOnlyPolicy))),
             "random" => Ok(Box::new(PolicyModerator::new(RandomPolicy::new()))),
             "round_robin" => Ok(Box::new(PolicyModerator::new(RoundRobinPolicy::default()))),
-            _ => Err(anyhow::anyhow!("Unsupported moderator type: {}", kind))
+            _ => Err(crate::session::SessionError::UnknownModerator(kind.clone()).into())
         }
     }
 

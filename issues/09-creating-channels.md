@@ -1,6 +1,6 @@
 # 09 — Creating channels
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -82,3 +82,46 @@ one participant — has nowhere to go.
     menu gets "Delete".
   - Agents creating channels stay out until
     [12](12-user-and-agent-permissions.md).
+- **2026-09-25** — Implemented as decided above, with these details:
+  - `SessionLoop::create_channel(context, ChannelSpec)` and
+    `delete_channel`; `SessionController::add_channel` and `remove_channel`
+    store the session under a write lock, which `update_name` now takes too,
+    so that concurrent changes cannot overwrite each other. For the lock,
+    `caelumora-model` depends on `tokio` (feature `sync`).
+  - `SessionLoop::run` receives every channel to start over a queue, those
+    of the session and those created later, and starts them in its
+    `JoinSet`, so stopping the session still stops all of them. A deleted
+    channel's task is aborted; one deleted before it started is never
+    started. `run` no longer ends when the last channel ends, since a
+    session without channels can get new ones.
+  - Invalid requests are a `SessionError` (a new user-facing error type,
+    added to `user_message`), refused before anything is stored: no name,
+    unknown moderator, someone who is not a participant of the session, and
+    also a name the session already has, because `channel_by_name` assumes
+    names are unique. REST answers `400 invalid_channel`, `409 channel_exists`
+    and `404 channel_not_found`. `RuntimeManager::new_moderator` reports an
+    unknown kind as `SessionError::UnknownModerator`.
+  - `SessionLoop::channels()` answers in the order of the session document.
+    It used to come from a `HashMap` and could put a new channel before
+    `main`.
+  - The session response (`SessionSnapshot`) carries the session's
+    `participants`, for the dialog.
+  - **Bug found on the way:** `EntityStore::delete_session` deleted the
+    channel state in the *entity* store, but entity and state store are
+    configured separately (`examples/config.yaml` uses two directories), so
+    the real state was left behind. Deleting state is now the `StateStore`'s
+    (`delete_channel_state`, `delete_session_state`), called by
+    `SessionManager::delete_session` and `SessionLoop::delete_channel`.
+  - The event stream of a channel held it strongly in its resync closure and
+    would have stayed open after deletion until its token expired; it holds it
+    weakly now and ends with the channel.
+  - Web UI: "New channel" under a session's channels opens a dialog for
+    name, moderator and participants (preselected: all of the session's). A
+    request error such as a taken name is shown in the dialog. Every channel
+    has a menu with "Delete". If the open channel disappears, deleted here or
+    elsewhere, the selection is cleared.
+  - Verified in the browser: a duplicate name is refused in the dialog; a
+    channel with only Sassy was created, opened and answered; deleting the
+    open channel cleared the view, removed it from the stored session and
+    deleted its state in the separate state store. Error codes and ordering
+    were checked through the API from the page.

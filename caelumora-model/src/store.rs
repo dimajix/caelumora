@@ -82,6 +82,13 @@ pub trait StateStore : Debug + Sync + Send {
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
     async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()>;
+
+    /// Deletes the state of a channel that no longer exists: its own and that
+    /// of every agent in it. Nothing to delete is not an error (issue 09).
+    async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()>;
+    /// Deletes the state of a session that no longer exists; its channels'
+    /// states are deleted with `delete_channel_state`.
+    async fn delete_session_state(&self, session_id: SessionId) -> StoreResult<()>;
 }
 
 

@@ -1,4 +1,5 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
+use crate::store::StoreError;
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::meta::Metadata;
@@ -21,6 +22,9 @@ pub struct SessionController {
     session: ArcSwap<Session>,
     event_publisher: Arc<dyn EventPublisher>,
     entity_store: Arc<dyn EntityStore>,
+    /// Held while the session is changed and stored, so that two changes -
+    /// say a rename and a new channel - cannot overwrite each other.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl SessionController {
@@ -35,6 +39,7 @@ impl SessionController {
             session: ArcSwap::from_pointee(session),
             event_publisher,
             entity_store,
+            write_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -58,12 +63,52 @@ impl SessionController {
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
     pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
+        let _guard = self.write_lock.lock().await;
         let event = SessionUpdateEvent::NameChanged(new_name);
         let session = self.apply(&event);
         self.entity_store.update_session(ctx, &session).await?;
         let attributes = session.security_attributes.clone();
         self.session.store(Arc::new(session));
         self.event_publisher.publish(GlobalEvent::SessionUpdated(self.id, event), attributes);
+        Ok(())
+    }
+
+    /// Adds `channel` to the session on behalf of `ctx`: stored first, which
+    /// is where the permission is checked (`UpdateSession`), and only then
+    /// changed live. Announcing it is the caller's, who also starts it
+    /// (issue 09).
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied` included;
+    /// the session is then unchanged.
+    pub async fn add_channel(&self, ctx: &SecurityContext, channel: Channel) -> StoreResult<()> {
+        let _guard = self.write_lock.lock().await;
+        let mut session = (**self.session.load()).clone();
+        session.channels.push(channel);
+        self.store(ctx, session).await
+    }
+
+    /// Removes the channel `channel_id` from the session on behalf of `ctx`,
+    /// like [`Self::add_channel`], and returns it.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the session has no such channel; whatever
+    /// the store reports otherwise. The session is then unchanged.
+    pub async fn remove_channel(&self, ctx: &SecurityContext, channel_id: ChannelId) -> StoreResult<Channel> {
+        let _guard = self.write_lock.lock().await;
+        let mut session = (**self.session.load()).clone();
+        let index = session.channels.iter().position(|c| c.id == channel_id)
+            .ok_or_else(|| StoreError::NotFound { entity: "channel", id: channel_id.to_string() })?;
+        let channel = session.channels.remove(index);
+        self.store(ctx, session).await?;
+        Ok(channel)
+    }
+
+    /// Stores `session` as changed by `ctx` and takes it over live.
+    async fn store(&self, ctx: &SecurityContext, mut session: Session) -> StoreResult<()> {
+        session.updated_at = Utc::now();
+        self.entity_store.update_session(ctx, &session).await?;
+        self.session.store(Arc::new(session));
         Ok(())
     }
 

@@ -18,7 +18,9 @@ derive_more = { version = "2.1.1", features = ["display"] }
 arc-swap = "1.9.2"
 async-trait = "0.1"
 tracing = "0.1.44"
+# The lock that serialises changes to a session (`SessionController`).
+tokio = { version = "1.53.1", features = ["sync"] }
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }
 tempfile = "3.27"

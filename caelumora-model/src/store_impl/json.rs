@@ -452,23 +452,13 @@ impl EntityStore for JsonFileStore {
     }
 
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        // Loaded first: for the check, and to clean up the state files of
-        // all its channels.
+        // The state of the session and its channels is the `StateStore`'s,
+        // which may be another store: the caller deletes it there.
         let session = read_json_opt::<Persisted<Session>>(&self.session_path(id))?.map(|p| p.value);
         if !self.access(ctx).delete(session.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
             return Ok(false);
         }
 
-        if let Some(session) = &session {
-            for channel in &session.channels {
-                debug!("Deleting channel {} of session {}", channel.id, id);
-                delete_if_exists(&self.channel_state_path(channel.id))?;
-                delete_dir_if_exists(&self.agent_channel_state_dir(channel.id))?;
-            }
-        }
-
-        // Remove the session state and the durable session definition itself.
-        delete_if_exists(&self.session_state_path(id))?;
         let removed = delete_if_exists(&self.session_path(id))?;
         info!("Deleted session {}", id);
         Ok(removed)
@@ -670,6 +660,19 @@ impl StateStore for JsonFileStore {
                 value: state,
             },
         )
+    }
+
+    async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
+        debug!("Deleting the state of channel {}", channel_id);
+        delete_if_exists(&self.channel_state_path(channel_id))?;
+        delete_dir_if_exists(&self.agent_channel_state_dir(channel_id))?;
+        Ok(())
+    }
+
+    async fn delete_session_state(&self, session_id: SessionId) -> StoreResult<()> {
+        debug!("Deleting the state of session {}", session_id);
+        delete_if_exists(&self.session_state_path(session_id))?;
+        Ok(())
     }
 }
 
@@ -889,7 +892,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_session_removes_files_and_channel_state() {
+    async fn deleting_a_session_leaves_its_state_to_the_state_store() {
         use crate::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
@@ -936,10 +939,16 @@ mod tests {
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
         assert!(store.delete_session(&ctx, session_id).await.unwrap());
-
         assert!(!store.session_path(session_id).exists());
-        assert!(!store.session_state_path(session_id).exists());
+        assert!(store.session_state_path(session_id).exists(), "the state may live in another store");
+
+        store.put_channel_state(channel_id, &ChannelState::new(channel_id)).await.unwrap();
+        store.delete_channel_state(channel_id).await.unwrap();
+        store.delete_session_state(session_id).await.unwrap();
+        assert!(!store.channel_state_path(channel_id).exists());
         assert!(!store.agent_channel_state_dir(channel_id).exists());
+        assert!(!store.session_state_path(session_id).exists());
+        store.delete_channel_state(channel_id).await.expect("nothing to delete is no error");
 
         // Deleting again reports that nothing was removed.
         assert!(!store.delete_session(&ctx, session_id).await.unwrap());

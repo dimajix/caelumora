@@ -10,12 +10,13 @@ import {
   Trash2,
   User
 } from 'lucide-react';
-import type {SessionSnapshot, SessionTemplate, UserResponse} from '../types';
+import type {ChannelResponse, SessionSnapshot, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {sessionChange} from '../globalEvents';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
+import {NewChannelDialog} from './NewChannelDialog';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 
@@ -52,6 +53,8 @@ interface SidebarProps {
   selectedChannelId: string | null;
   onSelectChannel: (sessionId: string, channelId: string) => void;
   onSessionDeleted: (sessionId: string) => void;
+  /** The selected channel no longer exists - deleted here or elsewhere. */
+  onChannelDeleted: (channelId: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -61,6 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedChannelId,
   onSelectChannel,
   onSessionDeleted,
+  onChannelDeleted,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
@@ -72,6 +76,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
+  // The session a new channel is being created in (issue 09).
+  const [newChannelIn, setNewChannelIn] = useState<SessionSnapshot | null>(null);
 
   useEffect(() => {
     api.getTemplates()
@@ -134,6 +140,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, []);
 
+  // A selected channel that the list no longer has was deleted: here, or
+  // elsewhere and learnt of by the global stream (issue 09).
+  useEffect(() => {
+    if (!selectedSessionId || !selectedChannelId) return;
+    const session = sessions.find(s => s.id === selectedSessionId);
+    if (session && !session.channels.some(c => c.id === selectedChannelId)) {
+      onChannelDeleted(selectedChannelId);
+    }
+  }, [sessions, selectedSessionId, selectedChannelId, onChannelDeleted]);
+
   const toggleSession = (sessionId: string) => {
     setExpandedSessions(prev => ({ ...prev, [sessionId]: !prev[sessionId] }));
   };
@@ -195,6 +211,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
       removeSession(sessionId);
     } catch (error) {
       reportError('Failed to delete session', error);
+    }
+  };
+
+  const handleChannelCreated = (session: SessionSnapshot, channel: ChannelResponse) => {
+    setNewChannelIn(null);
+    setSessions(prev => prev.map(s => (s.id === session.id && !s.channels.some(c => c.id === channel.id)
+      ? { ...s, channels: [...s.channels, channel] }
+      : s)));
+    onSelectChannel(session.id, channel.id);
+  };
+
+  const handleDeleteChannel = async (e: React.MouseEvent, sessionId: string, channelId: string) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+    try {
+      await api.deleteChannel(sessionId, channelId);
+      setSessions(prev => prev.map(s => (s.id === sessionId
+        ? { ...s, channels: s.channels.filter(c => c.id !== channelId) }
+        : s)));
+    } catch (error) {
+      reportError('Failed to delete the channel', error);
     }
   };
 
@@ -302,22 +339,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
               
               {expandedSessions[session.id] && (
                 <div className="ml-4 space-y-1">
-                  {session.channels.map(channel => (
-                    <button
-                      key={channel.id}
-                      onClick={() => onSelectChannel(session.id, channel.id)}
-                      className={cn(
-                        "w-full flex items-center p-2 rounded-md hover:bg-gray-700 transition-colors text-sm text-gray-400",
-                        selectedChannelId === channel.id && "bg-gray-700 text-white font-medium"
-                      )}
-                    >
-                      <MessageSquare size={14} className="mr-2" />
-                      <span className="truncate">{channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`}</span>
-                    </button>
-                  ))}
+                  {session.channels.map(channel => {
+                    const menuId = `channel:${channel.id}`;
+                    return (
+                      <div
+                        key={channel.id}
+                        className={cn(
+                          "relative group/channel flex items-center rounded-md hover:bg-gray-700 transition-colors text-sm text-gray-400",
+                          selectedChannelId === channel.id && "bg-gray-700 text-white font-medium"
+                        )}
+                      >
+                        <button
+                          onClick={() => onSelectChannel(session.id, channel.id)}
+                          className="flex-1 min-w-0 flex items-center p-2"
+                        >
+                          <MessageSquare size={14} className="mr-2 shrink-0" />
+                          <span className="truncate">{channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`}</span>
+                        </button>
+                        <button
+                          onClick={(e) => toggleMenu(e, menuId)}
+                          className="p-2 opacity-0 group-hover/channel:opacity-100 focus:opacity-100 hover:text-white transition-opacity"
+                          title="Channel options"
+                        >
+                          <MoreVertical size={14} />
+                        </button>
+                        {openMenuId === menuId && (
+                          <div className="absolute right-0 top-9 w-32 bg-gray-800 border border-gray-700 rounded-md shadow-lg z-50 py-1">
+                            <button
+                              onClick={(e) => handleDeleteChannel(e, session.id, channel.id)}
+                              className="w-full flex items-center px-3 py-2 text-xs text-red-400 hover:bg-gray-700 transition-colors"
+                            >
+                              <Trash2 size={12} className="mr-2" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   {session.channels.length === 0 && (
                     <div className="p-2 text-xs text-gray-500 italic">No channels</div>
                   )}
+                  <button
+                    onClick={() => setNewChannelIn(session)}
+                    className="w-full flex items-center p-2 rounded-md hover:bg-gray-700 transition-colors text-xs text-gray-500"
+                  >
+                    <Plus size={14} className="mr-2" />
+                    New channel
+                  </button>
                 </div>
               )}
             </div>
@@ -329,6 +398,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       </div>
+
+      {newChannelIn && (
+        <NewChannelDialog
+          session={newChannelIn}
+          user={user}
+          onCreated={(channel) => handleChannelCreated(newChannelIn, channel)}
+          onClose={() => setNewChannelIn(null)}
+        />
+      )}
 
       <div className="p-3 border-t border-gray-800 flex items-center gap-2 text-sm">
         <User size={16} className="text-gray-400 shrink-0" />

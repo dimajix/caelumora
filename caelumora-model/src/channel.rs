@@ -1,6 +1,6 @@
 use crate::actor::ActorId;
 use crate::agent::Agent;
-use crate::approval::Approver;
+use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::security::{Secured, SecurityAttributes};
@@ -11,6 +11,9 @@ use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// The moderator of a channel whose template or request names none.
+pub const DEFAULT_MODERATOR: &str = "round_robin";
 
 /// Something that may not be done in a channel.
 #[derive(Debug, thiserror::Error)]
@@ -173,6 +176,21 @@ impl Channel {
             participants,
             security_attributes,
         }
+    }
+
+    /// A new channel of `participants`, owned by `owner`, as every channel is
+    /// built - from a template or on request (issue 09): with an approver
+    /// added if there is none, and with every user and agent in it as a
+    /// contributor (see `participant_attributes`).
+    pub fn build(session_id: SessionId, owner: ActorId, name: String, moderator: String, mut participants: Vec<Participant>) -> Self {
+        if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
+            participants.push(Participant::Approver(Approver {
+                id: ApproverId(Uuid::new_v4()),
+                strategy: ApprovalStrategy::Any,
+            }));
+        }
+        let security_attributes = participant_attributes(owner, &participants);
+        Self::new(session_id, name, moderator, participants, security_attributes)
     }
 }
 

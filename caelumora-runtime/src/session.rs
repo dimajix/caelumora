@@ -1,20 +1,45 @@
 use crate::channel::ChannelLoop;
+use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
+use caelumora_model::actor::ActorId;
+use caelumora_model::channel::{Channel, DEFAULT_MODERATOR};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::store::StoreError;
-use tracing::info;
+use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinHandle, JoinSet};
 
-struct ChannelHandle {
-    id: ChannelId,
-    abort_handle: AbortHandle,
+/// A request for a channel that cannot be met as asked (issue 09). The
+/// messages are meant for users (see `crate::error::user_message`).
+#[derive(Debug, thiserror::Error)]
+pub enum SessionError {
+    #[error("A channel needs a name")]
+    EmptyChannelName,
+    #[error("Session {session} already has a channel named \"{name}\"")]
+    DuplicateChannelName { session: SessionId, name: String },
+    #[error("There is no moderator \"{0}\"")]
+    UnknownModerator(String),
+    #[error("{participant} is not a participant of session {session}")]
+    NotAParticipant { session: SessionId, participant: ActorId },
+    #[error("Session {session} has no channel {channel}")]
+    ChannelNotFound { session: SessionId, channel: ChannelId },
+}
+
+/// What a new channel should be (issue 09).
+#[derive(Debug, Clone)]
+pub struct ChannelSpec {
+    pub name: String,
+    /// The moderator kind; `None` for the default, as in a template.
+    pub moderator: Option<String>,
+    /// Who takes part, from the session's participants. Whoever creates the
+    /// channel takes part anyway, if they are a participant of the session.
+    pub participants: Vec<ActorId>,
 }
 
 #[derive(Debug)]
@@ -22,19 +47,32 @@ pub struct SessionLoop {
     id: SessionId,
     session_controller: Arc<SessionController>,
     runtime_manager: Arc<RuntimeManager>,
-    channels: HashMap<ChannelId,Arc<ChannelLoop>>,
-    run_lock: Mutex<()>
+    /// The user commands of every channel of the session.
+    commands: Arc<CommandExecutor>,
+    channels: DashMap<ChannelId, Arc<ChannelLoop>>,
+    /// The tasks of the channels that run. Checked and changed under the
+    /// lock, so that a channel deleted while it waits to be started is never
+    /// started.
+    tasks: std::sync::Mutex<HashMap<ChannelId, AbortHandle>>,
+    /// Channels to start. `run` starts them, those of the session as well as
+    /// those created later, so that all of them run in its `JoinSet` - and
+    /// stop with it when the session is stopped.
+    start_tx: mpsc::UnboundedSender<Arc<ChannelLoop>>,
+    /// Taken by `run`, which is how it knows it is not already running.
+    start_rx: Mutex<mpsc::UnboundedReceiver<Arc<ChannelLoop>>>,
 }
 
 impl SessionLoop {
     pub async fn new(session: Session, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
-        let mut channels = HashMap::new();
+        let (start_tx, start_rx) = mpsc::unbounded_channel();
+        let channels = DashMap::new();
         for channel in &session.channels {
             let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone());
             let cl = ChannelLoop::new(channel.clone(), runtime).await?;
-            channels.insert(cl.id(), cl);
+            channels.insert(cl.id(), cl.clone());
+            let _ = start_tx.send(cl);
         }
 
         let session_controller = runtime_manager.controller_manager().new_session_controller(session).await?;
@@ -43,8 +81,11 @@ impl SessionLoop {
             id,
             session_controller,
             runtime_manager,
+            commands,
             channels,
-            run_lock: Mutex::new(())
+            tasks: std::sync::Mutex::new(HashMap::new()),
+            start_tx,
+            start_rx: Mutex::new(start_rx),
         })
     }
 
@@ -69,20 +110,108 @@ impl SessionLoop {
         Ok(self.session_controller.update_name(context, new_name).await?)
     }
 
+    /// The running channels, in the order of the session: those from its
+    /// template first, then those created later, oldest first.
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
-        self.channels.values().cloned().collect()
+        self.get_session().channels.iter().filter_map(|c| self.channel_by_id(c.id)).collect()
     }
 
     pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
-        self.channels.values().find(|c| c.id() == channel_id).map(|c| c.clone())
+        self.channels.get(&channel_id).map(|c| c.value().clone())
     }
+
     pub async fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
-        for channel in self.channels.values() {
-            if channel.name() == name {
-                return Some(channel.clone());
+        self.channels.iter().find(|c| c.name() == name).map(|c| c.value().clone())
+    }
+
+    /// Creates a channel in the running session on behalf of `context` and
+    /// starts it (issue 09). Creating a channel changes the session, so it
+    /// takes the permission to change the session (`UpdateSession`); the
+    /// channel belongs to the session's owner, like the session's others.
+    ///
+    /// # Errors
+    /// - [`SessionError`] if `spec` asks for something that cannot be: no
+    ///   name, a name the session already has, an unknown moderator, or a
+    ///   participant who is not one of the session's.
+    /// - `StoreError::PermissionDenied` if `context` may not change the
+    ///   session; nothing is changed then.
+    pub async fn create_channel(&self, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
+        let session = self.get_session();
+        let name = spec.name.trim().to_string();
+        if name.is_empty() {
+            return Err(SessionError::EmptyChannelName.into());
+        }
+        if self.channels.iter().any(|c| c.name() == name) {
+            return Err(SessionError::DuplicateChannelName { session: self.id, name }.into());
+        }
+        let moderator = spec.moderator.unwrap_or_else(|| DEFAULT_MODERATOR.to_string());
+        // Asked for here, before anything is stored, rather than found out
+        // when the channel is built.
+        self.runtime_manager.new_moderator(&moderator)?;
+
+        // The creator first, if they take part in the session at all.
+        let mut ids = vec![context.initiator_id];
+        ids.extend(spec.participants);
+        let mut participants = Vec::new();
+        for id in ids {
+            if participants.iter().any(|p: &caelumora_model::channel::Participant| p.actor_id() == id) {
+                continue;
+            }
+            match session.participants.iter().find(|p| p.actor_id() == id) {
+                Some(participant) => participants.push(participant.clone()),
+                None if id == context.initiator_id => {}
+                None => return Err(SessionError::NotAParticipant { session: self.id, participant: id }.into()),
             }
         }
-        None
+
+        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, moderator, participants);
+        drop(session);
+        self.session_controller.add_channel(context, channel.clone()).await?;
+
+        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone());
+        let channel_loop = match ChannelLoop::new(channel.clone(), runtime).await {
+            Ok(channel_loop) => channel_loop,
+            Err(error) => {
+                // Stored, but it cannot run: taken back out, so that the
+                // session does not keep a channel that fails every start.
+                if let Err(undo) = self.session_controller.remove_channel(context, channel.id).await {
+                    warn!("Channel {} of session {} could not be built and not be removed again: {}", channel.id, self.id, undo);
+                }
+                return Err(error);
+            }
+        };
+        self.channels.insert(channel.id, channel_loop.clone());
+        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone());
+        let _ = self.start_tx.send(channel_loop.clone());
+        info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
+        Ok(channel_loop)
+    }
+
+    /// Stops and deletes the channel `channel_id` on behalf of `context`,
+    /// together with its state (issue 09). Asked about first, like creating
+    /// one: a refused deletion leaves the channel running.
+    ///
+    /// # Errors
+    /// - `SessionError::ChannelNotFound` if the session has no such channel.
+    /// - `StoreError::PermissionDenied` if `context` may not change the
+    ///   session; nothing is changed then.
+    pub async fn delete_channel(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<()> {
+        if !self.channels.contains_key(&channel_id) {
+            return Err(SessionError::ChannelNotFound { session: self.id, channel: channel_id }.into());
+        }
+        let channel = self.session_controller.remove_channel(context, channel_id).await?;
+
+        self.channels.remove(&channel_id);
+        let task = self.tasks.lock().map_err(|_| anyhow!("The channel tasks of session {} are poisoned", self.id))?.remove(&channel_id);
+        let event_bus = self.runtime_manager.event_bus();
+        if let Some(task) = task {
+            task.abort();
+            event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
+        }
+        event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes);
+        self.runtime_manager.state_store().delete_channel_state(channel_id).await?;
+        info!("Channel {}/{} deleted from session {}", channel.name, channel_id, self.id);
+        Ok(())
     }
 
     pub async fn cancel_channel(&self, channel_id: ChannelId, context: &SecurityContext) -> Result<()> {
@@ -94,23 +223,33 @@ impl SessionLoop {
         }
     }
 
+    /// Runs the session's channels, those it has and those created while it
+    /// runs, until the session is stopped - which aborts this, and with it
+    /// every channel.
     pub async fn run(&self) -> Result<()> {
-        let _guard = self.run_lock.try_lock()
+        let mut start_rx = self.start_rx.try_lock()
             .map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        let _channels = self.spawn_channels(&mut join_set);
         let mut global_rx = self.runtime_manager.event_bus().subscribe_session(self.id());
 
         loop {
             tokio::select! {
-                res = join_set.join_next() => {
-                    if let Some(res) = res {
-                        let channel_id = res?;
-                        let attributes = self.channels.get(&channel_id).map(|c| c.security_attributes()).unwrap_or_default();
-                        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
-                    } else {
-                        break;
+                Some(channel) = start_rx.recv() => {
+                    self.start_channel(channel, &mut join_set)?;
+                }
+                Some(res) = join_set.join_next(), if !join_set.is_empty() => {
+                    match res {
+                        Ok(channel_id) => {
+                            if let Ok(mut tasks) = self.tasks.lock() {
+                                tasks.remove(&channel_id);
+                            }
+                            let attributes = self.channels.get(&channel_id).map(|c| c.security_attributes()).unwrap_or_default();
+                            self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
+                        }
+                        // A deleted channel; `delete_channel` announced it.
+                        Err(e) if e.is_cancelled() => {}
+                        Err(e) => return Err(e.into()),
                     }
                 }
                 maybe_global = global_rx.recv() => {
@@ -118,8 +257,6 @@ impl SessionLoop {
                 }
             }
         }
-
-        Ok(())
     }
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
@@ -128,32 +265,23 @@ impl SessionLoop {
         }
     }
 
-    fn spawn_channels(&self, join_set: &mut JoinSet<ChannelId>) -> Result<HashMap<ChannelId, ChannelHandle>> {
-        let mut channels = HashMap::new();
-        for (id, channel) in &self.channels {
-            let handle = self.spawn_channel(channel.clone(), join_set)?;
-            channels.insert(id.clone(), handle);
-        };
-
-        Ok(channels)
-    }
-
-    fn spawn_channel(&self, channel: Arc<ChannelLoop>, join_set: &mut JoinSet<ChannelId>) -> Result<ChannelHandle> {
+    /// Starts `channel` in `join_set` - unless it was deleted while it
+    /// waited to be started.
+    fn start_channel(&self, channel: Arc<ChannelLoop>, join_set: &mut JoinSet<ChannelId>) -> Result<()> {
         let id = channel.id();
+        let mut tasks = self.tasks.lock().map_err(|_| anyhow!("The channel tasks of session {} are poisoned", self.id))?;
+        if !self.channels.contains_key(&id) {
+            return Ok(());
+        }
         self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes());
-        let abort_handle = join_set.spawn(async move {
+        let task = join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()
         });
-
-        let handle = ChannelHandle {
-            id,
-            abort_handle,
-        };
-        Ok(handle)
+        tasks.insert(id, task);
+        Ok(())
     }
 }
-
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -290,6 +418,13 @@ impl SessionManager {
         }
 
         let removed = self.runtime_manager.entity_store().delete_session(ctx, id).await?;
+        // The state lives in the `StateStore`, which may be another store
+        // than the session's.
+        let state_store = self.runtime_manager.state_store();
+        for channel in &session.channels {
+            state_store.delete_channel_state(channel.id).await?;
+        }
+        state_store.delete_session_state(id).await?;
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         Ok(removed)
     }
@@ -463,6 +598,163 @@ mod tests {
         };
         let error = runtime.new_command_executor(&session).await.expect_err("/help twice");
         assert!(error.to_string().contains("/help"), "{error}");
+    }
+
+    /// A running session owned by a user who takes part in it, with that
+    /// user's context and a second user of the session.
+    async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, caelumora_model::actor::ActorId) {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::session::Participant;
+        use caelumora_model::user::{User, UserId};
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let (owner, other) = (user("owner"), user("other"));
+        let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
+        let mut session = make_session("with-users");
+        session.participants = vec![Participant::User(owner), Participant::User(other)];
+        session.security_attributes = SecurityAttributes { owner_id, contributors: Vec::new() };
+        let ctx = SecurityContext::new(owner_id, session.id, Default::default());
+        let session_loop = manager.create_session(&ctx, session).await.expect("the session starts");
+        (session_loop, ctx, other_id)
+    }
+
+    fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
+        ChannelSpec { name: name.to_string(), moderator: None, participants }
+    }
+
+    #[tokio::test]
+    async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        let channel = session.create_channel(&ctx, spec(" side ", vec![other])).await.expect("the channel is created");
+
+        assert_eq!(channel.name(), "side", "the name is trimmed");
+        assert_eq!(channel.moderator(), DEFAULT_MODERATOR);
+        let kinds: Vec<String> = channel.members().into_iter().map(|m| m.kind).collect();
+        assert_eq!(kinds.iter().filter(|k| *k == "user").count(), 2, "the creator and the other user: {kinds:?}");
+        assert!(kinds.iter().any(|k| k == "approver"), "an approver is added: {kinds:?}");
+        assert!(session.channel_by_id(channel.id()).is_some());
+        let names: Vec<String> = session.channels().iter().map(|c| c.name()).collect();
+        assert_eq!(names, ["main", "side"], "in the order of the session");
+
+        let stored = runtime.entity_store().get_session(&ctx, session.id()).await.unwrap();
+        assert!(stored.channels.iter().any(|c| c.id == channel.id()), "the session is stored with the channel");
+
+        // `run` starts it asynchronously.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let events = drain(&mut rx);
+        let created = events.iter().position(|e| matches!(e, GlobalEvent::ChannelCreated(_, cid) if *cid == channel.id()));
+        let started = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStarted(_, cid) if *cid == channel.id()));
+        assert!(created.is_some() && started.is_some() && created < started, "created, then started: {events:?}");
+
+        manager.stop_session(session.id());
+    }
+
+    #[tokio::test]
+    async fn a_channel_that_cannot_be_is_refused_before_anything_is_stored() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
+
+        let refusal = |result: Result<Arc<ChannelLoop>>| result.expect_err("refused").downcast::<SessionError>().expect("a SessionError");
+        assert!(matches!(refusal(session.create_channel(&ctx, spec("  ", vec![])).await), SessionError::EmptyChannelName));
+        assert!(matches!(refusal(session.create_channel(&ctx, spec("main", vec![])).await), SessionError::DuplicateChannelName { .. }));
+        assert!(matches!(refusal(session.create_channel(&ctx, spec("x", vec![stranger])).await), SessionError::NotAParticipant { .. }));
+        let unknown = ChannelSpec { moderator: Some("nobody".to_string()), ..spec("x", vec![]) };
+        assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::UnknownModerator(_)));
+
+        assert_eq!(session.channels().len(), 1);
+        assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);
+        manager.stop_session(session.id());
+    }
+
+    #[tokio::test]
+    async fn a_deleted_channel_is_stopped_announced_and_its_state_is_gone() {
+        use caelumora_model::agent::{AgentChannelState, AgentId};
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let id = channel.id();
+        let agent = AgentId::new();
+        runtime.state_store().put_agent_channel_state(agent, id, &AgentChannelState::default()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        session.delete_channel(&ctx, id).await.expect("the owner deletes it");
+
+        assert!(session.channel_by_id(id).is_none());
+        assert!(!runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.iter().any(|c| c.id == id));
+        assert!(runtime.state_store().get_channel_state(id).await.is_err(), "its state is deleted");
+        let events = drain(&mut rx);
+        let stopped = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStopped(_, cid) if *cid == id));
+        let deleted = events.iter().position(|e| matches!(e, GlobalEvent::ChannelDeleted(_, cid) if *cid == id));
+        assert!(stopped.is_some() && deleted.is_some() && stopped < deleted, "stopped, then deleted: {events:?}");
+
+        let missing = session.delete_channel(&ctx, id).await.expect_err("gone");
+        assert!(matches!(missing.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })));
+
+        // The last channel may go too; the session keeps running without.
+        let main = session.channel_by_name("main").await.unwrap().id();
+        session.delete_channel(&ctx, main).await.expect("the last channel may be deleted");
+        assert!(session.channels().is_empty());
+        session.create_channel(&ctx, spec("again", vec![])).await.expect("and a new one created");
+        manager.stop_session(session.id());
+    }
+
+    #[tokio::test]
+    async fn only_who_may_change_the_session_creates_or_deletes_its_channels() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::session::Participant;
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
+        let manager = SessionManager::new(runtime);
+
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let (alice, bob) = (user("alice"), user("bob"));
+        let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice.id), contributors: vec![ActorId::User(bob.id)] };
+        session.participants = vec![Participant::User(alice), Participant::User(bob)];
+        let session = manager.create_session(&alice_ctx, session).await.unwrap();
+        let main = session.channel_by_name("main").await.unwrap().id();
+
+        let refused = session.create_channel(&bob_ctx, spec("bobs", vec![])).await.expect_err("a contributor may not");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        let refused = session.delete_channel(&bob_ctx, main).await.expect_err("a contributor may not");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(session.channel_by_id(main).is_some(), "a refused deletion leaves the channel");
+
+        session.create_channel(&alice_ctx, spec("hers", vec![])).await.expect("the owner may");
+        manager.stop_session(session.id());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_session_deletes_its_state_from_the_state_store() {
+        use caelumora_model::store::StateStore;
+        let entities = Arc::new(MemoryStore::new());
+        let states = Arc::new(MemoryStore::new());
+        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+        let runtime = Arc::new(RuntimeManager::new(states.clone(), entities, secret_manager, Arc::new(DummySecurityManager::new()), default_commands()).unwrap());
+        let manager = SessionManager::new(runtime);
+        let ctx = SecurityContext::default();
+        let session = make_session("two-stores");
+        let (id, channel_id) = (session.id, session.channels[0].id);
+        manager.create_session(&ctx, session).await.unwrap();
+        assert!(states.get_channel_state(channel_id).await.is_ok(), "the channel keeps its state in the state store");
+
+        manager.delete_session(&ctx, id).await.unwrap();
+
+        assert!(states.get_channel_state(channel_id).await.is_err(), "deleted from the state store, not only from the entity store");
     }
 
     #[tokio::test]

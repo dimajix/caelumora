@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react';
+import {useCallback, useEffect, useState} from 'react';
 import {Sidebar} from './components/Sidebar';
 import {ChatView} from './components/ChatView';
 import {Login} from './components/Login';
@@ -75,6 +75,10 @@ function Workspace({ user, onLogout }: WorkspaceProps) {
     setSelectedChannelId(channelId);
   };
 
+  const handleChannelDeleted = useCallback((channelId: string) => {
+    setSelectedChannelId(current => (current === channelId ? null : current));
+  }, []);
+
   const handleSessionDeleted = (sessionId: string) => {
     if (selectedSessionId === sessionId) {
       setSelectedSessionId(null);
@@ -91,6 +95,7 @@ function Workspace({ user, onLogout }: WorkspaceProps) {
         selectedChannelId={selectedChannelId}
         onSelectChannel={handleSelectChannel}
         onSessionDeleted={handleSessionDeleted}
+        onChannelDeleted={handleChannelDeleted}
       />
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">

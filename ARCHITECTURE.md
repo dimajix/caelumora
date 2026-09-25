@@ -77,6 +77,11 @@ Caelumora uses an actor-based model for communication within sessions.
 ### Session and SessionLoop
 A **Session** represents a high-level container for a specific interaction context. The `SessionLoop` manages multiple channels within that session.
 
+Channels can be created in and deleted from a running session (`SessionLoop::create_channel` and `delete_channel`, `POST /sessions/{id}/channels` and `DELETE /sessions/{id}/channels/{cid}`). Channels are part of the session document (`Session.channels`), so creating or deleting one changes the session. Like renaming, it is stored first through `SessionController::add_channel` or `remove_channel`, which checks `UpdateSession` so that only the owner may do it; only then is the running session changed and the change announced (`ChannelCreated`, `ChannelDeleted`). `SessionController` holds a lock while it changes and stores the session, so that concurrent changes cannot overwrite each other.
+*   **Building a channel.** Every channel is built by `Channel::build`, from a template (`ChannelTemplate::instantiate`) or on request. It adds an approver and makes every user and agent in the channel a contributor. The participants of a requested channel come from the session's participants, the creator always among them, and its moderator defaults to `round_robin`, as in a template. A request that cannot be met - no name, a name the session already has, an unknown moderator, someone who is not a participant of the session - is a `SessionError`, refused before anything is stored.
+*   **Running channels.** `SessionLoop::run` starts every channel in its `JoinSet`, those the session had and those created later, which it receives over a queue. Stopping the session aborts `run`, and with it every channel. Deleting a channel aborts that channel's task and deletes its state. A channel deleted while it waits to be started is never started.
+*   Participants of a channel are still fixed once it is built; changing them is [46](issues/46-channel-participants.md).
+
 ### Channel and ChannelLoop
 A **Channel** is a specific communication medium within a session (e.g., a chat room). The `ChannelLoop` is responsible for:
 *   Managing the lifecycle of **Actors** participating in the channel.
@@ -242,6 +247,8 @@ Implementations include `MemoryStore` (for testing) and `JsonFileStore` (for sim
 The `StateStore` trait (in `caelumora-model`) is dedicated to managing the frequently changing runtime state of agents and sessions.
 *   **Agent State**: Includes the current cognitive state, message history, and context.
 *   **Session State**: Includes metadata and operational state of a live session.
+
+Entity store and state store are configured separately and may be different stores. Deleting a session or a channel therefore deletes its state through the `StateStore` (`delete_session_state`, `delete_channel_state`, which removes the channel's state and that of every agent in it), never as a side effect of `EntityStore::delete_session`.
 
 ### `SessionContext`
 Provides necessary dependencies (stores, session ID, owner) for instantiating live objects from templates.

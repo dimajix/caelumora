@@ -72,6 +72,15 @@ export interface SessionSnapshot {
   id: string;
   name: string;
   channels: ChannelResponse[];
+  /** Everyone who takes part in the session - whom a new channel can be made of (issue 09). */
+  participants: SessionParticipant[];
+}
+
+export interface SessionParticipant {
+  id: ActorId;
+  name: string;
+  /** `user`, `agent` or `approver`. */
+  kind: string;
 }
 
 /** The state of all sessions when the global event stream connects (issue 34). */
@@ -186,6 +195,15 @@ export interface SessionTemplate {
 export interface CreateSessionRequest {
   template_id: string;
   name: string;
+}
+
+/** A channel to create in a running session (issue 09). */
+export interface CreateChannelRequest {
+  name: string;
+  /** The moderator kind; the server's default if absent. */
+  moderator?: string;
+  /** Participants of the session; you take part anyway. */
+  participants: ActorId[];
 }
 
 export type ApprovalStatus = 'Approved' | 'Denied';

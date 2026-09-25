@@ -55,11 +55,35 @@ pub struct SessionSnapshot {
     pub name: String,
     pub metadata: Metadata,
     pub channels: Vec<ChannelResponse>,
+    /// Everyone who takes part in the session - whom a new channel can be
+    /// made of (issue 09).
+    pub participants: Vec<ParticipantResponse>,
+}
+
+/// A participant of a session.
+#[derive(Debug, Serialize)]
+pub struct ParticipantResponse {
+    pub id: ActorId,
+    pub name: String,
+    /// `"user"`, `"agent"` or `"approver"`.
+    pub kind: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RenameSessionRequest {
     pub name: String,
+}
+
+/// A channel to create in a running session (issue 09).
+#[derive(Debug, Deserialize)]
+pub struct CreateChannelRequest {
+    pub name: String,
+    /// The moderator kind, e.g. `mentions_only`; the default if absent.
+    pub moderator: Option<String>,
+    /// Participants of the session to take part. The requesting user takes
+    /// part anyway.
+    #[serde(default)]
+    pub participants: Vec<ActorId>,
 }
 
 #[derive(Debug, Serialize)]

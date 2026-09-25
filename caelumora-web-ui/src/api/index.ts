@@ -3,6 +3,7 @@ import type {
   Command,
   CommandReply,
   MessageContextResponse,
+  CreateChannelRequest,
   CreateSessionRequest,
   Message,
   SessionResponse,
@@ -88,6 +89,23 @@ export const api = {
     });
     await ensureOk(res, 'Failed to create session');
     return res.json();
+  },
+
+  async createChannel(sessionId: string, channel: CreateChannelRequest): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(channel),
+    });
+    await ensureOk(res, 'Failed to create the channel');
+    return res.json();
+  },
+
+  async deleteChannel(sessionId: string, channelId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}`, {
+      method: 'DELETE',
+    });
+    await ensureOk(res, 'Failed to delete the channel');
   },
 
   async getChannels(sessionId: string): Promise<ChannelResponse[]> {
