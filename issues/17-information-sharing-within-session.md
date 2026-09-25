@@ -37,6 +37,42 @@ other agents rather than for the user.
 - Whether an agent may read what another agent wrote is also an access
   question — see [12](12-user-and-agent-permissions.md).
 
+## Plan (2026-09-25)
+
+Phases 1 and 2 of the order of work in [19](19-memory-tiers.md), whose
+principles (points 2-6, 9, 11) this follows. Requires phase 0:
+[47](47-prompt-parts-with-provenance.md) and [48](48-shared-digest-chain.md).
+
+**Phase 1 - notes within a channel**
+- [ ] 4. Model: a note chain in `ChannelState`, on the chain type of
+  [48](48-shared-digest-chain.md). Entries are "note" or "revoke N"; a new
+  version is a revocation plus a note. Each records its provenance: agent,
+  triggering message, context digest. The current notes are the chain read
+  from start to head.
+- [ ] 5. Writing: a tool provider with `note` and `revoke_note`. Only the
+  channel's own entries can be revoked.
+- [ ] 6. Reading in the own channel: a `PromptProvider` contributing the
+  current notes as a `BeforeTurnInput` part
+  ([47](47-prompt-parts-with-provenance.md)), so changing notes do not
+  invalidate the prompt cache; recorded with every answer through its
+  `PromptRef`.
+- [ ] 7. Web UI: a notes panel per channel, read-only, showing who wrote a
+  note and in reply to which message.
+
+**Phase 2 - across channels**
+- [ ] 8. `ReadChannel(&attributes)` checked by the `SecurityManager`, with the
+  strict rule: all participants of the reading channel must be allowed to
+  read the source channel ([12](12-user-and-agent-permissions.md)).
+- [ ] 9. A tool `read_notes(channel)` returning the active chain's notes of
+  finished turns, and `KnowledgeRef { channel, source, digest }` recorded in
+  `ContextRef`.
+- [ ] 10. Optionally, session memory as a prompt part: the current notes of
+  all channels the agent may read, with their `KnowledgeRef`s.
+- [ ] 11. A tool `read_history(channel, range/search)`, also recorded as a
+  `KnowledgeRef`.
+- [ ] 12. The web UI's context panel ([41](41-show-message-context.md)) shows
+  which notes and histories went into an answer.
+
 ## Done when
 
 - Agents in one session can exchange structured information without routing it
@@ -62,3 +98,8 @@ other agents rather than for the user.
   through a tool. Documents several channels edit together do not branch and
   are a separate shared workspace whose changes are effects. Reading across
   channels is checked, see [12](12-user-and-agent-permissions.md).
+- **2026-09-25** — Plan for phases 1 and 2 added above, from the order of
+  work in [19](19-memory-tiers.md). Notes are read as a transient prompt part
+  before the turn's input ([47](47-prompt-parts-with-provenance.md)), not
+  through the system prompt, because many models put the system prompt first
+  and any change to it invalidates the prompt cache.

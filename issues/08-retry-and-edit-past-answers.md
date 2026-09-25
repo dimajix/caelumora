@@ -191,3 +191,8 @@ and comes later.
   [17](17-information-sharing-within-session.md),
   [18](18-knowledge-sharing.md) and [20](20-transactional-effects.md); the
   general principles are recorded in [19](19-memory-tiers.md).
+- **2026-09-25** — Sequenced: branching is phase 3 of the order of work in
+  [19](19-memory-tiers.md), after notes ([17](17-information-sharing-within-session.md)).
+  Step 1 of the plan above ("trees with a head") is done on the chain type of
+  [48](48-shared-digest-chain.md), so history, context and notes become
+  trees at once.

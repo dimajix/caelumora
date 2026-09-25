@@ -158,6 +158,58 @@ before defining the tiers themselves, because they cannot be added afterwards.
    all participants of the reading channel must be allowed to read the source
    channel.
 
+## Order of work (decided 2026-09-25)
+
+Notes first, branching afterwards: notes are additive (components on
+existing extension points) and useful at once, branching reaches into the
+core. What makes that order safe is phase 0: history, context and notes share
+one chain type, so branching later turns all of them into trees at once.
+The steps are small and each can be delivered on its own.
+
+**Phase 0 - foundation**
+1. Prompt parts placed and recorded on one path, with a transient position
+   before the turn's input ([47](47-prompt-parts-with-provenance.md)).
+2. One chain type for history and context, a pure refactor
+   ([48](48-shared-digest-chain.md)).
+3. Terms defined here and in `ARCHITECTURE.md`: history, context, notes,
+   session memory (this issue's "done when").
+
+**Phase 1 - notes within a channel** ([17](17-information-sharing-within-session.md))
+
+4. Model: the note chain in `ChannelState`, entries "note" or "revoke N",
+   each with provenance; the current state is the chain read from start to
+   head.
+5. Writing: a tool provider with `note` and `revoke_note`.
+6. Reading in the own channel: a `PromptProvider` with a `BeforeTurnInput`
+   part, not the system prompt, so the prompt cache survives changing notes.
+7. Web UI: a notes panel per channel, read-only, with provenance.
+
+**Phase 2 - across channels** ([17](17-information-sharing-within-session.md))
+
+8. `ReadChannel` with the strict rule of point 11.
+9. `read_notes(channel)` and `KnowledgeRef` in `ContextRef`.
+10. Session memory as a prompt part: the active chains of all channels
+    (optional).
+11. `read_history(channel, range/search)`.
+12. The context panel ([41](41-show-message-context.md)) shows which state of
+    knowledge went in.
+
+**Phase 3 - branching** ([08](08-retry-and-edit-past-answers.md))
+
+13. The chain type becomes a tree: head, `fork_at`, `switch_to`, path.
+14. Regenerate the latest answer: `ChannelLoop::regenerate`, `BranchSwitched`,
+    turn state reset, `BranchChannel`.
+15. REST and web UI: the regenerate button.
+16. Regenerating earlier answers and switching branches (`< n/m >`).
+17. The world does not branch: tools declare effects, effects of abandoned
+    branches carried over as facts (part of
+    [20](20-transactional-effects.md)).
+18. Marking reads based on discarded notes (point 6).
+19. Editing a past user message.
+
+**Phase 4 - knowledge beyond the session** ([18](18-knowledge-sharing.md)),
+built on the commit of point 7.
+
 ## Done when
 
 - The tiers are defined here: scope, lifetime, reader, writer, invalidation,
@@ -181,3 +233,10 @@ before defining the tiers themselves, because they cannot be added afterwards.
   (9); documents several channels edit are a shared workspace outside the
   branches (10); reading across channels is checked, strictly until
   [12](12-user-and-agent-permissions.md) decides (11).
+- **2026-09-25** — Order of work recorded above: phase 0 (new issues
+  [47](47-prompt-parts-with-provenance.md) and [48](48-shared-digest-chain.md)),
+  phases 1 and 2 under [17](17-information-sharing-within-session.md),
+  phase 3 under [08](08-retry-and-edit-past-answers.md), phase 4 under
+  [18](18-knowledge-sharing.md). Notes are read as a transient prompt part
+  before the turn's input, not through the system prompt, for the prompt
+  cache ([47](47-prompt-parts-with-provenance.md)).
