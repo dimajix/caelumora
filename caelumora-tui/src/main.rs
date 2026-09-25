@@ -214,6 +214,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
         .collect();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
+    println!("Moderator: {}", channel.moderator());
     loop {
         tokio::select! {
             maybe_envelope = receiver.recv() => {

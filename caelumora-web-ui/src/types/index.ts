@@ -37,6 +37,8 @@ export interface ChannelResponse {
   name: string;
   /** All participants, in no particular order. */
   members: ChannelMember[];
+  /** The kind of moderator, e.g. `round_robin` or `mentions_only` (issue 44). */
+  moderator: string;
 }
 
 export interface ToolCall {

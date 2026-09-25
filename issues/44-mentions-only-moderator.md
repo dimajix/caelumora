@@ -1,6 +1,6 @@
 # 44 — A moderator that asks only mentioned agents to respond
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -112,3 +112,33 @@ it when it is empty. Which of the two is decided when implementing.
   this issue.
 - **2026-09-25** — Added: an example session template with this moderator
   is part of the issue.
+- **2026-09-25** — Implemented.
+  - The three moderators were copies of each other: the same `route()`, the
+    same forwarding, the same precedence of mentions, differing only in whom
+    they ask when nobody is mentioned. They are now one `PolicyModerator`
+    with a `ResponderPolicy` each (`BroadcastPolicy`, `RandomPolicy`,
+    `RoundRobinPolicy`, `MentionsOnlyPolicy` in
+    `caelumora-runtime/src/moderator_impl/`), so the precedence of mentions
+    lives in one place, which [45](45-agent-mentions.md) will change. One
+    unexplained difference went away with it: `broadcast` asked mentioned
+    agents only if the message was forwarded at all, the others always; now
+    all do the former, which makes no difference for a message with text.
+    `round_robin` no longer adjusts its index when an agent leaves; it takes
+    it modulo the candidates on every turn anyway.
+  - The moderator is named `mentions_only`.
+  - `ChannelResponse.moderator` (from `Channel.moderator` via
+    `ChannelLoop::moderator()`, and from the stored channel for sessions that
+    are not running). The web UI maps the four known kinds to a label with an
+    explanation as tooltip (`src/moderator.ts`), shown above the member
+    list, and changes the input placeholder for `mentions_only`. The TUI
+    prints the moderator when the chat starts.
+  - The example template `mentions-session` (the user, Jonathan and Sassy in
+    `main`) is seeded by the REST server in `caelumora-rest-server/src/data.rs`
+    like `simple-session` and `sassy-session`. The question of a versioned
+    home for it did not arise: example templates were never read from the
+    git-ignored store but created at startup. `examples/config.yaml` has no
+    templates, so it is not changed; the moderators are documented in
+    `ARCHITECTURE.md`.
+  - Verified in the browser: a message without a mention got no answer,
+    `@sassy` got exactly Sassy's; a `round_robin` session still answers and
+    shows "Round robin" with the normal placeholder.

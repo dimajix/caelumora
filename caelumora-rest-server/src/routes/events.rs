@@ -113,7 +113,7 @@ fn stored_channel_response(channel: &Channel) -> ChannelResponse {
         ChannelMemberResponse { id, name, handle, kind: kind.to_string(), can_read_context: false }
     }).collect();
 
-    ChannelResponse { id: channel.id, name: channel.name.clone(), members }
+    ChannelResponse { id: channel.id, name: channel.name.clone(), members, moderator: channel.moderator.clone() }
 }
 
 

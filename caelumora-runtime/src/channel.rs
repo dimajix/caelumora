@@ -136,6 +136,11 @@ impl ChannelLoop {
         self.channel.name()
     }
 
+    /// The kind of moderator the channel was built with, e.g. `round_robin`.
+    pub fn moderator(&self) -> String {
+        self.channel.load().moderator.clone()
+    }
+
     /// Who the channel belongs to and who contributes to it (issue 11).
     pub fn security_attributes(&self) -> SecurityAttributes {
         self.channel.load().security_attributes.clone()

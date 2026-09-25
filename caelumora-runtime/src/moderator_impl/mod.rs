@@ -1,17 +1,98 @@
+//! The moderators. They all route the same way - every message to every
+//! other participant, approvals, failed turns and commands to whom they
+//! concern, and a response request to every agent a user `@`-mentioned - and
+//! differ only in whom they ask to respond when nobody was mentioned. That
+//! difference is a [`ResponderPolicy`]; [`PolicyModerator`] is the rest
+//! (issue 44).
+
 pub mod broadcast;
+pub mod mentions_only;
 pub mod random;
 pub mod round_robin;
 
 use crate::actor::Actor;
 use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
-use crate::moderator::RouteDecision;
+use crate::moderator::{Moderator, RouteDecision};
+use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::{Message, MessageRole};
 use dashmap::DashMap;
 use std::any::Any;
 use std::collections::HashSet;
+use std::fmt::Debug;
 use std::sync::Arc;
+
+/// Whom a moderator asks to respond to a message that mentions no agent.
+pub trait ResponderPolicy: Send + Sync + Debug {
+    /// The agents of `candidates` to ask - the agents that are awake and did
+    /// not write the message, in no particular order.
+    fn choose(&mut self, candidates: Vec<ActorId>) -> Vec<ActorId>;
+}
+
+/// A moderator that routes like every other and asks whom `policy` chooses
+/// to respond when a message mentions nobody.
+#[derive(Debug)]
+pub struct PolicyModerator<P: ResponderPolicy> {
+    actors: ModeratorActors,
+    policy: P,
+}
+
+impl<P: ResponderPolicy> PolicyModerator<P> {
+    pub fn new(policy: P) -> Self {
+        Self { actors: ModeratorActors::new(), policy }
+    }
+
+    fn route_full_response(&mut self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
+        let mut routes = self.actors.forward_routes(event, messages);
+        if routes.is_empty() {
+            // Nothing anyone could answer, e.g. only tool calls.
+            return routes;
+        }
+
+        // Mentioned agents respond instead of those the policy would choose;
+        // the policy is not consulted, so a rotation is left as it is.
+        let responders = match self.actors.mentioned_responders(event, messages) {
+            Some(mentioned) => mentioned,
+            None => self.policy.choose(self.actors.actor_candidates(messages)),
+        };
+        for id in responders {
+            routes.push((id, event.forward_with_event(ActorEvent::ResponseRequested)));
+        }
+        routes
+    }
+}
+
+#[async_trait]
+impl<P: ResponderPolicy> Moderator for PolicyModerator<P> {
+    async fn route(&mut self, event: &Envelope) -> RouteDecision {
+        match &event.event {
+            ActorEvent::FullResponseGenerated(messages) => {
+                self.route_full_response(event, messages).into()
+            }
+            ActorEvent::ApprovalRequested(_) |
+            ActorEvent::ApprovalGranted(_) |
+            ActorEvent::ApprovalDenied(_) |
+            ActorEvent::ApprovalTimedOut(_) => {
+                self.actors.route_approval_events(event)
+            }
+            ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } => {
+                self.actors.route_to_users(event)
+            }
+            _ => {
+                Vec::new().into()
+            }
+        }
+    }
+
+    fn add_actor(&mut self, actor: Arc<dyn Actor>) -> () {
+        self.actors.add_actor(actor);
+    }
+
+    fn remove_actor(&mut self, actor: Arc<dyn Actor>) -> () {
+        self.actors.remove_actor(actor);
+    }
+}
 
 #[derive(Debug)]
 struct ModeratorActors {
@@ -267,12 +348,19 @@ mod tests {
             .collect()
     }
 
-    fn moderators() -> Vec<Box<dyn Moderator>> {
+    /// The moderators that ask someone to respond when nobody is mentioned.
+    fn answering_moderators() -> Vec<Box<dyn Moderator>> {
         vec![
-            Box::new(broadcast::BroadcastModerator::new()),
-            Box::new(random::RandomModerator::new()),
-            Box::new(round_robin::RoundRobinModerator::new()),
+            Box::new(PolicyModerator::new(broadcast::BroadcastPolicy)),
+            Box::new(PolicyModerator::new(random::RandomPolicy::new())),
+            Box::new(PolicyModerator::new(round_robin::RoundRobinPolicy::default())),
         ]
+    }
+
+    fn moderators() -> Vec<Box<dyn Moderator>> {
+        let mut all = answering_moderators();
+        all.push(Box::new(PolicyModerator::new(mentions_only::MentionsOnlyPolicy)));
+        all
     }
 
     #[tokio::test]
@@ -291,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn mentions_of_non_agents_fall_back_to_the_moderator_policy() {
-        for mut moderator in moderators() {
+        for mut moderator in answering_moderators() {
             let agents = add_agents(moderator.as_mut());
             let user = ActorId::User(UserId::new());
             let other_user = ActorId::User(UserId::new());
@@ -307,13 +395,46 @@ mod tests {
 
     #[tokio::test]
     async fn mentions_written_by_agents_are_not_routed() {
-        let mut moderator = broadcast::BroadcastModerator::new();
+        let mut moderator = PolicyModerator::new(broadcast::BroadcastPolicy);
         let agents = add_agents(&mut moderator);
         let event = message_from(agents[0], "@b, your turn", vec![agents[1]]);
 
         let decision = moderator.route(&event).await;
 
         assert_eq!(responders(&decision), vec![agents[2]], "an agent's mention must not override the policy");
+    }
+
+    #[tokio::test]
+    async fn mentions_only_asks_nobody_without_a_mention() {
+        let mut moderator = PolicyModerator::new(mentions_only::MentionsOnlyPolicy);
+        let agents = add_agents(&mut moderator);
+        let user = ActorId::User(UserId::new());
+
+        let decision = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await;
+        assert!(responders(&decision).is_empty(), "nobody was mentioned, so nobody answers");
+        assert_eq!(receivers(&decision), agents.iter().copied().collect(), "every agent still receives the message");
+
+        let decision = moderator.route(&message_from(agents[0], "@b, your turn", vec![agents[1]])).await;
+        assert!(responders(&decision).is_empty(), "an agent's mention is not routed");
+    }
+
+    #[tokio::test]
+    async fn round_robin_takes_turns_and_a_mention_does_not_advance_it() {
+        let mut moderator = PolicyModerator::new(round_robin::RoundRobinPolicy::default());
+        let agents = add_agents(&mut moderator);
+        let user = ActorId::User(UserId::new());
+        let mut awake = vec![agents[0], agents[2]];
+        awake.sort_unstable_by_key(|id| id.id());
+
+        let first = responders(&moderator.route(&message_from(user, "one", Vec::new())).await);
+        let mentioned = responders(&moderator.route(&message_from(user, "@b", vec![agents[1]])).await);
+        let second = responders(&moderator.route(&message_from(user, "two", Vec::new())).await);
+        let third = responders(&moderator.route(&message_from(user, "three", Vec::new())).await);
+
+        assert_eq!(first, vec![awake[0]]);
+        assert_eq!(mentioned, vec![agents[1]]);
+        assert_eq!(second, vec![awake[1]], "the mention must not have taken a turn");
+        assert_eq!(third, vec![awake[0]]);
     }
 
     #[tokio::test]

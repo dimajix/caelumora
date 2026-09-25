@@ -7,9 +7,11 @@ use crate::event::EventBus;
 use crate::llm::LLMClient;
 use crate::llm_impl::ollama::OllamaClient;
 use crate::moderator::Moderator;
-use crate::moderator_impl::broadcast::BroadcastModerator;
-use crate::moderator_impl::random::RandomModerator;
-use crate::moderator_impl::round_robin::RoundRobinModerator;
+use crate::moderator_impl::broadcast::BroadcastPolicy;
+use crate::moderator_impl::mentions_only::MentionsOnlyPolicy;
+use crate::moderator_impl::random::RandomPolicy;
+use crate::moderator_impl::round_robin::RoundRobinPolicy;
+use crate::moderator_impl::PolicyModerator;
 use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::Result;
@@ -213,9 +215,10 @@ impl RuntimeManager {
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
         match kind.as_str() {
-            "broadcast" => Ok(Box::new(BroadcastModerator::new())),
-            "random" => Ok(Box::new(RandomModerator::new())),
-            "round_robin" => Ok(Box::new(RoundRobinModerator::new())),
+            "broadcast" => Ok(Box::new(PolicyModerator::new(BroadcastPolicy))),
+            "mentions_only" => Ok(Box::new(PolicyModerator::new(MentionsOnlyPolicy))),
+            "random" => Ok(Box::new(PolicyModerator::new(RandomPolicy::new()))),
+            "round_robin" => Ok(Box::new(PolicyModerator::new(RoundRobinPolicy::default()))),
             _ => Err(anyhow::anyhow!("Unsupported moderator type: {}", kind))
         }
     }

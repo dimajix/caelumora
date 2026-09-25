@@ -126,6 +126,44 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
         store.put_session_template(&ctx, &template_b).await?;
     }
 
+    // Agents answer only when a user @-mentions them (issue 44).
+    if store.find_session_template_by_name(&ctx, "mentions-session", &Scope::GlobalScope).await.is_err() {
+        let template_c = SessionTemplate {
+            id: SessionTemplateId(Uuid::new_v4()),
+            metadata: Metadata {
+                name: "mentions-session".to_string(),
+                scope: Scope::GlobalScope,
+                description: "Two assistants that answer only when @-mentioned".to_string(),
+            },
+            scope: ScopeTemplate::SessionScope,
+            participants: vec![
+                ParticipantTemplate::User { name: "user".to_string() },
+                ParticipantTemplate::Agent {
+                    name: "Jonathan".to_string(),
+                    scope: ScopeTemplate::SessionScope,
+                    personality_id: jonathan.id.clone(),
+                },
+                ParticipantTemplate::Agent {
+                    name: "Sassy".to_string(),
+                    scope: ScopeTemplate::SessionScope,
+                    personality_id: sassy.id.clone(),
+                },
+            ],
+            channels: vec![ChannelTemplate {
+                name: "main".to_string(),
+                moderator: "mentions_only".to_string(),
+                participants: vec![
+                    "user".to_string(),
+                    "Jonathan".to_string(),
+                    "Sassy".to_string(),
+                ],
+            }],
+            commands: Default::default(),
+            security_attributes: Default::default(),
+        };
+        store.put_session_template(&ctx, &template_c).await?;
+    }
+
     Ok(())
 }
 

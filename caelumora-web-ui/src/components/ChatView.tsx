@@ -2,6 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
   ChevronRight,
+  Scale,
   ScrollText,
   Send,
   Square,
@@ -18,6 +19,7 @@ import type {
   Message,
   PlanStepEvent,
 } from '../types';
+import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -536,7 +538,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                 onKeyDown={handleInputKeyDown}
                 onBlur={() => setDismissedMention(suggestionStart)}
                 onFocus={() => setDismissedMention(null)}
-                placeholder="Type your message... (@ to mention, / for commands)"
+                placeholder={answersOnlyWhenMentioned(channel?.moderator)
+                  ? "Agents answer only when @-mentioned... (/ for commands)"
+                  : "Type your message... (@ to mention, / for commands)"}
                 // Read-only rather than disabled while sending: a disabled
                 // field loses the focus, and the user would have to click
                 // back into it for the next message.
@@ -585,6 +589,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             <Users size={18} />
             <h3 className="font-semibold uppercase text-xs tracking-wider">Channel Members</h3>
           </div>
+          {channel && (
+            <div
+              className="flex items-center gap-2 mb-4 text-xs text-gray-500 dark:text-gray-400"
+              title={moderatorInfo(channel.moderator).description}
+            >
+              <Scale size={14} />
+              <span>Moderator:</span>
+              <span className="text-gray-700 dark:text-gray-300">{moderatorInfo(channel.moderator).label}</span>
+            </div>
+          )}
           <div className="space-y-2">
             {members.map((member, idx) => (
               <div key={idx} className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">

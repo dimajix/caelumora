@@ -114,10 +114,15 @@ An **Actor** is any entity that can send and receive events in a channel.
 *   **`Envelope`**: The unit of communication, containing a timestamp, security context, event context, and the actual `ActorEvent`.
 
 ### Moderators
-Moderators control how messages are routed and who is allowed to respond. Implementations include:
-*   **Broadcast**: Forwards messages to all participants.
-*   **Round Robin**: Cycles through participants in a fixed order.
-*   **Random**: Picks a random participant to respond.
+Moderators control how messages are routed and who is allowed to respond. A channel's moderator is named in its template (`ChannelTemplate.moderator`, default `round_robin`) and built by `RuntimeManager::new_moderator`.
+
+All moderators route the same way: every message goes to every other participant, approvals, failed turns and announced commands go to whom they concern, and every agent a user `@`-mentioned is asked to respond. They differ only in whom they ask when a message mentions no agent. That difference is a `ResponderPolicy`, and `PolicyModerator` is everything else (`caelumora-runtime/src/moderator_impl/`), so a new moderator is a new policy:
+*   **`broadcast`**: every agent responds.
+*   **`round_robin`**: the agents take turns, in the order of their ids. A mention does not take a turn.
+*   **`random`**: one agent, chosen at random.
+*   **`mentions_only`**: nobody. Agents respond only when a user mentions them, and a message without a mention gets no answer.
+
+The REST API returns each channel's `moderator`. The web UI shows it above the member list, and for `mentions_only` its input field says that agents answer only when mentioned. The TUI prints it when the chat starts.
 
 #### `@`-Mentions
 A user can address participants directly with `@handle` (e.g. `@sassy` for "Sassy"). A handle is the participant's name lowercased, with every run of other characters collapsed into `-` (`caelumora_model::mention`). The `ChannelLoop` resolves mentions once, as a message enters the channel, and stores the resolved `ActorId`s in `Message::mentions`; nothing downstream re-parses the text, so a later rename cannot change whom a past message addressed. Unknown handles stay plain text, and text in backticks is ignored.

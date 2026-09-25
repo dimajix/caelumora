@@ -70,6 +70,9 @@ pub struct ChannelResponse {
     /// `@`-mentioned by - used by the web UI for the member list, completion
     /// and to render the `mentions` of a message.
     pub members: Vec<ChannelMemberResponse>,
+    /// The kind of moderator, e.g. `round_robin` or `mentions_only` - who is
+    /// asked to respond to a message (issue 44).
+    pub moderator: String,
 }
 
 #[derive(Debug, Serialize)]
