@@ -51,6 +51,11 @@ pub enum ActionType<'a> {
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
     WakeChannel(&'a SecurityAttributes),
+    /// Reading a channel's notes or history from another channel of the
+    /// session (issue 17), carrying the attributes of the channel read. Asked
+    /// for every user of the reading channel: an agent that reads passes on
+    /// what it read to them.
+    ReadChannel(&'a SecurityAttributes),
     /// Seeing that a user command exists - in `/help` and in completion.
     /// Keyed by the command's name, without the slash (issue 28).
     ShowCommand(&'a str),
@@ -206,7 +211,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::CancelChannel(a)
-            | ActionType::WakeChannel(a) => Self::may_read(a, me),
+            | ActionType::WakeChannel(a)
+            | ActionType::ReadChannel(a) => Self::may_read(a, me),
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)

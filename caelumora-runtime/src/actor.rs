@@ -12,9 +12,10 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::digest::Digest;
-use caelumora_model::message::{ContextRef, Message, MessageId, MessageRole, PromptRef};
+use caelumora_model::agent::TurnKnowledge;
+use caelumora_model::message::{ContextRef, KnowledgeRef, Message, MessageId, MessageRole, PromptRef};
 use caelumora_model::note::{Note, NoteChange, NoteId};
-use crate::notes::NoteReader;
+use crate::notes::SessionReader;
 use caelumora_model::agent::SeenContext;
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
@@ -107,7 +108,7 @@ pub struct TurnContext<'a> {
     pub agent_name: String,
     agent_state: &'a mut AgentState,
     agent_channel_state: &'a mut AgentChannelState,
-    note_reader: Option<Arc<dyn NoteReader>>,
+    session_reader: Option<Arc<dyn SessionReader>>,
 }
 
 impl<'a> TurnContext<'a> {
@@ -119,19 +120,21 @@ impl<'a> TurnContext<'a> {
             agent_name,
             agent_state,
             agent_channel_state,
-            note_reader: None,
+            session_reader: None,
         }
     }
 
-    /// Gives the turn read access to the notes others published.
-    pub fn with_note_reader(mut self, reader: Option<Arc<dyn NoteReader>>) -> Self {
-        self.note_reader = reader;
+    /// Gives the turn read access to what the session's agents and channels
+    /// published (issue 17).
+    pub fn with_session_reader(mut self, reader: Option<Arc<dyn SessionReader>>) -> Self {
+        self.session_reader = reader;
         self
     }
 
-    /// Read access to the notes others published, if the turn has it.
-    pub fn note_reader(&self) -> Option<Arc<dyn NoteReader>> {
-        self.note_reader.clone()
+    /// Read access to what the session's agents and channels published, if
+    /// the turn has it.
+    pub fn session_reader(&self) -> Option<Arc<dyn SessionReader>> {
+        self.session_reader.clone()
     }
 
     pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
@@ -142,6 +145,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.plan = None;
         self.agent_channel_state.turn_prompts.clear();
         self.agent_channel_state.turn_notes.clear();
+        self.agent_channel_state.turn_knowledge.clear();
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -276,10 +280,26 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.history.extend(messages);
     }
 
+    /// Records that the turn read `reference` (issue 17): it is recorded
+    /// with every message the turn produces from now on.
+    pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
+        let before = self.agent_channel_state.turn_messages.len();
+        let knowledge = &mut self.agent_channel_state.turn_knowledge;
+        if !knowledge.iter().any(|k| k.reference == reference) {
+            knowledge.push(TurnKnowledge { reference, before });
+        }
+    }
+
     /// The agent's notes in this channel as they stand - without the changes
     /// of the current turn, which count only once it completes.
     pub fn notes(&self) -> Vec<Note> {
         self.agent_channel_state.notes.current()
+    }
+
+    /// The digest of the agent's notes in this channel, `None` while it has
+    /// none: the state of knowledge a reader of them records.
+    pub fn notes_digest(&self) -> Option<caelumora_model::digest::Digest> {
+        self.agent_channel_state.notes.digest()
     }
 
     /// Notes `text` in this turn and returns the note's number. It is
@@ -324,9 +344,12 @@ impl<'a> TurnContext<'a> {
     pub fn record_turn(&mut self, messages: Vec<Message>) -> bool {
         let before = self.agent_channel_state.context.extend(messages.clone());
         let prompts = self.agent_channel_state.turn_prompts.clone();
-        for (message, context) in messages.into_iter().zip(before) {
+        let knowledge = mem::take(&mut self.agent_channel_state.turn_knowledge);
+        for (index, (message, context)) in messages.into_iter().zip(before).enumerate() {
             if !message.internal {
-                self.agent_channel_state.history.push(message, Some(ContextRef { context, prompts: prompts.clone() }));
+                // What was read before the message was produced.
+                let knowledge = knowledge.iter().filter(|k| k.before <= index).map(|k| k.reference).collect();
+                self.agent_channel_state.history.push(message, Some(ContextRef { context, prompts: prompts.clone(), knowledge }));
             }
         }
 
@@ -475,6 +498,25 @@ mod tests {
         }).collect();
         assert_eq!(order, ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
         assert!(state.seen_context_of(question.id).is_none(), "not produced by the agent");
+
+        // Knowledge read in a turn counts for the messages after it.
+        let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
+        let read = caelumora_model::message::KnowledgeRef {
+            channel: Default::default(),
+            source: caelumora_model::message::KnowledgeSource::History { digest: None },
+        };
+        {
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            turn.push_message(before.clone());
+            turn.record_knowledge(read);
+            turn.record_knowledge(read);
+            turn.push_message(after.clone());
+            let messages = turn.messages().clone();
+            turn.record_turn(messages);
+        }
+        let knowledge_of = |id| state.recorded_context_of(id).unwrap().knowledge;
+        assert!(knowledge_of(before.id).is_empty(), "produced before the read");
+        assert_eq!(knowledge_of(after.id), vec![read], "produced after it, recorded once");
 
         // The same prompt in another turn is kept once.
         {

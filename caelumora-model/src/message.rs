@@ -222,15 +222,36 @@ pub struct PromptRef {
     pub after: Option<Digest>,
 }
 
+/// Knowledge from another place an agent's model was given (issue 17): what
+/// was read, from which channel, as the digest of the state read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeRef {
+    pub channel: crate::channel::ChannelId,
+    pub source: KnowledgeSource,
+}
+
+/// What a [`KnowledgeRef`] read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KnowledgeSource {
+    /// The notes an agent published in the channel; the digest of its note
+    /// chain, `None` while it had none.
+    Notes { agent: crate::agent::AgentId, digest: Option<Digest> },
+    /// The channel's history; the digest of it when it was read.
+    History { digest: Option<Digest> },
+}
+
 /// What an agent's model saw when it produced a message (issue 06): the
 /// digest of its `MessageContext` before the message - `None` if it was
-/// empty - and the prompt parts of that turn, each where it was placed
-/// (issue 47). Resolved in the agent's `AgentChannelState`.
+/// empty - the prompt parts of that turn, each where it was placed (issue
+/// 47), and the knowledge from other places read before the message was
+/// produced (issue 17). Resolved in the agent's `AgentChannelState`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
     pub context: Option<Digest>,
     #[serde(default)]
     pub prompts: Vec<PromptRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge: Vec<KnowledgeRef>,
 }
 
 /// A message of a `MessageHistory`: with the digest of the history up to and
@@ -390,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { context: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new() };
+        let reference = ContextRef { context: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new() };
         let mut history = MessageHistory::new();
         history.extend(vec![make_message(id(1))]);
         history.push(make_message(id(2)), Some(reference.clone()));

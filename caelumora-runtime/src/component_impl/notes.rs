@@ -2,14 +2,19 @@
 //! remember in a channel, and is given what every agent of the channel noted.
 //!
 //! Its tools `note` and `revoke_note` change the agent's own notes - taken
-//! over when the turn completes, see `TurnContext::note`. Its prompt part
+//! over when the turn completes, see `TurnContext::note`; `read_notes` reads
+//! the notes of another channel of the session, or of all it may read. Every
+//! read is recorded as a `KnowledgeRef` with the turn's messages. Its prompt part
 //! gives the model the notes of all agents of the channel before the turn's
 //! input (`PromptPosition::BeforeTurnInput`), not in the system prompt, so
 //! that changing notes do not invalidate the prompt cache (issue 47).
 
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::component_impl::context::{PromptPosition, PromptProvider};
+use crate::component_impl::context::{Prompt, PromptPosition, PromptProvider};
+use crate::notes::{NotReadable, PublishedNotes};
+use caelumora_model::channel::ChannelId;
+use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -25,6 +30,7 @@ pub const NOTES_KIND: &str = "notes";
 
 pub const NOTE_TOOL_NAME: &str = "note";
 pub const REVOKE_NOTE_TOOL_NAME: &str = "revoke_note";
+pub const READ_NOTES_TOOL_NAME: &str = "read_notes";
 
 #[derive(Debug)]
 pub struct NotesComponent;
@@ -57,6 +63,18 @@ impl ToolProvider for NotesComponent {
                 ),
                 requires_approval: false,
             },
+            Tool {
+                name: READ_NOTES_TOOL_NAME.to_string(),
+                description: "Read what the agents of another channel of this session noted. Without \
+                    a channel, lists every channel you may read with its notes - also how to find out \
+                    which channels there are. The notes of your own channel are already shown to you."
+                    .to_string(),
+                parameters: ToolParameters::object(
+                    [("channel", ToolParameters::string("The name of the channel; omit it for all channels"))],
+                    Vec::<&str>::new(),
+                ),
+                requires_approval: false,
+            },
         ]
     }
 
@@ -80,9 +98,52 @@ impl ToolProvider for NotesComponent {
                     Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))
                 }
             }
+            READ_NOTES_TOOL_NAME => {
+                let reader = context.session_reader()
+                    .ok_or_else(|| ToolError::ExecutionFailed("no other channels can be read here".to_string()))?;
+                let channels = match params.get("channel").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
+                    Some(name) => vec![reader.notes_of(name).await.map_err(read_error)?],
+                    None => {
+                        let mut all = Vec::new();
+                        for channel in reader.readable_channels().await.map_err(read_error)? {
+                            all.push(reader.notes_of(&channel.name).await.map_err(read_error)?);
+                        }
+                        all
+                    }
+                };
+                let mut listed = Vec::new();
+                for (channel, published) in channels {
+                    let mut notes = Vec::new();
+                    for agent_notes in published {
+                        if let Some(reference) = notes_ref(channel.id, &agent_notes) {
+                            context.record_knowledge(reference);
+                        }
+                        for note in agent_notes.notes {
+                            notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
+                        }
+                    }
+                    listed.push(serde_json::json!({ "channel": channel.name, "notes": notes }));
+                }
+                Ok(serde_json::json!({ "channels": listed }))
+            }
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
     }
+}
+
+/// A failed read as the model is told it: which channel cannot be read, or
+/// that reading failed.
+fn read_error(error: anyhow::Error) -> ToolError {
+    match error.downcast_ref::<NotReadable>() {
+        Some(not_readable) => ToolError::InvalidParameter(not_readable.to_string()),
+        None => ToolError::ExecutionFailed(format!("reading failed: {error}")),
+    }
+}
+
+/// What reading `published` in `channel` records.
+fn notes_ref(channel: ChannelId, published: &PublishedNotes) -> Option<KnowledgeRef> {
+    let ActorId::Agent(agent) = published.agent else { return None };
+    Some(KnowledgeRef { channel, source: KnowledgeSource::Notes { agent, digest: published.digest } })
 }
 
 #[async_trait]
@@ -91,9 +152,9 @@ impl PromptProvider for NotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, context: &TurnContext) -> Result<String> {
+    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt> {
         let own = ActorId::Agent(context.agent_id);
-        let mut others = match context.note_reader() {
+        let mut others = match context.session_reader() {
             Some(reader) => match reader.channel_notes().await {
                 Ok(published) => published,
                 Err(e) => {
@@ -106,7 +167,16 @@ impl PromptProvider for NotesComponent {
         };
         others.retain(|p| p.agent != own && !p.notes.is_empty());
         others.sort_by(|l, r| l.name.cmp(&r.name));
-        Ok(render(&context.notes(), others.iter().map(|p| (p.name.as_str(), p.notes.as_slice()))))
+        let own_notes = context.notes();
+        let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
+
+        // What the part shows, as knowledge read (issue 17).
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(context.channel_id, p)).collect();
+        if !own_notes.is_empty() {
+            let own_digest = context.notes_digest();
+            knowledge.push(KnowledgeRef { channel: context.channel_id, source: KnowledgeSource::Notes { agent: context.agent_id, digest: own_digest } });
+        }
+        Ok(Prompt { text, knowledge })
     }
 }
 

@@ -129,8 +129,17 @@ impl ChannelLoop {
         self.state.lock().await.history.messages()
     }
 
+    /// The history together with its digest - the state read, for whoever
+    /// records what it read (issue 17).
+    pub async fn history_with_digest(&self) -> (Vec<Message>, Option<caelumora_model::digest::Digest>) {
+        let state = self.state.lock().await;
+        (state.history.messages(), state.history.digest())
+    }
+
 
     pub fn id(&self) -> ChannelId { self.id }
+
+    pub fn session_id(&self) -> SessionId { self.session_id }
     
     pub fn name(&self) -> String {
         self.channel.name()
@@ -242,6 +251,27 @@ impl ChannelLoop {
                 ChannelMember { id: a.id(), name, handle, kind: a.kind() }
             })
             .collect()
+    }
+
+    /// Whether this channel may read `source`'s notes and history (issue 17):
+    /// if every user of it may read `source` (`ActionType::ReadChannel`) -
+    /// an agent passes on what it reads to the users of its channel. A
+    /// channel may always read itself.
+    pub async fn may_read(&self, source: &ChannelLoop) -> bool {
+        if self.id == source.id() {
+            return true;
+        }
+        let attributes = source.security_attributes();
+        let security = self.runtime.security_manager();
+        for actor in self.actors.values() {
+            if matches!(actor.id(), ActorId::User(_)) {
+                let context = SecurityContext::new(actor.id(), self.session_id, self.id);
+                if !security.check(&context, ActionType::ReadChannel(&attributes)).await {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// The notes every agent of the channel published (issue 17), read from

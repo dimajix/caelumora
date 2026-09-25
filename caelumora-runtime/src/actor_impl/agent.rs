@@ -2,7 +2,7 @@ use crate::actor::{Actor, MessageContextError, TurnContext};
 use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::component_impl::context::ContextProvider;
-use crate::notes::{ChannelNoteReader, NoteReader};
+use crate::notes::{ChannelSessionReader, SessionReader};
 use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
@@ -57,8 +57,9 @@ struct AgentActorState {
     agent_id: AgentId,
     agent_channel_state: AgentChannelState,
     agent_state: AgentState,
-    /// What every turn reads other agents' notes through (issue 17).
-    note_reader: Arc<dyn NoteReader>,
+    /// What every turn reads the session's notes and histories through
+    /// (issue 17).
+    session_reader: Arc<dyn SessionReader>,
 }
 
 impl AgentActorState {
@@ -68,7 +69,7 @@ impl AgentActorState {
             self.agent_channel_state.turn_event_context.sender_name.clone(),
             &mut self.agent_state,
             &mut self.agent_channel_state,
-        ).with_note_reader(Some(self.note_reader.clone()))
+        ).with_session_reader(Some(self.session_reader.clone()))
     }
 }
 
@@ -117,7 +118,7 @@ impl AgentActor {
             agent_id,
             agent_channel_state,
             agent_state,
-            note_reader: Arc::new(ChannelNoteReader::new(actor_runtime.clone())),
+            session_reader: Arc::new(ChannelSessionReader::new(actor_runtime.clone())),
         });
 
         Ok(AgentActor {
@@ -1367,7 +1368,7 @@ mod tests {
         state.history.extend(vec![question.clone()]);
         let answer = text("answer");
         let before = state.context.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { context: before, prompts: Vec::new() }));
+        state.history.push(answer.clone(), Some(ContextRef { context: before, prompts: Vec::new(), knowledge: Vec::new() }));
 
         let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
@@ -1380,7 +1381,7 @@ mod tests {
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
-        state.history.push(lost.clone(), Some(ContextRef { context: before, prompts: vec![gone] }));
+        state.history.push(lost.clone(), Some(ContextRef { context: before, prompts: vec![gone], knowledge: Vec::new() }));
         assert!(matches!(context_of(&state, actor, lost.id), Err(MessageContextError::Unavailable { .. })));
     }
 }

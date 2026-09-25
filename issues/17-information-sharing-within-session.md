@@ -1,6 +1,6 @@
 # 17 — Sharing information within a single session
 
-**Status:** in progress
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -68,17 +68,17 @@ principles (points 2-6, 9, 11) this follows. Requires phase 0:
   snapshot, changes live through `NotesChanged`.
 
 **Phase 2 - across channels**
-- [ ] 8. `ReadChannel(&attributes)` checked by the `SecurityManager`, with the
+- [x] 8. `ReadChannel(&attributes)` checked by the `SecurityManager`, with the
   strict rule: all participants of the reading channel must be allowed to
   read the source channel ([12](12-user-and-agent-permissions.md)).
-- [ ] 9. A tool `read_notes(channel)` returning the active chain's notes of
+- [x] 9. A tool `read_notes(channel)` returning the active chain's notes of
   finished turns, and `KnowledgeRef { channel, source, digest }` recorded in
   `ContextRef`.
-- [ ] 10. Optionally, session memory as a prompt part: the current notes of
+- [ ] 10. (Deferred.) Optionally, session memory as a prompt part: the current notes of
   all channels the agent may read, with their `KnowledgeRef`s.
-- [ ] 11. A tool `read_history(channel, range/search)`, also recorded as a
+- [x] 11. A tool `read_history(channel, range/search)`, also recorded as a
   `KnowledgeRef`.
-- [ ] 12. The web UI's context panel ([41](41-show-message-context.md)) shows
+- [x] 12. The web UI's context panel ([41](41-show-message-context.md)) shows
   which notes and histories went into an answer.
 
 ## Done when
@@ -148,3 +148,43 @@ principles (points 2-6, 9, 11) this follows. Requires phase 0:
     the system prompt first and Sassy's note as a user message right before
     his input; Sassy revoked the note and noted a new version (#2), and after
     a reload the tab showed only #2.
+- **2026-09-25** — Phase 2 implemented (steps 8, 9, 11, 12; step 10
+  deferred - `read_notes` without a channel gives the session memory on
+  demand, without growing every prompt):
+  - `ActionType::ReadChannel(&attributes)`, allowed by the ownership policy
+    to the channel's owner and contributors; `ChannelLoop::may_read(source)`
+    asks it for every **user** of the reading channel (the rule of
+    [19](19-memory-tiers.md) point 11, corrected to users - see there).
+  - A channel reaches its session: `ChannelRuntime::with_session` shares an
+    `Arc<OnceLock<Weak<SessionLoop>>>` that `SessionLoop::attach` sets once
+    the session is in an `Arc`; `ActorRuntime::session()`.
+  - `caelumora_runtime::notes::SessionReader` (was `NoteReader`) reads the
+    own channel's notes, lists the readable channels, and reads another
+    channel's notes or history; a channel that does not exist and one that may
+    not be read are the same error (`NotReadable`), so channels cannot be
+    probed.
+  - `KnowledgeRef { channel, source: Notes { agent, digest } | History {
+    digest } }` in `ContextRef.knowledge`. A turn records what it read
+    (`TurnContext::record_knowledge`) with the number of messages it had
+    produced; `record_turn` attaches a reference only to the messages
+    produced after the read. `PromptProvider::get_prompt` returns a `Prompt`
+    with text and knowledge, so the notes prompt part records its reads too.
+  - Tools: `read_notes(channel?)` in the `notes` component; `read_history(
+    channel, last?, query?)` in a component of its own, `channel_history`
+    (latest 20 messages by default, at most 100; `query` filters by text,
+    ignoring case). Both are in the seeded personalities.
+  - REST: the message context carries `knowledge`, with channel and agent
+    names resolved; the web UI's context panel lists it as "Knowledge read".
+  - Verified in the browser: in a `mentions-session`, Sassy noted the
+    deadline in `main`; in a second channel `research` (Jonathan and the
+    user), Jonathan called `read_notes` and `read_history` on `main` and
+    answered correctly; his context panel listed "Knowledge read (3)":
+    Sassy's notes in #main and the history of #main with their digests,
+    and his own (empty) notes in #main. Found on the way: `read_history`
+    reported `more` when only messages without text had been left out;
+    fixed.
+- **2026-09-25** — Done: the "done when" holds - agents exchange structured
+  information without channel messages, and there are no write conflicts,
+  since every entry has one writer. Step 10 (session memory as a standing
+  prompt part) stays deferred; private notes are
+  [51](51-agent-private-notes.md).

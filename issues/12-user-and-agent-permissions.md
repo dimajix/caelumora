@@ -64,3 +64,9 @@ credentials of their own, which is half the point of an `mcp_tool` component.
   note carries the security attributes of its origin channel and is filtered
   by the same rule as reading across channels, so relaxing that rule here
   relaxes both.
+- **2026-09-25** — The strict rule for reading across channels
+  ([19](19-memory-tiers.md), point 11) now checks the **users** of the
+  reading channel with `ActionType::ReadChannel`, not its agents: under the
+  ownership policy an agent may only read channels it takes part in, so
+  counting agents would block reading whenever channels have different
+  agents. Implemented as `ChannelLoop::may_read`.

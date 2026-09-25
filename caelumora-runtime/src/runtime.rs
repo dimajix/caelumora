@@ -1,7 +1,8 @@
 use crate::channel::ChannelLoop;
+use crate::session::SessionLoop;
 use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, ComponentRegistry, ComponentResult};
-use crate::component_impl::{command, context, history, mcp, notes, tool};
+use crate::component_impl::{channel_history, command, context, history, mcp, notes, tool};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
@@ -48,12 +49,22 @@ pub struct ChannelRuntime {
     // owns its actors and they hold this runtime: a strong reference would
     // keep a stopped channel alive forever.
     channel: Arc<OnceLock<Weak<ChannelLoop>>>,
+    // The session the channel belongs to, shared by all its channels and set
+    // once the session exists (`SessionLoop::attach`). Weak for the same
+    // reason as `channel`.
+    session: Arc<OnceLock<Weak<SessionLoop>>>,
 }
 
 impl ChannelRuntime {
     /// A runtime for a channel of a session whose user commands are `commands`.
     pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>) -> Self {
-        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()) }
+        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()), session: Arc::new(OnceLock::new()) }
+    }
+
+    /// This runtime, for a channel of the session `session` will point to.
+    pub fn with_session(mut self, session: Arc<OnceLock<Weak<SessionLoop>>>) -> Self {
+        self.session = session;
+        self
     }
 
     /// The runtime of an actor of this channel.
@@ -132,6 +143,12 @@ impl ActorRuntime {
     pub fn channel(&self) -> Option<Arc<ChannelLoop>> {
         self.runtime.channel.get().and_then(Weak::upgrade)
     }
+
+    /// The session the actor's channel belongs to, or `None` outside of one
+    /// (e.g. in tests) or once it is gone.
+    pub fn session(&self) -> Option<Arc<SessionLoop>> {
+        self.runtime.session.get().and_then(Weak::upgrade)
+    }
 }
 
 impl RuntimeManager {
@@ -154,6 +171,7 @@ impl RuntimeManager {
         context::register(&mut component_registry);
         tool::register(&mut component_registry);
         notes::register(&mut component_registry);
+        channel_history::register(&mut component_registry);
         mcp::register(&mut component_registry);
         command::register(&mut component_registry);
 

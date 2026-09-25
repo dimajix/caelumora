@@ -168,6 +168,23 @@ pub struct MessageContextResponse {
     pub actor_id: ActorId,
     pub context_digest: Option<caelumora_model::digest::Digest>,
     pub items: Vec<SeenItemResponse>,
+    /// What was read from notes and histories before the message was
+    /// produced (issue 17).
+    pub knowledge: Vec<KnowledgeRefResponse>,
+}
+
+/// Knowledge a message was produced with, with the names of what it names
+/// where they are still known.
+#[derive(Debug, Serialize)]
+pub struct KnowledgeRefResponse {
+    pub channel_id: caelumora_model::session::ChannelId,
+    pub channel_name: Option<String>,
+    /// `"notes"` or `"history"`.
+    pub source: &'static str,
+    /// Whose notes, for `"notes"`.
+    pub agent_id: Option<ActorId>,
+    pub agent_name: Option<String>,
+    pub digest: Option<caelumora_model::digest::Digest>,
 }
 
 /// One element of a `MessageContextResponse`.

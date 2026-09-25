@@ -14,6 +14,7 @@ use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
 use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
 use caelumora_runtime::component_impl::notes::NOTES_KIND;
+use caelumora_runtime::component_impl::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_runtime::component_impl::tool::{CALCULATOR_TOOL_PROVIDER_KIND, CREATE_PLAN_TOOL_PROVIDER_KIND, STOP_TOOL_PROVIDER_KIND};
 
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
@@ -227,6 +228,15 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     components.component_nodes.push(ComponentDescriptor {
         id: "notes".to_string(),
         kind: NOTES_KIND.to_string(),
+        params: serde_json::Value::Null,
+        deps: vec![],
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
+    });
+    components.component_nodes.push(ComponentDescriptor {
+        id: "channel-history".to_string(),
+        kind: CHANNEL_HISTORY_KIND.to_string(),
         params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![],

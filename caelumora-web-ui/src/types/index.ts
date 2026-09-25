@@ -258,5 +258,18 @@ export interface MessageContextResponse {
   context_digest: string | null;
   /** The messages of the context and the prompt parts, in the order the model was given them. */
   items: (SeenPrompt | {kind: 'message'; message: Message})[];
+  /** What was read from notes and histories before the message was produced (issue 17). */
+  knowledge: KnowledgeRef[];
+}
+
+/** Knowledge a message was produced with (issue 17). */
+export interface KnowledgeRef {
+  channel_id: string;
+  channel_name: string | null;
+  source: 'notes' | 'history';
+  /** Whose notes, for `notes`. */
+  agent_id: ActorId | null;
+  agent_name: string | null;
+  digest: string | null;
 }
 

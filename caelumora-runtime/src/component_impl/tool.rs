@@ -1,6 +1,6 @@
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::component_impl::context::PromptProvider;
+use crate::component_impl::context::{Prompt, PromptProvider};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -50,8 +50,8 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self, _context: &TurnContext) -> Result<String> {
-        Ok(PLANNING_SYSTEM_PROMPT.to_string())
+    async fn get_prompt(&self, _context: &TurnContext) -> Result<Prompt> {
+        Ok(PLANNING_SYSTEM_PROMPT.to_string().into())
     }
 }
 
@@ -444,7 +444,7 @@ mod tests {
         let mut state = caelumora_model::agent::AgentChannelState::default();
         let turn = TurnContext::new(Default::default(), String::new(), &mut agent_state, &mut state);
         let prompt = CreatePlanToolProvider.get_prompt(&turn).await.expect("prompt should be available");
-        assert_eq!(prompt, PLANNING_SYSTEM_PROMPT);
+        assert_eq!(prompt.text, PLANNING_SYSTEM_PROMPT);
     }
 
     #[test]

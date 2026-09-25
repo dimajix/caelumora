@@ -184,6 +184,11 @@ pub struct AgentChannelState {
     /// when the turn completes and discarded if it does not.
     #[serde(default)]
     pub turn_notes: Vec<NoteChange>,
+    /// Knowledge read in the current turn, each with the number of messages
+    /// the turn had produced by then: it counts for the messages after it
+    /// (issue 17).
+    #[serde(default)]
+    pub turn_knowledge: Vec<TurnKnowledge>,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
@@ -213,6 +218,14 @@ pub struct AgentChannelState {
     pub turn_security_context: SecurityContext,
     #[serde(default)]
     pub turn_event_context: EventContext
+}
+
+/// Knowledge read in a turn, and how many messages the turn had produced
+/// before it was read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnKnowledge {
+    pub reference: crate::message::KnowledgeRef,
+    pub before: usize,
 }
 
 /// What an agent's model saw when it produced a message (issues 06, 47):
@@ -318,6 +331,7 @@ mod tests {
                 PromptRef { text: prompt("system"), role: MessageRole::System, after: None },
                 PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },
             ],
+            knowledge: Vec::new(),
         };
 
         let seen = state.resolve(&reference).expect("everything it names is here");

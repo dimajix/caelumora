@@ -5,7 +5,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, Message, MessageContextResponse, SeenPrompt} from '../types';
+import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenPrompt} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
@@ -41,7 +41,7 @@ function refusal(error: unknown): string | null {
 
 const DigestLine: React.FC<{label: string; digest: string | null}> = ({label, digest}) => (
   <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
-    <span className="w-24 shrink-0">{label}</span>
+    <span className="min-w-24 shrink-0">{label}</span>
     {digest ? (
       <>
         <code className="font-mono">{digest.slice(0, 12)}…</code>
@@ -90,6 +90,27 @@ const PromptView: React.FC<{prompt: SeenPrompt; leading: boolean}> = ({prompt, l
       <DigestLine label="Digest" digest={prompt.digest} />
     </div>
     <pre className="px-3 pb-3 whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-300">{prompt.text}</pre>
+  </details>
+);
+
+/** What a knowledge reference read, in words. */
+function knowledgeLabel(knowledge: KnowledgeRef): string {
+  const channel = knowledge.channel_name ? `#${knowledge.channel_name}` : 'a deleted channel';
+  return knowledge.source === 'notes'
+    ? `Notes of ${knowledge.agent_name ?? 'an agent'} in ${channel}`
+    : `History of ${channel}`;
+}
+
+const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]}> = ({knowledge}) => (
+  <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm" open>
+    <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
+      Knowledge read ({knowledge.length})
+    </summary>
+    <div className="px-3 pb-2 space-y-1">
+      {knowledge.map((k, idx) => (
+        <DigestLine key={idx} label={knowledgeLabel(k)} digest={k.digest} />
+      ))}
+    </div>
   </details>
 );
 
@@ -158,6 +179,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {!context && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
         {context && (
           <>
+            {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} />}
             {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
               <PromptView key={row.digest} prompt={row} leading />
             ))}

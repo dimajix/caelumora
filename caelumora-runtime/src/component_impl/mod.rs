@@ -1,3 +1,4 @@
+pub mod channel_history;
 pub mod command;
 pub mod context;
 pub mod history;

@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -10,7 +10,8 @@ use crate::error::{Json, Path};
 use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::{ChannelSpec, SessionError};
+use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
+use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_runtime::command::CommandError;
@@ -336,12 +337,33 @@ pub async fn message_context(
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
     let seen = actor.message_context(&user.security_context(), MessageId(mid)).await
         .map_err(message_context_error)?;
+    let knowledge = seen.reference.knowledge.iter().map(|k| knowledge_response(&session, k)).collect();
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
         actor_id: actor.id(),
         context_digest: seen.reference.context,
         items: seen.items.into_iter().map(Into::into).collect(),
+        knowledge,
     }))
+}
+
+/// `knowledge` with the names of its channel and agent, as far as the
+/// session still has them.
+fn knowledge_response(session: &SessionLoop, knowledge: &KnowledgeRef) -> KnowledgeRefResponse {
+    let channel = session.channel_by_id(knowledge.channel);
+    let (source, agent_id, digest) = match knowledge.source {
+        KnowledgeSource::Notes { agent, digest } => ("notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest),
+        KnowledgeSource::History { digest } => ("history", None, digest),
+    };
+    let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
+    KnowledgeRefResponse {
+        channel_id: knowledge.channel,
+        channel_name: channel.map(|c| c.name()),
+        source,
+        agent_id,
+        agent_name,
+        digest,
+    }
 }
 
 fn message_context_error(error: MessageContextError) -> ApiError {

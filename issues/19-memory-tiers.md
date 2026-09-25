@@ -159,8 +159,13 @@ before defining the tiers themselves, because they cannot be added afterwards.
    agent alone makes it a bridge for every user in B; all participants of B
    ("B may read A only if everyone in B may read A") leaks nothing. Until
    [12](12-user-and-agent-permissions.md) is decided, the strict rule applies:
-   all participants of the reading channel must be allowed to read the source
-   channel.
+   all **users** of the reading channel must be allowed to read the source
+   channel. (Corrected 2026-09-25: first "all participants"; but under the
+   ownership policy an agent may read a channel only if it takes part in it,
+   so counting agents would block reading whenever two channels have
+   different agents. The leak the rule guards against is a person learning
+   what they may not see; agents act for their owner, and what an agent
+   passes on reaches the users of its channel, who are checked.)
 
 12. **An agent has private knowledge across its channels, bounded by
    confidentiality.** Besides its public notes, every agent keeps a chain of
@@ -306,3 +311,8 @@ built on the commit of point 7.
   the only writer and taken over when its turn completes, only the author
   revokes, and the notes of a channel and session memory are views over the
   agents' public chains.
+- **2026-09-25** — Point 11 corrected while implementing phase 2: the strict
+  rule checks the **users** of the reading channel, not all participants.
+  With agents counted, reading would be blocked whenever two channels have
+  different agents, because an agent may only read channels it takes part
+  in.

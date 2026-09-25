@@ -4,7 +4,7 @@ use crate::component_impl::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::{KnowledgeRef, Message, MessageRole};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -27,6 +27,21 @@ pub enum PromptPosition {
     BeforeTurnInput,
 }
 
+/// What a [`PromptProvider`] contributes: the text of its part, and the
+/// knowledge from other places it contains, recorded with the turn's
+/// messages (issue 17).
+#[derive(Debug, Clone, Default)]
+pub struct Prompt {
+    pub text: String,
+    pub knowledge: Vec<KnowledgeRef>,
+}
+
+impl From<String> for Prompt {
+    fn from(text: String) -> Self {
+        Self { text, knowledge: Vec::new() }
+    }
+}
+
 /// Contributes a prompt part: the system prompt, or other text the model is
 /// given besides the conversation. `StateContextProvider` composes the parts
 /// of the providers it depends on, by position.
@@ -35,8 +50,9 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     fn position(&self) -> PromptPosition {
         PromptPosition::Start
     }
-    /// The part for the turn `context` is about to start; empty for none.
-    async fn get_prompt(&self, context: &TurnContext) -> Result<String>;
+    /// The part for the turn `context` is about to start; empty text for
+    /// none.
+    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt>;
 }
 
 #[async_trait]
@@ -73,8 +89,8 @@ impl PromptProvider for StaticPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self, _context: &TurnContext) -> Result<String> {
-        Ok(self.prompt.clone())
+    async fn get_prompt(&self, _context: &TurnContext) -> Result<Prompt> {
+        Ok(self.prompt.clone().into())
     }
 }
 
@@ -93,9 +109,13 @@ impl ContextProvider for StateContextProvider {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
         for provider in &self.prompt_providers {
-            let prompt = provider.get_prompt(state).await?.trim().to_string();
+            let contribution = provider.get_prompt(state).await?;
+            let prompt = contribution.text.trim().to_string();
             if prompt.is_empty() {
                 continue;
+            }
+            for reference in contribution.knowledge {
+                state.record_knowledge(reference);
             }
             match provider.position() {
                 PromptPosition::Start => start.push(prompt),

@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
 use dashmap::DashMap;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinHandle, JoinSet};
 
@@ -60,6 +60,9 @@ pub struct SessionLoop {
     start_tx: mpsc::UnboundedSender<Arc<ChannelLoop>>,
     /// Taken by `run`, which is how it knows it is not already running.
     start_rx: Mutex<mpsc::UnboundedReceiver<Arc<ChannelLoop>>>,
+    /// Shared with the runtime of every channel, so that a channel reaches
+    /// the others of its session (issue 17). Set by `attach`.
+    handle: Arc<OnceLock<Weak<SessionLoop>>>,
 }
 
 impl SessionLoop {
@@ -67,9 +70,10 @@ impl SessionLoop {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
+        let handle = Arc::new(OnceLock::new());
         let channels = DashMap::new();
         for channel in &session.channels {
-            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone());
+            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone()).with_session(handle.clone());
             let cl = ChannelLoop::new(channel.clone(), runtime).await?;
             channels.insert(cl.id(), cl.clone());
             let _ = start_tx.send(cl);
@@ -86,7 +90,14 @@ impl SessionLoop {
             tasks: std::sync::Mutex::new(HashMap::new()),
             start_tx,
             start_rx: Mutex::new(start_rx),
+            handle,
         })
+    }
+
+    /// Makes the session reachable from the runtimes of its channels. Called
+    /// once, as soon as it is in an `Arc`.
+    pub(crate) fn attach(self: &Arc<Self>) {
+        let _ = self.handle.set(Arc::downgrade(self));
     }
 
     pub fn id(&self) -> SessionId {
@@ -168,7 +179,7 @@ impl SessionLoop {
         drop(session);
         self.session_controller.add_channel(context, channel.clone()).await?;
 
-        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone());
+        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone()).with_session(self.handle.clone());
         let channel_loop = match ChannelLoop::new(channel.clone(), runtime).await {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
@@ -304,6 +315,7 @@ impl SessionManager {
         let id = session.id;
         let attributes = session.security_attributes.clone();
         let session_loop = Arc::new(SessionLoop::new(session, self.runtime_manager.clone()).await?);
+        session_loop.attach();
         self.sessions.insert(id, session_loop.clone());
 
         let loop_for_task = session_loop.clone();
@@ -735,6 +747,38 @@ mod tests {
         assert!(session.channel_by_id(main).is_some(), "a refused deletion leaves the channel");
 
         session.create_channel(&alice_ctx, spec("hers", vec![])).await.expect("the owner may");
+        manager.stop_session(session.id());
+    }
+
+    #[tokio::test]
+    async fn a_channel_reads_another_only_if_all_its_users_may() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::session::Participant;
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
+        let manager = SessionManager::new(runtime);
+
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let (alice, bob) = (user("alice"), user("bob"));
+        let alice_id = ActorId::User(alice.id);
+        let bob_id = ActorId::User(bob.id);
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: alice_id, contributors: vec![bob_id] };
+        session.participants = vec![Participant::User(alice), Participant::User(bob)];
+        let session = manager.create_session(&alice_ctx, session).await.unwrap();
+
+        let private = session.create_channel(&alice_ctx, spec("private", vec![])).await.unwrap();
+        let shared = session.create_channel(&alice_ctx, spec("shared", vec![bob_id])).await.unwrap();
+
+        assert!(private.may_read(&private).await, "a channel reads itself");
+        assert!(private.may_read(&shared).await, "alice owns every channel of her session");
+        assert!(!shared.may_read(&private).await, "bob is in shared, but may not read private");
         manager.stop_session(session.id());
     }
 
