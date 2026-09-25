@@ -14,6 +14,7 @@ import type {SessionSnapshot, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {sessionChange} from '../globalEvents';
+import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
@@ -63,6 +64,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
+  // The template a new session is created from, preselected with the one
+  // used last in this browser (issue 40).
+  const [lastTemplateId, setLastTemplateId] = useState<string | null>(() => loadLastTemplate());
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(() => loadLastTemplate());
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -133,15 +138,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setExpandedSessions(prev => ({ ...prev, [sessionId]: !prev[sessionId] }));
   };
 
+  // The chosen template if it still exists, else the first (the server sorts
+  // them by name).
+  const selectedTemplate = templates.find(t => t.id === selectedTemplateId) ?? templates[0];
+
   const handleCreateSession = async () => {
     try {
-      const template = templates[0];
+      const template = selectedTemplate;
       if (!template) {
         reportError('Cannot create a session', 'no session template is available');
         return;
       }
       const name = `New ${template.metadata.name}`;
       const newSession = await api.createSession(template.id, name);
+      saveLastTemplate(template.id);
+      setLastTemplateId(template.id);
       setExpandedSessions(prev => ({ ...prev, [newSession.id]: true }));
       await refreshSession(newSession.id);
     } catch (error) {
@@ -194,15 +205,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <div className="w-64 bg-gray-900 text-gray-100 flex flex-col border-r border-gray-800">
-      <div className="p-4 border-b border-gray-800 flex justify-between items-center">
+      <div className="p-4 border-b border-gray-800 space-y-3">
         <h1 className="font-bold text-lg">Caelumora</h1>
-        <button
-          onClick={handleCreateSession}
-          className="p-1 hover:bg-gray-800 rounded-md transition-colors"
-          title="New Session"
-        >
-          <Plus size={20} />
-        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedTemplate?.id ?? ''}
+            onChange={(e) => setSelectedTemplateId(e.target.value)}
+            disabled={templates.length === 0}
+            className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-sm"
+            title={selectedTemplate?.metadata.description || 'Template of a new session'}
+            aria-label="Template of a new session"
+          >
+            {templates.map(template => (
+              <option
+                key={template.id}
+                value={template.id}
+                title={template.metadata.description}
+                // The one used last, in bold - where the browser styles
+                // options at all (not on macOS).
+                style={{fontWeight: template.id === lastTemplateId ? 'bold' : 'normal'}}
+              >
+                {template.metadata.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleCreateSession}
+            disabled={!selectedTemplate}
+            className="p-1 hover:bg-gray-800 rounded-md transition-colors disabled:opacity-50"
+            title={selectedTemplate ? `New ${selectedTemplate.metadata.name}` : 'New Session'}
+          >
+            <Plus size={20} />
+          </button>
+        </div>
       </div>
       
       <div className="flex-1 overflow-y-auto p-2">

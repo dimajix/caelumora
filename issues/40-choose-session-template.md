@@ -1,6 +1,6 @@
 # 40 — A new session always uses whichever template happens to come first
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -48,3 +48,20 @@ there is no way in the UI to get the other one at all.
 - **2026-09-25** — Opened after the local store was recreated and "New
   Session" silently switched from the sassy to the simple template: it
   takes `templates[0]` of an unordered list.
+- **2026-09-25** — Done, along the maintainer's design rather than the menu
+  on "+" proposed above:
+  - **A dropdown with all templates, "+" next to it** creates a session
+    from the selected one (named "New <template>" as before). The
+    template's description is the dropdown's tooltip.
+  - **The template last used is remembered** in the browser's local storage
+    (`loadLastTemplate`/`saveLastTemplate` in `session.ts`, next to the
+    drafts) when a session is created from it, and preselected next time;
+    if it no longer exists, the first template is.
+  - **It is shown in bold in the dropdown** - where the browser styles
+    options at all; macOS does not.
+  - **A stable order:** `GET /templates` answers sorted by name, so every
+    client sees the same order rather than the store's directory order.
+  - Verified in the browser: the order, creating a session from the
+    template that was not preselected, and that one being preselected and
+    bold after a reload.
+

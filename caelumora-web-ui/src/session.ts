@@ -99,6 +99,29 @@ export function loadDraft(channelId: string): string {
   }
 }
 
+/** Where the template of the last session created in this browser is kept (issue 40). */
+const LAST_TEMPLATE_KEY = 'caelumora.lastTemplate';
+
+/**
+ * The id of the template the last session was created from in this browser,
+ * kept in local storage so that it survives closing the browser.
+ */
+export function loadLastTemplate(): string | null {
+  try {
+    return localStorage.getItem(LAST_TEMPLATE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastTemplate(templateId: string) {
+  try {
+    localStorage.setItem(LAST_TEMPLATE_KEY, templateId);
+  } catch {
+    // No local storage (private mode, blocked): the choice is then not kept.
+  }
+}
+
 export function saveDraft(channelId: string, text: string) {
   try {
     if (text) {
