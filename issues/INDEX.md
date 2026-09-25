@@ -123,7 +123,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [36](36-replace-serde-yaml.md) | done |
-| [53](53-facet-trait-placement.md) | open | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
+| [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 
 ## Open architecture questions
 

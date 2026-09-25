@@ -1,6 +1,6 @@
 # 53 — Facet traits live in different places, and one name is used twice
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -52,3 +52,17 @@ without a rule:
 
 - **2026-09-25** — Issue created while splitting `component_impl` into one
   file per component ([52](52-split-tool-providers.md)).
+- **2026-09-25** — Done:
+  - The second `MessageProcessor` was dead code: `crate::message` held it
+    and `MessageFilter`, which nothing used; the trait's only user was
+    `actor_impl/message_processor.rs` with a `MessageProcessorActor` that
+    nothing created. Both files were deleted (with the maintainer's
+    agreement), which also removed two build warnings from that actor.
+  - `component_impl::message` moved to `crate::message` (`MessageProcessor`,
+    `PerceiveInProcessor`, `EmitOutProcessor`), `component_impl::context` to
+    `crate::context` (`ContextProvider`, `PromptProvider`, `Prompt`,
+    `PromptPosition`) - next to `crate::tool` and `crate::command`.
+    `component_impl` holds components only.
+  - `ARCHITECTURE.md` lists the actual facets and says where facet traits
+    go; it had named a `PlanPreProcessor` that does not exist.
+  - No change in behaviour; all tests pass.

@@ -1,9 +1,9 @@
 use crate::actor::{Actor, MessageContextError, TurnContext};
 use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
-use crate::component_impl::context::ContextProvider;
+use crate::context::ContextProvider;
 use crate::notes::{ChannelSessionReader, SessionReader};
-use crate::component_impl::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
+use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
@@ -1149,12 +1149,12 @@ impl Actor for AgentActor {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
-    use crate::component_impl::context::{ContextProvider, PromptPosition};
+    use crate::context::{ContextProvider, PromptPosition};
     use crate::component_impl::state_context_appender::StateContextAppender;
     use crate::component_impl::state_context_provider::StateContextProvider;
     use crate::component_impl::state_history_appender::StateHistoryAppender;
     use crate::component_impl::static_system_prompt_provider::StaticPromptProvider;
-    use crate::component_impl::message::MessageProcessor;
+    use crate::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
     use caelumora_model::plan::{PlanId, PlanState};
     use chrono::Utc;

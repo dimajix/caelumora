@@ -1,18 +1,17 @@
 //! The built-in components, one file per component kind (issue 52). A
 //! component may offer several facets - a tool provider that also
 //! contributes a prompt part, say - so they are sorted by component, not by
-//! facet. `context` and `message` hold facet traits, not components.
+//! facet. The facet traits live next to the code that uses them
+//! (`crate::tool`, `crate::command`, `crate::context`, `crate::message`).
 
 use crate::component::ComponentRegistry;
 
 pub mod calculator_tool;
 pub mod channel_history;
-pub mod context;
 pub mod create_plan_tool;
 pub mod echo_tool;
 pub mod help_command;
 pub mod mcp_tool;
-pub mod message;
 pub mod notes;
 pub mod state_context_appender;
 pub mod state_context_provider;

@@ -17,6 +17,7 @@ pub mod controller;
 pub mod message;
 pub mod component;
 pub mod component_impl;
+pub mod context;
 pub mod transport;
 pub mod moderator_impl;
 pub mod notes;

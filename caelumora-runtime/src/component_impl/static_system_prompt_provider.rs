@@ -3,7 +3,7 @@
 
 use crate::actor::TurnContext;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
-use crate::component_impl::context::{Prompt, PromptPosition, PromptProvider};
+use crate::context::{Prompt, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;

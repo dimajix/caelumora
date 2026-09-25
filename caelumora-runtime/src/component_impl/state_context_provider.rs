@@ -3,7 +3,7 @@
 
 use crate::actor::{ContextItem, TurnContext};
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::component_impl::context::{ContextProvider, PromptPosition, PromptProvider};
+use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;

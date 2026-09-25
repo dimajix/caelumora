@@ -11,7 +11,7 @@
 
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::component_impl::context::{Prompt, PromptPosition, PromptProvider};
+use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::notes::{NotReadable, PublishedNotes};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};

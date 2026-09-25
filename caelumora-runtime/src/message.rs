@@ -1,21 +1,16 @@
+//! The facets of the agent loop's message stages: components that see the
+//! messages an agent perceives (`PerceiveInProcessor`) or emits
+//! (`EmitOutProcessor`), and may change them.
+
+use crate::actor::TurnContext;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::security::SecurityContext;
-use futures::stream::BoxStream;
-use std::fmt::Debug;
-
+use caelumora_model::message::Message;
 
 #[async_trait]
-pub trait MessageFilter: Send + Sync {
-    async fn process(&self, message: Message) -> anyhow::Result<Message>;
+pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
+    fn name(&self) -> &str;
+    async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> anyhow::Result<Vec<Message>>;
 }
 
-
-#[async_trait]
-pub trait MessageProcessor: Send + Sync + Debug {
-    fn id(&self) -> ActorId;
-    fn kind(&self) -> String;
-    fn name(&self) -> String;
-    async fn process_messages(&self, messages: Vec<Message>, security_context: &SecurityContext) -> BoxStream<'static, anyhow::Result<MessageEvent>>;
-}
+pub trait PerceiveInProcessor: MessageProcessor {}
+pub trait EmitOutProcessor: MessageProcessor {}
