@@ -61,6 +61,7 @@ against it, and what came out of the last attempt.
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |
 | [30](30-user-actor-for-authenticated-user.md) | done | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
+| [42](42-export-import-chats.md) | open | Chats cannot be exported or imported, so a conversation cannot leave the server it happened on or be brought into another. |
 
 ## Identity and access management
 
