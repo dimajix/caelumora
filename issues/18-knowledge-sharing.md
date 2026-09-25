@@ -48,3 +48,12 @@ learning a convention — is discarded at session end.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-25** — Decided with branching
+  ([08](08-retry-and-edit-past-answers.md)); principles in
+  [19](19-memory-tiers.md): knowledge beyond the session is not written but
+  committed from branch-bound notes ([17](17-information-sharing-within-session.md))
+  at a defined point, explicitly ("remember", optionally with approval) to
+  begin with. Every entry records its origin and the knowledge it was derived
+  from, so that it can be retracted when its origin is discarded or deleted.
+  Forgetting means retracting and invalidating; knowledge is never learnt into
+  model weights.

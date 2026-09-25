@@ -56,3 +56,11 @@ did.
 
 - **2026-09-10** — Issue created from `TODO.md`, where it appears under
   *"BIG questions"*.
+- **2026-09-25** — Two things added by the branching plan in
+  [08](08-retry-and-edit-past-answers.md) (principles in
+  [19](19-memory-tiers.md)): effects of an abandoned branch are carried into
+  the new branch as facts, which needs tools to declare whether they have an
+  effect or only read, the same distinction idempotency needs here. And two
+  more kinds of effect leave the reversible zone: another channel reading a
+  channel's notes, and committing knowledge beyond the session
+  ([18](18-knowledge-sharing.md)).

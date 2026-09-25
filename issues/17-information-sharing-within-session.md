@@ -46,3 +46,19 @@ other agents rather than for the user.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-25** — Shape decided together with branching
+  ([08](08-retry-and-edit-past-answers.md)); principles in
+  [19](19-memory-tiers.md): the notes of a channel are a chain of entries
+  that are only appended (which also settles the question of two writers)
+  and branch with the channel. Other channels of the session read its active
+  chain directly, only notes of finished turns. Such a read is an effect for
+  the writing channel and is recorded by the reader as a structured reference
+  to the state of knowledge it saw (digest of the note chain's head, e.g. in
+  `ContextRef`).
+- **2026-09-25** — Refined ([19](19-memory-tiers.md), points 3, 3a, 9-11):
+  session memory is the union of the active note chains of all channels,
+  every entry owned by the channel that wrote it; revoking and new versions
+  are entries of the chain. Other channels may also read a channel's history,
+  through a tool. Documents several channels edit together do not branch and
+  are a separate shared workspace whose changes are effects. Reading across
+  channels is checked, see [12](12-user-and-agent-permissions.md).

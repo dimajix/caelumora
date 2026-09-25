@@ -51,3 +51,10 @@ credentials of their own, which is half the point of an `mcp_tool` component.
 
 - **2026-09-10** — Issue created from `TODO.md`, where it was phrased as a
   question: *"Combining user permissions with agent permissions?"*
+- **2026-09-25** — A concrete case from the branching and memory
+  principles in [19](19-memory-tiers.md) (point 11): an agent in channel B
+  reading the notes or history of channel A. If only the agent's rights are
+  checked, it becomes a bridge through which every user in B learns what was
+  said in A. Until this issue decides how agent and user rights combine, the
+  strict rule applies: all participants of the reading channel must be
+  allowed to read the source channel (`ReadChannel`).

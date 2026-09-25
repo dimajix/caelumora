@@ -47,6 +47,117 @@ words imprecisely will confuse every later reader.
 - Prefer expressing the tiers through the existing component traits over
   introducing a parallel mechanism.
 
+## Principles: branching and provenance (decided 2026-09-25)
+
+Decided while planning branching conversations
+([08](08-retry-and-edit-past-answers.md)). They apply to every tier and come
+before defining the tiers themselves, because they cannot be added afterwards.
+
+1. **A third axis: bound to a branch or not.** Besides scope and lifetime,
+   every tier is either bound to the branch of the conversation it came from
+   or independent of it. The rule: *what is derived from the conversation
+   branches with it; what concerns the world does not.* From easiest to
+   hardest to undo:
+   - what was said (history, context, turn state): free, it lives in the
+     message tree;
+   - what was derived from it inside the session (notes, [17](17-information-sharing-within-session.md)):
+     bound to the branch through its provenance;
+   - knowledge that outlives the session ([18](18-knowledge-sharing.md)):
+     only through explicit retraction, with limits;
+   - effects outside the system ([20](20-transactional-effects.md)): not at
+     all.
+2. **Notes of a channel branch with it.** A channel's notes form a chain like
+   its history: entries only appended, each with a digest over its
+   predecessor, branching like the message tree. The *active chain* is the
+   one on the channel's active branch. Switching branches switches the notes;
+   a regenerated answer does not see what the abandoned one noted.
+3. **Other channels of the session read the active chain directly.** No
+   separate step to share. Only notes of finished turns are visible, never
+   those of a turn still running. *Session memory* is therefore not a store
+   of its own but a view: the union of the active note chains of all channels
+   of the session. Everyone can read everything, but every entry belongs to
+   exactly one channel, the one that wrote it, so there are no two writers of
+   one entry and no write conflicts.
+3a. **Revoking is part of the chain.** A channel revokes an entry by
+   appending "revoke N"; a new version is a revocation plus a new entry. The
+   current state is the active chain read from start to head. Only the owning
+   channel may revoke, and only entries on its active path. A revocation
+   branches like everything else: forking before it makes the entry valid
+   again in the new branch. The digest of the head covers revocations, so a
+   reader's reference also names what had been revoked when it read.
+4. **Reading across channels is an effect.** For the channel that wrote the
+   notes, another channel's read cannot be undone by branching. For the
+   reader it is an input, like a tool result, and is recorded as such.
+5. **Provenance is recorded, exactly and structurally.**
+   - Every write to a knowledge store records its origin: session, channel,
+     triggering message and the context digest at the time of writing
+     ([06](06-context-in-message-for-auditability.md)). Whether an entry is on
+     the active branch is then whether its origin lies on the path to the
+     head.
+   - Every read records the *state of knowledge* it saw: the digest of the
+     head of what was read, per channel and source. It goes where it is
+     already recorded what an agent saw, e.g. `ContextRef` gains
+     `knowledge: Vec<KnowledgeRef { channel, source: Notes | History, digest }>`. Knowledge is accessed
+     through tools or through the system prompt, both code under our control,
+     so the reference can be exact. The text itself is recorded anyway, in the
+     tool result or in the stored system prompt, but only a structured
+     reference can be queried.
+   - Knowledge written by an agent carries the references it had read
+     (lineage), even if nothing evaluates them yet.
+6. **A branch switch deletes nothing.** Notes of the abandoned branch stay in
+   the tree, so references to them stay resolvable. What changes is their
+   status: reads in other channels that relied on them become recognisable as
+   "based on notes discarded in channel A". First step: mark such answers in
+   the UI. Later, if needed: tell the reading agent, and follow lineage
+   transitively.
+7. **Knowledge that outlives the session is committed, not written.** It
+   first exists bound to a branch (point 2) and is taken over into a store
+   beyond the session only at a defined point, explicitly ("remember", a tool
+   that can require approval) to begin with. Until then it can be forgotten
+   without consequence. The commit is itself an effect that leaves the
+   reversible zone.
+8. **"Forgetting" means retracting and invalidating.**
+   - Possible: retracting entries whose origin lies in an abandoned branch or
+     a deleted session, if knowledge is stored as atomic entries.
+   - Possible with lineage: marking or retracting what was derived from them.
+     Summaries mix sources and have to be recreated instead.
+   - Not possible: rewriting other conversations that already used the
+     knowledge (history is the record of what happened), at most marking
+     them; forgetting from model weights, so knowledge is never learnt into
+     weights; undoing effects outside the system.
+
+9. **A channel offers two readable sources: its notes and its history.**
+   Another channel may read not only the curated notes but also the raw
+   history of a channel's active branch. It is the same mechanism: the
+   history has been a digest chain since
+   [06](06-context-in-message-for-auditability.md), and the head digest names
+   exactly what was read. A whole history rarely fits a prompt
+   ([16](16-context-compression.md)), so another channel's history is read
+   through a tool with a range or a search, not through the system prompt.
+10. **Documents several channels work on do not branch.** A document edited
+   by several channels cannot follow the branches of any one of them: if A
+   forks, B's changes may already build on A's discarded ones. By the rule in
+   point 1 such a document belongs to the *world*: a shared workspace outside
+   the branches (e.g. a document store, later perhaps a git repository),
+   edited through tools, every change an effect
+   ([20](20-transactional-effects.md)) that a branch switch does not undo but
+   carries over as a fact. So there are two ways to work together, with
+   deliberately different semantics: notes (branch, owned by one channel,
+   revocable) and the shared workspace (no branches, everyone writes, every
+   change an effect). The workspace is not needed now; it is recorded here so
+   that notes are not bent to serve it.
+11. **Reading across channels is checked.** Channels may have different
+   participants ([46](46-channel-participants.md)). If an agent in B reads
+   A's history or notes, a user who is only in B can learn through the agent
+   what was said in A. Reading another channel is therefore an action the
+   `SecurityManager` checks, e.g. `ReadChannel(&attributes_of_A)`. Whom it
+   checks is the question of [12](12-user-and-agent-permissions.md): the
+   agent alone makes it a bridge for every user in B; all participants of B
+   ("B may read A only if everyone in B may read A") leaks nothing. Until
+   [12](12-user-and-agent-permissions.md) is decided, the strict rule applies:
+   all participants of the reading channel must be allowed to read the source
+   channel.
+
 ## Done when
 
 - The tiers are defined here: scope, lifetime, reader, writer, invalidation,
@@ -57,3 +168,16 @@ words imprecisely will confuse every later reader.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-09-25** — Principles for branching and provenance decided and
+  recorded above, prompted by the branching plan in
+  [08](08-retry-and-edit-past-answers.md): a third axis (bound to a branch or
+  not), notes that branch with their channel and are read directly by other
+  channels, reading across channels as an effect, exact structured
+  provenance of writes and reads, commit instead of write for knowledge beyond
+  the session, and what "forgetting" can and cannot mean.
+  Refined the same day: session memory is the union of the channels' active
+  note chains, each entry owned by one channel; revocations and new versions
+  are part of the chain (3a); a channel offers its notes and its history
+  (9); documents several channels edit are a shared workspace outside the
+  branches (10); reading across channels is checked, strictly until
+  [12](12-user-and-agent-permissions.md) decides (11).
