@@ -127,4 +127,6 @@ turns.
   Still open: showing it in the web UI (a separate step), and
   [16](16-context-compression.md), which must keep earlier contexts
   resolvable.
+- **2026-09-25** — Showing the context in the web UI is now its own issue,
+  [41](41-show-message-context.md).
 
