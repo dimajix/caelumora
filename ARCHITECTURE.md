@@ -254,13 +254,35 @@ Implementations include `MemoryStore` (for testing) and `JsonFileStore` (for sim
 
 ### `StateStore`
 The `StateStore` trait (in `caelumora-model`) is dedicated to managing the frequently changing runtime state of agents and sessions.
-*   **Agent State**: Includes the current cognitive state, message history, and context.
-*   **Session State**: Includes metadata and operational state of a live session.
+*   **`ChannelState`**: the channel's history; later its notes.
+*   **`AgentChannelState`**: an agent in one channel - its history and context, the texts of its prompt parts by digest, and its turn state (processing state, pending tool calls, plan, the turn's messages); later its private notes.
+*   **`AgentState`**: an agent across the channels of one session; empty so far.
+*   **`SessionState`**: state of a live session.
 
 Entity store and state store are configured separately and may be different stores. Deleting a session or a channel therefore deletes its state through the `StateStore` (`delete_session_state`, `delete_channel_state`, which removes the channel's state and that of every agent in it), never as a side effect of `EntityStore::delete_session`.
 
 ### `SessionContext`
 Provides necessary dependencies (stores, session ID, owner) for instantiating live objects from templates.
+
+### Terms
+The words for what an agent remembers are used in one sense each (issue 19, where the principles behind them are recorded). "Branches" means: follows the branch of the conversation it came from ([08](issues/08-retry-and-edit-past-answers.md)).
+
+| Term | Meaning | Scope | Lifetime | Branches |
+|---|---|---|---|---|
+| **History** | The record of what happened, never rewritten or compressed: per channel (`ChannelState`), and per agent in a channel with what each own message was produced from. | channel / agent in channel | session | yes |
+| **Context** | The messages an agent's model is given as the conversation (`MessageContext`); derived from the history, may differ from it (compression, [16](issues/16-context-compression.md)). | agent in channel | session | yes |
+| **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest (see *Prompt parts* above). | turn | transient | - |
+| **Model input** | What one call of the model is given: prompt parts, context and the turn's messages; reconstructable through `ContextRef` ("what the agent saw"). In code still called "context" ([50](issues/50-turn-context-naming.md)). | one call | transient | - |
+| **Turn state** | The working state of a turn: scratch, plan, pending tool calls, the turn's messages. | agent in channel | turn | discarded |
+| **Notes** | Entries agents write into, or revoke from, their channel's note chain, with provenance ([17](issues/17-information-sharing-within-session.md)). | channel | session | yes |
+| **Session memory** | The union of the active note chains of all channels of a session - a view, not a store. | session | session | per channel |
+| **Private notes** | An agent's own note chain in one channel, carrying the confidentiality of that channel ([51](issues/51-agent-private-notes.md)). | agent in channel | session | yes |
+| **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its confidentiality allows. | agent in session | session | per channel |
+| **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](issues/18-knowledge-sharing.md)). | agent | permanent | no |
+| **Shared knowledge** | Knowledge shared by several agents or users ([18](issues/18-knowledge-sharing.md)). | group / global | permanent | no |
+| **Workspace** | Documents several channels edit together; outside the branches, every change an effect ([20](issues/20-transactional-effects.md)). | session or beyond | until deleted | no |
+
+Two technical words are not tiers: **state** is the container the `StateStore` keeps (history, context, turn state and notes live *in* state), as opposed to **entities** in the `EntityStore`; and the structs named `…Context` (`SecurityContext`, `EventContext`, `ComponentContext`, `SessionContext`, `CommandContext`, `TurnContext`) are *operation contexts*, the circumstances an operation runs in, unrelated to the model's context. In prose, "context" alone always means the model's context; the others are named in full.
 
 ## Templates and Identities
 

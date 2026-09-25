@@ -58,3 +58,9 @@ credentials of their own, which is half the point of an `mcp_tool` component.
   said in A. Until this issue decides how agent and user rights combine, the
   strict rule applies: all participants of the reading channel must be
   allowed to read the source channel (`ReadChannel`).
+- **2026-09-25** — A second case from [19](19-memory-tiers.md) (principle
+  12, [51](51-agent-private-notes.md)): an agent's private notes from channel
+  A must not surface in channel B for users who may not read A. Every private
+  note carries the security attributes of its origin channel and is filtered
+  by the same rule as reading across channels, so relaxing that rule here
+  relaxes both.

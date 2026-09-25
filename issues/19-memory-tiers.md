@@ -158,6 +158,48 @@ before defining the tiers themselves, because they cannot be added afterwards.
    all participants of the reading channel must be allowed to read the source
    channel.
 
+12. **An agent has private knowledge across its channels, bounded by
+   confidentiality.** Besides the shared notes of a channel, every agent keeps
+   private notes per channel, in its `AgentChannelState`; they branch with
+   the channel like the agent's history. *Agent session memory* is the union
+   of an agent's active private chains across its channels, readable only by
+   the agent. Every private note carries the security attributes of the
+   channel it was written in and appears in another channel only if that
+   channel may read the origin under point 11: the agent knows everything,
+   but recalls it only where that tells no one anything new. Relying on the
+   model's discretion instead was rejected as a leak
+   ([51](51-agent-private-notes.md)).
+
+## Terms (decided 2026-09-25)
+
+The same table is in `ARCHITECTURE.md` (section *Terms*); "branches" means
+follows the branch of the conversation it came from.
+
+| Term | Meaning | Scope | Lifetime | Branches |
+|---|---|---|---|---|
+| **History** | The record of what happened, never rewritten or compressed: per channel, and per agent in a channel with what each own message was produced from. | channel / agent in channel | session | yes |
+| **Context** | The messages an agent's model is given as the conversation (`MessageContext`); derived from the history, may differ from it ([16](16-context-compression.md)). | agent in channel | session | yes |
+| **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest ([47](47-prompt-parts-with-provenance.md)). | turn | transient | - |
+| **Model input** | What one call of the model is given: prompt parts, context and the turn's messages; reconstructable through `ContextRef`. Still called "context" in code ([50](50-turn-context-naming.md)). | one call | transient | - |
+| **Turn state** | Scratch, plan, pending tool calls, the turn's messages. | agent in channel | turn | discarded |
+| **Notes** | Entries in a channel's note chain, with provenance ([17](17-information-sharing-within-session.md)). | channel | session | yes |
+| **Session memory** | The union of the active note chains of all channels of a session; a view. | session | session | per channel |
+| **Private notes** | An agent's own note chain in one channel, with that channel's confidentiality ([51](51-agent-private-notes.md)). | agent in channel | session | yes |
+| **Agent session memory** | The union of an agent's active private note chains; a view, only for the agent, each note only where its confidentiality allows. | agent in session | session | per channel |
+| **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](18-knowledge-sharing.md)). | agent | permanent | no |
+| **Shared knowledge** | Knowledge shared by several agents or users ([18](18-knowledge-sharing.md)). | group / global | permanent | no |
+| **Workspace** | Documents several channels edit together; outside the branches, changes are effects ([20](20-transactional-effects.md)). | session or beyond | until deleted | no |
+
+- **State** is the container of the `StateStore`, not a tier; **entities**
+  are what the `EntityStore` keeps.
+- The structs named `…Context` (`SecurityContext`, `EventContext`,
+  `ComponentContext`, `SessionContext`, `CommandContext`, `TurnContext`) are
+  *operation contexts*, unrelated to the model's context, and are not
+  renamed. In prose, "context" alone means the model's context.
+- The four tiers of `TODO.md` map as: agent channel context → context; agent
+  session memory → agent session memory (private notes); agent global
+  knowledge → agent knowledge; global knowledge → shared knowledge.
+
 ## Order of work (decided 2026-09-25)
 
 Notes first, branching afterwards: notes are additive (components on
@@ -193,6 +235,10 @@ The steps are small and each can be delivered on its own.
 11. `read_history(channel, range/search)`.
 12. The context panel ([41](41-show-message-context.md)) shows which state of
     knowledge went in.
+
+**Phase 2b - private notes of an agent** ([51](51-agent-private-notes.md)),
+using the reading mechanism, `KnowledgeRef` and access rule of phase 2; steps
+in that issue.
 
 **Phase 3 - branching** ([08](08-retry-and-edit-past-answers.md))
 
@@ -240,3 +286,8 @@ built on the commit of point 7.
   [18](18-knowledge-sharing.md). Notes are read as a transient prompt part
   before the turn's input, not through the system prompt, for the prompt
   cache ([47](47-prompt-parts-with-provenance.md)).
+- **2026-09-25** — Terms defined above and in `ARCHITECTURE.md` (step 3 of
+  phase 0). "Agent session memory" is kept, as private notes of an agent per
+  channel that carry the confidentiality of their origin (principle 12,
+  [51](51-agent-private-notes.md), phase 2b). Renaming "context" for the
+  model input in `TurnContext` was deferred to [50](50-turn-context-naming.md).
