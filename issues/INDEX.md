@@ -96,7 +96,7 @@ against it, and what came out of the last attempt.
 | [35](35-sidebar-live-updates.md) | done | The web UI's session list is loaded once and never updated, so sessions and channels created or deleted elsewhere stay invisible until a reload. |
 | [40](40-choose-session-template.md) | open | A new session in the web UI always uses the first template of an unordered list, and the user cannot choose another. |
 | [41](41-show-message-context.md) | done | The web UI offers no way to see what an agent's model saw when it produced a message, although the server can answer it. |
-| [43](43-message-time-and-statistics.md) | open | The web UI shows neither when a message was written nor the token counts and durations recorded for it. |
+| [43](43-message-time-and-statistics.md) | done | The web UI shows neither when a message was written nor the token counts and durations recorded for it. |
 | [29](29-mentions.md) | done | In a multi-agent channel the user cannot choose who answers; the moderator alone decides, and an `@name` in the text means nothing to it. |
 
 ## Context and knowledge

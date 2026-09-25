@@ -1,6 +1,6 @@
 # 43 — The web UI shows neither when a message was written nor what it cost
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -65,3 +65,31 @@ Wanted:
 
 - **2026-09-25** — Opened at the maintainer's request; only recorded for
   now.
+- **2026-09-25** — Done, in the web UI only.
+  - **Placement:** both sit in a footer row at the bottom of the message
+    (`MessageFooter`), not next to the name as first planned - more icons
+    about a message are to come, and they get a row of their own. The
+    tooltip opens upwards, so that it stays visible on the last message.
+  - **Time:** always date and time
+    (`Intl.DateTimeFormat` with the browser's locale and time zone, e.g.
+    "25.09.2026, 14:28"), the full form with seconds as tooltip - no
+    relative times. `MessageTime` renders it in `MessageView` and in the
+    chat's notices: a failed turn and an announced command take the
+    envelope's timestamp, a private command output the time it arrived. The
+    message still streaming shows none.
+  - **Statistics:** `UsageInfo`, an "(i)" only on messages that have
+    statistics, lists what was reported - tokens, durations in seconds and
+    completion tokens per second; missing fields are left out. It opens on
+    hover, on keyboard focus and on click/tap (it stays open until focus
+    leaves).
+  - Found in the browser: a row dimmed with `opacity` as a whole makes the
+    tooltip in it translucent; the footer dims its items one by one.
+  - **The footer collects the icons about a message:** besides "(i)" a copy
+    button (copies the message's text as stored, Markdown included, and
+    confirms with a check mark), and the context action from
+    [41](41-show-message-context.md), moved down from the header with a
+    scroll icon instead of the eye.
+  - Both come through `MessageView`, so the context panel
+    ([41](41-show-message-context.md)) shows them too. Which model produced
+    a message is still not recorded, so the tooltip cannot show it.
+

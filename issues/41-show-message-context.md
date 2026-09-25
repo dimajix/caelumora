@@ -81,4 +81,8 @@ needs a REST client is an answer most of them will never get.
     Fetched contexts are cached per message for as long as the page runs.
   - Verified in the browser with a live agent. Not seen live: a context
     with tool steps, since the agent used none.
+- **2026-09-25** — With [43](43-message-time-and-statistics.md) the context
+  action moved from the message header into the new footer row that
+  collects the icons about a message, and uses a scroll icon (`ScrollText`)
+  instead of the eye - here and in the panel's header.
 

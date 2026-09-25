@@ -3,7 +3,7 @@
 // they were sent - including internal steps and tool results the chat hides.
 
 import React, {useEffect, useState} from 'react';
-import {Copy, Eye, X} from 'lucide-react';
+import {Copy, ScrollText, X} from 'lucide-react';
 import type {ChannelMember, Message, MessageContextResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
@@ -100,7 +100,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
     <div className="w-[28rem] max-w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
         <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
-          <Eye size={18} />
+          <ScrollText size={18} />
           <h3 className="font-semibold text-sm flex-1">What {message.sender_name || 'the agent'} saw</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
             <X size={16} />

@@ -1,14 +1,14 @@
 // One message as the chat shows it - content, tool calls with their status
 // and result - shared by the chat and the context panel (issue 41).
 
-import React from 'react';
-import {CheckCircle2, Terminal, Wrench, XCircle} from 'lucide-react';
+import React, {useState} from 'react';
+import {Check, CheckCircle2, Copy, Info, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ChannelMember, Message, ToolResult, ToolResultStatus} from '../types';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
-import {formatArguments} from '../messages';
+import {formatArguments, formatTimestamp, usageRows} from '../messages';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -35,18 +35,108 @@ function toolResultText(result: ToolResult): string {
   return result.content;
 }
 
+/** When a message was written: date and time, the full form on hover (issue 43). */
+export const MessageTime: React.FC<{timestamp?: string; className?: string}> = ({timestamp, className}) => {
+  const time = formatTimestamp(timestamp);
+  if (!time) return null;
+  return (
+    <time dateTime={timestamp} title={time.full} className={cn("normal-case tracking-normal font-normal", className)}>
+      {time.short}
+    </time>
+  );
+};
+
+/**
+ * An "(i)" that reveals a message's usage statistics - on hover, on keyboard
+ * focus, and on tap, where there is no hover (issue 43). Nothing for messages
+ * without statistics.
+ */
+const UsageInfo: React.FC<{message: Message}> = ({message}) => {
+  const [open, setOpen] = useState(false);
+  const rows = usageRows(message);
+  if (rows.length === 0) return null;
+  return (
+    <span className="relative group normal-case tracking-normal font-normal">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        onBlur={() => setOpen(false)}
+        aria-label="Usage statistics"
+        aria-expanded={open}
+        className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100 align-middle"
+      >
+        <Info size={13} />
+      </button>
+      <span
+        role="tooltip"
+        className={cn(
+          "absolute left-0 bottom-full mb-1 z-20 w-56 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-lg p-2 text-xs",
+          open ? "block" : "hidden group-hover:block group-focus-within:block"
+        )}
+      >
+        {rows.map(([label, value]) => (
+          <span key={label} className="flex justify-between gap-3">
+            <span className="text-gray-500 dark:text-gray-400">{label}</span>
+            <span className="font-mono">{value}</span>
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+};
+
+/** Copies the message's text - as stored, Markdown included - and confirms it briefly. */
+const CopyButton: React.FC<{text: string}> = ({text}) => {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (error) {
+      console.error('Copying to the clipboard failed', error);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+      title={copied ? 'Copied' : 'Copy to clipboard'}
+      aria-label="Copy to clipboard"
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  );
+};
+
+/**
+ * The bottom row of a message: when it was written and the icons about it -
+ * usage statistics, copying, and whatever `actions` the caller adds. Dimmed
+ * per item, not as a whole: opacity on the row would make the usage tooltip
+ * in it translucent too.
+ */
+export const MessageFooter: React.FC<{message: Message; actions?: React.ReactNode}> = ({message, actions}) => (
+  <div className="mt-2 flex items-center gap-2 text-[11px]">
+    <MessageTime timestamp={message.timestamp} className="opacity-60" />
+    <UsageInfo message={message} />
+    {message.content && <CopyButton text={message.content} />}
+    {actions}
+  </div>
+);
+
 interface MessageViewProps {
   message: Message;
   /** The channel's members, for highlighting `@`-mentions. */
   members: ChannelMember[];
   /** Labels shown next to the sender, e.g. "internal". */
   badges?: string[];
-  /** An action in the header, e.g. showing the message's context. */
-  action?: React.ReactNode;
+  /** Further icons for the footer, e.g. showing the message's context. */
+  actions?: React.ReactNode;
   className?: string;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, action, className}) => (
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className}) => (
   <div
     className={cn(
       "max-w-[80%] p-3 rounded-lg shadow-xs",
@@ -56,12 +146,11 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
       className
     )}
   >
-    <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
-      <span>{msg.sender_name || msg.role}</span>
+    <div className="text-xs font-semibold mb-1 uppercase tracking-wider flex items-center gap-2">
+      <span className="opacity-70">{msg.sender_name || msg.role}</span>
       {badges?.map(badge => (
-        <span key={badge} className="normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
+        <span key={badge} className="opacity-70 normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
       ))}
-      {action && <span className="ml-auto">{action}</span>}
     </div>
 
     {msg.content && (
@@ -116,5 +205,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
         })}
       </div>
     )}
+
+    <MessageFooter message={msg} actions={actions} />
   </div>
 );

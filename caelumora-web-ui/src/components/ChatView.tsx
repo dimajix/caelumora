@@ -2,7 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
   ChevronRight,
-  Eye,
+  ScrollText,
   Send,
   Square,
   Users,
@@ -23,7 +23,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
-import {MessageView} from './MessageView';
+import {MessageFooter, MessageView} from './MessageView';
 import {formatArguments, mergeToolResults} from '../messages';
 import {ContextPanel} from './ContextPanel';
 import {actorKey, mentionQueryAt} from '../mention';
@@ -174,6 +174,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             sender_name: envelope.context.sender_name,
             turnFailed: true,
             span_id: envelope.context.span_id,
+            timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, failed]);
           setStreamingMessage(null);
@@ -187,6 +188,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             content: actorEvent.CommandExecuted.output,
             sender_name: envelope.context.sender_name,
             commandOutput: {command: actorEvent.CommandExecuted.command, private: false},
+            timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, notice]);
         } else if (actorEvent.PlanStepStarted) {
@@ -259,6 +261,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             role: 'System',
             content: reply.output,
             commandOutput: {command: reply.command, private: true},
+            // Private output has no envelope: the time it arrived.
+            timestamp: new Date().toISOString(),
           };
           setMessages(prev => [...prev, notice]);
         }
@@ -393,6 +397,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
                   : <span>{msg.sender_name} ran <span className="font-mono normal-case">/{msg.commandOutput.command}</span></span>}
               </div>
               <MarkdownMessage content={msg.content ?? ''} />
+              <MessageFooter message={msg} />
             </div>
           ) : msg.turnFailed ? (
             <div
@@ -408,19 +413,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               {msg.span_id && (
                 <div className="mt-1 text-[10px] font-mono opacity-60">span_id {msg.span_id}</div>
               )}
+              <MessageFooter message={msg} />
             </div>
           ) : (
             <MessageView
               key={idx}
               message={msg}
               members={members}
-              action={mayShowContext(msg) ? (
+              actions={mayShowContext(msg) ? (
                 <button
                   onClick={() => setContextOf({channelId, message: msg})}
-                  className="p-0.5 opacity-60 hover:opacity-100"
+                  className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
                   title="Show what the agent saw"
+                  aria-label="Show what the agent saw"
                 >
-                  <Eye size={14} />
+                  <ScrollText size={13} />
                 </button>
               ) : undefined}
             />
