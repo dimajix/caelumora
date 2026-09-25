@@ -15,9 +15,11 @@ use caelumora_model::store::EntityStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantId, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
-use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
-use caelumora_runtime::component_impl::tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
+use caelumora_runtime::component_impl::state_context_appender::STATE_CONTEXT_APPENDER_KIND;
+use caelumora_runtime::component_impl::state_context_provider::STATE_CONTEXT_PROVIDER_KIND;
+use caelumora_runtime::component_impl::state_history_appender::STATE_HISTORY_APPENDER_KIND;
+use caelumora_runtime::component_impl::static_system_prompt_provider::STATIC_SYSTEM_PROMPT_PROVIDER_KIND;
+use caelumora_runtime::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
@@ -56,7 +58,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
         },
         ComponentDescriptor {
             id: "history-appender".to_string(),
-            kind: STATE_HISTORY_WRITER_KIND.to_string(),
+            kind: STATE_HISTORY_APPENDER_KIND.to_string(),
             params: serde_json::Value::Null,
             deps: Vec::new(),
             tags: vec![STAGE_PERCEIVE.to_string()],

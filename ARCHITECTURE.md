@@ -23,6 +23,8 @@ Caelumora uses a pluggable component-based architecture for defining agent behav
 *   **`ComponentContainer`**: Responsible for instantiating and managing the lifecycle of components based on the `ComponentConfig`.
 *   **Traits**: Components implement specific traits like `MessageProcessor`, `PerceiveInProcessor`, `PlanPreProcessor`, or `ContextProvider` to participate in different stages of the agent loop.
 
+The built-in components live in `caelumora-runtime/src/component_impl/`, **one file per component kind**, named after the kind (`calculator_tool.rs`, `notes.rs`, `state_context_provider.rs`, ...), each with its kind constant, its `register` function and its tests; `component_impl::register_all` registers them all (issue 52). They are sorted by component, not by facet, because one component may offer several facets - `create_plan_tool` and `notes` provide tools and a prompt part. A new component gets a file of its own and a line in `register_all`. Where the facet traits live is not yet uniform ([53](issues/53-facet-trait-placement.md)).
+
 ### Tool Components
 
 Agents gain capabilities through components implementing `ToolProvider` (one component can expose multiple `Tool`s). Built-in providers include `echo_tool`, `calculator_tool`, and `stop_tool`. An `mcp_tool` component exposes the tools of a remote MCP (Model Context Protocol) server, reached over the Streamable HTTP transport:

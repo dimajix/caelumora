@@ -2,7 +2,6 @@ use crate::channel::ChannelLoop;
 use crate::session::SessionLoop;
 use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, ComponentRegistry, ComponentResult};
-use crate::component_impl::{channel_history, command, context, history, mcp, notes, tool};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
@@ -167,13 +166,7 @@ impl RuntimeManager {
         commands: ComponentConfig,
     ) -> Result<Self> {
         let mut component_registry = ComponentRegistry::new(entity_store.clone());
-        history::register(&mut component_registry);
-        context::register(&mut component_registry);
-        tool::register(&mut component_registry);
-        notes::register(&mut component_registry);
-        channel_history::register(&mut component_registry);
-        mcp::register(&mut component_registry);
-        command::register(&mut component_registry);
+        crate::component_impl::register_all(&mut component_registry);
 
         let event_bus = Arc::new(EventBus::new(security_manager.clone()));
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));

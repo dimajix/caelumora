@@ -575,7 +575,8 @@ mod tests {
     use super::*;
     use crate::command::CommandExecutor;
     use crate::component::ComponentImpl;
-    use crate::component_impl::command::{HelpCommandProvider, WakeupCommandProvider};
+    use crate::component_impl::help_command::HelpCommandProvider;
+    use crate::component_impl::wakeup_command::WakeupCommandProvider;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::runtime::RuntimeManager;
     use caelumora_model::command::default_commands;

@@ -91,7 +91,7 @@ an obvious approach was already rejected.
 ### Unit Tests
 *   **Placement**: Put unit tests in a `mod tests` block at the bottom of the file, guarded by `#[cfg(test)]`.
 *   **Async Tests**: Use `#[tokio::test]` for tests involving async code.
-*   **Naming**: Use descriptive names for test functions (e.g., `state_history_writer_is_passthrough_and_persists_history`).
+*   **Naming**: Use descriptive names for test functions (e.g., `state_history_appender_is_passthrough_and_persists_history`).
 *   **Assertions**: Use `assert!`, `assert_eq!`, and `expect()` with descriptive messages.
 
 ### Integration Tests

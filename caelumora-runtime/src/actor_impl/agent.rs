@@ -1149,8 +1149,11 @@ impl Actor for AgentActor {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
-    use crate::component_impl::context::{ContextProvider, PromptPosition, StateContextAppender, StateContextProvider, StaticPromptProvider};
-    use crate::component_impl::history::StateHistoryWriter;
+    use crate::component_impl::context::{ContextProvider, PromptPosition};
+    use crate::component_impl::state_context_appender::StateContextAppender;
+    use crate::component_impl::state_context_provider::StateContextProvider;
+    use crate::component_impl::state_history_appender::StateHistoryAppender;
+    use crate::component_impl::static_system_prompt_provider::StaticPromptProvider;
     use crate::component_impl::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
     use caelumora_model::plan::{PlanId, PlanState};
@@ -1172,7 +1175,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn state_history_writer_is_passthrough_and_persists_history() {
+    async fn state_history_appender_is_passthrough_and_persists_history() {
         let mut agent_channel_state = AgentChannelState::default();
         let mut agent_state = AgentState::default();
         let mut turn_context = TurnContext::new(
@@ -1181,7 +1184,7 @@ mod tests {
             &mut agent_state,
             &mut agent_channel_state,
         );
-        let processor = StateHistoryWriter {};
+        let processor = StateHistoryAppender {};
         let input = vec![make_message("hello")];
 
         let output = processor

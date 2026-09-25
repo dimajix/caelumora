@@ -8,7 +8,7 @@ use caelumora_model::security::{DummySecurityManager, SecurityContext};
 use caelumora_model::store::EntityStore;
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-use caelumora_runtime::component_impl::mcp;
+use caelumora_runtime::component_impl::mcp_tool;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::tool::ToolProvider;
 use rmcp::handler::server::tool::ToolRouter;
@@ -78,7 +78,7 @@ async fn build_container(url: &str) -> ComponentContainer {
         component_nodes: vec![ComponentDescriptor {
             security_attributes: Default::default(),
             id: "test-echo".to_string(),
-            kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
+            kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
             params: json!({ "url": url }),
             deps: vec![],
             tags: vec![],
@@ -135,7 +135,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
             &ComponentDescriptor {
                 security_attributes: Default::default(),
                 id: "shared-echo".to_string(),
-                kind: mcp::MCP_TOOL_PROVIDER_KIND.to_string(),
+                kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
                 params: json!({ "url": url }),
                 deps: vec![],
                 tags: vec![],

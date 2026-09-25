@@ -1,8 +1,39 @@
+//! The built-in components, one file per component kind (issue 52). A
+//! component may offer several facets - a tool provider that also
+//! contributes a prompt part, say - so they are sorted by component, not by
+//! facet. `context` and `message` hold facet traits, not components.
+
+use crate::component::ComponentRegistry;
+
+pub mod calculator_tool;
 pub mod channel_history;
-pub mod command;
 pub mod context;
-pub mod history;
-pub mod mcp;
+pub mod create_plan_tool;
+pub mod echo_tool;
+pub mod help_command;
+pub mod mcp_tool;
 pub mod message;
 pub mod notes;
-pub mod tool;
+pub mod state_context_appender;
+pub mod state_context_provider;
+pub mod state_history_appender;
+pub mod static_system_prompt_provider;
+pub mod stop_tool;
+pub mod wakeup_command;
+
+/// Registers every built-in component kind with `registry`.
+pub fn register_all(registry: &mut ComponentRegistry) {
+    calculator_tool::register(registry);
+    channel_history::register(registry);
+    create_plan_tool::register(registry);
+    echo_tool::register(registry);
+    help_command::register(registry);
+    mcp_tool::register(registry);
+    notes::register(registry);
+    state_context_appender::register(registry);
+    state_context_provider::register(registry);
+    state_history_appender::register(registry);
+    static_system_prompt_provider::register(registry);
+    stop_tool::register(registry);
+    wakeup_command::register(registry);
+}

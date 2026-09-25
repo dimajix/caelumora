@@ -11,11 +11,15 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use caelumora_model::security::SecurityContext;
-use caelumora_runtime::component_impl::context::{STATE_CONTEXT_APPENDER_KIND, STATE_CONTEXT_PROVIDER_KIND, STATIC_SYSTEM_PROMPT_PROVIDER_KIND};
-use caelumora_runtime::component_impl::history::STATE_HISTORY_WRITER_KIND;
+use caelumora_runtime::component_impl::state_context_appender::STATE_CONTEXT_APPENDER_KIND;
+use caelumora_runtime::component_impl::state_context_provider::STATE_CONTEXT_PROVIDER_KIND;
+use caelumora_runtime::component_impl::state_history_appender::STATE_HISTORY_APPENDER_KIND;
+use caelumora_runtime::component_impl::static_system_prompt_provider::STATIC_SYSTEM_PROMPT_PROVIDER_KIND;
 use caelumora_runtime::component_impl::notes::NOTES_KIND;
 use caelumora_runtime::component_impl::channel_history::CHANNEL_HISTORY_KIND;
-use caelumora_runtime::component_impl::tool::{CALCULATOR_TOOL_PROVIDER_KIND, CREATE_PLAN_TOOL_PROVIDER_KIND, STOP_TOOL_PROVIDER_KIND};
+use caelumora_runtime::component_impl::calculator_tool::CALCULATOR_TOOL_PROVIDER_KIND;
+use caelumora_runtime::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
+use caelumora_runtime::component_impl::stop_tool::STOP_TOOL_PROVIDER_KIND;
 
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
     // The initial data belongs to the system: every user may use it, nobody
@@ -173,7 +177,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     let mut components = ComponentConfig::default();
     components.component_nodes.push(ComponentDescriptor {
         id: "history-appender".to_string(),
-        kind: STATE_HISTORY_WRITER_KIND.to_string(),
+        kind: STATE_HISTORY_APPENDER_KIND.to_string(),
         params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![STAGE_PERCEIVE.to_string()],

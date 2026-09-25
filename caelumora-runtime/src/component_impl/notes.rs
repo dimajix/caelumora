@@ -80,54 +80,66 @@ impl ToolProvider for NotesComponent {
 
     async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
         match name {
-            NOTE_TOOL_NAME => {
-                let text = params.get("text").and_then(Value::as_str).map(str::trim).unwrap_or_default();
-                if text.is_empty() {
-                    return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
-                }
-                let id = context.note(text.to_string());
-                Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
-            }
-            REVOKE_NOTE_TOOL_NAME => {
-                let id = params.get("id").and_then(Value::as_u64)
-                    .and_then(|id| u32::try_from(id).ok())
-                    .ok_or_else(|| ToolError::InvalidParameter("'id' must be the number of one of your notes".to_string()))?;
-                if context.revoke_note(NoteId(id)) {
-                    Ok(serde_json::json!({ "status": "revoked", "id": id }))
-                } else {
-                    Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))
-                }
-            }
-            READ_NOTES_TOOL_NAME => {
-                let reader = context.session_reader()
-                    .ok_or_else(|| ToolError::ExecutionFailed("no other channels can be read here".to_string()))?;
-                let channels = match params.get("channel").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
-                    Some(name) => vec![reader.notes_of(name).await.map_err(read_error)?],
-                    None => {
-                        let mut all = Vec::new();
-                        for channel in reader.readable_channels().await.map_err(read_error)? {
-                            all.push(reader.notes_of(&channel.name).await.map_err(read_error)?);
-                        }
-                        all
-                    }
-                };
-                let mut listed = Vec::new();
-                for (channel, published) in channels {
-                    let mut notes = Vec::new();
-                    for agent_notes in published {
-                        if let Some(reference) = notes_ref(channel.id, &agent_notes) {
-                            context.record_knowledge(reference);
-                        }
-                        for note in agent_notes.notes {
-                            notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
-                        }
-                    }
-                    listed.push(serde_json::json!({ "channel": channel.name, "notes": notes }));
-                }
-                Ok(serde_json::json!({ "channels": listed }))
-            }
+            NOTE_TOOL_NAME => self.execute_note(params, context),
+            REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, context),
+            READ_NOTES_TOOL_NAME => self.execute_read_notes(params, context).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
+    }
+}
+
+impl NotesComponent {
+    /// `note(text)`: notes `text`, published when the turn completes.
+    fn execute_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+        let text = params.get("text").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+        if text.is_empty() {
+            return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
+        }
+        let id = context.note(text.to_string());
+        Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
+    }
+
+    /// `revoke_note(id)`: revokes one of the agent's own current notes.
+    fn execute_revoke_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+        let id = params.get("id").and_then(Value::as_u64)
+            .and_then(|id| u32::try_from(id).ok())
+            .ok_or_else(|| ToolError::InvalidParameter("'id' must be the number of one of your notes".to_string()))?;
+        if context.revoke_note(NoteId(id)) {
+            Ok(serde_json::json!({ "status": "revoked", "id": id }))
+        } else {
+            Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))
+        }
+    }
+
+    /// `read_notes(channel?)`: the notes of the channel named, or of every
+    /// channel that may be read, each read recorded as knowledge.
+    async fn execute_read_notes(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+        let reader = context.session_reader()
+            .ok_or_else(|| ToolError::ExecutionFailed("no other channels can be read here".to_string()))?;
+        let channels = match params.get("channel").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
+            Some(name) => vec![reader.notes_of(name).await.map_err(read_error)?],
+            None => {
+                let mut all = Vec::new();
+                for channel in reader.readable_channels().await.map_err(read_error)? {
+                    all.push(reader.notes_of(&channel.name).await.map_err(read_error)?);
+                }
+                all
+            }
+        };
+        let mut listed = Vec::new();
+        for (channel, published) in channels {
+            let mut notes = Vec::new();
+            for agent_notes in published {
+                if let Some(reference) = notes_ref(channel.id, &agent_notes) {
+                    context.record_knowledge(reference);
+                }
+                for note in agent_notes.notes {
+                    notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
+                }
+            }
+            listed.push(serde_json::json!({ "channel": channel.name, "notes": notes }));
+        }
+        Ok(serde_json::json!({ "channels": listed }))
     }
 }
 

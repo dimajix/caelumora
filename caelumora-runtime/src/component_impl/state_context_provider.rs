@@ -1,0 +1,82 @@
+//! The `state_context_provider` component: the agent's stored context with
+//! the prompt parts of the `PromptProvider`s it depends on (issue 47).
+
+use crate::actor::{ContextItem, TurnContext};
+use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component_impl::context::{ContextProvider, PromptPosition, PromptProvider};
+use anyhow::Result;
+use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
+use caelumora_model::message::MessageRole;
+use std::sync::Arc;
+
+pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
+
+/// The stored context with the prompt parts of `prompt_providers`: those at
+/// `Start` joined into the system prompt before everything, those at
+/// `BeforeTurnInput` joined into one user message before the newest message
+/// of the turn.
+#[derive(Debug)]
+pub struct StateContextProvider {
+    pub prompt_providers: Vec<Arc<dyn PromptProvider>>,
+}
+
+#[async_trait]
+impl ContextProvider for StateContextProvider {
+    async fn current_context(&self, state: &mut TurnContext) -> Result<()> {
+        let mut start = Vec::new();
+        let mut before_input = Vec::new();
+        for provider in &self.prompt_providers {
+            let contribution = provider.get_prompt(state).await?;
+            let prompt = contribution.text.trim().to_string();
+            if prompt.is_empty() {
+                continue;
+            }
+            for reference in contribution.knowledge {
+                state.record_knowledge(reference);
+            }
+            match provider.position() {
+                PromptPosition::Start => start.push(prompt),
+                PromptPosition::BeforeTurnInput => before_input.push(prompt),
+            }
+        }
+
+        let mut conversation = state.stored_context();
+        if !before_input.is_empty() {
+            // The newest message is the turn's input - unless the agent wrote
+            // it itself, in a turn that has none (e.g. after `/wakeup`).
+            let own = ActorId::Agent(state.agent_id);
+            let at = match conversation.last() {
+                Some(ContextItem::Conversation { message, .. }) if message.sender_id != own => conversation.len() - 1,
+                _ => conversation.len(),
+            };
+            conversation.insert(at, ContextItem::Prompt { role: MessageRole::User, text: before_input.join("\n\n") });
+        }
+
+        let mut items = Vec::with_capacity(conversation.len() + 1);
+        if !start.is_empty() {
+            items.push(ContextItem::Prompt { role: MessageRole::System, text: start.join("\n\n") });
+        }
+        items.extend(conversation);
+        state.set_context(items);
+
+        Ok(())
+    }
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        STATE_CONTEXT_PROVIDER_KIND,
+        Box::new(|_descriptor, context| {
+            let prompt_providers = context.deps.values()
+                .filter_map(|facets| facets.get::<dyn PromptProvider>())
+                .collect();
+
+            let mut capabilities = ComponentFacets::empty();
+            capabilities.insert::<dyn ContextProvider>(Arc::new(StateContextProvider {
+                prompt_providers
+            }));
+            Ok(capabilities)
+        }),
+    );
+}

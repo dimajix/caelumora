@@ -1,6 +1,6 @@
 # 52 — All built-in tools live in one file
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -50,3 +50,28 @@ tools are, and no rule for where a new one goes.
 - **2026-09-25** — Issue created at the maintainer's request, while tools
   for reading notes and histories were being added in
   [17](17-information-sharing-within-session.md).
+- **2026-09-25** — Decided with the maintainer before implementing: **no
+  `tool_impl` directory**. A component may offer several facets
+  (`create_plan_tool` and `notes` provide tools and a prompt part), so
+  sorting by facet does not work; instead **every component gets a file of
+  its own in `component_impl`, named after its kind**. That applies to all
+  components, not only tools. Done:
+  - `tool.rs` split into `echo_tool.rs`, `calculator_tool.rs`, `stop_tool.rs`
+    and `create_plan_tool.rs`; `command.rs` into `help_command.rs` and
+    `wakeup_command.rs`; the components of `context.rs` into
+    `state_context_appender.rs`, `state_context_provider.rs` and
+    `static_system_prompt_provider.rs`; `history.rs` renamed to
+    `state_history_writer.rs`, `mcp.rs` to `mcp_tool.rs`.
+  - Each file has its kind constant, `register` and its tests;
+    `component_impl::register_all` replaces the list in `RuntimeManager::new`.
+  - `context.rs` and `message.rs` now hold only facet traits. Where facet
+    traits belong is uneven across the crate and was opened as
+    [53](53-facet-trait-placement.md) rather than changed here, to keep this
+    a pure move.
+  - No change in behaviour: kind strings unchanged, all 98 runtime tests pass
+    as before.
+- **2026-09-25** — Named consistently with `state_context_appender`:
+  `state_history_writer` is now `state_history_appender` (file, kind string,
+  `StateHistoryAppender`, `STATE_HISTORY_APPENDER_KIND`). Unlike the other
+  kinds, this kind string changed, so stored personalities that refer to
+  `state_history_writer` no longer load (legacy data need not be supported).
