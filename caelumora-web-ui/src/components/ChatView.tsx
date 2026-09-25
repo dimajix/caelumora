@@ -1,14 +1,12 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronRight,
+  Eye,
   Send,
   Square,
-  Terminal,
   Users,
   Wrench,
-  XCircle
 } from 'lucide-react';
 import type {
   ApprovalRequest,
@@ -19,46 +17,22 @@ import type {
   Envelope,
   Message,
   PlanStepEvent,
-  ToolResult,
-  ToolResultStatus
 } from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
-import {mentionedHandles, mentionQueryAt} from '../mention';
+import {MessageView} from './MessageView';
+import {formatArguments, mergeToolResults} from '../messages';
+import {ContextPanel} from './ContextPanel';
+import {actorKey, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
-
-const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
-  denied: 'Denied',
-  forbidden: 'Not permitted',
-  timed_out: 'Timed out',
-  invalid_arguments: 'Invalid arguments',
-  failed: 'Failed',
-  unknown_tool: 'Unknown tool',
-};
-
-/** The text to show for a tool result: the message of an unsuccessful one, else the content. */
-function toolResultText(result: ToolResult): string {
-  if (!result.status || result.status === 'ok') return result.content;
-  try {
-    const parsed = JSON.parse(result.content);
-    if (typeof parsed?.message === 'string') return parsed.message;
-  } catch {
-    // Not the JSON object the server writes for unsuccessful results.
-  }
-  return result.content;
-}
-
-function formatArguments(args: unknown): string {
-  return typeof args === 'string' ? args : JSON.stringify(args);
 }
 
 type MentionableMember = ChannelMember & {handle: string};
@@ -94,6 +68,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [caret, setCaret] = useState(0);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [dismissedMention, setDismissedMention] = useState<number | null>(null);
+  // The agent message whose context is shown, with the channel it belongs
+  // to - another channel shows none (issue 41).
+  const [contextOf, setContextOf] = useState<{channelId: string; message: Message} | null>(null);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
 
@@ -354,6 +331,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
     }
   };
 
+  /** Whether the user may see the context of `msg`: a stored message of an agent they may read (issue 41). */
+  const mayShowContext = (msg: Message): boolean => {
+    if (!msg.id || !msg.sender_id) return false;
+    const sender = actorKey(msg.sender_id);
+    return members.some(m => actorKey(m.id) === sender && m.can_read_context);
+  };
+
   const handleStopGeneration = async () => {
     try {
       await api.cancelChannel(sessionId, channelId);
@@ -397,21 +381,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               </button>
             </div>
           )}
-          {messages.reduce((acc: Message[], msg) => {
-            // Logic to merge tool calls and results
-            if (msg.tool_results && msg.tool_results.length > 0) {
-              const lastMsg = acc[acc.length - 1];
-              if (lastMsg && lastMsg.tool_calls && lastMsg.tool_calls.some(tc => msg.tool_results?.some(tr => tr.id === tc.id))) {
-                // Merge tool result into previous message that had the tool call
-                const newLastMsg = { 
-                  ...lastMsg, 
-                  tool_results: [...(lastMsg.tool_results || []), ...msg.tool_results] 
-                };
-                return [...acc.slice(0, -1), newLastMsg];
-              }
-            }
-            return [...acc, msg];
-          }, []).map((msg, idx) => msg.commandOutput ? (
+          {mergeToolResults(messages).map((msg, idx) => msg.commandOutput ? (
             <div
               key={idx}
               className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
@@ -440,72 +410,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               )}
             </div>
           ) : (
-            <div
+            <MessageView
               key={idx}
-              className={cn(
-                "max-w-[80%] p-3 rounded-lg shadow-xs",
-                msg.role === 'User' 
-                  ? "ml-auto bg-blue-600 text-white rounded-br-none" 
-                  : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600"
-              )}
-            >
-              <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
-                {msg.sender_name || msg.role}
-              </div>
-              
-              {msg.content && (
-                <MarkdownMessage
-                  content={msg.content}
-                  invert={msg.role === 'User'}
-                  mentions={mentionedHandles(msg, members)}
-                />
-              )}
-
-              {msg.tool_calls && msg.tool_calls.length > 0 && (
-                <div className="mt-2 space-y-2">
-                  {msg.tool_calls.map((call, cidx) => {
-                    const result = msg.tool_results?.find(r => r.id === call.id);
-                    return (
-                      <div key={cidx} className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
-                        <div className="bg-gray-100 dark:bg-gray-900 px-2 py-1 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
-                          <div className="flex items-center gap-2 text-xs font-mono">
-                            <Wrench size={12} className="text-blue-500" />
-                            <span>{call.function_name}</span>
-                          </div>
-                          {result && result.status && result.status !== 'ok' ? (
-                            <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                              <XCircle size={12} />
-                              <span className="text-[10px] uppercase">{TOOL_STATUS_LABELS[result.status]}</span>
-                            </div>
-                          ) : result ? (
-                            <CheckCircle2 size={12} className="text-green-500" />
-                          ) : (
-                            <div className="flex items-center gap-1">
-                               <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                               <span className="text-[10px] text-blue-500 uppercase">Executing</span>
-                            </div>
-                          )}
-                        </div>
-                        <div className="p-2">
-                           <div className="flex items-start gap-2 mb-1">
-                             <Terminal size={12} className="mt-0.5 opacity-50" />
-                             <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
-                           </div>
-                           {result && (
-                             <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                               <div className="text-[10px] uppercase opacity-50 mb-1">Result</div>
-                               <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">
-                                 {toolResultText(result)}
-                               </pre>
-                             </div>
-                           )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+              message={msg}
+              members={members}
+              action={mayShowContext(msg) ? (
+                <button
+                  onClick={() => setContextOf({channelId, message: msg})}
+                  className="p-0.5 opacity-60 hover:opacity-100"
+                  title="Show what the agent saw"
+                >
+                  <Eye size={14} />
+                </button>
+              ) : undefined}
+            />
           ))}
           {(isGenerating || streamingMessage) && (
             <div className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
@@ -644,6 +562,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         </div>
       </div>
 
+      {contextOf && contextOf.channelId === channelId ? (
+        <ContextPanel
+          key={contextOf.message.id}
+          sessionId={sessionId}
+          channelId={channelId}
+          message={contextOf.message}
+          members={members}
+          onClose={() => setContextOf(null)}
+        />
+      ) : (
       <div className="w-64 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block">
         <div className="p-4">
           <div className="flex items-center space-x-2 mb-4 text-gray-500 dark:text-gray-400">
@@ -661,6 +589,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };

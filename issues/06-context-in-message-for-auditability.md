@@ -1,6 +1,6 @@
 # 06 — Persist the context a message was generated from
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence / Audit
 
 ## The problem
@@ -129,4 +129,9 @@ turns.
   resolvable.
 - **2026-09-25** — Showing the context in the web UI is now its own issue,
   [41](41-show-message-context.md).
+- **2026-09-25** — Done: for every message an agent produces, what its model
+  saw can be reconstructed, over REST and in the web UI
+  ([41](41-show-message-context.md)), at the storage cost recorded above.
+  What compaction must preserve is recorded in
+  [16](16-context-compression.md).
 

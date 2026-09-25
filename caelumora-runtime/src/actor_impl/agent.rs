@@ -1107,8 +1107,7 @@ impl Actor for AgentActor {
     async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
         // Read from the store, where the state is written after every step:
         // the running loop holds the in-memory state for as long as it runs.
-        let attributes = self.agent_controller.load().security_attributes.clone();
-        if !self.actor_runtime.security_manager().check(caller, ActionType::ReadAgentContext(&attributes)).await {
+        if !self.may_read_context(caller).await {
             info!("Refused reading the context of agent {} for {}", self.id, caller.initiator_id);
             return Err(MessageContextError::Forbidden { actor: self.id });
         }
@@ -1118,6 +1117,11 @@ impl Actor for AgentActor {
                 MessageContextError::Failed { actor: self.id, message }
             })?;
         context_of(&state, self.id, message)
+    }
+
+    async fn may_read_context(&self, caller: &SecurityContext) -> bool {
+        let attributes = self.agent_controller.load().security_attributes.clone();
+        self.actor_runtime.security_manager().check(caller, ActionType::ReadAgentContext(&attributes)).await
     }
 
     async fn cancel(&self) -> Result<()> {

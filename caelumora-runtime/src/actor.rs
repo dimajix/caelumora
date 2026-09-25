@@ -59,6 +59,13 @@ pub trait Actor: Any + Debug + Send + Sync {
     async fn message_context(&self, _caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
         Err(MessageContextError::NotRecorded { actor: self.id(), message })
     }
+
+    /// Whether `caller` may read what this actor saw (`message_context`) -
+    /// asked in advance, so that a client offers it only where it works.
+    /// Only agents have anything to read.
+    async fn may_read_context(&self, _caller: &SecurityContext) -> bool {
+        false
+    }
 }
 
 /// Why a message's context cannot be shown. The messages are meant for users

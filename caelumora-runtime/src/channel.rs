@@ -710,4 +710,45 @@ mod tests {
         let error = actor.execute_command("nonsense", "").await.expect_err("unknown");
         assert!(matches!(command_error(&error), crate::command::CommandError::Unknown(_)), "{error}");
     }
+
+    #[tokio::test]
+    async fn only_the_owner_of_an_agent_may_read_what_it_saw() {
+        use caelumora_model::agent::{Agent, Personality, PersonalityId};
+        use caelumora_model::meta::{Metadata, Scope};
+        use caelumora_model::security::OwnershipSecurityManager;
+        use caelumora_model::store::EntityStore;
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let personality = Personality {
+            id: PersonalityId::new(),
+            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            components: Default::default(),
+            security_attributes: Default::default(),
+        };
+        store.put_personality(&SecurityContext::system(), &personality).await.unwrap();
+
+        let (alice, bob) = (user("alice"), user("bob"));
+        let as_user = |u: &User| SecurityContext::new(ActorId::User(u.id), Default::default(), Default::default());
+        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, as_user(&alice));
+        let agent_id = ActorId::Agent(agent.id);
+
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
+        let channel = Channel::new(
+            SessionId::new(),
+            "main".to_string(),
+            "broadcast".to_string(),
+            vec![Participant::User(alice.clone()), Participant::User(bob.clone()), Participant::Agent(agent)],
+            SecurityAttributes::default(),
+        );
+        let executor = CommandExecutor::empty(runtime.security_manager());
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
+
+        let helper = channel.actor_by_id(agent_id).expect("the agent is a participant");
+        assert!(helper.may_read_context(&as_user(&alice)).await, "alice created the agent");
+        assert!(!helper.may_read_context(&as_user(&bob)).await, "bob only takes part in the channel");
+        let bobs_actor = channel.actor_by_id(ActorId::User(bob.id)).unwrap();
+        assert!(!bobs_actor.may_read_context(&as_user(&alice)).await, "a user has nothing to read");
+    }
 }

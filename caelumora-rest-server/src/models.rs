@@ -79,6 +79,10 @@ pub struct ChannelMemberResponse {
     /// `None` if the participant cannot be mentioned.
     pub handle: Option<String>,
     pub kind: String,
+    /// Whether the requesting user may see what this participant saw when it
+    /// produced a message (issue 41) - only ever for agents, and only as the
+    /// policy decides for this user.
+    pub can_read_context: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -7,6 +7,7 @@ use axum::{
 };
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::mention::handle_of;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -41,12 +42,9 @@ pub async fn global_events(
     Sse::new(crate::sse::bounded_by_token(&user, sse_stream))
 }
 
-/// Every session with its channels, as the sessions' events refer to them by
-/// id alone.
-///
-/// Unfiltered: every user sees every session until issue 11 decides who may
-/// see what. A running session is described by its live channels, a stopped
-/// one by what the store holds.
+/// Every session the user may read, with its channels, as the sessions'
+/// events refer to them by id alone. A running session is described by its
+/// live channels, a stopped one by what the store holds.
 async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> GlobalSnapshot {
     let sessions = match state.entity_store.list_sessions(&user.security_context()).await {
         Ok(sessions) => sessions,
@@ -56,7 +54,12 @@ async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Glo
         }
     };
 
-    let sessions = sessions.into_iter().map(|session| describe_session(state, session)).collect();
+    let viewer = user.security_context();
+    let mut described = Vec::new();
+    for session in sessions {
+        described.push(describe_session(state, session, &viewer).await);
+    }
+    let sessions = described;
 
     GlobalSnapshot { sessions }
 }
@@ -65,10 +68,13 @@ async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Glo
 /// /sessions/{id}` describe it. A running session is described by its live
 /// state, a stopped one by what the store holds - describing it does not
 /// start it.
-pub(crate) fn describe_session(state: &AppState, session: Session) -> SessionSnapshot {
+pub(crate) async fn describe_session(state: &AppState, session: Session, viewer: &SecurityContext) -> SessionSnapshot {
     match state.session_manager.get_session(session.id) {
         Some(running) => {
-            let channels = running.channels().iter().map(|c| crate::routes::channels::channel_response(c)).collect();
+            let mut channels = Vec::new();
+            for channel in running.channels() {
+                channels.push(crate::routes::channels::channel_response(&channel, viewer).await);
+            }
             session_snapshot((**running.get_session()).clone(), channels)
         }
         None => {
@@ -102,7 +108,9 @@ fn stored_channel_response(channel: &Channel) -> ChannelResponse {
             Participant::Approver(a) => (caelumora_model::actor::ActorId::Approver(a.id.0), "Approver".to_string(), "approver"),
         };
         let handle = Some(handle_of(&name)).filter(|h| !h.is_empty() && kind != "approver");
-        ChannelMemberResponse { id, name, handle, kind: kind.to_string() }
+        // Not running: there is no actor to ask; opening the channel starts
+        // it, and its own snapshot says.
+        ChannelMemberResponse { id, name, handle, kind: kind.to_string(), can_read_context: false }
     }).collect();
 
     ChannelResponse { id: channel.id, name: channel.name.clone(), members }

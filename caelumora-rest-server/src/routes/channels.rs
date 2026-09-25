@@ -14,6 +14,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_runtime::command::CommandError;
 use caelumora_model::message::{Message, MessageId};
+use caelumora_model::security::SecurityContext;
 use caelumora_runtime::actor::MessageContextError;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
@@ -30,12 +31,12 @@ pub async fn list_channels(
     let session_id = SessionId(id);
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
-    Ok(Json(
-        session.channels()
-            .into_iter()
-            .map(|c| channel_response(&c))
-            .collect(),
-    ))
+    let context = user.security_context();
+    let mut channels = Vec::new();
+    for channel in session.channels() {
+        channels.push(channel_response(&channel, &context).await);
+    }
+    Ok(Json(channels))
 }
 
 pub async fn get_channel(
@@ -49,7 +50,7 @@ pub async fn get_channel(
     
     let channel = channel_of(&session, channel_id)?;
 
-    Ok(Json(channel_response(&channel)))
+    Ok(Json(channel_response(&channel, &user.security_context()).await))
 }
 
 /// How many messages a snapshot carries: the end of the conversation, which
@@ -57,15 +58,18 @@ pub async fn get_channel(
 /// (`GET .../messages`), which `has_more` tells the client to do.
 const SNAPSHOT_MESSAGES: usize = 20;
 
-pub fn channel_response(channel: &ChannelLoop) -> ChannelResponse {
-    ChannelResponse {
-        id: channel.id(),
-        name: channel.name(),
-        members: channel.members()
-            .into_iter()
-            .map(|m| ChannelMemberResponse { id: m.id, name: m.name, handle: m.handle, kind: m.kind })
-            .collect(),
+/// A running channel as `viewer` sees it: its members, with what the viewer
+/// may do with each (see `ChannelMemberResponse::can_read_context`).
+pub async fn channel_response(channel: &ChannelLoop, viewer: &SecurityContext) -> ChannelResponse {
+    let mut members = Vec::new();
+    for member in channel.members() {
+        let can_read_context = match channel.actor_by_id(member.id) {
+            Some(actor) => actor.may_read_context(viewer).await,
+            None => false,
+        };
+        members.push(ChannelMemberResponse { id: member.id, name: member.name, handle: member.handle, kind: member.kind, can_read_context });
     }
+    ChannelResponse { id: channel.id(), name: channel.name(), members }
 }
 
 pub async fn get_channel_messages(
@@ -85,9 +89,9 @@ pub async fn get_channel_messages(
 
 /// The state of `channel` right now, for a stream that starts with a
 /// snapshot (issue 34).
-async fn channel_snapshot(channel: &ChannelLoop) -> ChannelSnapshot {
+async fn channel_snapshot(channel: &ChannelLoop, viewer: &SecurityContext) -> ChannelSnapshot {
     let (messages, has_more) = recent_messages(channel.history().await);
-    ChannelSnapshot { channel: channel_response(channel), messages, has_more }
+    ChannelSnapshot { channel: channel_response(channel, viewer).await, messages, has_more }
 }
 
 /// The end of a history, and whether it was cut.
@@ -99,8 +103,8 @@ fn recent_messages(history: Vec<Message>) -> (Vec<Message>, bool) {
 
 /// The snapshot as an SSE event. Named, so that clients that do not know it
 /// (and the events that follow, which stay unnamed) are unaffected.
-async fn snapshot_event(channel: &ChannelLoop) -> Event {
-    let snapshot = channel_snapshot(channel).await;
+async fn snapshot_event(channel: &ChannelLoop, viewer: &SecurityContext) -> Event {
+    let snapshot = channel_snapshot(channel, viewer).await;
     Event::default().event("snapshot").data(serde_json::to_string(&snapshot).unwrap_or_default())
 }
 
@@ -121,13 +125,15 @@ pub async fn join_channel(
     // twice - once in the snapshot, once as an event - which clients drop by
     // message id.
     let receiver = channel.subscribe();
-    let snapshot = if options.snapshot { Some(snapshot_event(&channel).await) } else { None };
+    let viewer = user.security_context();
+    let snapshot = if options.snapshot { Some(snapshot_event(&channel, &viewer).await) } else { None };
 
     // A client that falls behind gets a fresh snapshot, if it asked for them.
     let resync = options.snapshot.then(|| {
         move || {
             let channel = channel.clone();
-            async move { snapshot_event(&channel).await }
+            let viewer = viewer.clone();
+            async move { snapshot_event(&channel, &viewer).await }
         }
     });
     let updates = crate::sse::resync_on_lag(receiver, format!("channel {}", channel_id), resync);

@@ -2,6 +2,7 @@ import type {
   ChannelResponse,
   Command,
   CommandReply,
+  MessageContextResponse,
   CreateSessionRequest,
   Message,
   SessionResponse,
@@ -114,6 +115,13 @@ export const api = {
       body: JSON.stringify({ content }),
     });
     await ensureOk(res, 'Failed to send message');
+  },
+
+  /** What actor `actorUuid` saw when it produced message `messageId`. */
+  async getMessageContext(sessionId: string, channelId: string, actorUuid: string, messageId: string): Promise<MessageContextResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/messages/${messageId}/context`);
+    await ensureOk(res, 'Failed to fetch the context');
+    return res.json();
   },
 
   /** The commands the current user may use in the channel. */

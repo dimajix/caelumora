@@ -97,7 +97,7 @@ pub async fn get_session(
                 ApiError::internal("session_unavailable", &format!("loading session {}", session_id), &error)
             }
         })?;
-    Ok(Json(crate::routes::events::describe_session(&state, session)))
+    Ok(Json(crate::routes::events::describe_session(&state, session, &user.security_context()).await))
 }
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {

@@ -1,6 +1,6 @@
 # 41 — The web UI cannot show what an agent saw
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -59,3 +59,26 @@ needs a REST client is an answer most of them will never get.
 
 - **2026-09-25** — Split off from [06](06-context-in-message-for-auditability.md),
   which built the endpoint; showing it in the web UI is a step of its own.
+- **2026-09-25** — Done.
+  - **Who sees the action:** decided for the server telling the UI in
+    advance rather than offering an action that always fails for
+    contributors. Every member of a channel response carries
+    `can_read_context`, decided for the requesting user by the new
+    `Actor::may_read_context` - the same `ReadAgentContext` question
+    `message_context` asks, answered by the agent (default: no). The flag
+    says only whether *you* may, not who owns the agent. Members of a
+    stopped session's stored description carry `false`; opening the channel
+    starts it and its snapshot tells.
+  - **Where:** an eye icon in the header of stored agent messages the user
+    may read, opening a panel in place of the member list, so that chat and
+    context can be read side by side.
+  - **How:** `MessageView`, extracted from `ChatView` and used by both, so
+    a message looks the same in the chat and in the panel; the panel marks
+    internal messages and tool results. Header with the agent and both
+    digests (short, copyable), the system prompt collapsed, the latest ten
+    messages with older ones behind "Show N earlier messages". A refusal or
+    a context not recorded (yet) is shown in the panel, not as an error.
+    Fetched contexts are cached per message for as long as the page runs.
+  - Verified in the browser with a live agent. Not seen live: a context
+    with tool steps, since the agent used none.
+

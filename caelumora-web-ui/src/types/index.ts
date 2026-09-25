@@ -28,6 +28,8 @@ export interface ChannelMember {
   /** The handle it is `@`-mentioned by, or null if it cannot be mentioned. */
   handle: string | null;
   kind: string;
+  /** Whether you may see what this participant saw when it wrote a message (issue 41). */
+  can_read_context: boolean;
 }
 
 export interface ChannelResponse {
@@ -85,6 +87,9 @@ export type GlobalEvent = Record<string, unknown>;
 export interface Message {
   id?: string;
   role: 'User' | 'Assistant' | 'System' | 'Tool';
+  sender_id?: ActorId;
+  /** Internal scaffolding (deliberation, plan steps, mid-plan tool steps): never shown in the chat. */
+  internal?: boolean;
   content: string | null;
   sender_name?: string;
   timestamp?: string;
@@ -196,3 +201,15 @@ export interface ApprovalResponse {
   id: string;
   agent_id: string;
 }
+
+/** What an agent's model saw when it produced a message (issue 06). */
+export interface MessageContextResponse {
+  message_id: string;
+  actor_id: ActorId;
+  context_digest: string | null;
+  system_prompt_digest: string | null;
+  system_prompt: string | null;
+  /** The messages of the context, in the order they were sent. */
+  messages: Message[];
+}
+
