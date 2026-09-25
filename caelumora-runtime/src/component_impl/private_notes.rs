@@ -1,0 +1,205 @@
+//! The `private_notes` component (issue 51): an agent notes what only it
+//! should remember, and recalls it in all its channels of the session where
+//! that tells no one anything new.
+//!
+//! Its tools `note_private` and `revoke_private_note` change the agent's
+//! private notes in the current channel - taken over when the turn
+//! completes, like public notes (`notes`). Its prompt part gives the model
+//! its private notes from this channel and from every other channel of the
+//! session whose notes every user of this channel may read
+//! (`ChannelLoop::may_read`): a note carries the confidentiality of the
+//! channel it was written in, checked when it is read. It is a
+//! `BeforeTurnInput` part, and every chain it shows is recorded as a
+//! `KnowledgeRef`.
+
+use crate::actor::TurnContext;
+use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component_impl::notes::{note_id, note_text};
+use crate::context::{Prompt, PromptPosition, PromptProvider};
+use crate::notes::ChannelNotes;
+use crate::tool::{ToolError, ToolProvider, ToolResult};
+use anyhow::Result;
+use async_trait::async_trait;
+use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::note::Note;
+use caelumora_model::tool::{Tool, ToolParameters};
+use serde_json::Value;
+use std::fmt::Write;
+use std::sync::Arc;
+use tracing::warn;
+
+pub const PRIVATE_NOTES_KIND: &str = "private_notes";
+
+pub const NOTE_PRIVATE_TOOL_NAME: &str = "note_private";
+pub const REVOKE_PRIVATE_NOTE_TOOL_NAME: &str = "revoke_private_note";
+
+#[derive(Debug)]
+pub struct PrivateNotesComponent;
+
+#[async_trait]
+impl ToolProvider for PrivateNotesComponent {
+    fn tools(&self) -> Vec<Tool> {
+        vec![
+            Tool {
+                name: NOTE_PRIVATE_TOOL_NAME.to_string(),
+                description: "Note something privately - no other participant sees it. You are shown \
+                    your private notes from now on, in this channel and in your other channels of this \
+                    session where that reveals nothing to someone who may not know it. Keep a note short \
+                    and self-contained; to change one, revoke it and note the new version."
+                    .to_string(),
+                parameters: ToolParameters::object(
+                    [("text", ToolParameters::string("What to note"))],
+                    ["text"],
+                ),
+                requires_approval: false,
+            },
+            Tool {
+                name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: "Revoke one of your private notes of this channel, by its number."
+                    .to_string(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number("The number of your private note"))],
+                    ["id"],
+                ),
+                requires_approval: false,
+            },
+        ]
+    }
+
+    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+        match name {
+            NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, context),
+            REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, context),
+            _ => Err(ToolError::UnknownTool(name.to_string())),
+        }
+    }
+}
+
+impl PrivateNotesComponent {
+    /// `note_private(text)`: notes `text` privately, taken over when the
+    /// turn completes.
+    fn execute_note_private(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+        let id = context.private_note(note_text(params)?);
+        Ok(serde_json::json!({ "status": "noted privately", "id": id.0 }))
+    }
+
+    /// `revoke_private_note(id)`: revokes one of the agent's private notes
+    /// of this channel.
+    fn execute_revoke_private_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+        let id = note_id(params)?;
+        if context.revoke_private_note(id) {
+            Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
+        } else {
+            Err(ToolError::InvalidParameter(format!("you have no private note #{id} in this channel")))
+        }
+    }
+}
+
+#[async_trait]
+impl PromptProvider for PrivateNotesComponent {
+    fn position(&self) -> PromptPosition {
+        PromptPosition::BeforeTurnInput
+    }
+
+    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt> {
+        let own = context.private_notes();
+        let mut elsewhere = match context.session_reader() {
+            Some(reader) => reader.private_notes(context.agent_id).await.unwrap_or_else(|e| {
+                // The agent can still answer without them.
+                warn!("Reading the private notes of agent {} failed: {}", context.agent_id, e);
+                Vec::new()
+            }),
+            None => Vec::new(),
+        };
+        elsewhere.retain(|c| !c.notes.is_empty());
+        elsewhere.sort_by(|l, r| l.channel.name.cmp(&r.channel.name));
+
+        let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: context.agent_id, digest } };
+        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel.id, c.digest)).collect();
+        if !own.is_empty() {
+            knowledge.push(private(context.channel_id, context.private_notes_digest()));
+        }
+        Ok(Prompt { text: render(&own, &elsewhere), knowledge })
+    }
+}
+
+/// The prompt part for the private notes of this channel (`own`) and of
+/// others; empty if there are none.
+fn render(own: &[Note], elsewhere: &[ChannelNotes]) -> String {
+    if own.is_empty() && elsewhere.is_empty() {
+        return String::new();
+    }
+    let mut text = String::from("[Your private notes - no one else sees them.]\n");
+    if !own.is_empty() {
+        let _ = writeln!(text, "In this channel (change them with `note_private` and `revoke_private_note`):");
+        for note in own {
+            let _ = writeln!(text, "- #{}: {}", note.id, note.text);
+        }
+    }
+    for channel in elsewhere {
+        let _ = writeln!(text, "From channel {}:", channel.channel.name);
+        for note in &channel.notes {
+            let _ = writeln!(text, "- {}", note.text);
+        }
+    }
+    text
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        PRIVATE_NOTES_KIND,
+        Box::new(|_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(PrivateNotesComponent));
+            facets.insert::<dyn PromptProvider>(Arc::new(PrivateNotesComponent));
+            Ok(facets)
+        }),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notes::ChannelInfo;
+    use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+    use caelumora_model::message::MessageId;
+    use caelumora_model::note::NoteId;
+
+    fn note(id: u32, text: &str) -> Note {
+        Note { id: NoteId(id), text: text.to_string(), after: MessageId::new(), written_at: chrono::Utc::now() }
+    }
+
+    #[test]
+    fn nothing_noted_gives_no_prompt_part() {
+        assert_eq!(render(&[], &[]), "");
+    }
+
+    #[test]
+    fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
+        let elsewhere = [ChannelNotes { channel: ChannelInfo { id: Default::default(), name: "research".to_string() }, notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
+        let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
+        assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research:").unwrap(), "{text}");
+        assert!(text.contains("- Kaya prefers short answers."));
+    }
+
+    #[tokio::test]
+    async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
+        let mut agent_state = AgentState::default();
+        let mut state = AgentChannelState::default();
+        let tools = PrivateNotesComponent;
+        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+        turn.note("public".to_string());
+        let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
+        assert_eq!(noted["id"], 1, "its own numbering");
+        assert!(turn.private_notes().is_empty(), "not before the turn completes");
+        assert!(turn.record_turn(Vec::new()), "public notes changed");
+        assert_eq!(turn.private_notes().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
+        assert_eq!(turn.notes().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
+
+        let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), &mut turn).await;
+        assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
+        tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
+        assert!(!turn.record_turn(Vec::new()), "only private notes changed: nobody is told");
+        assert!(turn.private_notes().is_empty());
+    }
+}

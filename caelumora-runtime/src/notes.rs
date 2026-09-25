@@ -14,6 +14,7 @@ use crate::runtime::ActorRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::digest::Digest;
 use caelumora_model::message::Message;
@@ -46,6 +47,14 @@ pub struct ChannelHistory {
     pub digest: Option<Digest>,
 }
 
+/// Notes of one agent from one channel.
+#[derive(Debug, Clone)]
+pub struct ChannelNotes {
+    pub channel: ChannelInfo,
+    pub notes: Vec<Note>,
+    pub digest: Option<Digest>,
+}
+
 /// A channel that cannot be read: it does not exist, or the users of the
 /// reading channel may not read it. Deliberately one case, so that a reader
 /// cannot probe which channels exist.
@@ -75,6 +84,11 @@ pub trait SessionReader: Send + Sync + Debug {
     /// # Errors
     /// [`NotReadable`] if there is no such channel or it may not be read.
     async fn history_of(&self, name: &str) -> Result<ChannelHistory>;
+    /// The private notes `agent` wrote in the other channels of the session
+    /// that the turn's channel may read (issue 51) - its agent session
+    /// memory, bounded by confidentiality. The own channel's are not among
+    /// them: the turn has them itself.
+    async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>>;
 }
 
 /// Reads the session of the channel an actor runs in.
@@ -145,5 +159,19 @@ impl SessionReader for ChannelSessionReader {
         let channel = self.readable(name).await?;
         let (messages, digest) = channel.history_with_digest().await;
         Ok(ChannelHistory { channel: info(&channel), messages, digest })
+    }
+
+    async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>> {
+        let (Some(own), Some(session)) = (self.runtime.channel(), self.runtime.session()) else { return Ok(Vec::new()) };
+        let mut found = Vec::new();
+        for channel in session.channels() {
+            if channel.id() == own.id() || !own.may_read(&channel).await {
+                continue;
+            }
+            if let Some((notes, digest)) = channel.private_notes(agent).await? {
+                found.push(ChannelNotes { channel: info(&channel), notes, digest });
+            }
+        }
+        Ok(found)
     }
 }

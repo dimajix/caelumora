@@ -184,6 +184,13 @@ pub struct AgentChannelState {
     /// when the turn completes and discarded if it does not.
     #[serde(default)]
     pub turn_notes: Vec<NoteChange>,
+    /// The agent's private notes in this channel, which only it reads - and
+    /// only where the channel's confidentiality allows (issue 51).
+    #[serde(default)]
+    pub private_notes: NoteChain,
+    /// Changes to them made in the current turn, like `turn_notes`.
+    #[serde(default)]
+    pub turn_private_notes: Vec<NoteChange>,
     /// Knowledge read in the current turn, each with the number of messages
     /// the turn had produced by then: it counts for the messages after it
     /// (issue 17).

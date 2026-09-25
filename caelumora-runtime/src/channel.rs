@@ -291,6 +291,17 @@ impl ChannelLoop {
         Ok(published)
     }
 
+    /// The private notes `agent` wrote in this channel (issue 51), read from
+    /// its state; `None` if it takes no part in the channel. Only for the
+    /// agent itself - see `notes::SessionReader::private_notes`.
+    pub async fn private_notes(&self, agent: caelumora_model::agent::AgentId) -> Result<Option<(Vec<caelumora_model::note::Note>, Option<caelumora_model::digest::Digest>)>> {
+        if !self.actors.contains_key(&ActorId::Agent(agent)) {
+            return Ok(None);
+        }
+        let state = self.state_store.get_agent_channel_state(agent, self.id).await?;
+        Ok(Some((state.private_notes.current(), state.private_notes.digest())))
+    }
+
     fn is_mentionable(id: ActorId) -> bool {
         matches!(id, ActorId::User(_) | ActorId::Agent(_))
     }

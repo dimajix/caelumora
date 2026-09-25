@@ -96,9 +96,15 @@ const PromptView: React.FC<{prompt: SeenPrompt; leading: boolean}> = ({prompt, l
 /** What a knowledge reference read, in words. */
 function knowledgeLabel(knowledge: KnowledgeRef): string {
   const channel = knowledge.channel_name ? `#${knowledge.channel_name}` : 'a deleted channel';
-  return knowledge.source === 'notes'
-    ? `Notes of ${knowledge.agent_name ?? 'an agent'} in ${channel}`
-    : `History of ${channel}`;
+  const agent = knowledge.agent_name ?? 'an agent';
+  switch (knowledge.source) {
+    case 'notes':
+      return `Notes of ${agent} in ${channel}`;
+    case 'private_notes':
+      return `Private notes of ${agent} in ${channel}`;
+    default:
+      return `History of ${channel}`;
+  }
 }
 
 const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]}> = ({knowledge}) => (

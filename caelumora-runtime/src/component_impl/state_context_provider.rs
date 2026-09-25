@@ -67,9 +67,13 @@ impl ContextProvider for StateContextProvider {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         STATE_CONTEXT_PROVIDER_KIND,
-        Box::new(|_descriptor, context| {
-            let prompt_providers = context.deps.values()
-                .filter_map(|facets| facets.get::<dyn PromptProvider>())
+        Box::new(|descriptor, context| {
+            // In the order the dependencies are declared, not the map's: the
+            // parts of one position are joined in this order, and a part that
+            // changes its place changes the prompt - and its cache - for
+            // nothing.
+            let prompt_providers = descriptor.deps.iter()
+                .filter_map(|id| context.deps.get(id)?.get::<dyn PromptProvider>())
                 .collect();
 
             let mut capabilities = ComponentFacets::empty();

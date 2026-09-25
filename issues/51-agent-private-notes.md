@@ -1,6 +1,6 @@
 # 51 — An agent has no private knowledge across its channels
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -73,3 +73,45 @@ Decided on 2026-09-25 (principle 12 in [19](19-memory-tiers.md)):
   ([19](19-memory-tiers.md), principle 2): private notes are the second chain
   of the same mechanism, next to the agent's public notes per channel, and
   differ only in who may read them.
+- **2026-09-25** — Implemented, as decided with the maintainer before:
+  - A component of its own, `private_notes`, so that private notes can be
+    enabled per personality apart from public ones; tools `note_private` and
+    `revoke_private_note` (separate tools rather than a `private` flag on
+    `note`, harder for a model to mix up) and a `BeforeTurnInput` prompt
+    part. Parameter parsing is shared with `notes` (`note_text`,
+    `note_id`).
+  - `AgentChannelState::private_notes` and `turn_private_notes`; the
+    `TurnContext` note operations work on either chain through shared
+    helpers (`add_note`, `revoke`). Private notes are numbered apart from
+    public ones, so gaps in the public numbers reveal nothing. `record_turn`
+    takes both over; only public changes are announced (`NotesChanged`).
+  - Reading: `SessionReader::private_notes(agent)` reads the agent's private
+    chains of the other channels of the session that the current channel may
+    read (`ChannelLoop::may_read`, the rule of point 11 in
+    [19](19-memory-tiers.md)); the current channel's come from the turn
+    itself. The confidentiality is checked against the channel's *current*
+    attributes when read, not frozen per note, so a user later removed from
+    a channel ([46](46-channel-participants.md)) does not keep access through
+    old notes.
+  - `KnowledgeSource::PrivateNotes { agent, digest }`; REST reports it as
+    `private_notes`, the context panel as "Private notes of X in #c".
+  - Not in the "Notes" tab; the owner sees them in the context panel, which
+    `ReadAgentContext` reserves to the owner. Deleting a channel deletes the
+    private notes written there.
+  - Found on the way: `StateContextProvider` collected its prompt providers
+    from a `HashMap`, so the order of parts at one position - system prompt
+    and planning prompt, now notes and private notes - could change between
+    starts and with it the prompt and its cache. It now follows the order of
+    the declared dependencies.
+  - Verified in the browser with a `mentions-session` and a second channel
+    `research` (Jonathan and the user): Jonathan noted a code word with
+    `note_private` in `research`; asked in `main`, whose conversation
+    never contained it, he answered it correctly. His context there shows
+    the prompt part "From channel research" and the knowledge
+    `private_notes Jonathan #research`; the "Notes" tab of `research` stays
+    empty.
+  - Observed, and consistent with point 11 of [19](19-memory-tiers.md): once
+    Jonathan answered in `main`, the other agent there (Sassy) received the
+    answer like every message. The rule guards users, not agents; an agent
+    that recalls a private note where it may still passes it on to the
+    channel it speaks in.

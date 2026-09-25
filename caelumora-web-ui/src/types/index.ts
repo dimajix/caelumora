@@ -266,8 +266,8 @@ export interface MessageContextResponse {
 export interface KnowledgeRef {
   channel_id: string;
   channel_name: string | null;
-  source: 'notes' | 'history';
-  /** Whose notes, for `notes`. */
+  source: 'notes' | 'private_notes' | 'history';
+  /** Whose notes, for `notes` and `private_notes`. */
   agent_id: ActorId | null;
   agent_name: string | null;
   digest: string | null;

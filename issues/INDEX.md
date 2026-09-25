@@ -115,7 +115,7 @@ against it, and what came out of the last attempt.
 | [47](47-prompt-parts-with-provenance.md) | done | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |
 | [48](48-shared-digest-chain.md) | done | History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately. |
 | [50](50-turn-context-naming.md) | open | `TurnContext` calls both the stored context and the input of one model call "context". |
-| [51](51-agent-private-notes.md) | open | An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels. |
+| [51](51-agent-private-notes.md) | done | An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Maintenance

@@ -91,21 +91,15 @@ impl ToolProvider for NotesComponent {
 impl NotesComponent {
     /// `note(text)`: notes `text`, published when the turn completes.
     fn execute_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
-        let text = params.get("text").and_then(Value::as_str).map(str::trim).unwrap_or_default();
-        if text.is_empty() {
-            return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
-        }
-        let id = context.note(text.to_string());
+        let id = context.note(note_text(params)?);
         Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
     }
 
     /// `revoke_note(id)`: revokes one of the agent's own current notes.
     fn execute_revoke_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
-        let id = params.get("id").and_then(Value::as_u64)
-            .and_then(|id| u32::try_from(id).ok())
-            .ok_or_else(|| ToolError::InvalidParameter("'id' must be the number of one of your notes".to_string()))?;
-        if context.revoke_note(NoteId(id)) {
-            Ok(serde_json::json!({ "status": "revoked", "id": id }))
+        let id = note_id(params)?;
+        if context.revoke_note(id) {
+            Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))
         }
@@ -141,6 +135,23 @@ impl NotesComponent {
         }
         Ok(serde_json::json!({ "channels": listed }))
     }
+}
+
+/// The parameter `text` of a tool that notes something, trimmed.
+pub(crate) fn note_text(params: &Value) -> ToolResult<String> {
+    let text = params.get("text").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    if text.is_empty() {
+        return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
+    }
+    Ok(text.to_string())
+}
+
+/// The parameter `id` of a tool that revokes a note.
+pub(crate) fn note_id(params: &Value) -> ToolResult<NoteId> {
+    params.get("id").and_then(Value::as_u64)
+        .and_then(|id| u32::try_from(id).ok())
+        .map(NoteId)
+        .ok_or_else(|| ToolError::InvalidParameter("'id' must be the number of one of your notes".to_string()))
 }
 
 /// A failed read as the model is told it: which channel cannot be read, or

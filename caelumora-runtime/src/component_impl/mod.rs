@@ -13,6 +13,7 @@ pub mod echo_tool;
 pub mod help_command;
 pub mod mcp_tool;
 pub mod notes;
+pub mod private_notes;
 pub mod state_context_appender;
 pub mod state_context_provider;
 pub mod state_history_appender;
@@ -29,6 +30,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     help_command::register(registry);
     mcp_tool::register(registry);
     notes::register(registry);
+    private_notes::register(registry);
     state_context_appender::register(registry);
     state_context_provider::register(registry);
     state_history_appender::register(registry);

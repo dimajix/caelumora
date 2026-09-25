@@ -179,9 +179,9 @@ pub struct MessageContextResponse {
 pub struct KnowledgeRefResponse {
     pub channel_id: caelumora_model::session::ChannelId,
     pub channel_name: Option<String>,
-    /// `"notes"` or `"history"`.
+    /// `"notes"`, `"private_notes"` or `"history"`.
     pub source: &'static str,
-    /// Whose notes, for `"notes"`.
+    /// Whose notes, for `"notes"` and `"private_notes"`.
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
     pub digest: Option<caelumora_model::digest::Digest>,

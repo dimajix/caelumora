@@ -236,6 +236,9 @@ pub enum KnowledgeSource {
     /// The notes an agent published in the channel; the digest of its note
     /// chain, `None` while it had none.
     Notes { agent: crate::agent::AgentId, digest: Option<Digest> },
+    /// An agent's private notes in the channel (issue 51), read by that
+    /// agent; the digest of its private note chain.
+    PrivateNotes { agent: crate::agent::AgentId, digest: Option<Digest> },
     /// The channel's history; the digest of it when it was read.
     History { digest: Option<Digest> },
 }

@@ -353,6 +353,7 @@ fn knowledge_response(session: &SessionLoop, knowledge: &KnowledgeRef) -> Knowle
     let channel = session.channel_by_id(knowledge.channel);
     let (source, agent_id, digest) = match knowledge.source {
         KnowledgeSource::Notes { agent, digest } => ("notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest),
+        KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest),
         KnowledgeSource::History { digest } => ("history", None, digest),
     };
     let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
