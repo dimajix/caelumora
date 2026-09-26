@@ -117,6 +117,7 @@ against it, and what came out of the last attempt.
 | [50](50-turn-context-naming.md) | open | `TurnContext` calls both the stored context and the input of one model call "context". |
 | [51](51-agent-private-notes.md) | done | An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels. |
 | [54](54-private-notes-visible-to-users.md) | open | Private notes meant for the agent alone are visible to users, in the context panel and as the tool call in the chat. |
+| [55](55-notes-by-reflection.md) | open | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Maintenance
