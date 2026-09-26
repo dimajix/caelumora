@@ -79,3 +79,47 @@ anyway, in two places:
   notes were implemented: they appear in the context panel. The tool call
   `note_private` showing the note's text in the chat was added while writing
   it up.
+- **2026-09-26** — Decided after the maintainer proposed a privacy setting
+  per tool:
+  - **Visibility per tool, persisted per call.** `Tool` gets
+    `visibility: ToolVisibility { Public, CallOnly, Hidden }` (default
+    `Public`), declared by the `ToolProvider` like `requires_approval`.
+    `Public`: others see the call, its arguments and its result. `CallOnly`:
+    others see only that the tool was called. `Hidden`: others see nothing.
+    The maintainer's names were Public / Protected / Private; "Protected" was
+    replaced because it says nothing about *what* stays visible and means
+    something else in OOP. A level "arguments visible, result hidden" is
+    conceivable but no tool needs it yet; the enum can grow.
+  - The visibility is stored on `ToolCall` and `ToolCallResult`, not on the
+    message: one message can hold calls of different visibility, and the
+    result lives in a message of its own that must be filterable without
+    looking the call up. What counts is what applied at the time of the call,
+    even if the tool changes or its component disappears later.
+  - **"Others" are users.** Other agents already see no tool calls of other
+    agents (`remove_tools` in the moderator).
+  - **Redacted at the source, in the agent.** The agent sends a redacted copy
+    in its events (`PartialMessageGenerated`, `CompleteMessageGenerated` and
+    the intermediate variants - partials already carry arguments while
+    streaming) and keeps the full call in its `MessageContext`. So the
+    history, REST, SSE and the moderator need no knowledge and cannot leak;
+    redacting only in the web UI would leave the text in the API. The history
+    is the public view, the context panel the agent's own view guarded by
+    `ReadAgentContext`. History digests (`KnowledgeRef::History`) then refer
+    to the redacted version, consistent with what `read_history` shows other
+    channels. A tool message with only hidden results is left out of the
+    history entirely.
+  - The audience is not a second dimension of the enum ("visible to the
+    owner only"); it follows from the place: history for all users, context
+    for whoever may `ReadAgentContext`.
+  - **Approval wins.** A tool with `requires_approval` still shows its
+    arguments to the approvers, who cannot decide otherwise; the history stays
+    redacted. Forbidding the combination was the alternative.
+  - Overriding the visibility per component (e.g. an admin marking MCP tools
+    `Hidden`) is possible later via the descriptor, not now.
+  - `note_private` becomes `Hidden` (`CallOnly` would be more honest about
+    the agent keeping something to itself; a matter of taste).
+  - **Context panel: option 1.** It stays the owner's audit view and shows
+    the private notes prompt part; the tool description of `note_private`
+    says truthfully that no one but the agent's owner can see private notes.
+  - Still open by design: an agent repeating a private note in its answer is
+    not prevented by any tool setting (see [51](51-agent-private-notes.md)).
