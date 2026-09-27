@@ -125,6 +125,7 @@ against it, and what came out of the last attempt.
 | [59](59-retrieval-of-notes.md) | open | Knowledge reaches the model only in full or when the model itself searches for it; nothing selects what is relevant to the turn. |
 | [60](60-note-ids-in-prompts.md) | open | Notes of its own that an agent is shown from other channels carry no usable id, so it cannot revoke them, and ids from other chains are ambiguous. |
 | [61](61-reasoning-leaves-the-agent.md) | open | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
+| [63](63-reasoning-in-model-input.md) | open | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Maintenance
