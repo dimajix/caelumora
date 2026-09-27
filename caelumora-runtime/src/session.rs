@@ -4,6 +4,7 @@ use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, DEFAULT_MODERATOR};
+use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::store::StoreError;
@@ -29,6 +30,8 @@ pub enum SessionError {
     NotAParticipant { session: SessionId, participant: ActorId },
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
+    #[error("A channel cannot be {0}: that level is an actor's, not a channel's")]
+    InvalidConfidentiality(Confidentiality),
 }
 
 /// What a new channel should be (issue 09).
@@ -40,6 +43,10 @@ pub struct ChannelSpec {
     /// Who takes part, from the session's participants. Whoever creates the
     /// channel takes part anyway, if they are a participant of the session.
     pub participants: Vec<ActorId>,
+    /// How far the channel's contents may travel (issue 61); `None` for the
+    /// default, as in a template. Set by whoever may create the channel -
+    /// its owner.
+    pub confidentiality: Option<Confidentiality>,
 }
 
 #[derive(Debug)]
@@ -155,6 +162,10 @@ impl SessionLoop {
         if self.channels.iter().any(|c| c.name() == name) {
             return Err(SessionError::DuplicateChannelName { session: self.id, name }.into());
         }
+        let confidentiality = spec.confidentiality.unwrap_or(Confidentiality::CHANNEL_DEFAULT);
+        if !confidentiality.is_channel_level() {
+            return Err(SessionError::InvalidConfidentiality(confidentiality).into());
+        }
         let moderator = spec.moderator.unwrap_or_else(|| DEFAULT_MODERATOR.to_string());
         // Asked for here, before anything is stored, rather than found out
         // when the channel is built.
@@ -175,7 +186,7 @@ impl SessionLoop {
             }
         }
 
-        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, moderator, participants);
+        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, moderator, confidentiality, participants);
         drop(session);
         self.session_controller.add_channel(context, channel.clone()).await?;
 
@@ -466,6 +477,7 @@ mod tests {
             session_id,
             name: "main".to_string(),
             moderator: "broadcast".to_string(),
+            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
         };
@@ -630,7 +642,7 @@ mod tests {
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
-        ChannelSpec { name: name.to_string(), moderator: None, participants }
+        ChannelSpec { name: name.to_string(), moderator: None, participants, confidentiality: None }
     }
 
     #[tokio::test]
@@ -751,7 +763,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_channel_reads_another_only_if_all_its_users_may() {
+    async fn a_channel_reads_another_by_their_confidentiality_not_by_who_takes_part() {
         use caelumora_model::actor::ActorId;
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::session::Participant;
@@ -773,12 +785,19 @@ mod tests {
         session.participants = vec![Participant::User(alice), Participant::User(bob)];
         let session = manager.create_session(&alice_ctx, session).await.unwrap();
 
-        let private = session.create_channel(&alice_ctx, spec("private", vec![])).await.unwrap();
-        let shared = session.create_channel(&alice_ctx, spec("shared", vec![bob_id])).await.unwrap();
+        let with = |name: &str, level, participants| ChannelSpec { confidentiality: Some(level), ..spec(name, participants) };
+        let public = session.create_channel(&alice_ctx, with("public", Confidentiality::Public, vec![bob_id])).await.unwrap();
+        let team = session.create_channel(&alice_ctx, with("team", Confidentiality::Session, vec![bob_id])).await.unwrap();
+        let secret = session.create_channel(&alice_ctx, with("secret", Confidentiality::Channel, vec![])).await.unwrap();
 
-        assert!(private.may_read(&private).await, "a channel reads itself");
-        assert!(private.may_read(&shared).await, "alice owns every channel of her session");
-        assert!(!shared.may_read(&private).await, "bob is in shared, but may not read private");
+        assert!(secret.may_read(&secret).await, "a channel reads itself");
+        assert!(team.may_read(&public).await);
+        assert!(!public.may_read(&team).await, "what public passes on may leave the session");
+        assert!(!team.may_read(&secret).await, "secret stays in its channel");
+        assert!(secret.may_read(&team).await, "although bob, who is in team, is not in secret");
+
+        let refused = session.create_channel(&alice_ctx, with("mine", Confidentiality::Private, vec![])).await.expect_err("private is an actor's");
+        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::InvalidConfidentiality(_))), "{refused}");
         manager.stop_session(session.id());
     }
 

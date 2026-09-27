@@ -5,9 +5,11 @@
 //! published is read from their states in the `StateStore`, where an agent's
 //! state is written after every step - so a reader sees notes of finished
 //! turns only, as principle 3 in issue 19 requires. Another channel's notes
-//! and history are read only if every user of the reading channel may read
-//! that channel (`ActionType::ReadChannel`): an agent passes on what it
-//! reads to the users of its channel (principle 11 in issue 19).
+//! and history are read only if the reading channel may read that channel
+//! (`ChannelLoop::may_read`, `ActionType::ReadChannel`): decided by the two
+//! channels' confidentiality levels, not by who takes part in them, since an
+//! agent passes on what it reads to its channel (principle 11 in issue 19,
+//! as changed by issue 61).
 
 use crate::channel::ChannelLoop;
 use crate::runtime::ActorRuntime;

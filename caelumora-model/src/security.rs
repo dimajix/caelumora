@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
+use crate::confidentiality::ChannelClassification;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -51,11 +52,11 @@ pub enum ActionType<'a> {
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
     WakeChannel(&'a SecurityAttributes),
-    /// Reading a channel's notes or history from another channel of the
-    /// session (issue 17), carrying the attributes of the channel read. Asked
-    /// for every user of the reading channel: an agent that reads passes on
-    /// what it read to them.
-    ReadChannel(&'a SecurityAttributes),
+    /// Reading a channel's notes or history (`source`) from another channel
+    /// (`reader`), issue 17. Decided by the channels alone - their places and
+    /// confidentiality levels (issue 61) - not by who takes part in them, so
+    /// that the answer does not change when someone joins or leaves.
+    ReadChannel { source: &'a ChannelClassification, reader: &'a ChannelClassification },
     /// Seeing that a user command exists - in `/help` and in completion.
     /// Keyed by the command's name, without the slash (issue 28).
     ShowCommand(&'a str),
@@ -173,6 +174,8 @@ impl SecurityManager for DummySecurityManager {
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
+/// - Reading one channel from another follows the confidentiality levels of
+///   the two (`ChannelClassification::readable_from`, issue 61).
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (approvals, issues 12 and 23).
@@ -211,8 +214,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::CancelChannel(a)
-            | ActionType::WakeChannel(a)
-            | ActionType::ReadChannel(a) => Self::may_read(a, me),
+            | ActionType::WakeChannel(a) => Self::may_read(a, me),
+            ActionType::ReadChannel { source, reader } => source.readable_from(reader),
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)
@@ -275,6 +278,18 @@ mod tests {
         assert!(!allows(bob, ActionType::ReadAgentContext(&hers)).await, "what an agent saw is its owner's alone");
         assert!(!allows(bob, ActionType::UpdateSession(&hers)).await);
         assert!(!allows(bob, ActionType::DeleteSession(&hers)).await);
+    }
+
+    #[tokio::test]
+    async fn reading_a_channel_depends_on_the_channels_not_on_the_reader() {
+        use crate::confidentiality::{ChannelClassification, Confidentiality};
+        let session = SessionId::new();
+        let classification = |level| ChannelClassification { session_id: session, channel_id: ChannelId::new(), level };
+        let (team, secret) = (classification(Confidentiality::Session), classification(Confidentiality::Channel));
+        for actor in [user(), user()] {
+            assert!(allows(actor, ActionType::ReadChannel { source: &team, reader: &secret }).await);
+            assert!(!allows(actor, ActionType::ReadChannel { source: &secret, reader: &team }).await);
+        }
     }
 
     #[tokio::test]

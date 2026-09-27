@@ -387,6 +387,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
+            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             participants: vec![
                 Participant::User(user1),
                 Participant::Approver(approver.clone()),
@@ -477,6 +478,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
+            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             participants: vec![
                 Participant::Approver(approver.clone()),
             ],
@@ -590,6 +592,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
+            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             participants: vec![
                 Participant::Approver(approver.clone()),
                 Participant::User(user1.clone()),

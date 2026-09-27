@@ -166,6 +166,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
             ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "round_robin".to_string(),
+                confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
                     "Jonathan".to_string(),

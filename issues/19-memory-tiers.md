@@ -316,3 +316,12 @@ built on the commit of point 7.
   With agents counted, reading would be blocked whenever two channels have
   different agents, because an agent may only read channels it takes part
   in.
+- **2026-09-27** — Principles 11 and 12 changed while deciding
+  [61](61-reasoning-leaves-the-agent.md): whether one channel may read
+  another no longer depends on its participants but on the channels'
+  confidentiality levels (`public < session < channel`). Channel A may read
+  B if `B.level <= A.level` and A is within B's reach (`public`: always;
+  `session`: same session; `channel`: only A itself); private notes are
+  recalled by the same rule. The per-user check "every user of the reading
+  channel may `ReadChannel` the source" is replaced, because it changed its
+  answer whenever someone joined or left.

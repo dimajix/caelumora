@@ -1,4 +1,5 @@
 use caelumora_model::actor::ActorId;
+use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::message::Message;
 use caelumora_model::meta::Metadata;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -101,6 +102,9 @@ pub struct CreateChannelRequest {
     /// part anyway.
     #[serde(default)]
     pub participants: Vec<ActorId>,
+    /// How far the channel's contents may travel (issue 61): `public`,
+    /// `session` or `channel`; `session` if absent.
+    pub confidentiality: Option<Confidentiality>,
 }
 
 #[derive(Debug, Serialize)]
@@ -114,6 +118,8 @@ pub struct ChannelResponse {
     /// The kind of moderator, e.g. `round_robin` or `mentions_only` - who is
     /// asked to respond to a message (issue 44).
     pub moderator: String,
+    /// How far the channel's contents may travel (issue 61).
+    pub confidentiality: Confidentiality,
 }
 
 #[derive(Debug, Serialize)]

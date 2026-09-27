@@ -1,3 +1,5 @@
+import type {ChannelConfidentiality} from '../confidentiality';
+
 export interface SessionId {
   0: string;
 }
@@ -39,6 +41,8 @@ export interface ChannelResponse {
   members: ChannelMember[];
   /** The kind of moderator, e.g. `round_robin` or `mentions_only` (issue 44). */
   moderator: string;
+  /** How far the channel's contents may travel (issue 61). */
+  confidentiality: ChannelConfidentiality;
 }
 
 /**
@@ -235,6 +239,8 @@ export interface CreateChannelRequest {
   moderator?: string;
   /** Participants of the session; you take part anyway. */
   participants: ActorId[];
+  /** How far the channel's contents may travel; the server's default if absent. */
+  confidentiality?: ChannelConfidentiality;
 }
 
 export type ApprovalStatus = 'Approved' | 'Denied';

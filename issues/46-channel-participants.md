@@ -99,3 +99,9 @@ they refer to `ActorId`s, not to handles.
   The two are independent, and adding participants touches the security
   questions of [12](12-user-and-agent-permissions.md) and
   [23](23-acls-in-security-attributes.md).
+- **2026-09-27** — Channels now get a confidentiality level
+  ([61](61-reasoning-leaves-the-agent.md)); what may be read and published in
+  a channel depends on its level, not on its participants. That guarantee is
+  only as good as the control over who joins: adding participants must be
+  checked against the channel's level (e.g. `ActionType::JoinChannel`) -
+  part of this issue.

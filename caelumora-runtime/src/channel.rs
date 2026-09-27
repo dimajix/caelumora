@@ -10,6 +10,7 @@ use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemor
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, Participant};
+use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
@@ -253,25 +254,24 @@ impl ChannelLoop {
             .collect()
     }
 
-    /// Whether this channel may read `source`'s notes and history (issue 17):
-    /// if every user of it may read `source` (`ActionType::ReadChannel`) -
-    /// an agent passes on what it reads to the users of its channel. A
-    /// channel may always read itself.
+    /// The channel as the confidentiality rules see it (issue 61).
+    pub fn classification(&self) -> ChannelClassification {
+        self.channel.load().classification()
+    }
+
+    /// Whether this channel may read `source`'s notes and history (issue 17),
+    /// as the `SecurityManager` decides from the two channels' places and
+    /// confidentiality levels (`ActionType::ReadChannel`, issue 61) - not
+    /// from who takes part in them. Asked in the name of this channel's
+    /// owner, the one responsible for what is read into it. A channel may
+    /// always read itself.
     pub async fn may_read(&self, source: &ChannelLoop) -> bool {
         if self.id == source.id() {
             return true;
         }
-        let attributes = source.security_attributes();
-        let security = self.runtime.security_manager();
-        for actor in self.actors.values() {
-            if matches!(actor.id(), ActorId::User(_)) {
-                let context = SecurityContext::new(actor.id(), self.session_id, self.id);
-                if !security.check(&context, ActionType::ReadChannel(&attributes)).await {
-                    return false;
-                }
-            }
-        }
-        true
+        let (source, reader) = (source.classification(), self.classification());
+        let context = SecurityContext::new(self.security_attributes().owner_id, self.session_id, self.id);
+        self.runtime.security_manager().check(&context, ActionType::ReadChannel { source: &source, reader: &reader }).await
     }
 
     /// The notes every agent of the channel published (issue 17), read from

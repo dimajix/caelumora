@@ -53,7 +53,7 @@ pub async fn create_channel(
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
 
-    let spec = ChannelSpec { name: payload.name, moderator: payload.moderator, participants: payload.participants };
+    let spec = ChannelSpec { name: payload.name, moderator: payload.moderator, participants: payload.participants, confidentiality: payload.confidentiality };
     let channel = session.create_channel(&context, spec).await
         .map_err(|e| channel_error(e, session_id, "create a channel in", "creating a channel in"))?;
     Ok(Json(channel_response(&channel, &context).await))
@@ -81,7 +81,7 @@ fn channel_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: 
     match error.downcast_ref::<SessionError>() {
         Some(SessionError::ChannelNotFound { .. }) => ApiError::not_found("channel_not_found", detail),
         Some(SessionError::DuplicateChannelName { .. }) => ApiError::conflict("channel_exists", detail),
-        Some(SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. }) => {
+        Some(SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. } | SessionError::InvalidConfidentiality(_)) => {
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_channel", detail)
         }
         None => crate::routes::session_error(error, session_id, act, doing),
@@ -118,7 +118,7 @@ pub async fn channel_response(channel: &ChannelLoop, viewer: &SecurityContext) -
         };
         members.push(ChannelMemberResponse { id: member.id, name: member.name, handle: member.handle, kind: member.kind, can_read_context });
     }
-    ChannelResponse { id: channel.id(), name: channel.name(), members, moderator: channel.moderator() }
+    ChannelResponse { id: channel.id(), name: channel.name(), members, moderator: channel.moderator(), confidentiality: channel.classification().level }
 }
 
 pub async fn get_channel_messages(

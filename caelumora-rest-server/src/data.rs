@@ -85,6 +85,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "round_robin".to_string(),
+                confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
                     "assistant".to_string(),
@@ -121,6 +122,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "round_robin".to_string(),
+                confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
                     "Jonathan".to_string(),
@@ -159,6 +161,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "mentions_only".to_string(),
+                confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
                     "Jonathan".to_string(),

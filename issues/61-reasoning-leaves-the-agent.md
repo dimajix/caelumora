@@ -1,6 +1,6 @@
 # 61 — An agent's reasoning is published with its messages
 
-**Status:** open
+**Status:** in progress
 **Area:** Context & knowledge
 
 ## The problem
@@ -74,3 +74,63 @@ bubble.
   browser check of [54](54-private-notes-visible-to-users.md) showed the
   reasoning of a message with a hidden `note_private` call quoting the note
   in the channel history.
+- **2026-09-27** — Decided after discussion with the maintainer. The first
+  proposals were to decide at the source against the channel's current users
+  (A) or per viewer at every egress (B). The maintainer's objection: a
+  channel is a construct of a certain trustworthiness, and what of an
+  actor's information is visible in it must depend on the channel alone, not
+  on its participants - consistent while membership changes. Labels on
+  messages stay as the actor's statement of what it wants to publish; the
+  `SecurityManager` evaluates them from the **label**, the **owner / actor**
+  of the message and the **channel**.
+  - **Confidentiality levels as reaches**, ordered
+    `public < session < channel < private`: as the label of a message part,
+    how far it may travel (anywhere / channels of this session / only this
+    channel / never leaves the actor - its owner sees it in the context
+    panel only); as the level of a channel (one of the first three), how far
+    the channel's contents may travel. Compartments later:
+    [64](64-confidentiality-compartments.md).
+  - **Rule 1 - publishing:** a part labelled `L` may appear in channel `C`
+    if `L <= C.level`. Redaction stays in one place (`TurnContext::send_event`),
+    now against the channel's level instead of the fixed `ToolVisibility`
+    behaviour. Since the decision depends only on the channel, it holds for
+    later participants as well; per-viewer redaction (B) is not needed.
+  - **Rule 2 - reading across channels** (replaces the per-user check of
+    `ChannelLoop::may_read`): channel A may read the notes and history of B
+    if `B.level <= A.level` (the agent passes on what it reads, principle 11
+    in [19](19-memory-tiers.md)) and A is within B's reach (`public`: always;
+    `session`: same session; `channel`: only A itself). Private notes from
+    another channel are recalled by the same rule (principle 12).
+  - **Labels:** `ToolVisibility` becomes the label of a call's arguments and
+    result (`CallOnly`: the call itself `public`, arguments and result
+    `private`; `Hidden`: the whole call `private`). Reasoning is labelled
+    with the maximum of what the turn saw - private notes in the prompt give
+    `private`, read channels their level, a non-public call `private` - and
+    a default of the personality. The answer text gets no label for now; the
+    channel's level is given to the agent as a prompt part instead.
+  - **Streaming:** reasoning partials are streamed only if the label known
+    before the call may be published and the agent has no non-public tools;
+    otherwise the reasoning follows with the complete message under rule 1.
+  - **Setting a channel's level:** only its owner, when creating it (dialog
+    and REST); default `session`, the closest to today's behaviour. The owner
+    may change it later, lowering included for now.
+  - Joining a channel is not checked against its level yet, since
+    participants come from the template only ([46](46-channel-participants.md)).
+  - Two commits: (1) channel level and reading rule, (2) labels and the
+    publishing rule.
+- **2026-09-27** — Step 1 implemented: channel levels and the reading rule.
+  `caelumora_model::confidentiality` holds `Confidentiality` (ordered
+  `Public < Session < Channel < Private`) and `ChannelClassification`
+  (session, channel, level) with `readable_from`, rule 2. `Channel` and
+  `ChannelTemplate` have a `confidentiality` (default `session`; `private` is
+  refused as `TemplateError::InvalidConfidentiality` /
+  `SessionError::InvalidConfidentiality`); `ChannelSpec`, the REST request
+  and response and the web UI's channel dialog carry it, and the members
+  panel shows it. `ActionType::ReadChannel` now carries both channels'
+  classifications instead of the source's attributes; `ChannelLoop::may_read`
+  asks once, in the name of the reading channel's owner, instead of once per
+  user, and the ownership policy decides by `readable_from`. Verified in the
+  browser: from a `session` channel an agent lists only the `session`
+  channels and cannot read a new `channel`-level one. Not yet: changing a
+  channel's level after creation (the owner may, per the decision), and
+  step 2 - labels and the publishing rule.

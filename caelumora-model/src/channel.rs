@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::agent::Agent;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
+use crate::confidentiality::{ChannelClassification, Confidentiality};
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::security::{Secured, SecurityAttributes};
@@ -157,6 +158,14 @@ pub struct Channel {
     pub moderator: String,
     pub participants: Vec<Participant>,
     pub security_attributes: SecurityAttributes,
+    /// How far the channel's contents may travel (issue 61); never
+    /// `Private`. Set by its owner when creating it.
+    #[serde(default = "default_confidentiality")]
+    pub confidentiality: Confidentiality,
+}
+
+fn default_confidentiality() -> Confidentiality {
+    Confidentiality::CHANNEL_DEFAULT
 }
 
 impl Secured for Channel {
@@ -175,14 +184,20 @@ impl Channel {
             moderator,
             participants,
             security_attributes,
+            confidentiality: Confidentiality::CHANNEL_DEFAULT,
         }
+    }
+
+    /// The channel as the confidentiality rules see it.
+    pub fn classification(&self) -> ChannelClassification {
+        ChannelClassification { session_id: self.session_id, channel_id: self.id, level: self.confidentiality }
     }
 
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and with every user and agent in it as a
     /// contributor (see `participant_attributes`).
-    pub fn build(session_id: SessionId, owner: ActorId, name: String, moderator: String, mut participants: Vec<Participant>) -> Self {
+    pub fn build(session_id: SessionId, owner: ActorId, name: String, moderator: String, confidentiality: Confidentiality, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {
                 id: ApproverId(Uuid::new_v4()),
@@ -190,7 +205,7 @@ impl Channel {
             }));
         }
         let security_attributes = participant_attributes(owner, &participants);
-        Self::new(session_id, name, moderator, participants, security_attributes)
+        Self { confidentiality, ..Self::new(session_id, name, moderator, participants, security_attributes) }
     }
 }
 

@@ -712,6 +712,7 @@ mod tests {
             channels: vec![ChannelTemplate {
                 name: "general".to_string(),
                 moderator: "broadcast".to_string(),
+                confidentiality: crate::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec!["user".to_string()],
             }],
         }
@@ -906,6 +907,7 @@ mod tests {
             session_id,
             name: "general".to_string(),
             moderator: "broadcast".to_string(),
+            confidentiality: crate::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
         };
