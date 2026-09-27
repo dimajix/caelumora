@@ -49,6 +49,7 @@ against it, and what came out of the last attempt.
 | [04](04-postgres-state-store.md) | open | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [06](06-context-in-message-for-auditability.md) | done | For a past message there is no way to reconstruct what the agent actually saw when it wrote it. |
+| [62](62-json-store-concurrent-writes.md) | open | Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost. |
 
 ## Sessions and channels
 
@@ -117,12 +118,13 @@ against it, and what came out of the last attempt.
 | [48](48-shared-digest-chain.md) | done | History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately. |
 | [50](50-turn-context-naming.md) | open | `TurnContext` calls both the stored context and the input of one model call "context". |
 | [51](51-agent-private-notes.md) | done | An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels. |
-| [54](54-private-notes-visible-to-users.md) | open | Private notes meant for the agent alone are visible to users, in the context panel and as the tool call in the chat. |
+| [54](54-private-notes-visible-to-users.md) | done | Private notes meant for the agent alone are visible to users, in the context panel and as the tool call in the chat. |
 | [55](55-notes-by-reflection.md) | open | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [57](57-prompt-catalogue.md) | open | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [58](58-notes-in-every-prompt.md) | open | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
 | [59](59-retrieval-of-notes.md) | open | Knowledge reaches the model only in full or when the model itself searches for it; nothing selects what is relevant to the turn. |
 | [60](60-note-ids-in-prompts.md) | open | Notes of its own that an agent is shown from other channels carry no usable id, so it cannot revoke them, and ids from other chains are ambiguous. |
+| [61](61-reasoning-leaves-the-agent.md) | open | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Maintenance

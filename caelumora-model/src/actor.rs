@@ -120,6 +120,25 @@ pub enum ActorEvent {
 }
 
 impl ActorEvent {
+    /// The event as it leaves its sender for the channel (issue 54): the
+    /// messages it carries redacted by the visibility of their tool calls
+    /// (`Message::published`). `None` if it carried a single message of which
+    /// nothing is left to show. Approval requests are left as they are: the
+    /// approvers see the arguments of a call they are asked to decide.
+    pub fn published(self) -> Option<ActorEvent> {
+        let publish = |message: Message, wrap: fn(Message) -> ActorEvent| message.published().map(wrap);
+        match self {
+            ActorEvent::PartialMessageGenerated(m) => publish(m, ActorEvent::PartialMessageGenerated),
+            ActorEvent::CompleteMessageGenerated(m) => publish(m, ActorEvent::CompleteMessageGenerated),
+            ActorEvent::IntermediatePartialGenerated(m) => publish(m, ActorEvent::IntermediatePartialGenerated),
+            ActorEvent::IntermediateMessageGenerated(m) => publish(m, ActorEvent::IntermediateMessageGenerated),
+            ActorEvent::FullResponseGenerated(messages) => Some(ActorEvent::FullResponseGenerated(
+                messages.iter().filter_map(Message::published).collect(),
+            )),
+            other => Some(other),
+        }
+    }
+
     /// The variant's name, for logs - never the payload, which may carry
     /// message content.
     pub fn kind(&self) -> &'static str {
@@ -474,5 +493,29 @@ mod tests {
         assert_eq!(ActorState::from(6), ActorState::Planning);
         assert_eq!(ActorState::from(7), ActorState::ExecutingTools);
         assert_eq!(ActorState::from(8), ActorState::Reflecting);
+    }
+
+    #[test]
+    fn published_events_carry_redacted_messages() {
+        use crate::tool::{ToolCall, ToolVisibility};
+        let hidden = Message {
+            tool_calls: vec![ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::Hidden }],
+            ..Message::default()
+        };
+        let text = Message { content: Some("hi".to_string()), ..Message::default() };
+
+        assert!(ActorEvent::CompleteMessageGenerated(hidden.clone()).published().is_none(), "nothing left to show");
+        assert!(ActorEvent::PartialMessageGenerated(hidden.clone()).published().is_none());
+        match ActorEvent::FullResponseGenerated(vec![hidden.clone(), text.clone()]).published() {
+            Some(ActorEvent::FullResponseGenerated(messages)) => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, text.id);
+            }
+            other => panic!("expected the response, got {other:?}"),
+        }
+        assert!(
+            matches!(ActorEvent::FullResponseGenerated(vec![hidden]).published(), Some(ActorEvent::FullResponseGenerated(m)) if m.is_empty()),
+            "the end of the turn is still announced"
+        );
     }
 }

@@ -8,7 +8,7 @@ use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
-use caelumora_model::tool::{Tool, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -108,6 +108,7 @@ impl ToolProvider for CreatePlanToolProvider {
                 ["summary", "steps"],
             ),
             requires_approval: true,
+            visibility: ToolVisibility::Public,
         }]
     }
 

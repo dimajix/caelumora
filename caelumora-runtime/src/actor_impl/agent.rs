@@ -262,6 +262,23 @@ impl AgentActor {
             .await
     }
 
+    /// Stamps every tool call of `message` with the visibility its tool
+    /// declares now (issue 54), so that the call and its result are
+    /// published by what applied at the time of the call. A call of an
+    /// unknown tool is public: it fails, and its failure hides nothing.
+    fn stamp_visibility(&self, message: &mut Message) {
+        if message.tool_calls.is_empty() {
+            return;
+        }
+        let tools = self.tool_executor.tools();
+        for call in &mut message.tool_calls {
+            call.visibility = tools.iter()
+                .find(|t| t.name == call.function_name)
+                .map(|t| t.visibility)
+                .unwrap_or_default();
+        }
+    }
+
     async fn execute_tools<'a>(
         &self,
         turn_context: &mut TurnContext<'a>,
@@ -321,6 +338,7 @@ impl AgentActor {
                     tool_name: c.tool_call.function_name,
                     content: c.result.unwrap(),
                     status: c.result_status,
+                    visibility: c.tool_call.visibility,
                 })
             }
             // A tool result is only ever "final" (shown as the real answer)
@@ -839,6 +857,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
+                    self.stamp_visibility(&mut message);
                     message.internal = internal_message;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
                         let event = if msg.internal {
@@ -852,6 +871,7 @@ impl AgentActor {
                 MessageEvent::Complete(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
+                    self.stamp_visibility(&mut message);
                     message.internal = internal_message;
 
                     self.request_approvals(&message.tool_calls, turn_context, output).await?;

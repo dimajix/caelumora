@@ -11,6 +11,11 @@
 //! channel it was written in, checked when it is read. It is a
 //! `BeforeTurnInput` part, and every chain it shows is recorded as a
 //! `KnowledgeRef`.
+//!
+//! "Private" means private from other agents and other users (issue 54):
+//! both tools are `ToolVisibility::Hidden`, so their calls never reach the
+//! channel, but the agent's owner sees them, and the prompt part, in the
+//! context panel - the audit view of the one responsible for the agent.
 
 use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
@@ -22,7 +27,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::Note;
-use caelumora_model::tool::{Tool, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -42,8 +47,8 @@ impl ToolProvider for PrivateNotesComponent {
         vec![
             Tool {
                 name: NOTE_PRIVATE_TOOL_NAME.to_string(),
-                description: "Note something privately - no other participant sees it. You are shown \
-                    your private notes from now on, in this channel and in your other channels of this \
+                description: "Note something privately - no other participant sees it; only the person \
+                    responsible for you can inspect it. You are shown your private notes from now on, in this channel and in your other channels of this \
                     session where that reveals nothing to someone who may not know it. Keep a note short \
                     and self-contained; to change one, revoke it and note the new version."
                     .to_string(),
@@ -52,6 +57,7 @@ impl ToolProvider for PrivateNotesComponent {
                     ["text"],
                 ),
                 requires_approval: false,
+                visibility: ToolVisibility::Hidden,
             },
             Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -62,6 +68,7 @@ impl ToolProvider for PrivateNotesComponent {
                     ["id"],
                 ),
                 requires_approval: false,
+                visibility: ToolVisibility::Hidden,
             },
         ]
     }
@@ -129,7 +136,7 @@ fn render(own: &[Note], elsewhere: &[ChannelNotes]) -> String {
     if own.is_empty() && elsewhere.is_empty() {
         return String::new();
     }
-    let mut text = String::from("[Your private notes - no one else sees them.]\n");
+    let mut text = String::from("[Your private notes - no other participant sees them; only the person responsible for you can inspect them.]\n");
     if !own.is_empty() {
         let _ = writeln!(text, "In this channel (change them with `note_private` and `revoke_private_note`):");
         for note in own {

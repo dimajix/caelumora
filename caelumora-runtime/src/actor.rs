@@ -417,7 +417,12 @@ impl<'a> TurnContext<'a> {
         }
     }
 
+    /// Sends `av` to the channel as the agent publishes it: messages redacted
+    /// by the visibility of their tool calls (issue 54). The agent keeps the
+    /// full messages in its context; an event with nothing left to show is
+    /// not sent.
     pub async fn send_event(&self, av: ActorEvent, output: &dyn EventSender) -> Result<()> {
+        let Some(av) = av.published() else { return Ok(()) };
         let ev = Envelope::new(
             self.agent_channel_state.turn_security_context.clone(),
             self.agent_channel_state.turn_event_context.clone(),
@@ -566,5 +571,27 @@ mod tests {
             turn.set_context(vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn events_leave_the_agent_redacted_while_its_context_keeps_the_full_call() {
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
+        let mut agent_state = AgentState::default();
+        let mut state = AgentChannelState::default();
+        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+
+        let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::Hidden };
+        let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::default() };
+        turn.push_message(message.clone());
+        turn.send_event(ActorEvent::CompleteMessageGenerated(message.clone()), &output).await.unwrap();
+        turn.send_event(ActorEvent::FullResponseGenerated(vec![message]), &output).await.unwrap();
+
+        match rx.recv().await.map(|e| e.event) {
+            Some(ActorEvent::FullResponseGenerated(messages)) => assert!(messages.is_empty(), "the hidden call is not published"),
+            other => panic!("the complete message is not sent at all, got {other:?}"),
+        }
+        assert_eq!(turn.messages()[0].tool_calls.len(), 1, "the agent keeps it");
     }
 }

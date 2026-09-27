@@ -290,7 +290,7 @@ mod tests {
             session_id: Default::default(),
             channel_id: Default::default(),
             agent_id: AgentId::new(),
-            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}) },
+            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default() },
             description: "test".to_string(),
         }
     }

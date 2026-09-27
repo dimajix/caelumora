@@ -3,7 +3,7 @@ use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::tool::ToolCall;
+use caelumora_model::tool::{ToolCall, ToolVisibility};
 use chrono::Utc;
 use futures::stream::{BoxStream, StreamExt};
 use tracing::{debug, trace, warn};
@@ -212,11 +212,13 @@ mod tests {
                 id: Some("1".to_string()),
                 function_name: "test_func_1".to_string(),
                 arguments: json!("{}".to_string()),
+                visibility: Default::default(),
             },
             ToolCall {
                 id: Some("2".to_string()),
                 function_name: "test_func_2".to_string(),
                 arguments: json!("{\"a\": 1}".to_string()),
+                visibility: Default::default(),
             },
         ];
 
@@ -456,6 +458,7 @@ impl LLMClient for OllamaClient {
                                             id: call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
                                             function_name: call.function.name,
                                             arguments: call.function.arguments,
+                                            visibility: ToolVisibility::Public,
                                         });
                                     }
                                 }

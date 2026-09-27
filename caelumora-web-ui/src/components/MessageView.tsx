@@ -2,8 +2,8 @@
 // and result - shared by the chat and the context panel (issue 41).
 
 import React, {useState} from 'react';
-import {Check, CheckCircle2, Copy, Info, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {ChannelMember, Message, ToolResult, ToolResultStatus} from '../types';
+import {Check, CheckCircle2, Copy, EyeOff, Info, Terminal, Wrench, XCircle} from 'lucide-react';
+import type {ChannelMember, Message, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -24,6 +24,17 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
 };
 
 /** The text to show for a tool result: the message of an unsuccessful one, else the content. */
+/**
+ * What others see of a call that is not public (issue 54). Only the agent's
+ * owner, in the context panel, sees such a call in full; everybody else sees
+ * a `call_only` call without arguments and result, and a `hidden` one not at
+ * all.
+ */
+const VISIBILITY_LABELS: Record<Exclude<ToolVisibility, 'public'>, string> = {
+  call_only: 'Others see only the call',
+  hidden: 'Hidden from others',
+};
+
 function toolResultText(result: ToolResult): string {
   if (!result.status || result.status === 'ok') return result.content;
   try {
@@ -171,6 +182,12 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                 <div className="flex items-center gap-2 text-xs font-mono">
                   <Wrench size={12} className="text-blue-500" />
                   <span>{call.function_name}</span>
+                  {call.visibility && call.visibility !== 'public' && (
+                    <span className="flex items-center gap-1 font-sans text-[10px] opacity-60" title={VISIBILITY_LABELS[call.visibility]}>
+                      <EyeOff size={11} />
+                      {VISIBILITY_LABELS[call.visibility]}
+                    </span>
+                  )}
                 </div>
                 {result && result.status && result.status !== 'ok' ? (
                   <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
@@ -189,9 +206,17 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
               <div className="p-2">
                 <div className="flex items-start gap-2 mb-1">
                   <Terminal size={12} className="mt-0.5 opacity-50" />
-                  <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+                  {call.arguments === null ? (
+                    <span className="text-[11px] italic opacity-60">Arguments not shown</span>
+                  ) : (
+                    <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
+                  )}
                 </div>
-                {result && (
+                {result && result.visibility === 'call_only' && result.content === '' ? (
+                  <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 text-[11px] italic opacity-60">
+                    Result not shown
+                  </div>
+                ) : result && (
                   <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                     <div className="text-[10px] uppercase opacity-50 mb-1">Result</div>
                     <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">

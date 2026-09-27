@@ -20,7 +20,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::tool::{Tool, ToolParameters};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -51,6 +51,7 @@ impl ToolProvider for NotesComponent {
                     ["text"],
                 ),
                 requires_approval: false,
+                visibility: ToolVisibility::Public,
             },
             Tool {
                 name: REVOKE_NOTE_TOOL_NAME.to_string(),
@@ -62,6 +63,7 @@ impl ToolProvider for NotesComponent {
                     ["id"],
                 ),
                 requires_approval: false,
+                visibility: ToolVisibility::Public,
             },
             Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
@@ -74,6 +76,7 @@ impl ToolProvider for NotesComponent {
                     Vec::<&str>::new(),
                 ),
                 requires_approval: false,
+                visibility: ToolVisibility::Public,
             },
         ]
     }

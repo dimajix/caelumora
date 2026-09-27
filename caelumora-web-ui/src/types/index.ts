@@ -41,10 +41,18 @@ export interface ChannelResponse {
   moderator: string;
 }
 
+/**
+ * What participants other than the calling agent see of a tool call
+ * (issue 54); absent means `public`.
+ */
+export type ToolVisibility = 'public' | 'call_only' | 'hidden';
+
 export interface ToolCall {
   id?: string;
   function_name: string;
+  /** `null` where the call was published with `call_only`. */
   arguments: unknown;
+  visibility?: ToolVisibility;
 }
 
 /** How a tool call ended; absent means `ok`. */
@@ -57,6 +65,8 @@ export interface ToolResult {
   /** The tool's result, or for any other status a JSON object with `status` and `message`. */
   content: string;
   status?: ToolResultStatus;
+  /** Empty `content` where the call was published with `call_only`. */
+  visibility?: ToolVisibility;
 }
 
 /** The state of a channel when an event stream connects (issue 34). */

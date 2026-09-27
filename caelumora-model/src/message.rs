@@ -1,5 +1,5 @@
 use crate::actor::ActorId;
-use crate::tool::{ToolCall, ToolCallResult};
+use crate::tool::{ToolCall, ToolCallResult, ToolVisibility};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use crate::chain::{Chain, ChainEntry};
@@ -85,6 +85,37 @@ impl Default for Message {
             completion_duration: None,
             total_duration: None,
         }
+    }
+}
+
+impl Message {
+    /// The message as participants other than its sender see it (issue 54):
+    /// tool calls and results redacted by their `ToolVisibility`. `None` if
+    /// nothing is left to show - a tool message whose results are all
+    /// hidden, or a message that held nothing but hidden calls.
+    pub fn published(&self) -> Option<Message> {
+        if self.tool_calls.iter().all(|c| c.visibility.is_public())
+            && self.tool_results.iter().all(|r| r.visibility.is_public()) {
+            return Some(self.clone());
+        }
+        let mut message = self.clone();
+        message.tool_calls.retain(|c| c.visibility != ToolVisibility::Hidden);
+        for call in &mut message.tool_calls {
+            if call.visibility == ToolVisibility::CallOnly {
+                call.arguments = serde_json::Value::Null;
+            }
+        }
+        message.tool_results.retain(|r| r.visibility != ToolVisibility::Hidden);
+        for result in &mut message.tool_results {
+            if result.visibility == ToolVisibility::CallOnly {
+                result.content.clear();
+            }
+        }
+        let empty = message.content.as_deref().is_none_or(str::is_empty)
+            && message.reasoning.as_deref().is_none_or(str::is_empty)
+            && message.tool_calls.is_empty()
+            && message.tool_results.is_empty();
+        (!empty).then_some(message)
     }
 }
 
@@ -443,5 +474,58 @@ mod tests {
         assert_eq!(messages[0].prev_id, MessageId::default());
         assert_eq!(messages[1].prev_id, id(1));
         assert_eq!(messages[2].prev_id, id(2));
+    }
+
+    fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
+        ToolCall { id: Some(id.to_string()), function_name: "f".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility }
+    }
+
+    fn result(id: &str, visibility: ToolVisibility) -> ToolCallResult {
+        ToolCallResult { id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility }
+    }
+
+    #[test]
+    fn a_message_is_published_redacted_by_the_visibility_of_its_tool_calls() {
+        let message = Message {
+            content: None,
+            tool_calls: vec![call("1", ToolVisibility::Public), call("2", ToolVisibility::CallOnly), call("3", ToolVisibility::Hidden)],
+            ..make_message(MessageId::new())
+        };
+        let published = message.published().expect("public and call-only calls are left");
+        let ids: Vec<_> = published.tool_calls.iter().map(|c| c.id.clone().unwrap()).collect();
+        assert_eq!(ids, ["1", "2"], "the hidden call is gone");
+        assert_eq!(published.tool_calls[0].arguments, message.tool_calls[0].arguments, "public as it is");
+        assert_eq!(published.tool_calls[1].arguments, serde_json::Value::Null, "call-only without arguments");
+        assert_eq!(published.id, message.id, "the same message, for the context panel to find");
+
+        let results = Message {
+            role: MessageRole::Tool,
+            content: None,
+            tool_results: vec![result("1", ToolVisibility::Public), result("2", ToolVisibility::CallOnly), result("3", ToolVisibility::Hidden)],
+            ..make_message(MessageId::new())
+        };
+        let published = results.published().expect("public and call-only results are left");
+        let contents: Vec<_> = published.tool_results.iter().map(|r| r.content.as_str()).collect();
+        assert_eq!(contents, ["secret", ""], "the hidden result is gone, the call-only one empty");
+    }
+
+    #[test]
+    fn a_message_with_nothing_left_to_show_is_not_published() {
+        let hidden_only = Message { content: None, tool_calls: vec![call("1", ToolVisibility::Hidden)], ..make_message(MessageId::new()) };
+        assert!(hidden_only.published().is_none());
+        let with_text = Message { tool_calls: vec![call("1", ToolVisibility::Hidden)], ..make_message(MessageId::new()) };
+        let published = with_text.published().expect("the text is left");
+        assert!(published.tool_calls.is_empty());
+        assert_eq!(published.content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn visibility_is_stored_only_where_it_is_not_public() {
+        let public = serde_json::to_value(call("1", ToolVisibility::Public)).unwrap();
+        assert!(public.get("visibility").is_none());
+        let hidden = serde_json::to_value(call("1", ToolVisibility::Hidden)).unwrap();
+        assert_eq!(hidden["visibility"], "hidden");
+        let stored: ToolCall = serde_json::from_value(serde_json::json!({"id": "1", "function_name": "f", "arguments": {}})).unwrap();
+        assert_eq!(stored.visibility, ToolVisibility::Public, "a call without it is public");
     }
 }

@@ -1,6 +1,6 @@
 # 54 — Private notes are visible to users
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -123,3 +123,25 @@ anyway, in two places:
     says truthfully that no one but the agent's owner can see private notes.
   - Still open by design: an agent repeating a private note in its answer is
     not prevented by any tool setting (see [51](51-agent-private-notes.md)).
+- **2026-09-27** — Implemented as decided. `ToolVisibility` on `Tool`,
+  `ToolCall` and `ToolCallResult` (stored only where not `Public`); the
+  agent stamps every call in `handle_llm_turn` from its tool's declaration
+  (`AgentActor::stamp_visibility`, unknown tools are public), results take
+  it over from the call. Redaction happens in one place:
+  `TurnContext::send_event` sends `ActorEvent::published`, which applies
+  `Message::published` to every message an event carries - `CallOnly`
+  arguments become `null` and results empty, `Hidden` calls and results are
+  dropped, a message with nothing left is not sent; approval requests stay
+  unredacted. `note_private` and `revoke_private_note` are `Hidden`; their
+  tool description and prompt header now say that no other participant sees
+  private notes, only the person responsible for the agent. The web UI shows
+  a badge on non-public calls (visible to the owner in the context panel)
+  and "Arguments/Result not shown" for `CallOnly` calls. Verified in the
+  browser: the call is absent from the chat, the history and the event
+  stream, and shown in full with its badge in the context panel.
+  The same check found the model's **reasoning** of the message that made
+  the hidden call quoting the note in the history (the web UI does not show
+  reasoning, the API delivers it). That is split off as
+  [61](61-reasoning-leaves-the-agent.md), since who may see reasoning is a
+  decision of its own and streaming makes a per-message rule too late. This
+  issue's decision - tool visibility and the context panel - is done.
