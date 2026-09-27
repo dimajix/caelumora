@@ -129,7 +129,7 @@ against it, and what came out of the last attempt.
 | [61](61-reasoning-leaves-the-agent.md) | done | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
 | [63](63-reasoning-in-model-input.md) | open | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
-| [66](66-channel-level-in-prompt.md) | open | The answer text is always published, and the agent is not told how confidential the channel it writes in is, so it may repeat private knowledge there. |
+| [66](66-channel-level-in-prompt.md) | done | Private notes and results of tools the channel does not see are not marked as private for the model, which may quote them in its always-published answer. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Maintenance

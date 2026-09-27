@@ -48,7 +48,8 @@ impl ToolProvider for PrivateNotesComponent {
             Tool {
                 name: NOTE_PRIVATE_TOOL_NAME.to_string(),
                 description: "Note something privately - no other participant sees it; only the person \
-                    responsible for you can inspect it. You are shown your private notes from now on, in this channel and in your other channels of this \
+                    responsible for you can inspect it. Do not quote or reveal your private notes in \
+                    your answers. You are shown your private notes from now on, in this channel and in your other channels of this \
                     session where that reveals nothing to someone who may not know it. Keep a note short \
                     and self-contained; to change one, revoke it and note the new version."
                     .to_string(),
@@ -136,7 +137,7 @@ fn render(own: &[Note], elsewhere: &[ChannelNotes]) -> String {
     if own.is_empty() && elsewhere.is_empty() {
         return String::new();
     }
-    let mut text = String::from("[Your private notes - no other participant sees them; only the person responsible for you can inspect them.]\n");
+    let mut text = String::from("[Your private notes - no other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.]\n");
     if !own.is_empty() {
         let _ = writeln!(text, "In this channel (change them with `note_private` and `revoke_private_note`):");
         for note in own {

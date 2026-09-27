@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
 use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolResultStatus};
+use caelumora_model::confidentiality::Publication;
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
 use chrono::{DateTime, Utc};
 use tracing::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,21 @@ pub type ToolResult<T> = Result<T, ToolError>;
 /// results are passed on unchanged.
 pub fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
     serde_json::json!({ "status": status, "message": message }).to_string()
+}
+
+/// What the model is given as the result of a call that succeeded: the
+/// tool's `value` - marked as the agent's alone if the channel does not see
+/// it (issue 66), i.e. if the turn may not publish the call's content label.
+/// The answer text is always published, so a result the channel does not
+/// see is worthless redacted if the model quotes it.
+pub fn successful_result(value: Value, confidentiality: ToolConfidentiality, publication: Publication) -> String {
+    if publication.allows(confidentiality.content) {
+        return value.to_string();
+    }
+    serde_json::json!({
+        "result": value,
+        "note": "Only you see this result - the channel does not. Do not quote or reveal it in your answers.",
+    }).to_string()
 }
 
 /// The result for a call a user declined.
@@ -216,7 +232,7 @@ impl ToolExecutor for DefaultToolExecutor {
                         Ok(ToolCallResult {
                             id: call.id.clone(),
                             tool_name: call.function_name.clone(),
-                            content: value.to_string(),
+                            content: successful_result(value, call.confidentiality, context.publication()),
                             status: ToolResultStatus::Ok,
                             confidentiality: call.confidentiality,
                         })
@@ -419,5 +435,20 @@ mod tests {
 
         let result = executor.execute(&call, &mut context).await.unwrap();
         assert_eq!(result.content, "{\"result\":\"ok\"}");
+    }
+
+    #[test]
+    fn a_result_the_channel_does_not_see_is_marked_for_the_model() {
+        let value = json!({"secret": 42});
+        let public = successful_result(value.clone(), ToolConfidentiality::PUBLIC, Publication::default());
+        assert_eq!(parse(&public), value, "passed on unchanged");
+
+        let hidden = parse(&successful_result(value.clone(), ToolConfidentiality::CALL_ONLY, Publication::new(true, true)));
+        assert_eq!(hidden["result"], value);
+        assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
+
+        let session_content = ToolConfidentiality { call: caelumora_model::confidentiality::Confidentiality::Public, content: caelumora_model::confidentiality::Confidentiality::Session };
+        assert_eq!(parse(&successful_result(value.clone(), session_content, Publication::new(true, false))), value, "the channel sees it");
+        assert!(parse(&successful_result(value, session_content, Publication::default())).get("note").is_some(), "a public channel does not");
     }
 }

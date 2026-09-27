@@ -426,6 +426,11 @@ impl<'a> TurnContext<'a> {
         }
     }
 
+    /// Which labels the agent may publish to its channel in this turn.
+    pub fn publication(&self) -> Publication {
+        self.agent_channel_state.turn_publication
+    }
+
     /// Sets which labels the agent may publish to its channel in this turn
     /// (issue 61), as the `SecurityManager` decided when it began.
     pub fn set_publication(&mut self, publication: Publication) {
