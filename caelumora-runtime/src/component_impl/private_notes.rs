@@ -13,7 +13,7 @@
 //! `KnowledgeRef`.
 //!
 //! "Private" means private from other agents and other users (issue 54):
-//! both tools are `ToolVisibility::Hidden`, so their calls never reach the
+//! both tools are `ToolConfidentiality::HIDDEN`, so their calls never reach the
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
@@ -27,7 +27,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::Note;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
 use serde_json::Value;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -57,7 +57,7 @@ impl ToolProvider for PrivateNotesComponent {
                     ["text"],
                 ),
                 requires_approval: false,
-                visibility: ToolVisibility::Hidden,
+                confidentiality: ToolConfidentiality::HIDDEN,
             },
             Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -68,7 +68,7 @@ impl ToolProvider for PrivateNotesComponent {
                     ["id"],
                 ),
                 requires_approval: false,
-                visibility: ToolVisibility::Hidden,
+                confidentiality: ToolConfidentiality::HIDDEN,
             },
         ]
     }

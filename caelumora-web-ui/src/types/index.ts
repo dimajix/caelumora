@@ -45,18 +45,24 @@ export interface ChannelResponse {
   confidentiality: ChannelConfidentiality;
 }
 
+/** How far a piece of information may travel (issue 61), from the most open. */
+export type Confidentiality = 'public' | 'session' | 'channel' | 'private';
+
 /**
- * What participants other than the calling agent see of a tool call
- * (issue 54); absent means `public`.
+ * The labels of a tool call (issues 54, 61): how far the call itself may
+ * travel, and how far its arguments and result. Absent means both `public`.
  */
-export type ToolVisibility = 'public' | 'call_only' | 'hidden';
+export interface ToolConfidentiality {
+  call: Confidentiality;
+  content: Confidentiality;
+}
 
 export interface ToolCall {
   id?: string;
   function_name: string;
-  /** `null` where the call was published with `call_only`. */
+  /** `null` where the call was published without its content. */
   arguments: unknown;
-  visibility?: ToolVisibility;
+  confidentiality?: ToolConfidentiality;
 }
 
 /** How a tool call ended; absent means `ok`. */
@@ -69,8 +75,8 @@ export interface ToolResult {
   /** The tool's result, or for any other status a JSON object with `status` and `message`. */
   content: string;
   status?: ToolResultStatus;
-  /** Empty `content` where the call was published with `call_only`. */
-  visibility?: ToolVisibility;
+  /** Empty `content` where the call was published without its content. */
+  confidentiality?: ToolConfidentiality;
 }
 
 /** The state of a channel when an event stream connects (issue 34). */

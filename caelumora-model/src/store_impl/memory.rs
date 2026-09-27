@@ -404,6 +404,7 @@ mod tests {
 
     fn make_personality(name: &str, scope: Scope) -> Personality {
         Personality {
+            reasoning_confidentiality: crate::confidentiality::Confidentiality::Public,
             security_attributes: Default::default(),
             id: PersonalityId(Uuid::new_v4()),
             metadata: Metadata {

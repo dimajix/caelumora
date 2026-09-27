@@ -218,7 +218,7 @@ impl ToolExecutor for DefaultToolExecutor {
                             tool_name: call.function_name.clone(),
                             content: value.to_string(),
                             status: ToolResultStatus::Ok,
-                            visibility: call.visibility,
+                            confidentiality: call.confidentiality,
                         })
                     }
                     Err(e) => {
@@ -284,7 +284,7 @@ mod tests {
                 description: "desc".to_string(),
                 parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
                 requires_approval: self.requires_approval,
-                visibility: Default::default(),
+                confidentiality: Default::default(),
             }]
         }
         async fn execute(&self, _name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
@@ -303,7 +303,7 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default() }
+        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), confidentiality: Default::default() }
     }
 
     fn parse(result: &str) -> Value {
@@ -408,7 +408,7 @@ mod tests {
             id: Some("call_1".to_string()),
             function_name: "test_tool".to_string(),
             arguments: json!("{}".to_string()),
-            visibility: Default::default(),
+            confidentiality: Default::default(),
         };
 
         let mut agent_state = AgentState::default();

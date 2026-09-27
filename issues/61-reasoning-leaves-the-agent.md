@@ -1,6 +1,6 @@
 # 61 — An agent's reasoning is published with its messages
 
-**Status:** in progress
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -134,3 +134,32 @@ bubble.
   channels and cannot read a new `channel`-level one. Not yet: changing a
   channel's level after creation (the owner may, per the decision), and
   step 2 - labels and the publishing rule.
+- **2026-09-27** — Step 2 implemented: labels and the publishing rule.
+  `ToolVisibility` is replaced by `ToolConfidentiality { call, content }`
+  (`PUBLIC`, `CALL_ONLY`, `HIDDEN`) on `Tool`, `ToolCall` and
+  `ToolCallResult`; `Message` has `reasoning_confidentiality`, `Personality`
+  a `reasoning_confidentiality` default (`public`). The agent labels every
+  message (`AgentActor::label`): calls by their tool's declaration; the
+  reasoning by the personality's default, `private` once the turn saw
+  private notes (`TurnContext::saw_private_knowledge`), and the content
+  labels of the message's calls - while streaming, of every tool it could
+  still call. Knowledge from other channels adds nothing, since rule 2 only
+  lets in what the channel admits anyway. Publishing is
+  `ActionType::Publish { label, actor, channel }`, allowed by the ownership
+  policy if `ChannelClassification::admits(label)`; the agent asks once per
+  turn and level in its owner's name and keeps the answer as the turn's
+  `Publication`, which `TurnContext::send_event` redacts by
+  (`Message::published`). `private` is never published and never asked
+  for. The web UI shows a call's labels instead of its visibility.
+  Verified in the browser: asked to note something privately, the agent's
+  message with the hidden call no longer reaches the history - neither the
+  call nor its reasoning - and its answer arrives without reasoning,
+  labelled `private`; no empty bubble.
+  Still open from the decision: the channel's level as a prompt part for
+  the agent (the answer text is not labelled), and changing a channel's
+  level after creation.
+- **2026-09-27** — The two open points are split off at the maintainer's
+  request: the channel's level as a prompt part as
+  [66](66-channel-level-in-prompt.md), changing a channel's level as
+  [67](67-change-channel-level.md). Reasoning and tool calls are published
+  by their labels, so this issue is done.

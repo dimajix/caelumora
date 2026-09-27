@@ -11,6 +11,7 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
+use caelumora_model::confidentiality::Publication;
 use caelumora_model::digest::Digest;
 use caelumora_model::agent::TurnKnowledge;
 use caelumora_model::message::{ContextRef, KnowledgeRef, Message, MessageId, MessageRole, PromptRef};
@@ -283,6 +284,14 @@ impl<'a> TurnContext<'a> {
 
     /// Records that the turn read `reference` (issue 17): it is recorded
     /// with every message the turn produces from now on.
+    /// Whether the turn was given or read private knowledge of the agent -
+    /// its private notes (issue 51) - so far: what the model produces from
+    /// then on may reveal it (issue 61).
+    pub fn saw_private_knowledge(&self) -> bool {
+        self.agent_channel_state.turn_knowledge.iter()
+            .any(|k| matches!(k.reference.source, caelumora_model::message::KnowledgeSource::PrivateNotes { .. }))
+    }
+
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
         let before = self.agent_channel_state.turn_messages.len();
         let knowledge = &mut self.agent_channel_state.turn_knowledge;
@@ -417,12 +426,19 @@ impl<'a> TurnContext<'a> {
         }
     }
 
+    /// Sets which labels the agent may publish to its channel in this turn
+    /// (issue 61), as the `SecurityManager` decided when it began.
+    pub fn set_publication(&mut self, publication: Publication) {
+        self.agent_channel_state.turn_publication = publication;
+    }
+
     /// Sends `av` to the channel as the agent publishes it: messages redacted
-    /// by the visibility of their tool calls (issue 54). The agent keeps the
-    /// full messages in its context; an event with nothing left to show is
-    /// not sent.
+    /// by the labels of their parts against what the turn may publish
+    /// (issues 54, 61). The agent keeps the full messages in its context; an
+    /// event with nothing left to show is not sent.
     pub async fn send_event(&self, av: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        let Some(av) = av.published() else { return Ok(()) };
+        let publication = self.agent_channel_state.turn_publication;
+        let Some(av) = av.published(&|label| publication.allows(label)) else { return Ok(()) };
         let ev = Envelope::new(
             self.agent_channel_state.turn_security_context.clone(),
             self.agent_channel_state.turn_event_context.clone(),
@@ -575,14 +591,16 @@ mod tests {
 
     #[tokio::test]
     async fn events_leave_the_agent_redacted_while_its_context_keeps_the_full_call() {
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
+        use caelumora_model::confidentiality::Confidentiality;
+        use caelumora_model::tool::{ToolCall, ToolConfidentiality};
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut agent_state = AgentState::default();
         let mut state = AgentChannelState::default();
         let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+        turn.set_publication(Publication::new(true, true));
 
-        let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::Hidden };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::default() };
         turn.push_message(message.clone());
         turn.send_event(ActorEvent::CompleteMessageGenerated(message.clone()), &output).await.unwrap();
@@ -593,5 +611,23 @@ mod tests {
             other => panic!("the complete message is not sent at all, got {other:?}"),
         }
         assert_eq!(turn.messages()[0].tool_calls.len(), 1, "the agent keeps it");
+
+        // Reasoning reaches the channel only as far as the turn may publish.
+        let thinking = Message {
+            role: MessageRole::Assistant,
+            content: Some("done".to_string()),
+            reasoning: Some("weighing".to_string()),
+            reasoning_confidentiality: Confidentiality::Channel,
+            ..Message::default()
+        };
+        turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output).await.unwrap();
+        turn.set_publication(Publication::new(true, false));
+        turn.send_event(ActorEvent::CompleteMessageGenerated(thinking), &output).await.unwrap();
+        let reasoning = |event: Option<Envelope>| match event.map(|e| e.event) {
+            Some(ActorEvent::CompleteMessageGenerated(m)) => m.reasoning,
+            other => panic!("expected a message, got {other:?}"),
+        };
+        assert_eq!(reasoning(rx.recv().await).as_deref(), Some("weighing"), "a channel-level channel admits it");
+        assert!(reasoning(rx.recv().await).is_none(), "a session-level one does not");
     }
 }

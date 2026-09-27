@@ -5,7 +5,7 @@ use crate::actor::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ impl ToolProvider for CalculatorToolProvider {
                 vec!["expression"],
             ),
             requires_approval: false,
-            visibility: ToolVisibility::Public,
+            confidentiality: ToolConfidentiality::PUBLIC,
         }]
     }
 

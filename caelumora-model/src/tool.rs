@@ -1,4 +1,5 @@
 use crate::approval::{ApprovalId, ApprovalStatus};
+use crate::confidentiality::Confidentiality;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -77,24 +78,35 @@ impl ToolParameters {
     }
 }
 
-/// What participants other than the calling agent see of a call of a tool
-/// (issue 54). The agent itself always has the full call and result in its
-/// context; only what it publishes to the channel is redacted.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolVisibility {
-    /// The call, its arguments and its result.
-    #[default]
-    Public,
-    /// Only that the tool was called - no arguments, no result.
-    CallOnly,
-    /// Nothing at all.
-    Hidden,
+/// The confidentiality labels of a tool's calls (issues 54, 61): how far
+/// the call itself - that the tool was called - may travel, and how far its
+/// content, the arguments and the result. The content is never less
+/// confidential than the call. The agent keeps every call in full; what it
+/// publishes to its channel is redacted by these labels against the
+/// channel's level (`Message::published`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolConfidentiality {
+    pub call: Confidentiality,
+    pub content: Confidentiality,
 }
 
-impl ToolVisibility {
+impl ToolConfidentiality {
+    /// Call, arguments and result may travel anywhere.
+    pub const PUBLIC: ToolConfidentiality = ToolConfidentiality { call: Confidentiality::Public, content: Confidentiality::Public };
+    /// Others may see that the tool was called, but not with what or what
+    /// it returned.
+    pub const CALL_ONLY: ToolConfidentiality = ToolConfidentiality { call: Confidentiality::Public, content: Confidentiality::Private };
+    /// Nothing of the call leaves the agent.
+    pub const HIDDEN: ToolConfidentiality = ToolConfidentiality { call: Confidentiality::Private, content: Confidentiality::Private };
+
     pub fn is_public(&self) -> bool {
-        *self == ToolVisibility::Public
+        *self == Self::PUBLIC
+    }
+}
+
+impl Default for ToolConfidentiality {
+    fn default() -> Self {
+        Self::PUBLIC
     }
 }
 
@@ -105,22 +117,22 @@ pub struct Tool {
     pub parameters: ToolParameters,
     #[serde(default)]
     pub requires_approval: bool,
-    /// What others see of a call. Approvers see the arguments of a call that
-    /// needs approval regardless: they cannot decide otherwise.
-    #[serde(default, skip_serializing_if = "ToolVisibility::is_public")]
-    pub visibility: ToolVisibility,
+    /// How far its calls may travel. Approvers see the arguments of a call
+    /// that needs approval regardless: they cannot decide otherwise.
+    #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
+    pub confidentiality: ToolConfidentiality,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: Option<String>,
     pub function_name: String,
-    /// `Null` where the call was published with `ToolVisibility::CallOnly`.
+    /// `Null` where the call was published without its content.
     pub arguments: Value,
-    /// The visibility of the tool at the time of the call, stamped by the
-    /// agent: what applied then counts, even if the tool changes later.
-    #[serde(default, skip_serializing_if = "ToolVisibility::is_public")]
-    pub visibility: ToolVisibility,
+    /// The labels of the tool at the time of the call, stamped by the agent:
+    /// what applied then counts, even if the tool changes later.
+    #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
+    pub confidentiality: ToolConfidentiality,
 }
 
 /// How a tool call ended (issue 15). Everything but `Ok` means the tool did
@@ -159,10 +171,10 @@ pub struct ToolCallResult {
     /// Omitted when `Ok`, so results stored before it existed read as such.
     #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
     pub status: ToolResultStatus,
-    /// The visibility of the call this is the result of; `content` is empty
-    /// where it was published with `ToolVisibility::CallOnly`.
-    #[serde(default, skip_serializing_if = "ToolVisibility::is_public")]
-    pub visibility: ToolVisibility,
+    /// The labels of the call this is the result of; `content` is empty
+    /// where it was published without its content.
+    #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
+    pub confidentiality: ToolConfidentiality,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

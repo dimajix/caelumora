@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
-use crate::confidentiality::ChannelClassification;
+use crate::confidentiality::{ChannelClassification, Confidentiality};
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,12 @@ pub enum ActionType<'a> {
     /// confidentiality levels (issue 61) - not by who takes part in them, so
     /// that the answer does not change when someone joins or leaves.
     ReadChannel { source: &'a ChannelClassification, reader: &'a ChannelClassification },
+    /// Publishing a part of a message labelled `label` to `channel`, as
+    /// `actor` (issue 61) - reasoning, a tool call or its content. Decided by
+    /// the label, the actor and the channel, not by who takes part in the
+    /// channel. Never asked for `Confidentiality::Private`, which does not
+    /// leave the actor whatever a policy says.
+    Publish { label: Confidentiality, actor: ActorId, channel: &'a ChannelClassification },
     /// Seeing that a user command exists - in `/help` and in completion.
     /// Keyed by the command's name, without the slash (issue 28).
     ShowCommand(&'a str),
@@ -175,7 +181,9 @@ impl SecurityManager for DummySecurityManager {
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
 /// - Reading one channel from another follows the confidentiality levels of
-///   the two (`ChannelClassification::readable_from`, issue 61).
+///   the two (`ChannelClassification::readable_from`, issue 61), and so does
+///   publishing a labelled part of a message to a channel
+///   (`ChannelClassification::admits`).
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (approvals, issues 12 and 23).
@@ -216,6 +224,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
             ActionType::ReadChannel { source, reader } => source.readable_from(reader),
+            ActionType::Publish { label, channel, .. } => channel.admits(label),
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)
@@ -290,6 +299,18 @@ mod tests {
             assert!(allows(actor, ActionType::ReadChannel { source: &team, reader: &secret }).await);
             assert!(!allows(actor, ActionType::ReadChannel { source: &secret, reader: &team }).await);
         }
+    }
+
+    #[tokio::test]
+    async fn a_part_is_published_where_the_channel_admits_its_label() {
+        use crate::confidentiality::{ChannelClassification, Confidentiality};
+        let team = ChannelClassification { session_id: SessionId::new(), channel_id: ChannelId::new(), level: Confidentiality::Session };
+        let (owner, agent) = (user(), ActorId::Agent(crate::agent::AgentId::new()));
+        let publish = |label| ActionType::Publish { label, actor: agent, channel: &team };
+        assert!(allows(owner, publish(Confidentiality::Public)).await);
+        assert!(allows(owner, publish(Confidentiality::Session)).await);
+        assert!(!allows(owner, publish(Confidentiality::Channel)).await);
+        assert!(!allows(owner, publish(Confidentiality::Private)).await);
     }
 
     #[tokio::test]

@@ -71,6 +71,13 @@ impl ChannelClassification {
         }
     }
 
+    /// Whether a part of a message labelled `label` may be published to this
+    /// channel (rule 1 of issue 61): if the label does not reach further
+    /// than the channel's contents may travel anyway. Never for `Private`.
+    pub fn admits(&self, label: Confidentiality) -> bool {
+        label.is_channel_level() && label <= self.level
+    }
+
     /// Whether the notes and history of this channel may be read from
     /// `reader` (rule 2 of issue 61): `reader` must lie within this
     /// channel's reach, and its own level must be at least this channel's,
@@ -78,6 +85,39 @@ impl ChannelClassification {
     /// always read itself.
     pub fn readable_from(&self, reader: &ChannelClassification) -> bool {
         self.channel_id == reader.channel_id || (self.reaches(reader) && self.level <= reader.level)
+    }
+}
+
+/// Which labels an actor may publish to its channel, as the
+/// `SecurityManager` decided when its turn began (issue 61) - asked once per
+/// turn and level rather than once per streamed part. `Private` is never
+/// among them, whatever the policy says. Without a decision only `Public`
+/// is published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Publication {
+    session: bool,
+    channel: bool,
+}
+
+impl Publication {
+    /// A decision: whether `Session` and `Channel` may be published.
+    pub fn new(session: bool, channel: bool) -> Self {
+        Self { session, channel }
+    }
+
+    pub fn allows(&self, label: Confidentiality) -> bool {
+        match label {
+            Confidentiality::Public => true,
+            Confidentiality::Session => self.session,
+            Confidentiality::Channel => self.channel,
+            Confidentiality::Private => false,
+        }
+    }
+}
+
+impl Default for Publication {
+    fn default() -> Self {
+        Self::new(false, false)
     }
 }
 
@@ -115,6 +155,14 @@ mod tests {
         assert!(!channel(here, Session).readable_from(&reader(Public)));
         assert!(channel(here, Session).readable_from(&reader(Channel)));
         assert!(!channel(here, Channel).readable_from(&reader(Channel)), "not even by another confidential channel");
+    }
+
+    #[test]
+    fn a_channel_admits_what_travels_no_further_than_its_contents() {
+        let team = channel(SessionId::new(), Session);
+        assert!(team.admits(Public) && team.admits(Session));
+        assert!(!team.admits(Channel), "would reach the other channels of the session");
+        assert!(!channel(SessionId::new(), Channel).admits(Private), "never leaves the actor");
     }
 
     #[test]

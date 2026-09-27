@@ -107,6 +107,7 @@ fn create_component_config(system_prompt: &str, enable_extended_planning: bool) 
 
 fn create_personality(name: &str, description: &str, system_prompt: &str, enable_extended_planning: bool) -> Personality {
     Personality {
+        reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
         id: PersonalityId(Uuid::new_v4()),
         metadata: Metadata {
             name: name.to_string(),

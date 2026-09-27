@@ -785,6 +785,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let personality = Personality {
+            reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
             components: Default::default(),

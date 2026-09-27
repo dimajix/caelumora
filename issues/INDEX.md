@@ -59,6 +59,7 @@ against it, and what came out of the last attempt.
 | [08](08-retry-and-edit-past-answers.md) | open | A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one. |
 | [09](09-creating-channels.md) | done | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
 | [46](46-channel-participants.md) | open | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
+| [67](67-change-channel-level.md) | open | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |
@@ -125,8 +126,10 @@ against it, and what came out of the last attempt.
 | [58](58-notes-in-every-prompt.md) | open | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
 | [59](59-retrieval-of-notes.md) | open | Knowledge reaches the model only in full or when the model itself searches for it; nothing selects what is relevant to the turn. |
 | [60](60-note-ids-in-prompts.md) | open | Notes of its own that an agent is shown from other channels carry no usable id, so it cannot revoke them, and ids from other chains are ambiguous. |
-| [61](61-reasoning-leaves-the-agent.md) | in progress | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
+| [61](61-reasoning-leaves-the-agent.md) | done | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
 | [63](63-reasoning-in-model-input.md) | open | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
+| [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
+| [66](66-channel-level-in-prompt.md) | open | The answer text is always published, and the agent is not told how confidential the channel it writes in is, so it may repeat private knowledge there. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
 ## Maintenance

@@ -6,7 +6,7 @@ use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -27,21 +27,21 @@ impl ToolProvider for StopToolProvider {
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
-                visibility: ToolVisibility::Public,
+                confidentiality: ToolConfidentiality::PUBLIC,
             },
             Tool {
                 name: "bye".to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
-                visibility: ToolVisibility::Public,
+                confidentiality: ToolConfidentiality::PUBLIC,
             },
             Tool {
                 name: "silence".to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
                 requires_approval: true,
-                visibility: ToolVisibility::Public,
+                confidentiality: ToolConfidentiality::PUBLIC,
             }
         ]
     }

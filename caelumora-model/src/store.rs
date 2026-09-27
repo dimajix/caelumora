@@ -107,6 +107,7 @@ pub mod tests {
 
     fn personality_template() -> Personality {
         Personality {
+            reasoning_confidentiality: crate::confidentiality::Confidentiality::Public,
             security_attributes: Default::default(),
             id: PersonalityId(Uuid::new_v4()),
             metadata: Metadata {

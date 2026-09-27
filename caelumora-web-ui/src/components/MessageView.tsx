@@ -3,7 +3,7 @@
 
 import React, {useState} from 'react';
 import {Check, CheckCircle2, Copy, EyeOff, Info, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {ChannelMember, Message, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
+import type {ChannelMember, Message, ToolConfidentiality, ToolResult, ToolResultStatus} from '../types';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -23,18 +23,18 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   unknown_tool: 'Unknown tool',
 };
 
-/** The text to show for a tool result: the message of an unsuccessful one, else the content. */
 /**
- * What others see of a call that is not public (issue 54). Only the agent's
- * owner, in the context panel, sees such a call in full; everybody else sees
- * a `call_only` call without arguments and result, and a `hidden` one not at
- * all.
+ * How far a call that is not public may travel (issues 54, 61), or `null`
+ * for a public one. Where its labels exceed a channel's level, the channel
+ * shows the call without arguments and result, or not at all; the agent's
+ * owner sees it in full in the context panel.
  */
-const VISIBILITY_LABELS: Record<Exclude<ToolVisibility, 'public'>, string> = {
-  call_only: 'Others see only the call',
-  hidden: 'Hidden from others',
-};
+function confidentialityLabel(labels: ToolConfidentiality | undefined): string | null {
+  if (!labels || (labels.call === 'public' && labels.content === 'public')) return null;
+  return labels.call === 'public' ? `Arguments and result: ${labels.content}` : `Call: ${labels.call}`;
+}
 
+/** The text to show for a tool result: the message of an unsuccessful one, else the content. */
 function toolResultText(result: ToolResult): string {
   if (!result.status || result.status === 'ok') return result.content;
   try {
@@ -182,10 +182,10 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                 <div className="flex items-center gap-2 text-xs font-mono">
                   <Wrench size={12} className="text-blue-500" />
                   <span>{call.function_name}</span>
-                  {call.visibility && call.visibility !== 'public' && (
-                    <span className="flex items-center gap-1 font-sans text-[10px] opacity-60" title={VISIBILITY_LABELS[call.visibility]}>
+                  {confidentialityLabel(call.confidentiality) && (
+                    <span className="flex items-center gap-1 font-sans text-[10px] opacity-60" title="How far this call may travel">
                       <EyeOff size={11} />
-                      {VISIBILITY_LABELS[call.visibility]}
+                      {confidentialityLabel(call.confidentiality)}
                     </span>
                   )}
                 </div>
@@ -212,7 +212,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                     <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
                   )}
                 </div>
-                {result && result.visibility === 'call_only' && result.content === '' ? (
+                {result && result.content === '' && (result.confidentiality?.content ?? 'public') !== 'public' ? (
                   <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 text-[11px] italic opacity-60">
                     Result not shown
                   </div>

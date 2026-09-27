@@ -16,6 +16,7 @@ use caelumora_model::agent::{
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
+use caelumora_model::confidentiality::{Confidentiality, Publication};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
@@ -44,6 +45,9 @@ pub struct AgentActor {
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     tool_executor: Box<dyn ToolExecutor>,
+    /// The least confidential label its reasoning gets (issue 61), from the
+    /// personality.
+    reasoning_confidentiality: Confidentiality,
 
     // State
     state: Mutex<AgentActorState>,
@@ -133,6 +137,7 @@ impl AgentActor {
             perceive_in_processors,
             emit_out_processors,
             tool_executor,
+            reasoning_confidentiality: personality.reasoning_confidentiality,
             state,
             processing_state,
             loop_count: AtomicI32::new(0),
@@ -236,6 +241,7 @@ impl AgentActor {
             event_context.next(self.id, agent_name.clone()),
             event_security.next(self.id),
         );
+        turn_context.set_publication(self.publication().await);
 
         debug!("Starting generating messages for agent {} {}", self.id, agent_name);
         turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
@@ -262,21 +268,53 @@ impl AgentActor {
             .await
     }
 
-    /// Stamps every tool call of `message` with the visibility its tool
-    /// declares now (issue 54), so that the call and its result are
-    /// published by what applied at the time of the call. A call of an
+    /// Labels the parts of `message` (issues 54, 61). Every tool call gets
+    /// the labels its tool declares now, so that the call and its result are
+    /// published by what applied at the time of the call; a call of an
     /// unknown tool is public: it fails, and its failure hides nothing.
-    fn stamp_visibility(&self, message: &mut Message) {
-        if message.tool_calls.is_empty() {
-            return;
-        }
+    ///
+    /// The reasoning gets the most confidential of: the personality's
+    /// default; `Private` once the turn saw the agent's private knowledge;
+    /// and the content of the calls it leads to - those of the message once
+    /// it is `complete`, and while it streams those of every tool the agent
+    /// could still call, since reasoning comes before the call it leads to.
+    /// Knowledge read from other channels adds nothing: a channel reads only
+    /// what reaches no further than its own contents (rule 2), so the
+    /// channel admits it anyway.
+    fn label(&self, message: &mut Message, turn_context: &TurnContext, complete: bool) {
         let tools = self.tool_executor.tools();
+        let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.confidentiality).unwrap_or_default();
         for call in &mut message.tool_calls {
-            call.visibility = tools.iter()
-                .find(|t| t.name == call.function_name)
-                .map(|t| t.visibility)
-                .unwrap_or_default();
+            call.confidentiality = declared(&call.function_name);
         }
+
+        let mut label = self.reasoning_confidentiality;
+        if turn_context.saw_private_knowledge() {
+            label = Confidentiality::Private;
+        }
+        let calls = if complete {
+            message.tool_calls.iter().map(|c| c.confidentiality.content).max()
+        } else {
+            tools.iter().map(|t| t.confidentiality.content).max()
+        };
+        message.reasoning_confidentiality = label.max(calls.unwrap_or(Confidentiality::Public));
+    }
+
+    /// What the agent may publish to its channel in the turn beginning now
+    /// (issue 61): the `SecurityManager` is asked for each level a channel
+    /// can have, with the agent's channel and in its owner's name. Outside a
+    /// channel only what is public.
+    async fn publication(&self) -> Publication {
+        let Some(channel) = self.actor_runtime.channel() else { return Publication::default() };
+        let classification = channel.classification();
+        let owner = self.agent_controller.load().security_attributes.owner_id;
+        let context = SecurityContext::new(owner, classification.session_id, classification.channel_id);
+        let security = self.actor_runtime.security_manager();
+        let allows = |label| {
+            let (security, context) = (security.clone(), context.clone());
+            async move { security.check(&context, ActionType::Publish { label, actor: self.id, channel: &classification }).await }
+        };
+        Publication::new(allows(Confidentiality::Session).await, allows(Confidentiality::Channel).await)
     }
 
     async fn execute_tools<'a>(
@@ -338,7 +376,7 @@ impl AgentActor {
                     tool_name: c.tool_call.function_name,
                     content: c.result.unwrap(),
                     status: c.result_status,
-                    visibility: c.tool_call.visibility,
+                    confidentiality: c.tool_call.confidentiality,
                 })
             }
             // A tool result is only ever "final" (shown as the real answer)
@@ -857,7 +895,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    self.stamp_visibility(&mut message);
+                    self.label(&mut message, turn_context, false);
                     message.internal = internal_message;
                     if let Some(msg) = self.respond_partial(message, turn_context).await {
                         let event = if msg.internal {
@@ -871,7 +909,7 @@ impl AgentActor {
                 MessageEvent::Complete(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    self.stamp_visibility(&mut message);
+                    self.label(&mut message, turn_context, true);
                     message.internal = internal_message;
 
                     self.request_approvals(&message.tool_calls, turn_context, output).await?;

@@ -114,6 +114,14 @@ pub struct Personality {
     pub components: ComponentConfig,
     #[serde(default)]
     pub security_attributes: SecurityAttributes,
+    /// The least confidential label the reasoning of its agents gets
+    /// (issue 61); what a turn saw may raise it. `public` unless named.
+    #[serde(default = "public_reasoning")]
+    pub reasoning_confidentiality: crate::confidentiality::Confidentiality,
+}
+
+fn public_reasoning() -> crate::confidentiality::Confidentiality {
+    crate::confidentiality::Confidentiality::Public
 }
 
 impl Secured for Personality {
@@ -196,6 +204,11 @@ pub struct AgentChannelState {
     /// (issue 17).
     #[serde(default)]
     pub turn_knowledge: Vec<TurnKnowledge>,
+    /// Which labels the agent may publish to the channel in the current turn
+    /// (issue 61), decided when the turn began. Not stored: a turn resumed
+    /// after a restart publishes only what is public until its next turn.
+    #[serde(skip)]
+    pub turn_publication: crate::confidentiality::Publication,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).

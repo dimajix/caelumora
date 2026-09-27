@@ -4,7 +4,7 @@ use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
 use tracing::warn;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
@@ -131,7 +131,7 @@ async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<Stri
                 description,
                 parameters: schema_to_tool_parameters(&schema),
                 requires_approval: false,
-                visibility: ToolVisibility::Public,
+                confidentiality: ToolConfidentiality::PUBLIC,
             }
         })
         .collect())

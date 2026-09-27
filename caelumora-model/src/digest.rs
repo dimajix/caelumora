@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn the_order_of_json_keys_does_not_matter() {
         let with = |arguments: Value| Message {
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments, visibility: Default::default() }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "f".to_string(), arguments, confidentiality: Default::default() }],
             ..message("")
         };
         let mut m1 = with(json!({"a": 1, "b": {"x": 1, "y": 2}}));
