@@ -194,7 +194,7 @@ impl PromptProvider for NotesComponent {
             Ok(published) => published,
             Err(e) => {
                 // The agent can still answer without the others' notes.
-                warn!("Reading the notes of channel {} failed: {}", context.channel_id, e);
+                warn!("Reading the notes of channel {} failed: {}", context.channel_id(), e);
                 Vec::new()
             }
         };
@@ -204,10 +204,10 @@ impl PromptProvider for NotesComponent {
         let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
 
         // What the part shows, as knowledge read (issue 17).
-        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(context.channel_id, p)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(context.channel_id(), p)).collect();
         if !own_notes.is_empty() {
             let own_digest = AgentNotes::digest(context, NoteKind::Public);
-            knowledge.push(KnowledgeRef { channel: context.channel_id, source: KnowledgeSource::Notes { agent: context.agent_id, digest: own_digest } });
+            knowledge.push(KnowledgeRef { channel: context.channel_id(), source: KnowledgeSource::Notes { agent: context.agent_id, digest: own_digest } });
         }
         Ok(Prompt { text, knowledge })
     }
@@ -300,7 +300,7 @@ mod tests {
             // starts without its changes.
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
-            turn.next_turn(Default::default(), Default::default());
+            turn.next_turn(Default::default(), Default::default(), Default::default(), Default::default());
             assert!(!turn.commit_turn().await.channel_state_changed);
         }
     }

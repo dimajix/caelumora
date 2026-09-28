@@ -17,7 +17,7 @@ use caelumora_model::agent::{
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
-use caelumora_model::confidentiality::{Confidentiality, Publication};
+use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, Publication};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
@@ -103,6 +103,11 @@ impl AgentActor {
         let tool_executor = actor_runtime.new_tool_executor(tool_providers)?;
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
+        // A state that has not had a turn here yet gets the channel as it is
+        // now; a turn under way keeps the channel as it was when it began.
+        if agent_channel_state.turn_classification.channel_id != channel.id {
+            agent_channel_state.turn_classification = channel.classification();
+        }
         agent_channel_state.turn_event_context.session_id = channel.session_id;
         agent_channel_state.turn_event_context.channel_id = channel.id;
         agent_channel_state.turn_event_context.sender_id = ActorId::Agent(agent_id);
@@ -141,11 +146,10 @@ impl AgentActor {
         event_context: &EventContext,
         security_context: &SecurityContext,
     ) {
-        let agent_name = self.agent_controller.name();
-        turn.next_turn(
-            event_context.next(self.id, agent_name),
-            security_context.next(self.id),
-        );
+        if let Err(e) = self.begin_turn(turn, event_context, security_context).await {
+            warn!("Agent {} cannot perceive: {:#}", self.id, e);
+            return;
+        }
 
         let original_messages = messages.clone();
         let perceived =
@@ -222,18 +226,10 @@ impl AgentActor {
         event_security: &SecurityContext,
         output: &dyn EventSender,
     ) -> Result<()> {
-        let agent_name = self.agent_controller.name();
-
         self.loop_count.store(0, Ordering::SeqCst);
+        self.begin_turn(turn, event_context, event_security).await?;
 
-        turn.next_turn(
-            event_context.next(self.id, agent_name.clone()),
-            event_security.next(self.id),
-        );
-        turn.set_publication(self.publication().await);
-        turn.set_classification(self.actor_runtime.classification());
-
-        debug!("Starting generating messages for agent {} {}", self.id, agent_name);
+        debug!("Starting generating messages for agent {} {}", self.id, turn.agent_name);
         turn.send_event(ActorEvent::ResponseStarted, output).await?;
 
         // Initialize next turn
@@ -298,18 +294,33 @@ impl AgentActor {
         }
     }
 
+    /// Begins a turn in answer to the envelope with `event_context` and
+    /// `security_context`: with the channel as it is now and what the
+    /// `SecurityManager` lets the agent publish there. Fails without a
+    /// channel, which happens only while it is being torn down.
+    async fn begin_turn<'a>(&self, turn: &mut Turn<'a>, event_context: &EventContext, security_context: &SecurityContext) -> Result<()> {
+        let classification = self.actor_runtime.classification()
+            .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id))?;
+        let publication = self.publication(&classification).await;
+        turn.next_turn(
+            event_context.next(self.id, self.agent_controller.name()),
+            security_context.next(self.id),
+            classification,
+            publication,
+        );
+        Ok(())
+    }
+
     /// What the agent may publish to its channel in the turn beginning now
     /// (issue 61): the `SecurityManager` is asked for each level a channel
-    /// can have, with the agent's channel and in its owner's name. Outside a
-    /// channel only what is public.
-    async fn publication(&self) -> Publication {
-        let Some(classification) = self.actor_runtime.classification() else { return Publication::default() };
+    /// can have, with the agent's channel and in its owner's name.
+    async fn publication(&self, classification: &ChannelClassification) -> Publication {
         let owner = self.agent_controller.load().security_attributes.owner_id;
         let context = SecurityContext::new(owner, classification.session_id, classification.channel_id);
         let security = self.actor_runtime.security_manager();
         let allows = |label| {
             let (security, context) = (security.clone(), context.clone());
-            async move { security.check(&context, ActionType::Publish { label, actor: self.id, channel: &classification }).await }
+            async move { security.check(&context, ActionType::Publish { label, actor: self.id, channel: classification }).await }
         };
         Publication::new(allows(Confidentiality::Session).await, allows(Confidentiality::Channel).await)
     }
@@ -814,8 +825,8 @@ impl AgentActor {
             if tc.status == ApprovalStatus::Pending {
                 let request = ApprovalRequest {
                     id: tc.id,
-                    session_id: turn.session_id,
-                    channel_id: turn.channel_id,
+                    session_id: turn.session_id(),
+                    channel_id: turn.channel_id(),
                     agent_id: self.agent_id,
                     tool_call: tc.tool_call.clone(),
                     description: tc.description.clone(),

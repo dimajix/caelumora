@@ -88,12 +88,19 @@ impl ChannelClassification {
     }
 }
 
+/// No channel yet: the nil ids, at the level a channel gets by default.
+impl Default for ChannelClassification {
+    fn default() -> Self {
+        Self { session_id: SessionId::default(), channel_id: ChannelId::default(), level: Confidentiality::CHANNEL_DEFAULT }
+    }
+}
+
 /// Which labels an actor may publish to its channel, as the
 /// `SecurityManager` decided when its turn began (issue 61) - asked once per
 /// turn and level rather than once per streamed part. `Private` is never
 /// among them, whatever the policy says. Without a decision only `Public`
 /// is published.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Publication {
     session: bool,
     channel: bool,

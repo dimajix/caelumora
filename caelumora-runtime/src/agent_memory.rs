@@ -26,9 +26,8 @@ impl<'t, 'a> AgentMemory<'t, 'a> {
     /// What may be recalled in `turn`'s channel: entries written in a
     /// channel it may read (`ChannelClassification::readable_from`, rule 2
     /// of issue 61), as the memory is now - without the turn's own changes.
-    /// Nothing outside of a turn in a channel.
     pub fn recalled(turn: &Turn) -> Vec<Memory> {
-        let Some(here) = turn.classification() else { return Vec::new() };
+        let here = turn.classification();
         turn.agent_state().current().memory.current().into_iter()
             .filter(|m| m.origin.readable_from(&here))
             .collect()
@@ -41,20 +40,19 @@ impl<'t, 'a> AgentMemory<'t, 'a> {
     }
 
     /// Remembers `text`, as written in the turn's channel - taken over when
-    /// the turn completes. Returns its number, or `None` outside of a turn
-    /// in a channel, which has no origin to record.
-    pub fn remember(&mut self, text: String) -> Option<MemoryId> {
-        let origin = self.turn.classification()?;
+    /// the turn completes. Returns its number.
+    pub fn remember(&mut self, text: String) -> MemoryId {
+        let origin = self.turn.classification();
         let id = self.turn.agent_state().reserve_memory_id();
         self.turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remember { id, text }, origin });
-        Some(id)
+        id
     }
 
     /// Forgets entry `id` if it may be recalled here or was remembered
     /// earlier in this turn, and is not forgotten already - taken over when
     /// the turn completes. Returns whether it was.
     pub fn forget(&mut self, id: MemoryId) -> bool {
-        let Some(origin) = self.turn.classification() else { return false };
+        let origin = self.turn.classification();
         let recalled = Self::recalled(self.turn).iter().any(|m| m.id == id);
         let staged = |wanted: fn(&MemoryChange, MemoryId) -> bool| self.turn.staged_agent_changes().iter()
             .any(|c| matches!(c, AgentStateChange::Memory { change, .. } if wanted(change, id)));

@@ -197,15 +197,16 @@ pub struct AgentChannelState {
     #[serde(default)]
     pub turn_knowledge: Vec<TurnKnowledge>,
     /// Which labels the agent may publish to the channel in the current turn
-    /// (issue 61), decided when the turn began. Not stored: a turn resumed
-    /// after a restart publishes only what is public until its next turn.
-    #[serde(skip)]
+    /// (issue 61), decided when the turn began. Stored with the turn, so
+    /// that a turn resumed after a restart publishes what it was allowed.
+    #[serde(default)]
     pub turn_publication: crate::confidentiality::Publication,
     /// The agent's channel as the confidentiality rules see it, as it was
-    /// when the current turn began (issue 61). Not stored, like
-    /// `turn_publication`.
-    #[serde(skip)]
-    pub turn_classification: Option<crate::confidentiality::ChannelClassification>,
+    /// when the current turn began (issue 61): the turn is consistent in
+    /// itself should the channel's level change. Before the first turn, the
+    /// channel as the actor found it.
+    #[serde(default)]
+    pub turn_classification: crate::confidentiality::ChannelClassification,
     /// Changes to the agent's `AgentState` made in the current turn, applied
     /// to the current state when the turn completes (issue 62).
     #[serde(default)]

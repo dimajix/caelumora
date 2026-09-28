@@ -132,7 +132,7 @@ impl PromptProvider for PrivateNotesComponent {
         let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: context.agent_id, digest } };
         let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel.id, c.digest)).collect();
         if !own.is_empty() {
-            knowledge.push(private(context.channel_id, AgentNotes::digest(context, NoteKind::Private)));
+            knowledge.push(private(context.channel_id(), AgentNotes::digest(context, NoteKind::Private)));
         }
         Ok(Prompt { text: render(&own, &elsewhere), knowledge })
     }

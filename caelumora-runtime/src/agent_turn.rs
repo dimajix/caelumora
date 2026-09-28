@@ -45,8 +45,6 @@ pub struct CommittedTurn {
 #[derive(Debug)]
 pub struct Turn<'a> {
     pub agent_id: AgentId,
-    pub channel_id: ChannelId,
-    pub session_id: SessionId,
     pub agent_name: String,
     agent_channel_state: &'a mut AgentChannelState,
     /// The agent's own state, shared by all its actors (issue 62). The turn
@@ -58,8 +56,6 @@ impl<'a> Turn<'a> {
     pub fn new(agent_id: AgentId, agent_name:String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
         Self {
             agent_id,
-            channel_id: agent_channel_state.turn_event_context.channel_id,
-            session_id: agent_channel_state.turn_event_context.session_id,
             agent_name,
             agent_channel_state,
             agent_state,
@@ -73,14 +69,17 @@ impl<'a> Turn<'a> {
     }
 
     /// The agent's channel as the confidentiality rules see it, as it was
-    /// when the turn began; `None` outside of a turn in a channel.
-    pub fn classification(&self) -> Option<ChannelClassification> {
+    /// when the turn began (`next_turn`).
+    pub fn classification(&self) -> ChannelClassification {
         self.agent_channel_state.turn_classification
     }
 
-    /// Sets the agent's channel as it is when the turn begins.
-    pub fn set_classification(&mut self, classification: Option<ChannelClassification>) {
-        self.agent_channel_state.turn_classification = classification;
+    pub fn channel_id(&self) -> ChannelId {
+        self.agent_channel_state.turn_classification.channel_id
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.agent_channel_state.turn_classification.session_id
     }
 
     /// Stages `change` to the agent's own state, applied when the turn
@@ -137,7 +136,19 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.tool_calls.clear();
     }
 
-    pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
+    /// Begins a turn: discards whatever a previous turn left behind and fixes
+    /// what this one is - the envelope it answers, whose authority it acts
+    /// with, the channel as the confidentiality rules see it now, and what
+    /// the `SecurityManager` lets it publish there (issue 61). The last two
+    /// hold for the whole turn, so that what it reads, publishes and
+    /// remembers is judged alike.
+    pub fn next_turn(
+        &mut self,
+        event_context: EventContext,
+        security_context: SecurityContext,
+        classification: ChannelClassification,
+        publication: Publication,
+    ) {
         self.agent_channel_state.turn_context.clear();
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
@@ -147,6 +158,8 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.turn_agent_changes.clear();
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
+        self.agent_channel_state.turn_classification = classification;
+        self.agent_channel_state.turn_publication = publication;
     }
 
     /// The event context of the current turn: carries the ids (`span_id`,
@@ -187,14 +200,6 @@ impl<'a> Turn<'a> {
         }
         prompts
     }
-    pub fn messages(&self) -> &Vec<Message> {
-        &self.agent_channel_state.turn_messages
-    }
-
-    pub fn last_message(&self) -> Option<&Message> {
-        self.agent_channel_state.turn_messages.last()
-    }
-
     pub fn full_context(&self) -> Vec<Message> {
         let mut context = self.context();
         context.extend_from_slice(self.agent_channel_state.turn_messages.as_slice());
@@ -214,6 +219,12 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.turn_context = items;
     }
 
+    pub fn messages(&self) -> &Vec<Message> {
+        &self.agent_channel_state.turn_messages
+    }
+    pub fn last_message(&self) -> Option<&Message> {
+        self.agent_channel_state.turn_messages.last()
+    }
     pub fn push_message(&mut self, message: Message) {
         self.agent_channel_state.turn_messages.push(message);
     }
@@ -362,15 +373,10 @@ impl<'a> Turn<'a> {
     }
 
 
-    /// Which labels the agent may publish to its channel in this turn.
+    /// Which labels the agent may publish to its channel in this turn, as
+    /// the `SecurityManager` decided when it began (`next_turn`).
     pub fn publication(&self) -> Publication {
         self.agent_channel_state.turn_publication
-    }
-
-    /// Sets which labels the agent may publish to its channel in this turn
-    /// (issue 61), as the `SecurityManager` decided when it began.
-    pub fn set_publication(&mut self, publication: Publication) {
-        self.agent_channel_state.turn_publication = publication;
     }
 
     /// Sends `av` to the channel as the agent publishes it: messages redacted
@@ -436,7 +442,7 @@ mod tests {
         ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
 
-        ctx.next_turn(EventContext::default(), SecurityContext::default());
+        ctx.next_turn(EventContext::default(), SecurityContext::default(), Default::default(), Default::default());
         assert!(ctx.plan().is_none());
     }
 
@@ -506,7 +512,7 @@ mod tests {
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
-        turn.set_publication(Publication::new(true, true));
+        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, true));
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::default() };
@@ -529,7 +535,7 @@ mod tests {
             ..Message::default()
         };
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output).await.unwrap();
-        turn.set_publication(Publication::new(true, false));
+        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, false));
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking), &output).await.unwrap();
         let reasoning = |event: Option<Envelope>| match event.map(|e| e.event) {
             Some(ActorEvent::CompleteMessageGenerated(m)) => m.reasoning,
