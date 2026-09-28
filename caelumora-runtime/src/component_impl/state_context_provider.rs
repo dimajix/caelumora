@@ -1,7 +1,7 @@
 //! The `state_context_provider` component: the agent's stored context with
 //! the prompt parts of the `PromptProvider`s it depends on (issue 47).
 
-use crate::agent_turn::{ContextItem, TurnContext};
+use crate::agent_turn::{ContextItem, Turn};
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
@@ -23,7 +23,7 @@ pub struct StateContextProvider {
 
 #[async_trait]
 impl ContextProvider for StateContextProvider {
-    async fn current_context(&self, state: &mut TurnContext) -> Result<()> {
+    async fn current_context(&self, state: &mut Turn) -> Result<()> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
         for provider in &self.prompt_providers {
@@ -41,7 +41,7 @@ impl ContextProvider for StateContextProvider {
             }
         }
 
-        let mut conversation = state.stored_context();
+        let mut conversation = state.transcript_items();
         if !before_input.is_empty() {
             // The newest message is the turn's input - unless the agent wrote
             // it itself, in a turn that has none (e.g. after `/wakeup`).

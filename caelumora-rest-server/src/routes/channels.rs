@@ -356,7 +356,7 @@ pub async fn message_context(
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
         actor_id: actor.id(),
-        context_digest: seen.reference.context,
+        transcript_digest: seen.reference.transcript,
         items: seen.items.into_iter().map(Into::into).collect(),
         knowledge,
     }))

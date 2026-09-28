@@ -44,7 +44,7 @@ pub struct Message {
     pub metadata: HashMap<String, String>,
     /// True for messages that are internal agent scaffolding - deliberation
     /// chatter, plan-step instructions, mid-plan tool calls/results - rather
-    /// than a genuine final answer. Kept in `MessageContext` (this agent's
+    /// than a genuine final answer. Kept in `Transcript` (this agent's
     /// own future-turn LLM input, which needs the full detail) but excluded
     /// from `MessageHistory` and end-of-turn `FullResponseGenerated`
     /// broadcasts (the user-facing/audit trail).
@@ -153,15 +153,15 @@ pub fn format_conversation(messages:&[Message]) -> String {
         .unwrap_or(String::new())
 }
 
-/// A message of a `MessageContext`, with the digest of the context up to and
+/// A message of a `Transcript`, with the digest of the transcript up to and
 /// including it (issue 06).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextEntry {
+pub struct TranscriptEntry {
     pub message: Message,
     pub digest: Digest,
 }
 
-impl ChainEntry for ContextEntry {
+impl ChainEntry for TranscriptEntry {
     fn digest(&self) -> &Digest {
         &self.digest
     }
@@ -172,7 +172,7 @@ trait MessageEntry: ChainEntry {
     fn message(&self) -> &Message;
 }
 
-impl MessageEntry for ContextEntry {
+impl MessageEntry for TranscriptEntry {
     fn message(&self) -> &Message {
         &self.message
     }
@@ -201,23 +201,27 @@ fn last_message_id_of<E: MessageEntry>(chain: &Chain<E>) -> MessageId {
     chain.last().map(|e| e.message().id).unwrap_or_default()
 }
 
-/// The messages an agent's model sees, as a chain: every entry's digest
-/// covers its message and the digest before it, so one digest names the
-/// whole context up to that point by content (see `crate::chain`).
+/// An agent's transcript (issue 50): the sequence of messages its context is
+/// built from - its own messages in full, with tool calls and internal
+/// steps, and what others said as it received them. The context of a model
+/// call adds the prompt parts and the turn's messages to it; the history is
+/// the channel's public record, which the transcript is not.
 ///
-/// The context is only ever appended to, so every earlier digest names a
-/// prefix of it and that prefix can be recovered (`prefix`).
+/// A chain: every entry's digest covers its message and the digest before
+/// it, so one digest names the whole transcript up to that point by content
+/// (see `crate::chain`). It is only ever appended to, so every earlier digest
+/// names a prefix of it and that prefix can be recovered (`prefix`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MessageContext {
-    messages: Chain<ContextEntry>,
+pub struct Transcript {
+    messages: Chain<TranscriptEntry>,
 }
 
-impl MessageContext {
+impl Transcript {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// The digest of the whole context, or `None` while it is empty.
+    /// The digest of the whole transcript, or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
         self.messages.digest()
     }
@@ -231,37 +235,37 @@ impl MessageContext {
     }
 
     /// Appends `msgs` and returns, for each of them, the digest of the
-    /// context before it - the context it was produced from.
+    /// transcript before it - the transcript it was produced from.
     pub fn extend(&mut self, msgs: Vec<Message>) -> Vec<Option<Digest>> {
         msgs.into_iter().map(|m| self.push(m)).collect()
     }
 
-    /// Appends `msg` and returns the digest of the context before it.
+    /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        push_message(&mut self.messages, msg, |message, digest| ContextEntry { message, digest })
+        push_message(&mut self.messages, msg, |message, digest| TranscriptEntry { message, digest })
     }
 
-    pub fn entries(&self) -> &[ContextEntry] {
+    pub fn entries(&self) -> &[TranscriptEntry] {
         self.messages.entries()
     }
 
-    /// The messages of the context `digest` names: this context up to and
-    /// including the entry with that digest, or `None` if it is not a prefix
-    /// of this context.
+    /// The messages of the transcript `digest` names: this transcript up to
+    /// and including the entry with that digest, or `None` if it is not a
+    /// prefix of this transcript.
     pub fn prefix(&self, digest: &Digest) -> Option<Vec<Message>> {
         Some(self.prefix_entries(digest)?.iter().map(|e| e.message.clone()).collect())
     }
 
-    /// The entries of the context `digest` names, like [`Self::prefix`].
-    pub fn prefix_entries(&self, digest: &Digest) -> Option<&[ContextEntry]> {
+    /// The entries of the transcript `digest` names, like [`Self::prefix`].
+    pub fn prefix_entries(&self, digest: &Digest) -> Option<&[TranscriptEntry]> {
         self.messages.prefix(digest)
     }
 }
 
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
-/// was given as, and the entry of the context it followed, `None` if it came
-/// before everything.
+/// was given as, and the entry of the transcript it followed, `None` if it
+/// came before everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptRef {
     pub text: Digest,
@@ -294,13 +298,14 @@ pub enum KnowledgeSource {
 }
 
 /// What an agent's model saw when it produced a message (issue 06): the
-/// digest of its `MessageContext` before the message - `None` if it was
+/// digest of its `Transcript` before the message - `None` if it was
 /// empty - the prompt parts of that turn, each where it was placed (issue
 /// 47), and the knowledge from other places read before the message was
 /// produced (issue 17). Resolved in the agent's `AgentChannelState`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
-    pub context: Option<Digest>,
+    /// The digest of the agent's transcript before the message.
+    pub transcript: Option<Digest>,
     #[serde(default)]
     pub prompts: Vec<PromptRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -329,7 +334,7 @@ impl MessageEntry for HistoryEntry {
     }
 }
 
-/// The conversation as it happened - a chain like a `MessageContext`.
+/// The conversation as it happened - a chain like a `Transcript`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageHistory {
     messages: Chain<HistoryEntry>,
@@ -398,7 +403,7 @@ mod tests {
 
     #[test]
     fn message_context_empty_state() {
-        let context = MessageContext::new();
+        let context = Transcript::new();
 
         assert_eq!(context.digest(), None);
         assert!(context.messages().is_empty());
@@ -408,7 +413,7 @@ mod tests {
     fn message_context_chains_the_digests_of_its_messages() {
         let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
 
-        let mut context = MessageContext::new();
+        let mut context = Transcript::new();
         let before = context.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
 
         // The chain assigns `prev_id`, which the digest does not cover.
@@ -424,10 +429,10 @@ mod tests {
     fn message_context_extend_matches_repeated_push_digest() {
         let messages = vec![make_message(id(11)), make_message(id(12)), make_message(id(13))];
 
-        let mut extend_context = MessageContext::new();
+        let mut extend_context = Transcript::new();
         extend_context.extend(messages.clone());
 
-        let mut push_context = MessageContext::new();
+        let mut push_context = Transcript::new();
         for message in messages {
             push_context.push(message);
         }
@@ -437,7 +442,7 @@ mod tests {
 
     #[test]
     fn a_digest_names_the_prefix_it_was_taken_at() {
-        let mut context = MessageContext::new();
+        let mut context = Transcript::new();
         context.extend(vec![make_message(id(1)), make_message(id(2))]);
         let at_two = context.digest().unwrap();
         context.push(make_message(id(3)));
@@ -449,7 +454,7 @@ mod tests {
 
     #[test]
     fn digests_are_kept_as_recorded() {
-        let mut context = MessageContext::new();
+        let mut context = Transcript::new();
         context.extend(vec![make_message(id(1)), make_message(id(2))]);
 
         // What was recorded stands, even if today's scheme would compute
@@ -458,14 +463,14 @@ mod tests {
         let recorded = crate::digest::prompt("recorded under another scheme");
         let mut stored = serde_json::to_value(&context).unwrap();
         stored["messages"][1]["digest"] = serde_json::Value::String(recorded.to_string());
-        let loaded: MessageContext = serde_json::from_value(stored).unwrap();
+        let loaded: Transcript = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.digest(), Some(recorded));
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
     }
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { context: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new() };
+        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new() };
         let mut history = MessageHistory::new();
         history.extend(vec![make_message(id(1))]);
         history.push(make_message(id(2)), Some(reference.clone()));
@@ -480,7 +485,7 @@ mod tests {
     fn message_prev_id_updates() {
         let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
 
-        let mut context = MessageContext::new();
+        let mut context = Transcript::new();
         context.push(m1.clone());
         context.push(m2.clone());
 

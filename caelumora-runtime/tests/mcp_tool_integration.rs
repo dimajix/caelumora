@@ -104,13 +104,13 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert_eq!(tools[0].name, "test-echo__echo");
 
     let mut agent_channel_state = caelumora_model::agent::AgentChannelState::default();
-    let mut turn_context = caelumora_runtime::agent_turn::TurnContext::new(
+    let mut turn = caelumora_runtime::agent_turn::Turn::new(
         caelumora_model::agent::AgentId::default(),
         "test-agent".to_string(),
         &mut agent_channel_state, caelumora_runtime::agent_state::AgentStateHandle::detached());
 
     let result = provider
-        .execute("test-echo__echo", &json!({ "message": "hello mcp" }), &mut turn_context)
+        .execute("test-echo__echo", &json!({ "message": "hello mcp" }), &mut turn)
         .await
         .unwrap();
     assert_eq!(result, json!("hello mcp"));

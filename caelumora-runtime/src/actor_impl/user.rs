@@ -12,7 +12,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::user::{User, UserController, UserId};
+use caelumora_model::user::{User, UserController};
 use chrono::Utc;
 use tracing::{debug, info, warn};
 use std::sync::Arc;
@@ -27,7 +27,6 @@ const SUBSCRIBER_CAPACITY: usize = 100;
 #[derive(Debug)]
 pub struct UserActor {
     id: ActorId,
-    user_id: UserId,
     session_id: SessionId,
     channel_id: ChannelId,
     security_context: SecurityContext,
@@ -54,7 +53,6 @@ impl UserActor {
 
         Ok(Self {
             id: ActorId::User(user_id),
-            user_id,
             session_id: channel.session_id,
             channel_id: channel.id,
             security_context,
@@ -283,7 +281,7 @@ mod tests {
         let runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())));
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
         let user = User {
-            id: UserId::new(),
+            id: caelumora_model::user::UserId::new(),
             username: "alice".to_string(),
             email: String::new(),
             roles: Vec::new(),

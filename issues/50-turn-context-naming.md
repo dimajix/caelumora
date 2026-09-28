@@ -1,6 +1,6 @@
 # 50 — `TurnContext` calls the model input "context"
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -58,3 +58,41 @@ more often, and the confusion will cost more.
   `caelumora-runtime/src/actor.rs` to its own module
   `caelumora-runtime/src/agent_turn.rs` at the maintainer's request;
   `actor.rs` keeps the `Actor` trait and `MessageContextError`.
+- **2026-09-28** — Decided with the maintainer, differently from the issue's
+  starting point. "Context" keeps its meaning in the LLM sense: what one call
+  of the model is given, assembled on purpose - system prompt, notes,
+  redacted parts, the conversation - so `context()`, `full_context()`,
+  `set_context()`, `ContextItem` and `ContextProvider` are named right. The
+  *stored* part is renamed instead, to **transcript**: the agent's own
+  sequence of messages the context is built from - its messages in full,
+  with tool calls and internal steps, and what others said as it received
+  it; compressible later ([16](16-context-compression.md)). `view` was
+  proposed and rejected ("context" is established for LLMs, and the
+  provider does build a context); `conversation` was rejected because the
+  context is not the conversation, and the history - the channel's public
+  record - keeps its name. Other candidates weighed: `working_memory`
+  (collides with agent memory), `dialogue` / `thread` / `record` / `log` /
+  `trace` (too close to history or other meanings), `scratchpad` (within a
+  turn). Renamed: `MessageContext` / `ContextEntry` to `Transcript` /
+  `TranscriptEntry`, `AgentChannelState::context` to `transcript`, the
+  accessors of the stored part, `ContextRef::context` to `transcript`, the
+  component `state_context_appender` to `transcript_appender`.
+  **`TurnContext` becomes `Turn`**, against the note above that it was not to
+  be renamed: then "context" in its API means only the model's context
+  (`turn.context()`), and a turn is a domain object of its own, not a helper
+  for one call like `SecurityContext`. Two commits: the `Turn` rename, then
+  the transcript.
+- **2026-09-28** — Implemented. `TurnContext` is `Turn` (its variables
+  `turn`); `MessageContext` / `ContextEntry` are `Transcript` /
+  `TranscriptEntry`, `AgentChannelState::context` is `transcript`, the stored
+  part's accessors are `transcript()`, `transcript_items()` and
+  `extend_transcript()`, `ContextRef::context` and `NoteEntry::context` are
+  `transcript`, the component `state_context_appender` is
+  `transcript_appender` (`TRANSCRIPT_APPENDER_KIND`), and the REST field
+  `context_digest` of the message context is `transcript_digest` (the web
+  UI's context panel labels it "Transcript"). `context()`, `full_context()`,
+  `set_context()`, `ContextItem`, `ContextProvider`, `ContextRef`,
+  `SeenContext` and the message context endpoint keep their names: they are
+  about the context. The terms in `ARCHITECTURE.md` follow. No change in
+  behaviour; stored personalities with the old component kind have to be
+  created again.

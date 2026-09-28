@@ -5,7 +5,7 @@
 //! It translates the tools `remember` and `forget` and renders the prompt
 //! part; the logic is `crate::agent_memory::AgentMemory`. Changes are applied
 //! to the agent's state as it is when the turn completes
-//! (`TurnContext::commit_agent_state`), so that actors of the same agent in
+//! (`Turn::commit_agent_state`), so that actors of the same agent in
 //! other channels and sessions neither lose nor overwrite them. The prompt
 //! part shows the entries that may be recalled in the current channel: those
 //! written in a channel it may read (`ChannelClassification::readable_from`,
@@ -15,7 +15,7 @@
 //! `ToolConfidentiality::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::agent_memory::AgentMemory;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::note_text;
@@ -70,7 +70,7 @@ impl ToolProvider for AgentMemoryComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
         match name {
             REMEMBER_TOOL_NAME => self.execute_remember(params, context),
             FORGET_TOOL_NAME => self.execute_forget(params, context),
@@ -82,7 +82,7 @@ impl ToolProvider for AgentMemoryComponent {
 impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
-    fn execute_remember(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    fn execute_remember(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let text = note_text(params)?;
         let id = AgentMemory::new(context).remember(text)
             .ok_or_else(|| ToolError::ExecutionFailed("nothing can be remembered here".to_string()))?;
@@ -90,7 +90,7 @@ impl AgentMemoryComponent {
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
-    fn execute_forget(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    fn execute_forget(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let id = params.get("id").and_then(Value::as_u64)
             .and_then(|id| u32::try_from(id).ok())
             .map(MemoryId)
@@ -109,7 +109,7 @@ impl PromptProvider for AgentMemoryComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt> {
+    async fn get_prompt(&self, context: &Turn) -> Result<Prompt> {
         let recalled = AgentMemory::recalled(context);
         if recalled.is_empty() {
             return Ok(Prompt::default());
@@ -164,7 +164,7 @@ mod tests {
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
     async fn recall(handle: &Arc<crate::agent_state::AgentStateHandle>, agent: AgentId, at: ChannelClassification) -> Prompt {
         let mut state = AgentChannelState::default();
-        let mut turn = TurnContext::new(agent, "agent".to_string(), &mut state, handle.clone());
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
         turn.set_classification(Some(at));
         AgentMemoryComponent.get_prompt(&turn).await.unwrap()
     }
@@ -182,7 +182,7 @@ mod tests {
         // A turn in a session-level channel remembers something ...
         let mut state = AgentChannelState::default();
         {
-            let mut turn = TurnContext::new(agent, "agent".to_string(), &mut state, handle.clone());
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
             turn.set_classification(Some(team));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result["id"], 1);
@@ -200,7 +200,7 @@ mod tests {
 
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
-        let mut turn = TurnContext::new(agent, "agent".to_string(), &mut state, handle.clone());
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
         turn.set_classification(Some(elsewhere));
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err());
         turn.set_classification(Some(team));

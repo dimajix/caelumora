@@ -1,7 +1,7 @@
 //! The turn of an agent: what one cognitive cycle of an `AgentActor` works
 //! with (see *Agent Cognitive Cycle* in `ARCHITECTURE.md`).
 //!
-//! A [`TurnContext`] is made for every step of a turn from the agent's state
+//! A [`Turn`] is made for every step of a turn from the agent's state
 //! in its channel, and handed to its components: it holds the turn's
 //! messages, the context and prompt parts the model is given and where they
 //! came from, pending tool calls and the plan, the changes of the turn not
@@ -43,7 +43,7 @@ pub enum ContextItem {
 }
 
 #[derive(Debug)]
-pub struct TurnContext<'a> {
+pub struct Turn<'a> {
     pub agent_id: AgentId,
     pub channel_id: ChannelId,
     pub session_id: SessionId,
@@ -54,7 +54,7 @@ pub struct TurnContext<'a> {
     agent_state: Arc<AgentStateHandle>,
 }
 
-impl<'a> TurnContext<'a> {
+impl<'a> Turn<'a> {
     pub fn new(agent_id: AgentId, agent_name:String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
         Self {
             agent_id,
@@ -231,18 +231,18 @@ impl<'a> TurnContext<'a> {
         &self.agent_channel_state.turn_security_context
     }
 
-    pub fn state_context(&self) -> Vec<Message> {
-        self.agent_channel_state.context.messages()
+    pub fn transcript(&self) -> Vec<Message> {
+        self.agent_channel_state.transcript.messages()
     }
     /// The stored context as items for [`Self::set_context`], each with its
     /// digest.
-    pub fn stored_context(&self) -> Vec<ContextItem> {
-        self.agent_channel_state.context.entries().iter()
+    pub fn transcript_items(&self) -> Vec<ContextItem> {
+        self.agent_channel_state.transcript.entries().iter()
             .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest })
             .collect()
     }
-    pub fn extend_state_context(&mut self, messages: Vec<Message>) {
-        self.agent_channel_state.context.extend(messages);
+    pub fn extend_transcript(&mut self, messages: Vec<Message>) {
+        self.agent_channel_state.transcript.extend(messages);
     }
     pub fn extend_state_history(&mut self, messages: Vec<Message>) {
         self.agent_channel_state.history.extend(messages);
@@ -296,25 +296,25 @@ impl<'a> TurnContext<'a> {
     /// (`stage_channel_change`), anchored at the turn's last message in the
     /// history, and returns whether there were any (issue 65).
     pub fn record_turn(&mut self, messages: Vec<Message>) -> bool {
-        let before = self.agent_channel_state.context.extend(messages.clone());
+        let before = self.agent_channel_state.transcript.extend(messages.clone());
         let prompts = self.agent_channel_state.turn_prompts.clone();
         let knowledge = mem::take(&mut self.agent_channel_state.turn_knowledge);
-        for (index, (message, context)) in messages.into_iter().zip(before).enumerate() {
+        for (index, (message, transcript)) in messages.into_iter().zip(before).enumerate() {
             if !message.internal {
                 // What was read before the message was produced.
                 let knowledge = knowledge.iter().filter(|k| k.before <= index).map(|k| k.reference).collect();
-                self.agent_channel_state.history.push(message, Some(ContextRef { context, prompts: prompts.clone(), knowledge }));
+                self.agent_channel_state.history.push(message, Some(ContextRef { transcript, prompts: prompts.clone(), knowledge }));
             }
         }
 
-        // A message of the history, not an internal step of the context:
+        // A message of the history, not an internal step of the transcript:
         // what branching (issue 08) will find the changes by.
         let after = self.agent_channel_state.history.last_message_id();
-        let context = self.agent_channel_state.context.digest();
+        let transcript = self.agent_channel_state.transcript.digest();
         let changes = mem::take(&mut self.agent_channel_state.turn_channel_changes);
         let changed = !changes.is_empty();
         for change in changes {
-            self.agent_channel_state.apply(change, after, context);
+            self.agent_channel_state.apply(change, after, transcript);
         }
         changed
     }
@@ -322,8 +322,8 @@ impl<'a> TurnContext<'a> {
     /// Records what state the turn should land on once `Reflecting` finishes,
     /// overriding the default `Idle`. This does not touch the live `ActorState`
     /// atomic directly — only the run loop does that; this is purely a same-turn
-    /// handoff (survives across separate `TurnContext` borrows because it lives
-    /// in `AgentChannelState`, not in `TurnContext` itself).
+    /// handoff (survives across separate `Turn` borrows because it lives
+    /// in `AgentChannelState`, not in `Turn` itself).
     pub fn request_state(&mut self, state: ActorState) {
         self.agent_channel_state.requested_state = Some(state);
     }
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn plan_round_trips_through_set_and_take() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut ctx = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         assert!(ctx.plan().is_none());
         assert!(!ctx.has_plan());
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn next_turn_clears_a_stale_plan() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut ctx = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
@@ -424,14 +424,14 @@ mod tests {
         let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
-        state.context.push(question.clone());
+        state.transcript.push(question.clone());
 
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
         let system = || ContextItem::Prompt { role: MessageRole::System, text: "You are good at sums.".to_string() };
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let mut items = vec![system()];
-            items.extend(turn.stored_context());
+            items.extend(turn.transcript_items());
             turn.set_context(items);
             assert_eq!(turn.context().len(), 2, "the prompt is given to the model as a message");
             turn.record_turn(vec![first.clone(), second.clone()]);
@@ -452,7 +452,7 @@ mod tests {
             source: caelumora_model::message::KnowledgeSource::History { digest: None },
         };
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.push_message(before.clone());
             turn.record_knowledge(read);
             turn.record_knowledge(read);
@@ -466,7 +466,7 @@ mod tests {
 
         // The same prompt in another turn is kept once.
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.set_context(vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
@@ -479,7 +479,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
-        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         turn.set_publication(Publication::new(true, true));
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };

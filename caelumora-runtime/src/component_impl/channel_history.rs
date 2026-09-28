@@ -5,7 +5,7 @@
 //! every read is recorded as a
 //! `KnowledgeRef` with the turn's messages.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::session_reader::{NotReadable, SessionReader};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
@@ -54,7 +54,7 @@ impl ToolProvider for ChannelHistoryReader {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
         if name != READ_HISTORY_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }

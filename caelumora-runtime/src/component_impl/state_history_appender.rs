@@ -1,7 +1,7 @@
 //! The `state_history_appender` component: keeps the agent's history up to
 //! date with what it perceives.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{
     ComponentFacets, ComponentRegistry
 };
@@ -23,7 +23,7 @@ impl MessageProcessor for StateHistoryAppender {
         STATE_HISTORY_APPENDER_KIND
     }
 
-    async fn process_messages(&self, input: Vec<Message>, context: &mut TurnContext) -> Result<Vec<Message>> {
+    async fn process_messages(&self, input: Vec<Message>, context: &mut Turn) -> Result<Vec<Message>> {
         context.extend_state_history(input.clone());
         Ok(input)
     }

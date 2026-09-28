@@ -1,14 +1,14 @@
 //! An agent's notes in a channel (issue 17) and its private notes there
 //! (issue 51), read and changed within a turn.
 //!
-//! Both are chains in the agent's `AgentChannelState`; `TurnContext` offers
+//! Both are chains in the agent's `AgentChannelState`; `Turn` offers
 //! only generic access to that state - reading it, staging
 //! `AgentChannelChange`s that `record_turn` applies when the turn completes -
 //! and knows nothing of notes (issue 65). [`AgentNotes`] is the logic on top:
 //! numbering, noting, revoking. The `notes` and `private_notes` components use
 //! it; anything else that works with an agent's notes in a turn uses it too.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId};
@@ -50,24 +50,24 @@ impl NoteKind {
 
 /// One of an agent's note chains in a channel, as a turn sees it.
 pub struct AgentNotes<'t, 'a> {
-    turn: &'t mut TurnContext<'a>,
+    turn: &'t mut Turn<'a>,
     kind: NoteKind,
 }
 
 impl<'t, 'a> AgentNotes<'t, 'a> {
-    pub fn new(turn: &'t mut TurnContext<'a>, kind: NoteKind) -> Self {
+    pub fn new(turn: &'t mut Turn<'a>, kind: NoteKind) -> Self {
         Self { turn, kind }
     }
 
     /// The notes as they stand - without the changes of the current turn,
     /// which count only once it completes.
-    pub fn current(turn: &TurnContext, kind: NoteKind) -> Vec<Note> {
+    pub fn current(turn: &Turn, kind: NoteKind) -> Vec<Note> {
         kind.chain(turn.agent_channel_state()).current()
     }
 
     /// The digest of the chain, `None` while it is empty: the state of
     /// knowledge a reader of the notes records.
-    pub fn digest(turn: &TurnContext, kind: NoteKind) -> Option<Digest> {
+    pub fn digest(turn: &Turn, kind: NoteKind) -> Option<Digest> {
         kind.chain(turn.agent_channel_state()).digest()
     }
 

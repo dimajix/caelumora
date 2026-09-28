@@ -1,4 +1,4 @@
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
@@ -108,7 +108,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 
     /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value>;
+    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value>;
     /// Provides a textual description for a specific tool call
     fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
         let tools = self.tools();
@@ -144,11 +144,11 @@ pub enum ExecutionStatus {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolResult<ToolCallResult>;
+    async fn execute(&self, call: &ToolCall, context: &mut Turn) -> ToolResult<ToolCallResult>;
     /// Whether the policy permits `call` in `context`. Checked before asking
     /// anyone for approval, so that users are not asked about calls that
     /// would be refused anyway; `execute` checks again.
-    async fn is_permitted(&self, call: &ToolCall, context: &TurnContext) -> bool;
+    async fn is_permitted(&self, call: &ToolCall, context: &Turn) -> bool;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
@@ -193,7 +193,7 @@ impl DefaultToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, context: &mut TurnContext) -> ToolResult<ToolCallResult> {
+    async fn execute(&self, call: &ToolCall, context: &mut Turn) -> ToolResult<ToolCallResult> {
         let security = &context.security_context();
         debug!(
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
@@ -249,7 +249,7 @@ impl ToolExecutor for DefaultToolExecutor {
         Err(ToolError::UnknownTool(tool_name.clone()))
     }
 
-    async fn is_permitted(&self, call: &ToolCall, context: &TurnContext) -> bool {
+    async fn is_permitted(&self, call: &ToolCall, context: &Turn) -> bool {
         self.security_manager.check(context.security_context(), ActionType::CallTool(call)).await
     }
 
@@ -280,7 +280,7 @@ impl ToolExecutor for DefaultToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_turn::TurnContext;
+    use crate::agent_turn::Turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
 
@@ -303,7 +303,7 @@ mod tests {
                 confidentiality: Default::default(),
             }]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
+        async fn execute(&self, _name: &str, _params: &Value, _context: &mut Turn) -> ToolResult<Value> {
             Ok(json!({"result": "ok"}))
         }
     }
@@ -368,7 +368,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
-        let mut context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         assert!(!executor.is_permitted(&call("test_tool"), &context).await);
         let error = executor.execute(&call("test_tool"), &mut context).await.unwrap_err();
@@ -380,7 +380,7 @@ mod tests {
         let executor = DefaultToolExecutor::new(Arc::new(DummySecurityManager::new()), vec![component("tools", Arc::new(MockToolProvider { requires_approval: false }))]).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(AgentId::new());
-        let mut context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let error = executor.execute(&call("does_not_exist"), &mut context).await.unwrap_err();
         assert!(matches!(error, ToolError::UnknownTool(ref name) if name == "does_not_exist"));
@@ -428,7 +428,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
-        let mut context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let result = executor.execute(&call, &mut context).await.unwrap();
         assert_eq!(result.content, "{\"result\":\"ok\"}");

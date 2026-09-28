@@ -2,7 +2,7 @@ use crate::actor::{ActorId, ActorState, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::digest::Digest;
-use crate::message::{ContextRef, Message, MessageContext, MessageHistory, MessageId, PromptRef};
+use crate::message::{ContextRef, Message, Transcript, MessageHistory, MessageId, PromptRef};
 use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
@@ -183,7 +183,7 @@ pub struct AgentChannelState {
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
-    pub context: MessageContext,
+    pub transcript: Transcript,
     /// The notes the agent published in this channel (issue 17).
     #[serde(default)]
     pub notes: NoteChain,
@@ -253,8 +253,8 @@ pub struct TurnKnowledge {
 }
 
 /// What an agent's model saw when it produced a message (issues 06, 47):
-/// the messages of its context and the prompt parts of that turn, in the
-/// order the model was given them.
+/// its context - the messages of its transcript and the prompt parts of that
+/// turn, in the order the model was given them.
 #[derive(Debug, Clone)]
 pub struct SeenContext {
     /// The digests the history recorded for the message.
@@ -283,11 +283,11 @@ pub enum AgentChannelChange {
 
 impl AgentChannelState {
     /// Applies `change`, made in the turn that ended with message `after`
-    /// while the agent's context had the digest `context`.
-    pub fn apply(&mut self, change: AgentChannelChange, after: MessageId, context: Option<Digest>) {
+    /// while the agent's transcript had the digest `transcript`.
+    pub fn apply(&mut self, change: AgentChannelChange, after: MessageId, transcript: Option<Digest>) {
         match change {
-            AgentChannelChange::Note(change) => self.notes.push(change, after, context),
-            AgentChannelChange::PrivateNote(change) => self.private_notes.push(change, after, context),
+            AgentChannelChange::Note(change) => self.notes.push(change, after, transcript),
+            AgentChannelChange::PrivateNote(change) => self.private_notes.push(change, after, transcript),
         }
     }
 
@@ -297,8 +297,8 @@ impl AgentChannelState {
     /// prompt that was never recorded, or one whose entry is not in the
     /// prefix.
     pub fn resolve(&self, reference: &ContextRef) -> Option<SeenContext> {
-        let entries = match &reference.context {
-            Some(digest) => self.context.prefix_entries(digest)?,
+        let entries = match &reference.transcript {
+            Some(digest) => self.transcript.prefix_entries(digest)?,
             None => &[],
         };
         let prompt = |p: &PromptRef| -> Option<SeenItem> {
@@ -387,15 +387,15 @@ mod tests {
         let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
         let mut state = AgentChannelState::default();
         let (earlier, question) = (text("earlier"), text("question"));
-        let after_earlier = state.context.push(earlier.clone());
+        let after_earlier = state.transcript.push(earlier.clone());
         assert_eq!(after_earlier, None);
-        let before_question = state.context.push(question.clone());
-        let whole = state.context.digest();
+        let before_question = state.transcript.push(question.clone());
+        let whole = state.transcript.digest();
         for part in ["system", "notes"] {
             state.prompts.insert(prompt(part), part.to_string());
         }
         let reference = ContextRef {
-            context: whole,
+            transcript: whole,
             prompts: vec![
                 PromptRef { text: prompt("system"), role: MessageRole::System, after: None },
                 PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },

@@ -48,7 +48,7 @@ pub struct CommandReply {
 }
 
 /// What a command runs with: who issued it, in which channel, and the
-/// session's other commands. Deliberately no `TurnContext` - a command runs
+/// session's other commands. Deliberately no `Turn` - a command runs
 /// outside of any agent's turn, often because none is running.
 pub struct CommandContext<'a> {
     /// The issuing user's security context.

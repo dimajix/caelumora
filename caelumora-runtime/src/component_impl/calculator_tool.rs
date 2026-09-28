@@ -1,7 +1,7 @@
 //! The `calculator_tool` component: a tool that evaluates mathematical
 //! expressions.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -29,7 +29,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut Turn) -> ToolResult<Value> {
         if name == "calculate" {
             let expression = params["expression"]
                 .as_str()
@@ -66,7 +66,7 @@ mod tests {
     async fn test_calculator_tool() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -79,7 +79,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute("calculate", &params, &mut turn_context).await.unwrap();
+            let result = provider.execute("calculate", &params, &mut turn).await.unwrap();
             let val = result.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
@@ -89,10 +89,10 @@ mod tests {
     async fn test_calculator_tool_invalid_expression() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute("calculate", &params, &mut turn_context).await;
+        let result = provider.execute("calculate", &params, &mut turn).await;
         assert!(result.is_err());
     }
 }

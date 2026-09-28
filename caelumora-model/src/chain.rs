@@ -3,7 +3,7 @@
 //!
 //! One digest therefore names the whole chain up to its entry by content, and
 //! every earlier digest names a prefix of it. `MessageHistory` and
-//! `MessageContext` are chains of messages (issue 06); a channel's notes will
+//! `Transcript` are chains of messages (issue 06); a channel's notes will
 //! be one too (issue 17), and branching (issue 08) will make chains trees.
 //!
 //! What goes into an entry's digest is up to its type, which computes it when

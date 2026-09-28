@@ -1,7 +1,7 @@
 //! The `static_system_prompt_provider` component: a fixed prompt part, the
 //! system prompt by default (parameters `prompt` and `position`).
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use anyhow::Result;
@@ -21,7 +21,7 @@ impl PromptProvider for StaticPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self, _context: &TurnContext) -> Result<Prompt> {
+    async fn get_prompt(&self, _context: &Turn) -> Result<Prompt> {
         Ok(self.prompt.clone().into())
     }
 }

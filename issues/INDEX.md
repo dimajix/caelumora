@@ -118,7 +118,7 @@ against it, and what came out of the last attempt.
 | [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
 | [47](47-prompt-parts-with-provenance.md) | done | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |
 | [48](48-shared-digest-chain.md) | done | History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately. |
-| [50](50-turn-context-naming.md) | open | `TurnContext` calls both the stored context and the input of one model call "context". |
+| [50](50-turn-context-naming.md) | done | `TurnContext` calls both the stored context and the input of one model call "context". |
 | [51](51-agent-private-notes.md) | done | An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels. |
 | [54](54-private-notes-visible-to-users.md) | done | Private notes meant for the agent alone are visible to users, in the context panel and as the tool call in the chat. |
 | [55](55-notes-by-reflection.md) | open | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |

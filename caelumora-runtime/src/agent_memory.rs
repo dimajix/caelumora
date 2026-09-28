@@ -1,25 +1,25 @@
 //! What an agent remembers across its channels and sessions (issue 62),
 //! read and changed within a turn.
 //!
-//! The memory is part of the agent's `AgentState`; `TurnContext` offers only
+//! The memory is part of the agent's `AgentState`; `Turn` offers only
 //! generic access to that state - a snapshot, staged changes - and knows
 //! nothing of memory. [`AgentMemory`] is the logic on top: which entries may
 //! be recalled in the turn's channel, remembering and forgetting. The
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
 use caelumora_model::memory::{Memory, MemoryChange, MemoryId};
 
 /// An agent's memory as a turn sees it.
 pub struct AgentMemory<'t, 'a> {
-    turn: &'t mut TurnContext<'a>,
+    turn: &'t mut Turn<'a>,
 }
 
 impl<'t, 'a> AgentMemory<'t, 'a> {
-    pub fn new(turn: &'t mut TurnContext<'a>) -> Self {
+    pub fn new(turn: &'t mut Turn<'a>) -> Self {
         Self { turn }
     }
 
@@ -27,7 +27,7 @@ impl<'t, 'a> AgentMemory<'t, 'a> {
     /// channel it may read (`ChannelClassification::readable_from`, rule 2
     /// of issue 61), as the memory is now - without the turn's own changes.
     /// Nothing outside of a turn in a channel.
-    pub fn recalled(turn: &TurnContext) -> Vec<Memory> {
+    pub fn recalled(turn: &Turn) -> Vec<Memory> {
         let Some(here) = turn.classification() else { return Vec::new() };
         turn.agent_state().current().memory.current().into_iter()
             .filter(|m| m.origin.readable_from(&here))
@@ -36,7 +36,7 @@ impl<'t, 'a> AgentMemory<'t, 'a> {
 
     /// The digest of the memory as it is now: the state of knowledge a turn
     /// that recalls from it records.
-    pub fn digest(turn: &TurnContext) -> Option<Digest> {
+    pub fn digest(turn: &Turn) -> Option<Digest> {
         turn.agent_state().current().memory.digest()
     }
 

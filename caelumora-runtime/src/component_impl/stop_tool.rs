@@ -1,7 +1,7 @@
 //! The `stop_tool` component: tools with which an agent ends its part in a
 //! conversation - `stop`, `bye` and `silence`.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -46,7 +46,7 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, _params: &Value, context: &mut Turn) -> ToolResult<Value> {
         match name {
             "stop" | "bye" => {
                 info!("Stopping agent {} {}", context.agent_id, context.agent_name);
@@ -86,9 +86,9 @@ mod tests {
     async fn test_stop_tool() {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let result = provider.execute("stop", &json!({}), &mut turn_context).await.unwrap();
+        let result = provider.execute("stop", &json!({}), &mut turn).await.unwrap();
         assert_eq!(result["status"], "stopped");
 
         let tools = provider.tools();

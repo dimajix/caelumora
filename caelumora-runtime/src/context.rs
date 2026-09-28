@@ -3,7 +3,7 @@
 //! (issue 47). Their implementations are components of their own, e.g.
 //! `state_context_provider` and `static_system_prompt_provider`.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::KnowledgeRef;
@@ -49,10 +49,10 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     }
     /// The part for the turn `context` is about to start; empty text for
     /// none.
-    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt>;
+    async fn get_prompt(&self, context: &Turn) -> Result<Prompt>;
 }
 
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
-    async fn current_context(&self, state: &mut TurnContext) -> Result<()>;
+    async fn current_context(&self, state: &mut Turn) -> Result<()>;
 }

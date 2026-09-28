@@ -17,7 +17,7 @@
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::{note_id, note_text};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
@@ -84,7 +84,7 @@ impl ToolProvider for PrivateNotesComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
         match name {
             NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, context),
             REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, context),
@@ -96,14 +96,14 @@ impl ToolProvider for PrivateNotesComponent {
 impl PrivateNotesComponent {
     /// `note_private(text)`: notes `text` privately, taken over when the
     /// turn completes.
-    fn execute_note_private(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    fn execute_note_private(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentNotes::new(context, NoteKind::Private).note(note_text(params)?);
         Ok(serde_json::json!({ "status": "noted privately", "id": id.0 }))
     }
 
     /// `revoke_private_note(id)`: revokes one of the agent's private notes
     /// of this channel.
-    fn execute_revoke_private_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    fn execute_revoke_private_note(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let id = note_id(params)?;
         if AgentNotes::new(context, NoteKind::Private).revoke(id) {
             Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
@@ -119,7 +119,7 @@ impl PromptProvider for PrivateNotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt> {
+    async fn get_prompt(&self, context: &Turn) -> Result<Prompt> {
         let own = AgentNotes::current(context, NoteKind::Private);
         let mut elsewhere = self.reader.private_notes(context.agent_id).await.unwrap_or_else(|e| {
             // The agent can still answer without them.
@@ -202,7 +202,7 @@ mod tests {
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
         let tools = PrivateNotesComponent::new(crate::session_reader::detached());
-        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         AgentNotes::new(&mut turn, NoteKind::Public).note("public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted["id"], 1, "its own numbering");

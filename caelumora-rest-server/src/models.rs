@@ -167,13 +167,13 @@ pub struct CommandReplyResponse {
 }
 
 /// What an agent's model saw when it produced a message (issues 06, 47):
-/// the messages of its context and the prompt parts of that turn, in the
+/// the messages of its transcript and the prompt parts of that turn, in the
 /// order the model was given them, with the digest of the context.
 #[derive(Debug, Serialize)]
 pub struct MessageContextResponse {
     pub message_id: caelumora_model::message::MessageId,
     pub actor_id: ActorId,
-    pub context_digest: Option<caelumora_model::digest::Digest>,
+    pub transcript_digest: Option<caelumora_model::digest::Digest>,
     pub items: Vec<SeenItemResponse>,
     /// What was read from notes and histories before the message was
     /// produced (issue 17).

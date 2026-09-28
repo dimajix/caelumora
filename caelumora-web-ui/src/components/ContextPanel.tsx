@@ -177,7 +177,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         </div>
         {context && (
           <div className="space-y-0.5">
-            <DigestLine label="Context" digest={context.context_digest} />
+            <DigestLine label="Transcript" digest={context.transcript_digest} />
           </div>
         )}
       </div>

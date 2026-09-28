@@ -10,7 +10,7 @@
 //! input (`PromptPosition::BeforeTurnInput`), not in the system prompt, so
 //! that changing notes do not invalidate the prompt cache (issue 47).
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::agent_notes::{AgentNotes, NoteKind};
@@ -92,7 +92,7 @@ impl ToolProvider for NotesComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
         match name {
             NOTE_TOOL_NAME => self.execute_note(params, context),
             REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, context),
@@ -104,13 +104,13 @@ impl ToolProvider for NotesComponent {
 
 impl NotesComponent {
     /// `note(text)`: notes `text`, published when the turn completes.
-    fn execute_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    fn execute_note(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentNotes::new(context, NoteKind::Public).note(note_text(params)?);
         Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
     }
 
     /// `revoke_note(id)`: revokes one of the agent's own current notes.
-    fn execute_revoke_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    fn execute_revoke_note(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let id = note_id(params)?;
         if AgentNotes::new(context, NoteKind::Public).revoke(id) {
             Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
@@ -121,7 +121,7 @@ impl NotesComponent {
 
     /// `read_notes(channel?)`: the notes of the channel named, or of every
     /// channel that may be read, each read recorded as knowledge.
-    async fn execute_read_notes(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
+    async fn execute_read_notes(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
         let reader = &self.reader;
         let channels = match params.get("channel").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
             Some(name) => vec![reader.notes_of(name).await.map_err(read_error)?],
@@ -188,7 +188,7 @@ impl PromptProvider for NotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt> {
+    async fn get_prompt(&self, context: &Turn) -> Result<Prompt> {
         let own = ActorId::Agent(context.agent_id);
         let mut others = match self.reader.channel_notes().await {
             Ok(published) => published,
@@ -278,7 +278,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let tools = NotesComponent::new(crate::session_reader::detached());
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
             assert_eq!(noted["id"], 1);
             assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty(), "not before the turn completes");
@@ -288,7 +288,7 @@ mod tests {
             assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), &mut turn).await.unwrap();
             turn.record_turn(Vec::new());
@@ -298,7 +298,7 @@ mod tests {
         {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
             turn.next_turn(Default::default(), Default::default());
             assert!(!turn.record_turn(Vec::new()));

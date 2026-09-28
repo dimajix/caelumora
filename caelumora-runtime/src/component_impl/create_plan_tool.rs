@@ -1,7 +1,7 @@
 //! The `create_plan_tool` component: the `create_plan` tool, and the planning
 //! prompt that nudges the model towards it (extended planning).
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptProvider};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
@@ -36,7 +36,7 @@ steps, skip `create_plan` entirely and just answer directly.";
 /// pipeline (`requires_approval: true`) as any other tool. `execute()` only
 /// ever runs once that approval has already been granted, at which point
 /// the submission is inherently "approved" - it parses the plan and either
-/// stores it on `TurnContext` as a fresh plan, or, if one is already in
+/// stores it on `Turn` as a fresh plan, or, if one is already in
 /// progress, appends the new steps to it (see `execute` below). Also
 /// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT` -
 /// see the `context` node's `deps` in whatever `ComponentConfig` wires this
@@ -47,7 +47,7 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self, _context: &TurnContext) -> Result<Prompt> {
+    async fn get_prompt(&self, _context: &Turn) -> Result<Prompt> {
         Ok(PLANNING_SYSTEM_PROMPT.to_string().into())
     }
 }
@@ -112,7 +112,7 @@ impl ToolProvider for CreatePlanToolProvider {
         }]
     }
 
-    async fn execute(&self, _name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, _name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
         let incoming = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         match context.take_plan() {
             Some(mut state) => {
@@ -178,7 +178,7 @@ mod tests {
     async fn create_plan_tool_execute_stores_the_parsed_plan() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let params = json!({
             "summary": "Investigate and fix the bug",
@@ -188,10 +188,10 @@ mod tests {
             ]
         });
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn_context).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn).await;
         assert!(result.is_ok());
 
-        let plan_state = turn_context.plan().expect("plan should be set after execute");
+        let plan_state = turn.plan().expect("plan should be set after execute");
         assert_eq!(plan_state.plan.summary, "Investigate and fix the bug");
         assert_eq!(plan_state.plan.steps.len(), 2);
         assert_eq!(plan_state.progress, PlanProgress::Step(0));
@@ -201,9 +201,9 @@ mod tests {
     async fn create_plan_tool_execute_appends_steps_to_a_plan_mid_step() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        turn_context.set_plan(PlanState {
+        turn.set_plan(PlanState {
             progress: PlanProgress::Step(0),
             plan: Plan {
                 id: PlanId::new(),
@@ -216,10 +216,10 @@ mod tests {
             "summary": "updated",
             "steps": [ { "description": "second" } ]
         });
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn_context).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn).await;
         assert!(result.is_ok());
 
-        let plan_state = turn_context.plan().expect("plan should still be set");
+        let plan_state = turn.plan().expect("plan should still be set");
         assert_eq!(plan_state.plan.summary, "updated");
         assert_eq!(plan_state.plan.steps.len(), 2);
         assert_eq!(plan_state.plan.steps[1].description, "second");
@@ -231,9 +231,9 @@ mod tests {
     async fn create_plan_tool_execute_resumes_a_finalizing_plan_when_steps_are_added() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        turn_context.set_plan(PlanState {
+        turn.set_plan(PlanState {
             progress: PlanProgress::Finalizing,
             plan: Plan {
                 id: PlanId::new(),
@@ -246,10 +246,10 @@ mod tests {
             "summary": "updated",
             "steps": [ { "description": "one more thing" } ]
         });
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn_context).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, &mut turn).await;
         assert!(result.is_ok());
 
-        let plan_state = turn_context.plan().expect("plan should still be set");
+        let plan_state = turn.plan().expect("plan should still be set");
         assert_eq!(plan_state.plan.steps.len(), 2);
         // Redirected back to the newly-added step instead of staying Finalizing.
         assert_eq!(plan_state.progress, PlanProgress::Step(1));
@@ -259,11 +259,11 @@ mod tests {
     async fn create_plan_tool_execute_rejects_malformed_arguments() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), &mut turn_context).await;
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), &mut turn).await;
         assert!(result.is_err());
-        assert!(turn_context.plan().is_none());
+        assert!(turn.plan().is_none());
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
     #[tokio::test]
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = caelumora_model::agent::AgentChannelState::default();
-        let turn = TurnContext::new(Default::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let turn = Turn::new(Default::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
         let prompt = CreatePlanToolProvider.get_prompt(&turn).await.expect("prompt should be available");
         assert_eq!(prompt.text, PLANNING_SYSTEM_PROMPT);
     }

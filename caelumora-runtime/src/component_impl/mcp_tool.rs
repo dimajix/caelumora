@@ -1,4 +1,4 @@
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -221,7 +221,7 @@ impl ToolProvider for McpToolProvider {
         self.cached_tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = context.security_context().clone();
 

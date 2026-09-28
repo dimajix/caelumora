@@ -275,7 +275,7 @@ export interface SeenPrompt {
 export interface MessageContextResponse {
   message_id: string;
   actor_id: ActorId;
-  context_digest: string | null;
+  transcript_digest: string | null;
   /** The messages of the context and the prompt parts, in the order the model was given them. */
   items: (SeenPrompt | {kind: 'message'; message: Message})[];
   /** What was read from notes and histories before the message was produced (issue 17). */

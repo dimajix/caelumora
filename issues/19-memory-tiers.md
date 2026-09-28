@@ -332,3 +332,9 @@ built on the commit of point 7.
   recalled in the agent's other sessions too and survive the deletion of
   the session they were written in. Knowledge from more confidential
   channels stays bound to them by the recall rule.
+- **2026-09-28** — Terms changed ([50](50-turn-context-naming.md)): *context*
+  is what one call of the model is given, assembled from prompt parts, the
+  transcript and the turn's messages - "context" in the usual LLM sense. The
+  stored sequence of an agent's messages the context is built from, called
+  *context* in the table above, is now the *transcript*. The term *model
+  input* is superseded by *context*.

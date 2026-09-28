@@ -42,8 +42,8 @@ pub struct NoteEntry {
     /// The message the change follows: the last one of the turn that made
     /// it (`MessageId::default()` if there was none).
     pub after: MessageId,
-    /// The digest of the agent's context when the change was taken over.
-    pub context: Option<Digest>,
+    /// The digest of the agent's transcript when the change was taken over.
+    pub transcript: Option<Digest>,
     pub written_at: DateTime<Utc>,
     pub digest: Digest,
 }
@@ -86,11 +86,11 @@ impl NoteChain {
     }
 
     /// Appends `change`, made in the turn that ended with message `after`
-    /// while the agent's context had the digest `context`.
-    pub fn push(&mut self, change: NoteChange, after: MessageId, context: Option<Digest>) {
+    /// while the agent's transcript had the digest `transcript`.
+    pub fn push(&mut self, change: NoteChange, after: MessageId, transcript: Option<Digest>) {
         self.changes.push_with(|previous| {
             let digest = crate::digest::note_chain(previous, &change, after);
-            NoteEntry { change, after, context, written_at: Utc::now(), digest }
+            NoteEntry { change, after, transcript, written_at: Utc::now(), digest }
         });
     }
 

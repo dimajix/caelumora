@@ -1,6 +1,6 @@
 //! The `echo_tool` component: a tool that echoes its input, for testing.
 
-use crate::agent_turn::TurnContext;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -28,7 +28,7 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut TurnContext) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, _context: &mut Turn) -> ToolResult<Value> {
         if name == "echo" {
             Ok(params.clone())
         } else {
