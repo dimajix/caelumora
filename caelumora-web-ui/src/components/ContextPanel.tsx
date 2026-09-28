@@ -102,6 +102,8 @@ function knowledgeLabel(knowledge: KnowledgeRef): string {
       return `Notes of ${agent} in ${channel}`;
     case 'private_notes':
       return `Private notes of ${agent} in ${channel}`;
+    case 'memory':
+      return `Memory of ${agent}, as recalled in ${channel}`;
     default:
       return `History of ${channel}`;
   }

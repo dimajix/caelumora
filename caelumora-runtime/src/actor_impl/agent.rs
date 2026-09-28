@@ -10,8 +10,9 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
+use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{
-    Agent, AgentChannelState, AgentController, AgentId, AgentState, SeenContext,
+    Agent, AgentChannelState, AgentController, AgentId, SeenContext,
 };
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
@@ -60,7 +61,9 @@ pub struct AgentActor {
 struct AgentActorState {
     agent_id: AgentId,
     agent_channel_state: AgentChannelState,
-    agent_state: AgentState,
+    /// The agent's own state, shared with its actors in other channels and
+    /// sessions (issue 62).
+    agent_state: Arc<AgentStateHandle>,
     /// What every turn reads the session's notes and histories through
     /// (issue 17).
     session_reader: Arc<dyn SessionReader>,
@@ -71,9 +74,10 @@ impl AgentActorState {
         TurnContext::new(
             self.agent_id,
             self.agent_channel_state.turn_event_context.sender_name.clone(),
-            &mut self.agent_state,
             &mut self.agent_channel_state,
-        ).with_session_reader(Some(self.session_reader.clone()))
+            self.agent_state.clone(),
+        )
+        .with_session_reader(Some(self.session_reader.clone()))
     }
 }
 
@@ -116,7 +120,7 @@ impl AgentActor {
         agent_channel_state.turn_event_context.channel_id = channel.id;
         agent_channel_state.turn_event_context.sender_id = ActorId::Agent(agent_id);
         agent_channel_state.turn_event_context.sender_name = agent_controller.name();
-        let agent_state = state_store.get_agent_state(agent_id).await?;
+        let agent_state = actor_runtime.agent_states().get(agent_id).await?;
         let processing_state = agent_channel_state.processing_state.clone();
         let state = Mutex::new(AgentActorState {
             agent_id,
@@ -242,6 +246,7 @@ impl AgentActor {
             event_security.next(self.id),
         );
         turn_context.set_publication(self.publication().await);
+        turn_context.set_classification(self.actor_runtime.channel().map(|c| c.classification()));
 
         debug!("Starting generating messages for agent {} {}", self.id, agent_name);
         turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
@@ -490,6 +495,11 @@ impl AgentActor {
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>, output: &dyn EventSender) -> Result<()> {
         let messages = turn_context.messages().clone();
         let notes_changed = turn_context.record_turn(messages);
+        // The answer is already out: a state that cannot be stored costs the
+        // turn's memory, not the turn.
+        if let Err(e) = turn_context.commit_agent_state().await {
+            warn!("{:#}", e);
+        }
         turn_context.send_event(
             ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
             output,
@@ -1128,7 +1138,6 @@ impl Actor for AgentActor {
                 Err(e) => return Err(e),
             };
 
-            turn_context.store_agent_state(&self.state_store).await;
             turn_context.store_channel_state(&self.state_store).await;
 
             match next_state {
@@ -1235,13 +1244,9 @@ mod tests {
     #[tokio::test]
     async fn state_history_appender_is_passthrough_and_persists_history() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut agent_state = AgentState::default();
         let mut turn_context = TurnContext::new(
             AgentId::default(),
-            String::new(),
-            &mut agent_state,
-            &mut agent_channel_state,
-        );
+            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         let processor = StateHistoryAppender {};
         let input = vec![make_message("hello")];
 
@@ -1261,13 +1266,9 @@ mod tests {
     #[tokio::test]
     async fn state_context_appender_is_passthrough_and_updates_provider_context() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut agent_state = AgentState::default();
         let mut turn_context = TurnContext::new(
             AgentId::default(),
-            String::new(),
-            &mut agent_state,
-            &mut agent_channel_state,
-        );
+            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         let appender = StateContextAppender {};
         let provider = StateContextProvider {
             prompt_providers: vec![],
@@ -1294,7 +1295,6 @@ mod tests {
     async fn prompt_parts_go_where_their_position_says_and_only_the_conversation_is_stored() {
         let agent_id = AgentId::new();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut agent_state = AgentState::default();
         let provider = StateContextProvider {
             prompt_providers: vec![
                 Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }),
@@ -1305,7 +1305,7 @@ mod tests {
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 
-        let mut turn_context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         let mut earlier = make_message("earlier");
         earlier.role = MessageRole::User;
         let mut question = make_message("question");
@@ -1337,9 +1337,8 @@ mod tests {
 
     #[tokio::test]
     async fn advance_plan_moves_to_the_next_step_when_one_remains() {
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         turn_context.set_plan(make_plan_state(vec!["first", "second"]));
         let (tx, mut rx) = mpsc::channel(10);
         let output = crate::transport_impl::InMemoryEventSender::new(tx);
@@ -1365,9 +1364,8 @@ mod tests {
 
     #[tokio::test]
     async fn advance_plan_finalizes_once_steps_are_exhausted() {
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         turn_context.set_plan(make_plan_state(vec!["first", "second"]));
         let (tx, mut rx) = mpsc::channel(10);
         let output = crate::transport_impl::InMemoryEventSender::new(tx);
@@ -1384,9 +1382,8 @@ mod tests {
 
     #[tokio::test]
     async fn advance_plan_finalizes_immediately_for_an_empty_plan() {
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         turn_context.set_plan(make_plan_state(vec![]));
         let (tx, _rx) = mpsc::channel(10);
         let output = crate::transport_impl::InMemoryEventSender::new(tx);
@@ -1398,9 +1395,8 @@ mod tests {
 
     #[test]
     fn final_messages_filters_out_internal_messages() {
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let mut internal = make_message("working on it");
         internal.internal = true;

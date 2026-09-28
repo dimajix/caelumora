@@ -6,6 +6,7 @@
 
 use crate::component::ComponentRegistry;
 
+pub mod agent_memory;
 pub mod calculator_tool;
 pub mod channel_history;
 pub mod create_plan_tool;
@@ -23,6 +24,7 @@ pub mod wakeup_command;
 
 /// Registers every built-in component kind with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
+    agent_memory::register(registry);
     calculator_tool::register(registry);
     channel_history::register(registry);
     create_plan_tool::register(registry);

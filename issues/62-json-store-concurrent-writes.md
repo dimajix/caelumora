@@ -132,3 +132,67 @@ WARN caelumora_runtime::channel: Cannot store state of channel 6537d0a0-...: bac
   warning at all any more, no temporary files left. This only hides cause 3:
   the actors of an agent in several channels still each write their own
   copy of `AgentState` whole - which is harmless only while it is empty.
+- **2026-09-28** — Step 3 refined with the maintainer before implementing:
+  - **The registry is per process, not per session.** Agents of user or
+    global scope are reused across sessions (`find_agent_by_name` in
+    `SessionTemplate::instantiate`), so one agent can run in several
+    sessions at once; a handle per `SessionLoop` would bring the lost update
+    back one level up. The `RuntimeManager` keeps `AgentId -> Weak<handle>`;
+    every `AgentActor` takes its agent's handle from there, whatever the
+    session, and the last one to drop it releases it.
+  - **First user: agent memory** - a new component `agent_memory` with the
+    tools `remember` / `forget` and a prompt part, writing a chain in
+    `AgentState`. Every entry carries the `ChannelClassification` of the
+    channel it was written in and is recalled only where that channel may
+    be read (`readable_from`, rule 2 of [61](61-reasoning-leaves-the-agent.md)):
+    entries from a `public` channel everywhere, across sessions too; from a
+    `session` channel within that session; from a `channel` channel only
+    there. The chain does not branch with a channel (principle 7 in
+    [19](19-memory-tiers.md)); [08](08-retry-and-edit-past-answers.md) will
+    have to mark entries of abandoned branches. The existing notes stay
+    where they are; moving them is [68](68-notes-in-agent-state.md).
+  - **The mechanism is generic, the content concrete for now:** handle,
+    registry, snapshot and staged changes applied to the current state are
+    independent of what `AgentState` holds; its content is a concrete
+    `memory` field for now. Making it generic per component is
+    [65](65-generic-component-state.md).
+- **2026-09-28** — Step 3 implemented (not yet verified in the browser):
+  - `caelumora_runtime::agent_state`: `AgentStateHandle` (the current state
+    behind an `ArcSwap`, a write lock, the numbering of memory entries, the
+    `StateStore`) and `AgentStates`, the registry in the `RuntimeManager`
+    (`AgentId -> Weak<handle>`, loaded once however many actors ask).
+    `apply` applies staged changes to the state as it is, stores it, and
+    only then makes it current.
+  - `TurnContext` no longer holds `&mut AgentState`: it gets the handle
+    (`with_agent_state`), reads a snapshot (`agent_state`), stages
+    `AgentStateChange`s in `AgentChannelState::turn_agent_changes`, and
+    `commit_agent_state` applies them in `reflect`, after `record_turn`; a
+    failure to store is logged, the answer is already out. The actors no
+    longer store the agent state after every step.
+  - `AgentState::memory` (`caelumora_model::memory::MemoryChain`, entries
+    with the origin's `ChannelClassification`), component `agent_memory`
+    with `remember` / `forget` (both `HIDDEN`) and a `BeforeTurnInput` part
+    showing the entries readable from the current channel, recorded as
+    `KnowledgeSource::Memory` - which counts as private knowledge for the
+    reasoning label. The turn's channel classification is set when it
+    begins (`TurnContext::set_classification`). Seeded personalities get the
+    component (`memory`).
+  - Tests: two actors of one agent staging changes from old snapshots lose
+    none; a released state is loaded again with what was stored; memory is
+    recalled and forgotten only where its origin may be read.
+- **2026-09-28** — Reworked at the maintainer's request before committing
+  step 3, because `TurnContext` kept growing:
+  - The agent state handle is a required argument of `TurnContext::new`,
+    not `Option` behind a builder; tests use `AgentStateHandle::detached()`,
+    a handle without a store. The session reader stays a builder
+    (`with_session_reader`): it is genuinely optional (outside a channel
+    there is none) - required things go into the constructor, optional ones
+    through `with_…`.
+  - `remember` / `forget` leave `TurnContext`. It offers only generic access
+    to the agent's state - the handle, staging a change, the staged changes,
+    committing - and knows nothing of memory. The memory logic is a wrapper,
+    `caelumora_runtime::agent_memory::AgentMemory`, usable by the tool and by
+    others (e.g. reflection, [55](55-notes-by-reflection.md)); the component
+    only translates tool calls and renders its prompt part.
+  - Notes are not reworked now: they are to follow this pattern in
+    [65](65-generic-component-state.md).

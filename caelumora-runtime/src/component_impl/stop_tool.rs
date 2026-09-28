@@ -79,15 +79,14 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+    use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
     #[tokio::test]
     async fn test_stop_tool() {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut agent_state = AgentState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let result = provider.execute("stop", &json!({}), &mut turn_context).await.unwrap();
         assert_eq!(result["status"], "stopped");

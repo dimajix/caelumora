@@ -283,7 +283,7 @@ mod tests {
     use crate::actor::TurnContext;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::agent::AgentState;
+
     use caelumora_model::security::DummySecurityManager;
     use serde_json::json;
 
@@ -365,11 +365,10 @@ mod tests {
         let provider = Arc::new(MockToolProvider { requires_approval: true });
         let executor = DefaultToolExecutor::new(Arc::new(DenyAllSecurityManager), vec![component("tools", provider)]).unwrap();
 
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
-        let mut context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_state, &mut agent_channel_state);
+        let mut context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         assert!(!executor.is_permitted(&call("test_tool"), &context).await);
         let error = executor.execute(&call("test_tool"), &mut context).await.unwrap_err();
@@ -379,10 +378,9 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_tool_is_reported_as_such() {
         let executor = DefaultToolExecutor::new(Arc::new(DummySecurityManager::new()), vec![component("tools", Arc::new(MockToolProvider { requires_approval: false }))]).unwrap();
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(AgentId::new());
-        let mut context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut agent_channel_state);
+        let mut context = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let error = executor.execute(&call("does_not_exist"), &mut context).await.unwrap_err();
         assert!(matches!(error, ToolError::UnknownTool(ref name) if name == "does_not_exist"));
@@ -427,11 +425,10 @@ mod tests {
             confidentiality: Default::default(),
         };
 
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
-        let mut context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_state, &mut agent_channel_state);
+        let mut context = TurnContext::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let result = executor.execute(&call, &mut context).await.unwrap();
         assert_eq!(result.content, "{\"result\":\"ok\"}");

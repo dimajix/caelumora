@@ -34,6 +34,8 @@ pub struct RuntimeManager {
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
     commands: ComponentConfig,
+    /// One owner of every running agent's `AgentState` (issue 62).
+    agent_states: Arc<crate::agent_state::AgentStates>,
 }
 
 /// What a channel runs with: the process-wide services of the
@@ -122,6 +124,11 @@ impl ActorRuntime {
         self.runtime.runtime_manager.controller_manager()
     }
 
+    /// The owner of every running agent's `AgentState` (issue 62).
+    pub fn agent_states(&self) -> Arc<crate::agent_state::AgentStates> {
+        self.runtime.runtime_manager.agent_states()
+    }
+
     /// An executor for the tools `providers` contribute.
     ///
     /// # Errors
@@ -170,6 +177,7 @@ impl RuntimeManager {
 
         let event_bus = Arc::new(EventBus::new(security_manager.clone()));
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
+        let agent_states = Arc::new(crate::agent_state::AgentStates::new(state_store.clone()));
 
         Ok(Self {
             security_manager,
@@ -181,6 +189,7 @@ impl RuntimeManager {
             event_bus,
             controller_manager,
             commands,
+            agent_states,
         })
     }
 
@@ -223,6 +232,11 @@ impl RuntimeManager {
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> {
         self.controller_manager.clone()
+    }
+
+    /// The owner of every running agent's `AgentState` (issue 62).
+    pub fn agent_states(&self) -> Arc<crate::agent_state::AgentStates> {
+        self.agent_states.clone()
     }
 
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {

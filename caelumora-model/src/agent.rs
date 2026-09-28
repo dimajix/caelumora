@@ -209,6 +209,15 @@ pub struct AgentChannelState {
     /// after a restart publishes only what is public until its next turn.
     #[serde(skip)]
     pub turn_publication: crate::confidentiality::Publication,
+    /// The agent's channel as the confidentiality rules see it, as it was
+    /// when the current turn began (issue 61). Not stored, like
+    /// `turn_publication`.
+    #[serde(skip)]
+    pub turn_classification: Option<crate::confidentiality::ChannelClassification>,
+    /// Changes to the agent's `AgentState` made in the current turn, applied
+    /// to the current state when the turn completes (issue 62).
+    #[serde(default)]
+    pub turn_agent_changes: Vec<AgentStateChange>,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
@@ -309,9 +318,33 @@ impl AgentChannelState {
     }
 }
 
+/// The state of an agent itself, across its channels and - for agents of
+/// user or global scope - across sessions (issue 62). One owner per agent
+/// and process holds it; turns read a snapshot and stage their changes as
+/// [`AgentStateChange`]s, which are applied to the current state when the
+/// turn completes, so that no turn overwrites another's changes.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
-    // Add session specific data of an individual agent from multiple channels here if needed
+    /// What the agent remembers across its channels and sessions.
+    #[serde(default)]
+    pub memory: crate::memory::MemoryChain,
+}
+
+/// A change to an [`AgentState`], staged by a turn and applied to the state
+/// as it is when the turn completes (issue 62).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AgentStateChange {
+    /// A change to the agent's memory, made in the channel `origin`.
+    Memory { change: crate::memory::MemoryChange, origin: crate::confidentiality::ChannelClassification },
+}
+
+impl AgentState {
+    /// Applies `change`, made in the turn that ended with message `after`.
+    pub fn apply(&mut self, change: AgentStateChange, after: MessageId) {
+        match change {
+            AgentStateChange::Memory { change, origin } => self.memory.push(change, origin, after),
+        }
+    }
 }
 
 #[cfg(test)]

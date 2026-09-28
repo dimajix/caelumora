@@ -243,7 +243,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+    use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
 
     fn note(id: u32, text: &str) -> Note {
@@ -267,11 +267,10 @@ mod tests {
 
     #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
-        let mut agent_state = AgentState::default();
         let mut state = AgentChannelState::default();
         let tools = NotesComponent;
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
             assert_eq!(noted["id"], 1);
             assert!(turn.notes().is_empty(), "not before the turn completes");
@@ -281,7 +280,7 @@ mod tests {
             assert_eq!(turn.notes().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), &mut turn).await.unwrap();
             turn.record_turn(Vec::new());
@@ -291,7 +290,7 @@ mod tests {
         {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
             turn.next_turn(Default::default(), Default::default());
             assert!(!turn.record_turn(Vec::new()));

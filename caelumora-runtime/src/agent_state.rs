@@ -1,0 +1,174 @@
+//! One owner of an agent's `AgentState` per process (issue 62, step 3).
+//!
+//! An agent takes part in several channels, and agents of user or global
+//! scope in several sessions, each with an `AgentActor` of its own. Their
+//! `AgentState` is the agent's, not a channel's, so it must not be a copy per
+//! actor - the last one to store its copy would overwrite the others'
+//! changes. The `RuntimeManager` keeps one [`AgentStateHandle`] per agent in
+//! [`AgentStates`]; every actor of the agent holds the same handle. A turn
+//! reads the state as it is (`AgentStateHandle::current`, a snapshot that
+//! does not change under it) and stages its changes; when it completes, they
+//! are applied to the state as it is then, under the handle's lock, and
+//! stored - so no turn overwrites another's changes, and every next turn, in
+//! whatever channel, sees them.
+
+use anyhow::{Context, Result};
+use arc_swap::ArcSwap;
+use caelumora_model::agent::{AgentId, AgentState, AgentStateChange};
+use caelumora_model::memory::MemoryId;
+use caelumora_model::message::MessageId;
+use caelumora_model::store::StateStore;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
+use tokio::sync::Mutex;
+use tracing::debug;
+
+/// The state of one agent, shared by all its actors.
+#[derive(Debug)]
+pub struct AgentStateHandle {
+    agent_id: AgentId,
+    current: ArcSwap<AgentState>,
+    /// Held while changes are applied and stored, so that they are applied
+    /// one after another to the state as it is.
+    write: Mutex<()>,
+    /// The number the next memory entry gets. Handed out when a turn
+    /// remembers something, not when the turn completes: turns in several
+    /// channels may remember at the same time, and each needs its number at
+    /// once to tell the model.
+    next_memory_id: AtomicU32,
+    /// Where the state is stored; `None` for a detached handle.
+    state_store: Option<Arc<dyn StateStore>>,
+}
+
+impl AgentStateHandle {
+    fn new(agent_id: AgentId, state: AgentState, state_store: Option<Arc<dyn StateStore>>) -> Self {
+        let next_memory_id = AtomicU32::new(state.memory.next_id().0);
+        Self { agent_id, current: ArcSwap::from_pointee(state), write: Mutex::new(()), next_memory_id, state_store }
+    }
+
+    /// A handle of an empty state that is kept in memory only and stored
+    /// nowhere - for turns outside of a running agent, e.g. in tests.
+    pub fn detached() -> Arc<Self> {
+        Arc::new(Self::new(AgentId::default(), AgentState::default(), None))
+    }
+
+    /// The state as it is now. A snapshot: changes applied afterwards do not
+    /// change it.
+    pub fn current(&self) -> Arc<AgentState> {
+        self.current.load_full()
+    }
+
+    /// A number for a new memory entry, never handed out before.
+    pub fn reserve_memory_id(&self) -> MemoryId {
+        MemoryId(self.next_memory_id.fetch_add(1, Ordering::SeqCst))
+    }
+
+    /// Applies `changes`, made in a turn that ended with message `after`, to
+    /// the state as it is, stores it, and makes it the current state. Nothing
+    /// is changed if storing fails.
+    ///
+    /// # Errors
+    /// Whatever the `StateStore` reports.
+    pub async fn apply(&self, changes: Vec<AgentStateChange>, after: MessageId) -> Result<()> {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        let _writing = self.write.lock().await;
+        let mut state = (*self.current.load_full()).clone();
+        let count = changes.len();
+        for change in changes {
+            state.apply(change, after);
+        }
+        if let Some(store) = &self.state_store {
+            store.put_agent_state(self.agent_id, &state).await
+                .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
+        }
+        self.current.store(Arc::new(state));
+        debug!("Applied {} changes to the state of agent {}", count, self.agent_id);
+        Ok(())
+    }
+}
+
+/// The [`AgentStateHandle`]s of the process, one per agent while any of its
+/// actors runs.
+#[derive(Debug)]
+pub struct AgentStates {
+    handles: Mutex<HashMap<AgentId, Weak<AgentStateHandle>>>,
+    state_store: Arc<dyn StateStore>,
+}
+
+impl AgentStates {
+    pub fn new(state_store: Arc<dyn StateStore>) -> Self {
+        Self { handles: Mutex::new(HashMap::new()), state_store }
+    }
+
+    /// The handle of `agent_id`: the one its other actors hold, or loaded
+    /// from the `StateStore` if none does. Loaded once, however many actors
+    /// ask at the same time.
+    ///
+    /// # Errors
+    /// Whatever the `StateStore` reports when loading.
+    pub async fn get(&self, agent_id: AgentId) -> Result<Arc<AgentStateHandle>> {
+        let mut handles = self.handles.lock().await;
+        if let Some(handle) = handles.get(&agent_id).and_then(Weak::upgrade) {
+            return Ok(handle);
+        }
+        let state = self.state_store.get_agent_state(agent_id).await
+            .with_context(|| format!("Cannot load the state of agent {}", agent_id))?;
+        let handle = Arc::new(AgentStateHandle::new(agent_id, state, Some(self.state_store.clone())));
+        handles.retain(|_, h| h.strong_count() > 0);
+        handles.insert(agent_id, Arc::downgrade(&handle));
+        Ok(handle)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::confidentiality::{ChannelClassification, Confidentiality};
+    use caelumora_model::memory::MemoryChange;
+    use caelumora_model::store_impl::memory::MemoryStore;
+
+    fn remember(id: MemoryId, text: &str) -> AgentStateChange {
+        let origin = ChannelClassification { session_id: Default::default(), channel_id: Default::default(), level: Confidentiality::Session };
+        AgentStateChange::Memory { change: MemoryChange::Remember { id, text: text.to_string() }, origin }
+    }
+
+    #[tokio::test]
+    async fn every_actor_of_an_agent_shares_one_state_and_no_change_is_lost() {
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let states = AgentStates::new(store.clone());
+        let agent = AgentId::new();
+        let (in_main, in_research) = (states.get(agent).await.unwrap(), states.get(agent).await.unwrap());
+        assert!(Arc::ptr_eq(&in_main, &in_research), "one handle for both channels");
+
+        // Two turns, each from a snapshot taken before the other's changes.
+        let before = in_main.current();
+        let (a, b) = (in_main.reserve_memory_id(), in_research.reserve_memory_id());
+        assert_ne!(a, b, "numbers are handed out once");
+        in_main.apply(vec![remember(a, "from main")], MessageId::new()).await.unwrap();
+        in_research.apply(vec![remember(b, "from research")], MessageId::new()).await.unwrap();
+
+        let texts: Vec<_> = in_main.current().memory.current().into_iter().map(|m| m.text).collect();
+        assert_eq!(texts, ["from main", "from research"], "neither overwrote the other");
+        assert!(before.memory.current().is_empty(), "a snapshot does not change under its reader");
+        let stored = store.get_agent_state(agent).await.unwrap();
+        assert_eq!(stored.memory.current().len(), 2, "stored as applied");
+    }
+
+    #[tokio::test]
+    async fn a_released_state_is_loaded_again_with_what_was_stored() {
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let states = AgentStates::new(store);
+        let agent = AgentId::new();
+        let handle = states.get(agent).await.unwrap();
+        let id = handle.reserve_memory_id();
+        handle.apply(vec![remember(id, "kept")], MessageId::new()).await.unwrap();
+        drop(handle);
+
+        let again = states.get(agent).await.unwrap();
+        assert_eq!(again.current().memory.current()[0].text, "kept");
+        assert_eq!(again.reserve_memory_id(), MemoryId(id.0 + 1), "numbering continues after what was stored");
+    }
+}

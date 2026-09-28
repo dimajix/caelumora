@@ -17,6 +17,7 @@ use caelumora_runtime::component_impl::state_history_appender::STATE_HISTORY_APP
 use caelumora_runtime::component_impl::static_system_prompt_provider::STATIC_SYSTEM_PROMPT_PROVIDER_KIND;
 use caelumora_runtime::component_impl::notes::NOTES_KIND;
 use caelumora_runtime::component_impl::private_notes::PRIVATE_NOTES_KIND;
+use caelumora_runtime::component_impl::agent_memory::AGENT_MEMORY_KIND;
 use caelumora_runtime::component_impl::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_runtime::component_impl::calculator_tool::CALCULATOR_TOOL_PROVIDER_KIND;
 use caelumora_runtime::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
@@ -192,7 +193,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         id: "context".to_string(),
         kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,
-        deps: vec!["system-prompt".to_string(), "notes".to_string(), "private-notes".to_string()],
+        deps: vec!["system-prompt".to_string(), "notes".to_string(), "private-notes".to_string(), "memory".to_string()],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
         security_attributes: Default::default(),
@@ -245,6 +246,15 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
     components.component_nodes.push(ComponentDescriptor {
         id: "private-notes".to_string(),
         kind: PRIVATE_NOTES_KIND.to_string(),
+        params: serde_json::Value::Null,
+        deps: vec![],
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+        security_attributes: Default::default(),
+    });
+    components.component_nodes.push(ComponentDescriptor {
+        id: "memory".to_string(),
+        kind: AGENT_MEMORY_KIND.to_string(),
         params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![],

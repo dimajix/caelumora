@@ -169,7 +169,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::notes::ChannelInfo;
-    use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+    use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::note::NoteId;
 
@@ -192,10 +192,9 @@ mod tests {
 
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
-        let mut agent_state = AgentState::default();
         let mut state = AgentChannelState::default();
         let tools = PrivateNotesComponent;
-        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         turn.note("public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted["id"], 1, "its own numbering");

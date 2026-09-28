@@ -59,15 +59,14 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+    use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
     #[tokio::test]
     async fn test_calculator_tool() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut agent_state = AgentState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -90,8 +89,7 @@ mod tests {
     async fn test_calculator_tool_invalid_expression() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut agent_state = AgentState::default();
-        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut turn_context = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
         let result = provider.execute("calculate", &params, &mut turn_context).await;

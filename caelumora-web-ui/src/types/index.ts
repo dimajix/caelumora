@@ -288,8 +288,8 @@ export interface MessageContextResponse {
 export interface KnowledgeRef {
   channel_id: string;
   channel_name: string | null;
-  source: 'notes' | 'private_notes' | 'history';
-  /** Whose notes, for `notes` and `private_notes`. */
+  source: 'notes' | 'private_notes' | 'history' | 'memory';
+  /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
   agent_id: ActorId | null;
   agent_name: string | null;
   digest: string | null;

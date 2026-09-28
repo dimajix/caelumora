@@ -75,3 +75,31 @@ the turn again.
   `TurnContext`; further kinds of state will be defined implicitly by
   components, and neither the core classes nor the data model should know
   them. The mechanism must support branching conversations later.
+- **2026-09-28** — The agent memory of [62](62-json-store-concurrent-writes.md)
+  (step 3) sets the pattern notes are to follow here: `TurnContext` offers
+  generic access to a state (a handle, staged changes, commit when the turn
+  completes) and knows nothing of what the state is; the logic of a kind of
+  state lives in a wrapper (`AgentMemory`) used by the component and by
+  anyone else, not in `TurnContext`. Today notes still have `note`,
+  `revoke_note`, `private_note`, `revoke_private_note` and their digests in
+  `TurnContext` and are taken over in `record_turn` by name.
+- **2026-09-28** — Asked by the maintainer whether `AgentChannelState` should
+  follow the pattern of `AgentState` ([62](62-json-store-concurrent-writes.md),
+  step 3). Decided: not as a whole, but split.
+  - The lost-update argument does not apply: `AgentChannelState` has exactly
+    one writer, the actor of that agent and channel (true since sessions
+    start only once, [62](62-json-store-concurrent-writes.md) step 1). Handle,
+    snapshot and deltas were needed for `AgentState` because several actors
+    change it.
+  - **The actor's working state stays as it is:** the turn's messages,
+    pending tool calls, plan, requested state, scratch - mutable state of one
+    actor during one step, where snapshots and deltas would cost without
+    gain.
+  - **Component state in it follows the pattern:** notes, private notes and
+    later kinds get the same shape as agent state - generic access in
+    `TurnContext`, staged changes, taken over when the turn completes, the
+    logic in a wrapper - stored per agent and channel instead of per agent.
+    That is this issue.
+  - A handle for `AgentChannelState` would let other channels read another's
+    notes from memory instead of the `StateStore` (`published_notes`,
+    `private_notes`); convenient, optional.

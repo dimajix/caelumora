@@ -288,6 +288,9 @@ pub enum KnowledgeSource {
     PrivateNotes { agent: crate::agent::AgentId, digest: Option<Digest> },
     /// The channel's history; the digest of it when it was read.
     History { digest: Option<Digest> },
+    /// An agent's memory (issue 62), read by that agent; the digest of its
+    /// memory chain. Recorded with the channel it was read in.
+    Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
 }
 
 /// What an agent's model saw when it produced a message (issue 06): the

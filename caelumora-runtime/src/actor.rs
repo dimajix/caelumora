@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentStateChange};
 use tracing::warn;
 use std::any::Any;
 use std::fmt::Debug;
@@ -11,7 +11,8 @@ use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::Publication;
+use caelumora_model::confidentiality::{ChannelClassification, Publication};
+use crate::agent_state::AgentStateHandle;
 use caelumora_model::digest::Digest;
 use caelumora_model::agent::TurnKnowledge;
 use caelumora_model::message::{ContextRef, KnowledgeRef, Message, MessageId, MessageRole, PromptRef};
@@ -107,22 +108,64 @@ pub struct TurnContext<'a> {
     pub channel_id: ChannelId,
     pub session_id: SessionId,
     pub agent_name: String,
-    agent_state: &'a mut AgentState,
     agent_channel_state: &'a mut AgentChannelState,
     session_reader: Option<Arc<dyn SessionReader>>,
+    /// The agent's own state, shared by all its actors (issue 62). The turn
+    /// reads it and stages changes, never holds it.
+    agent_state: Arc<AgentStateHandle>,
 }
 
 impl<'a> TurnContext<'a> {
-    pub fn new(agent_id: AgentId, agent_name:String, agent_state: &'a mut AgentState, agent_channel_state: &'a mut AgentChannelState) -> Self {
+    pub fn new(agent_id: AgentId, agent_name:String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
         Self {
             agent_id,
             channel_id: agent_channel_state.turn_event_context.channel_id,
             session_id: agent_channel_state.turn_event_context.session_id,
             agent_name,
-            agent_state,
             agent_channel_state,
             session_reader: None,
+            agent_state,
         }
+    }
+
+    /// The agent's own state (issue 62): `current()` is a snapshot of it as
+    /// it is now, without the changes of the current turn.
+    pub fn agent_state(&self) -> &Arc<AgentStateHandle> {
+        &self.agent_state
+    }
+
+    /// The agent's channel as the confidentiality rules see it, as it was
+    /// when the turn began; `None` outside of a turn in a channel.
+    pub fn classification(&self) -> Option<ChannelClassification> {
+        self.agent_channel_state.turn_classification
+    }
+
+    /// Sets the agent's channel as it is when the turn begins.
+    pub fn set_classification(&mut self, classification: Option<ChannelClassification>) {
+        self.agent_channel_state.turn_classification = classification;
+    }
+
+    /// Stages `change` to the agent's own state, applied when the turn
+    /// completes (`commit_agent_state`).
+    pub fn stage_agent_change(&mut self, change: AgentStateChange) {
+        self.agent_channel_state.turn_agent_changes.push(change);
+    }
+
+    /// The changes to the agent's own state staged in this turn so far.
+    pub fn staged_agent_changes(&self) -> &[AgentStateChange] {
+        &self.agent_channel_state.turn_agent_changes
+    }
+
+    /// Applies the changes the turn made to the agent's own state to that
+    /// state as it is now (issue 62), anchored at the last message of the
+    /// agent's history in this channel. Called when the turn completes,
+    /// after `record_turn`.
+    ///
+    /// # Errors
+    /// Whatever storing the state reports; the changes are then lost.
+    pub async fn commit_agent_state(&mut self) -> Result<()> {
+        let changes = mem::take(&mut self.agent_channel_state.turn_agent_changes);
+        self.agent_state.apply(changes, self.agent_channel_state.history.last_message_id()).await
     }
 
     /// Gives the turn read access to what the session's agents and channels
@@ -148,6 +191,7 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.turn_notes.clear();
         self.agent_channel_state.turn_private_notes.clear();
         self.agent_channel_state.turn_knowledge.clear();
+        self.agent_channel_state.turn_agent_changes.clear();
         self.agent_channel_state.turn_event_context = event_context;
         self.agent_channel_state.turn_security_context = security_context;
     }
@@ -285,11 +329,12 @@ impl<'a> TurnContext<'a> {
     /// Records that the turn read `reference` (issue 17): it is recorded
     /// with every message the turn produces from now on.
     /// Whether the turn was given or read private knowledge of the agent -
-    /// its private notes (issue 51) - so far: what the model produces from
+    /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
     pub fn saw_private_knowledge(&self) -> bool {
         self.agent_channel_state.turn_knowledge.iter()
-            .any(|k| matches!(k.reference.source, caelumora_model::message::KnowledgeSource::PrivateNotes { .. }))
+            .any(|k| matches!(k.reference.source,
+                caelumora_model::message::KnowledgeSource::PrivateNotes { .. } | caelumora_model::message::KnowledgeSource::Memory { .. }))
     }
 
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
@@ -405,16 +450,6 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.requested_state.take()
     }
 
-    pub async fn store_agent_state(&self, state_store: &Arc<dyn StateStore>) {
-        if let Err(e) = state_store
-            .put_agent_state(self.agent_id, self.agent_state)
-            .await
-        {
-            warn!(
-                "Cannot store agent state of agent {}: {}", self.agent_id, e
-            )
-        }
-    }
     pub async fn store_channel_state(&self, state_store: &Arc<dyn StateStore>) {
         if let Err(e) = state_store
             .put_agent_channel_state(self.agent_id, self.channel_id, self.agent_channel_state)
@@ -507,9 +542,8 @@ mod tests {
 
     #[test]
     fn plan_round_trips_through_set_and_take() {
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         assert!(ctx.plan().is_none());
         assert!(!ctx.has_plan());
@@ -526,9 +560,8 @@ mod tests {
 
     #[test]
     fn next_turn_clears_a_stale_plan() {
-        let mut agent_state = AgentState::default();
         let mut agent_channel_state = AgentChannelState::default();
-        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_state, &mut agent_channel_state);
+        let mut ctx = TurnContext::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
@@ -539,11 +572,10 @@ mod tests {
 
     #[test]
     fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
-        use caelumora_model::agent::{AgentChannelState, AgentId, AgentState, SeenItem};
+        use caelumora_model::agent::{AgentChannelState, AgentId, SeenItem};
         use caelumora_model::message::{MessageId, MessageRole};
 
         let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
-        let mut agent_state = AgentState::default();
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
         state.context.push(question.clone());
@@ -551,7 +583,7 @@ mod tests {
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
         let system = || ContextItem::Prompt { role: MessageRole::System, text: "You are good at sums.".to_string() };
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let mut items = vec![system()];
             items.extend(turn.stored_context());
             turn.set_context(items);
@@ -574,7 +606,7 @@ mod tests {
             source: caelumora_model::message::KnowledgeSource::History { digest: None },
         };
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.push_message(before.clone());
             turn.record_knowledge(read);
             turn.record_knowledge(read);
@@ -588,7 +620,7 @@ mod tests {
 
         // The same prompt in another turn is kept once.
         {
-            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+            let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.set_context(vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
@@ -600,9 +632,8 @@ mod tests {
         use caelumora_model::tool::{ToolCall, ToolConfidentiality};
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
-        let mut agent_state = AgentState::default();
         let mut state = AgentChannelState::default();
-        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut agent_state, &mut state);
+        let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         turn.set_publication(Publication::new(true, true));
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
