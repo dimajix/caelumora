@@ -1,6 +1,6 @@
 # 62 — Concurrent writes of one JSON store file fail and can lose state
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -202,3 +202,14 @@ WARN caelumora_runtime::channel: Cannot store state of channel 6537d0a0-...: bac
   the agent recalls it in `research` (`session`) and in `vault` (`channel`) -
   both may read `main`. No "Cannot store" warning in the log. Still open:
   `stop_session` does not take the start lock.
+- **2026-09-28** — The last gap closed: `stop_session` is async and takes the
+  session's start lock, so it waits for a start under way and stops what that
+  start registered instead of missing it. `delete_session` holds the lock
+  from before it stops the session until it is gone from the store, so that
+  no request starts it again from there in the meantime; it drops the lock
+  entry afterwards. The ten callers (one in `delete_session`, one in the TUI,
+  the rest tests) await it. Test
+  `a_stop_waits_for_a_start_under_way_and_then_stops_what_it_started`.
+  Both "done when" points hold; multiple processes stay with
+  [21](21-scaling.md), [03](03-postgres-entity-store.md) and
+  [04](04-postgres-state-store.md).

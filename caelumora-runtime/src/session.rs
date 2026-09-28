@@ -426,7 +426,18 @@ impl SessionManager {
     }
 
     /// Stop a running session's loop without deleting its durable definition.
-    pub fn stop_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+    ///
+    /// Waits for a start of the same session that is under way (issue 62):
+    /// otherwise that start could register the session after it was stopped,
+    /// and it would run on.
+    pub async fn stop_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
+        self.stop_running(id)
+    }
+
+    /// Stops session `id` if it runs. Called with its start lock held.
+    fn stop_running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
         if let Some((_, handle)) = self.handles.remove(&id) {
             handle.abort();
         }
@@ -448,6 +459,10 @@ impl SessionManager {
     /// read it, `StoreError::PermissionDenied` if they may read but not
     /// delete it.
     pub async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> Result<bool> {
+        // Held until the session is gone from the store, so that no request
+        // starts it again from there in the meantime (issue 62).
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
         let session: Session = match self.get_session(id) {
             Some(session_loop) => (**session_loop.get_session()).clone(),
             None => self.runtime_manager.entity_store().get_session(ctx, id).await?,
@@ -462,8 +477,7 @@ impl SessionManager {
             .map(|c| (c.id, c.security_attributes.clone()))
             .collect();
 
-        self.stop_session(id);
-        self.starts.remove(&id);
+        self.stop_running(id);
 
         let event_bus = self.runtime_manager.event_bus();
         for (channel_id, attributes) in channels {
@@ -479,6 +493,7 @@ impl SessionManager {
         }
         state_store.delete_session_state(id).await?;
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
+        self.starts.remove(&id);
         Ok(removed)
     }
 }
@@ -564,7 +579,7 @@ mod tests {
         assert!(runtime.entity_store().get_session(&ctx, session_id).await.is_ok());
         assert!(manager.get_session(session_id).is_some());
 
-        manager.stop_session(session_id);
+        manager.stop_session(session_id).await;
     }
 
     #[tokio::test]
@@ -620,7 +635,7 @@ mod tests {
             "load must not emit SessionCreated, got {:?}", events
         );
 
-        manager.stop_session(session_id);
+        manager.stop_session(session_id).await;
     }
 
     #[tokio::test]
@@ -643,7 +658,34 @@ mod tests {
 
         let started = drain(&mut rx).into_iter().filter(|e| matches!(e, GlobalEvent::SessionStarted(id) if *id == session_id)).count();
         assert_eq!(started, 1, "the session started once");
-        manager.stop_session(session_id);
+        manager.stop_session(session_id).await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_waits_for_a_start_under_way_and_then_stops_what_it_started() {
+        let runtime = test_runtime();
+        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let ctx = SecurityContext::default();
+        let session = make_session("stopped");
+        let session_id = session.id;
+        runtime.entity_store().create_session(&ctx, &session).await.unwrap();
+
+        // A start under way holds the lock ...
+        let start = manager.start_lock(session_id);
+        let starting = start.lock().await;
+        let stopping = tokio::spawn({
+            let manager = manager.clone();
+            async move { manager.stop_session(session_id).await.is_some() }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!stopping.is_finished(), "the stop waits for the start");
+
+        // ... and registers the session before it lets go: the stop then
+        // finds it, and nothing keeps running.
+        manager.spawn_session(session).await.unwrap();
+        drop(starting);
+        assert!(stopping.await.unwrap(), "the stop stopped what the start started");
+        assert!(manager.get_session(session_id).is_none());
     }
 
     #[tokio::test]
@@ -726,7 +768,7 @@ mod tests {
         let started = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStarted(_, cid) if *cid == channel.id()));
         assert!(created.is_some() && started.is_some() && created < started, "created, then started: {events:?}");
 
-        manager.stop_session(session.id());
+        manager.stop_session(session.id()).await;
     }
 
     #[tokio::test]
@@ -745,7 +787,7 @@ mod tests {
 
         assert_eq!(session.channels().len(), 1);
         assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);
-        manager.stop_session(session.id());
+        manager.stop_session(session.id()).await;
     }
 
     #[tokio::test]
@@ -779,7 +821,7 @@ mod tests {
         session.delete_channel(&ctx, main).await.expect("the last channel may be deleted");
         assert!(session.channels().is_empty());
         session.create_channel(&ctx, spec("again", vec![])).await.expect("and a new one created");
-        manager.stop_session(session.id());
+        manager.stop_session(session.id()).await;
     }
 
     #[tokio::test]
@@ -812,7 +854,7 @@ mod tests {
         assert!(session.channel_by_id(main).is_some(), "a refused deletion leaves the channel");
 
         session.create_channel(&alice_ctx, spec("hers", vec![])).await.expect("the owner may");
-        manager.stop_session(session.id());
+        manager.stop_session(session.id()).await;
     }
 
     #[tokio::test]
@@ -851,7 +893,7 @@ mod tests {
 
         let refused = session.create_channel(&alice_ctx, with("mine", Confidentiality::Private, vec![])).await.expect_err("private is an actor's");
         assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::InvalidConfidentiality(_))), "{refused}");
-        manager.stop_session(session.id());
+        manager.stop_session(session.id()).await;
     }
 
     #[tokio::test]
