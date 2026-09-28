@@ -104,7 +104,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         CHANNEL_HISTORY_KIND,
         Box::new(|_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryReader { reader: context.session_reader.clone() }));
+            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryReader { reader: context.session_reader() }));
             Ok(facets)
         }),
     );

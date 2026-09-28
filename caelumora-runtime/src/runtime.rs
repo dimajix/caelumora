@@ -14,8 +14,19 @@ use crate::moderator_impl::round_robin::RoundRobinPolicy;
 use crate::moderator_impl::PolicyModerator;
 use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{Agent, AgentChannelState, AgentController, AgentId, Personality, PersonalityId};
+use caelumora_model::channel::ChannelId;
+use caelumora_model::confidentiality::ChannelClassification;
+use caelumora_model::event::GlobalEvent;
+use caelumora_model::security::SecurityAttributes;
+use caelumora_model::session::SessionId;
+use caelumora_model::store::StoreResult;
+use caelumora_model::user::{User, UserController};
+use crate::agent_state::AgentStateHandle;
+use crate::event::{EventSubscription, SubscriptionTopic};
+use crate::session_reader::{ChannelSessionReader, SessionReader};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -68,9 +79,11 @@ impl ChannelRuntime {
         self
     }
 
-    /// The runtime of an actor of this channel.
-    pub fn new_actor_runtime(&self) -> ActorRuntime {
-        ActorRuntime { runtime: self.clone() }
+    /// The runtime of `actor` in the channel `channel_id` of session
+    /// `session_id` - the channel this runtime is for, which is not attached
+    /// yet while its actors are built.
+    pub fn new_actor_runtime(&self, actor: ActorId, session_id: SessionId, channel_id: ChannelId) -> ActorRuntime {
+        ActorRuntime { runtime: self.clone(), actor, session_id, channel_id }
     }
 
     /// Makes `channel` reachable from the runtimes of its actors. Called once
@@ -92,16 +105,36 @@ impl ChannelRuntime {
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
 
-/// What an actor runs with: the process-wide services, and the commands and
-/// the channel of the `ChannelRuntime` that created it.
+/// What an actor may subscribe to on the event bus: only what concerns it
+/// (issue 69).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnTopic {
+    /// The actor itself - an agent's or a user's events.
+    Actor,
+    /// The actor's channel.
+    Channel,
+}
+
+/// What an actor runs with (issue 69): the services every actor needs, and
+/// access to what concerns this actor alone - its controller, its state, its
+/// events, a narrow view of its channel. It is made for one actor
+/// (`ChannelRuntime::new_actor_runtime`) and hands out nothing about others,
+/// so it can be given to the actor's components (`ComponentContext`) without
+/// letting them read around the confidentiality rules: other channels are
+/// read through `session_reader()`, which enforces them. The full channel and
+/// session are `pub(crate)`, for the user's commands and the reader.
 #[derive(Debug, Clone)]
 pub struct ActorRuntime {
     runtime: ChannelRuntime,
+    actor: ActorId,
+    session_id: SessionId,
+    channel_id: ChannelId,
 }
 
 impl ActorRuntime {
-    pub fn event_bus(&self) -> Arc<EventBus> {
-        self.runtime.runtime_manager.event_bus()
+    /// The actor this runtime is for.
+    pub fn actor(&self) -> ActorId {
+        self.actor
     }
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
@@ -110,23 +143,10 @@ impl ActorRuntime {
         self.runtime.runtime_manager.llm_client.clone()
     }
 
-    pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime.runtime_manager.state_store() }
-
-    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.runtime.runtime_manager.entity_store() }
-
     pub fn secret_manager(&self) -> Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
-    }
-
-    pub fn controller_manager(&self) -> Arc<ControllerManager> {
-        self.runtime.runtime_manager.controller_manager()
-    }
-
-    /// The owner of every running agent's `AgentState` (issue 62).
-    pub fn agent_states(&self) -> Arc<crate::agent_state::AgentStates> {
-        self.runtime.runtime_manager.agent_states()
     }
 
     /// An executor for the tools `providers` contribute.
@@ -144,16 +164,122 @@ impl ActorRuntime {
         self.runtime.command_executor.clone()
     }
 
+    /// The controller of `agent`, which must be this actor.
+    ///
+    /// # Errors
+    /// If `agent` is not the agent this runtime is for.
+    pub async fn new_agent_controller(&self, agent: Agent) -> Result<Arc<AgentController>> {
+        self.ensure_self(ActorId::Agent(agent.id))?;
+        Ok(self.runtime.runtime_manager.controller_manager().new_agent_controller(self.session_id, agent).await)
+    }
+
+    /// The controller of `user`, which must be this actor.
+    ///
+    /// # Errors
+    /// If `user` is not the user this runtime is for.
+    pub fn new_user_controller(&self, user: User) -> Result<Arc<UserController>> {
+        self.ensure_self(ActorId::User(user.id))?;
+        Ok(self.runtime.runtime_manager.controller_manager().new_user_controller(user))
+    }
+
+    /// The personality `id`, as `security` may read it - the one the agent
+    /// is built from.
+    pub async fn personality(&self, security: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        self.runtime.runtime_manager.entity_store().get_personality(security, id).await
+    }
+
+    /// The agent's own state, shared with its actors in other channels and
+    /// sessions (issue 62); `attributes` are the agent's.
+    ///
+    /// # Errors
+    /// If this actor is no agent, or the state cannot be loaded.
+    pub async fn agent_state(&self, attributes: SecurityAttributes) -> Result<Arc<AgentStateHandle>> {
+        let agent = self.agent_id()?;
+        self.runtime.runtime_manager.agent_states().get(agent, attributes).await
+    }
+
+    /// The state of this agent in its channel, as stored.
+    ///
+    /// # Errors
+    /// If this actor is no agent, or whatever the `StateStore` reports.
+    pub async fn load_channel_state(&self) -> Result<AgentChannelState> {
+        let agent = self.agent_id()?;
+        Ok(self.runtime.runtime_manager.state_store().get_agent_channel_state(agent, self.channel_id).await?)
+    }
+
+    /// Stores the state of this agent in its channel.
+    ///
+    /// # Errors
+    /// If this actor is no agent, or whatever the `StateStore` reports.
+    pub async fn store_channel_state(&self, state: &AgentChannelState) -> Result<()> {
+        let agent = self.agent_id()?;
+        Ok(self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?)
+    }
+
+    /// The global events about `topics` - this actor itself, its channel -
+    /// in one subscription. Nothing about other actors or channels can be
+    /// subscribed to. An actor without a topic of its own (an approver) has
+    /// nothing to hear about itself.
+    pub fn subscribe(&self, topics: &[OwnTopic]) -> EventSubscription {
+        let topics = topics.iter().filter_map(|topic| match topic {
+            OwnTopic::Actor => match self.actor {
+                ActorId::Agent(agent) => Some(SubscriptionTopic::Agent(agent)),
+                ActorId::User(user) => Some(SubscriptionTopic::User(user)),
+                _ => None,
+            },
+            OwnTopic::Channel => Some(SubscriptionTopic::Channel(self.channel_id)),
+        }).collect();
+        self.runtime.runtime_manager.event_bus().subscribe(topics)
+    }
+
+    /// Announces that this agent's state in its channel changed and is
+    /// stored (issue 65), with the channel's attributes and without content.
+    /// Nothing once the channel is gone.
+    pub fn announce_channel_state_changed(&self) {
+        let (Ok(agent), Some(attributes)) = (self.agent_id(), self.channel_attributes()) else { return };
+        self.runtime.runtime_manager.event_bus()
+            .publish(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes);
+    }
+
+    /// The actor's channel as the confidentiality rules see it (issue 61);
+    /// `None` while the channel is being built or once it is gone.
+    pub fn classification(&self) -> Option<ChannelClassification> {
+        self.channel().map(|c| c.classification())
+    }
+
+    /// Who the actor's channel belongs to and who contributes to it.
+    pub fn channel_attributes(&self) -> Option<SecurityAttributes> {
+        self.channel().map(|c| c.security_attributes())
+    }
+
+    /// What the actor may read of the session's other channels: their notes
+    /// and histories, as the confidentiality rules allow (issue 17).
+    pub fn session_reader(&self) -> Arc<dyn SessionReader> {
+        Arc::new(ChannelSessionReader::new(self.clone()))
+    }
+
     /// The channel the actor is in, or `None` while the channel is still
     /// being built or once it is gone.
-    pub fn channel(&self) -> Option<Arc<ChannelLoop>> {
+    pub(crate) fn channel(&self) -> Option<Arc<ChannelLoop>> {
         self.runtime.channel.get().and_then(Weak::upgrade)
     }
 
     /// The session the actor's channel belongs to, or `None` outside of one
     /// (e.g. in tests) or once it is gone.
-    pub fn session(&self) -> Option<Arc<SessionLoop>> {
+    pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
         self.runtime.session.get().and_then(Weak::upgrade)
+    }
+
+    fn ensure_self(&self, actor: ActorId) -> Result<()> {
+        if actor == self.actor {
+            Ok(())
+        } else {
+            Err(anyhow!("The runtime of {} cannot act for {}", self.actor, actor))
+        }
+    }
+
+    fn agent_id(&self) -> Result<AgentId> {
+        self.actor.as_agent_id().ok_or_else(|| anyhow!("{} is no agent", self.actor))
     }
 }
 
@@ -204,7 +330,7 @@ impl RuntimeManager {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
         // Commands run outside of any channel: they read none.
-        let context = ComponentContext::new(security, self.secret_manager(), crate::session_reader::detached());
+        let context = ComponentContext::new(security, self.secret_manager(), None);
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
@@ -252,5 +378,46 @@ impl RuntimeManager {
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
         Ok(Box::new(crate::recorder::BlackholeRecorder::new()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::agent::{Agent, AgentId};
+    use caelumora_model::command::default_commands;
+    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::store_impl::memory::MemoryStore;
+    use caelumora_model::user::{User, UserId};
+
+    fn channel_runtime() -> ChannelRuntime {
+        let store = Arc::new(MemoryStore::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+        let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands()).unwrap());
+        let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
+        ChannelRuntime::new(manager, commands)
+    }
+
+    fn user(id: UserId) -> User {
+        User { id, username: "alice".to_string(), email: String::new(), roles: Vec::new(), security: SecurityContext::default() }
+    }
+
+    #[tokio::test]
+    async fn an_actor_runtime_acts_for_its_own_actor_only() {
+        let runtime = channel_runtime();
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let hers = runtime.new_actor_runtime(ActorId::User(alice), SessionId::new(), ChannelId::new());
+
+        assert!(hers.new_user_controller(user(alice)).is_ok());
+        assert!(hers.new_user_controller(user(bob)).is_err(), "not someone else's controller");
+        assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
+        assert!(hers.agent_state(Default::default()).await.is_err());
+
+        let agent = Agent { id: AgentId::new(), metadata: Default::default(), personality_id: Default::default(), security_attributes: Default::default(), security_context: Default::default() };
+        let its = runtime.new_actor_runtime(ActorId::Agent(agent.id), SessionId::new(), ChannelId::new());
+        assert!(hers.new_agent_controller(agent.clone()).await.is_err(), "not another actor's agent");
+        assert!(its.new_agent_controller(agent).await.is_ok());
+        its.store_channel_state(&AgentChannelState::default()).await.expect("its own state in its channel");
+        its.load_channel_state().await.expect("and back");
     }
 }

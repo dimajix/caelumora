@@ -239,7 +239,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         NOTES_KIND,
         Box::new(|_descriptor, context| {
-            let component = Arc::new(NotesComponent::new(context.session_reader.clone()));
+            let component = Arc::new(NotesComponent::new(context.session_reader()));
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);

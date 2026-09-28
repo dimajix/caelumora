@@ -13,7 +13,6 @@
 
 use anyhow::{Context, Result};
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange};
-use tracing::warn;
 use std::mem;
 use std::sync::Arc;
 
@@ -29,7 +28,6 @@ use caelumora_model::message::{ContextRef, KnowledgeRef, Message, MessageRole, P
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::StateStore;
 use caelumora_model::tool::ToolCallState;
 
 /// An element of the context a `ContextProvider` hands a turn (issue 47):
@@ -340,16 +338,6 @@ impl<'a> TurnContext<'a> {
         self.agent_channel_state.requested_state.take()
     }
 
-    pub async fn store_channel_state(&self, state_store: &Arc<dyn StateStore>) {
-        if let Err(e) = state_store
-            .put_agent_channel_state(self.agent_id, self.channel_id, self.agent_channel_state)
-            .await
-        {
-            warn!(
-                "Cannot store agent channel state of agent {}: {}", self.agent_id, e
-            )
-        }
-    }
 
     /// Which labels the agent may publish to its channel in this turn.
     pub fn publication(&self) -> Publication {

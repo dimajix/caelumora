@@ -1,5 +1,5 @@
 use crate::actor::Actor;
-use crate::runtime::ActorRuntime;
+use crate::runtime::{ActorRuntime, OwnTopic};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -283,7 +283,7 @@ impl Actor for ApproverActor {
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
-        let mut global_rx = self.actor_runtime.event_bus().subscribe_channel(self.channel.id());
+        let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Channel]);
 
         loop {
             let next_timeout = {
@@ -397,7 +397,7 @@ mod tests {
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime();
+            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -487,7 +487,7 @@ mod tests {
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime();
+            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -603,7 +603,7 @@ mod tests {
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime();
+            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);

@@ -3,9 +3,8 @@ use crate::agent_turn::TurnContext;
 use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
-use crate::session_reader::ChannelSessionReader;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
-use crate::runtime::ActorRuntime;
+use crate::runtime::{ActorRuntime, OwnTopic};
 use crate::tool::{ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -23,7 +22,6 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
 use caelumora_model::security::{ActionType, SecurityContext};
-use caelumora_model::store::StateStore;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -40,7 +38,6 @@ pub struct AgentActor {
     channel_id: ChannelId,
     agent_controller: Arc<AgentController>,
     actor_runtime: ActorRuntime,
-    state_store: Arc<dyn StateStore>,
 
     // Components
     context_provider: Vec<ComponentImpl<dyn ContextProvider>>,
@@ -87,26 +84,16 @@ impl AgentActor {
         agent.security_context.session_id = channel.session_id;
         agent.security_context.channel_id = channel.id;
         let security_context = agent.security_context.clone();
-        let personality = actor_runtime
-            .entity_store()
-            .get_personality(&security_context, agent.personality_id)
-            .await?;
+        let personality = actor_runtime.personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let agent_controller = actor_runtime
-            .controller_manager()
-            .new_agent_controller(channel.session_id, agent)
-            .await;
+        let agent_controller = actor_runtime.new_agent_controller(agent).await?;
 
         let components = ComponentContainer::from_config(
             &personality.components,
             &actor_runtime.component_registry(),
-            // Its components read the session's other channels through the
-            // agent's runtime (issue 17).
-            &ComponentContext::new(
-                security_context.clone(),
-                actor_runtime.secret_manager(),
-                Arc::new(ChannelSessionReader::new(actor_runtime.clone())),
-            ),
+            // Its components get the agent's runtime, and read the session's
+            // other channels through it (issues 17, 69).
+            &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager(), Some(actor_runtime.clone())),
         )
         .await?;
         let context_provider = components.get_all::<dyn ContextProvider>(None)?;
@@ -115,15 +102,12 @@ impl AgentActor {
         let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
         let tool_executor = actor_runtime.new_tool_executor(tool_providers)?;
 
-        let state_store = actor_runtime.state_store();
-        let mut agent_channel_state = state_store
-            .get_agent_channel_state(agent_id, channel.id)
-            .await?;
+        let mut agent_channel_state = actor_runtime.load_channel_state().await?;
         agent_channel_state.turn_event_context.session_id = channel.session_id;
         agent_channel_state.turn_event_context.channel_id = channel.id;
         agent_channel_state.turn_event_context.sender_id = ActorId::Agent(agent_id);
         agent_channel_state.turn_event_context.sender_name = agent_controller.name();
-        let agent_state = actor_runtime.agent_states().get(agent_id, agent_controller.load().security_attributes.clone()).await?;
+        let agent_state = actor_runtime.agent_state(agent_controller.load().security_attributes.clone()).await?;
         let processing_state = agent_channel_state.processing_state.clone();
         let state = Mutex::new(AgentActorState {
             agent_id,
@@ -138,7 +122,6 @@ impl AgentActor {
             channel_id: channel.id,
             agent_controller,
             actor_runtime,
-            state_store,
             context_provider,
             perceive_in_processors,
             emit_out_processors,
@@ -248,7 +231,7 @@ impl AgentActor {
             event_security.next(self.id),
         );
         turn_context.set_publication(self.publication().await);
-        turn_context.set_classification(self.actor_runtime.channel().map(|c| c.classification()));
+        turn_context.set_classification(self.actor_runtime.classification());
 
         debug!("Starting generating messages for agent {} {}", self.id, agent_name);
         turn_context.send_event(ActorEvent::ResponseStarted, output).await?;
@@ -307,13 +290,20 @@ impl AgentActor {
         message.reasoning_confidentiality = label.max(calls.unwrap_or(Confidentiality::Public));
     }
 
+    /// Stores the agent's state in its channel as `turn_context` holds it.
+    /// A failure is logged: the actor carries on with the state in memory.
+    async fn store_channel_state(&self, turn_context: &TurnContext<'_>) {
+        if let Err(e) = self.actor_runtime.store_channel_state(turn_context.agent_channel_state()).await {
+            warn!("Cannot store agent channel state of agent {}: {:#}", self.agent_id, e);
+        }
+    }
+
     /// What the agent may publish to its channel in the turn beginning now
     /// (issue 61): the `SecurityManager` is asked for each level a channel
     /// can have, with the agent's channel and in its owner's name. Outside a
     /// channel only what is public.
     async fn publication(&self) -> Publication {
-        let Some(channel) = self.actor_runtime.channel() else { return Publication::default() };
-        let classification = channel.classification();
+        let Some(classification) = self.actor_runtime.classification() else { return Publication::default() };
         let owner = self.agent_controller.load().security_attributes.owner_id;
         let context = SecurityContext::new(owner, classification.session_id, classification.channel_id);
         let security = self.actor_runtime.security_manager();
@@ -506,14 +496,9 @@ impl AgentActor {
         if let Err(e) = turn_context.commit_agent_state().await {
             warn!("{:#}", e);
         }
-        turn_context.store_channel_state(&self.state_store).await;
+        self.store_channel_state(turn_context).await;
         if channel_state_changed {
-            if let Some(channel) = self.actor_runtime.channel() {
-                self.actor_runtime.event_bus().publish(
-                    GlobalEvent::AgentChannelStateChanged(turn_context.session_id, self.channel_id, self.agent_id),
-                    channel.security_attributes(),
-                );
-            }
+            self.actor_runtime.announce_channel_state_changed();
         }
         turn_context.send_event(
             ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
@@ -1107,10 +1092,7 @@ impl Actor for AgentActor {
 
         info!("AgentActor {} is starting", self.id());
 
-        let mut global_rx = self
-            .actor_runtime
-            .event_bus()
-            .subscribe_agent(self.agent_id);
+        let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Actor]);
 
         loop {
             let current_state = self.processing_state.load();
@@ -1150,7 +1132,7 @@ impl Actor for AgentActor {
                 Err(e) => return Err(e),
             };
 
-            turn_context.store_channel_state(&self.state_store).await;
+            self.store_channel_state(&turn_context).await;
 
             match next_state {
                 Some(next) => {
@@ -1196,7 +1178,7 @@ impl Actor for AgentActor {
             info!("Refused reading the context of agent {} for {}", self.id, caller.initiator_id);
             return Err(MessageContextError::Forbidden { actor: self.id });
         }
-        let state = self.state_store.get_agent_channel_state(self.agent_id, self.channel_id).await
+        let state = self.actor_runtime.load_channel_state().await
             .map_err(|e| {
                 warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);
                 MessageContextError::Failed { actor: self.id, message }

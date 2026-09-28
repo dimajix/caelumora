@@ -1,6 +1,6 @@
 use crate::actor::Actor;
 use crate::command::{CommandContext, CommandReply};
-use crate::runtime::ActorRuntime;
+use crate::runtime::{ActorRuntime, OwnTopic};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -48,7 +48,7 @@ impl UserActor {
         user.security.channel_id = channel.id;
         let user_id = user.id;
         let security_context = user.security.clone();
-        let user_controller = actor_runtime.controller_manager().new_user_controller(user);
+        let user_controller = actor_runtime.new_user_controller(user)?;
 
         let (utx,urx) = mpsc::channel(100);
 
@@ -241,11 +241,7 @@ impl Actor for UserActor {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
 
-        let user_id = self.user_id;
-        let mut global_rx = self.actor_runtime.event_bus().subscribe(vec![
-            crate::event::SubscriptionTopic::User(user_id),
-            crate::event::SubscriptionTopic::Channel(self.channel_id),
-        ]);
+        let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Actor, OwnTopic::Channel]);
         let mut rx_closed = false;
         let mut user_rx_closed = false;
         let mut global_rx_closed = false;
@@ -293,7 +289,8 @@ mod tests {
             roles: Vec::new(),
             security: SecurityContext::default(),
         };
-        UserActor::new(&channel, user, runtime.new_actor_runtime()).await.unwrap()
+        let actor_runtime = runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
+        UserActor::new(&channel, user, actor_runtime).await.unwrap()
     }
 
     fn envelope_from(sender: ActorId) -> Envelope {

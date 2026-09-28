@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use crate::runtime::ActorRuntime;
 use crate::session_reader::SessionReader;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,25 +36,33 @@ pub type ComponentResult<T> = Result<T, ComponentError>;
 /// What a component is built with: the facets of the components it
 /// depends on, and the environment of the whole graph - the security
 /// context it is built under, the secrets it may resolve, and, for the
-/// components of an agent in a channel, what it may read of the session's
-/// other channels.
+/// components of an actor, the actor's runtime.
 #[derive(Debug, Clone)]
 pub struct ComponentContext {
     pub deps: HashMap<String, ComponentFacets>,
     pub security_context: SecurityContext,
     pub secret_manager: Arc<SecretManager>,
-    /// Read access to the notes and histories of the session's channels
-    /// (issue 17); `session_reader::detached()` outside of a channel, e.g.
-    /// for the commands of a session.
-    pub session_reader: Arc<dyn SessionReader>,
+    /// The runtime of the actor the components are built for (issue 69);
+    /// `None` for components of no actor, such as the commands of a session.
+    pub actor_runtime: Option<ActorRuntime>,
 }
 
 impl ComponentContext {
     /// The context a component graph is built in, without dependencies:
     /// `ComponentContainer::from_config` gives each component this context
     /// with its own dependencies added.
-    pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>, session_reader: Arc<dyn SessionReader>) -> Self {
-        Self { deps: HashMap::new(), security_context, secret_manager, session_reader }
+    pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>, actor_runtime: Option<ActorRuntime>) -> Self {
+        Self { deps: HashMap::new(), security_context, secret_manager, actor_runtime }
+    }
+
+    /// What the components may read of the session's other channels (issue
+    /// 17): through the actor's runtime, or nothing for components of no
+    /// actor.
+    pub fn session_reader(&self) -> Arc<dyn SessionReader> {
+        match &self.actor_runtime {
+            Some(runtime) => runtime.session_reader(),
+            None => crate::session_reader::detached(),
+        }
     }
 }
 
@@ -342,7 +351,7 @@ mod tests {
         ComponentContext::new(
             SecurityContext { session_id, ..SecurityContext::default() },
             Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
-            crate::session_reader::detached(),
+            None,
         )
     }
 

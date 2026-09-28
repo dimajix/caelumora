@@ -1,6 +1,6 @@
 # 69 — The ActorRuntime hands out more than an actor needs
 
-**Status:** open
+**Status:** done
 **Area:** Open architecture questions
 
 ## The problem
@@ -67,3 +67,51 @@ What the actors actually use is almost only about themselves:
   proposed giving components the `ActorRuntime` instead, as the right level;
   handed out as it is, it would let components read around the
   confidentiality rules, so it is to be restricted to its actor first.
+- **2026-09-28** — Decided with the maintainer:
+  1. The `ActorRuntime` knows its actor: it is made with the `ActorId` and
+     the ids of session and channel (`ChannelRuntime::new_actor_runtime` in
+     `ChannelLoop::new`, where the channel is known - it is not attached yet
+     when the actors are built).
+  2. Broad accessors are replaced by own ones: `new_agent_controller` /
+     `new_user_controller` (an error for anyone but the own actor) instead of
+     `controller_manager()`; `agent_state()` (the own handle) instead of
+     `agent_states()`; `load_channel_state()` / `store_channel_state()` for
+     the own agent and channel instead of `state_store()`; `personality()`
+     instead of `entity_store()`; `subscribe()` (the own subscription, by
+     kind of actor as today) and `announce_channel_state_changed()` instead
+     of `event_bus()`; `classification()` and `channel_attributes()` instead
+     of `channel()` for what agents need. `security_manager`, `llm_client`,
+     `secret_manager`, `component_registry`, `new_tool_executor` and
+     `command_executor` stay.
+  3. The full `ChannelLoop` and `SessionLoop` (`channel()`, `session()`) stay
+     `pub(crate)`: the user actor needs the channel for commands, the
+     `SessionReader` both. Components from other crates cannot reach them;
+     built-in components could, and are held to it by review. Moving the
+     reader into the runtime module for real enforcement was not wanted.
+  4. `ComponentContext` carries `Option<ActorRuntime>` instead of the
+     `SessionReader` - optional, since only actors have an `ActorRuntime`
+     (the session's commands have none). Components build their reader from
+     it (`ActorRuntime::session_reader()`); without a runtime they read
+     nothing (`session_reader::detached()`).
+- **2026-09-28** — Implemented as decided. `ActorRuntime` holds the actor's
+  id and the ids of its session and channel; the broad accessors
+  (`controller_manager`, `agent_states`, `state_store`, `entity_store`,
+  `event_bus`) are gone, replaced by `new_agent_controller`,
+  `new_user_controller`, `agent_state`, `load_channel_state`,
+  `store_channel_state`, `personality`, `subscribe`,
+  `announce_channel_state_changed`, `classification`, `channel_attributes`
+  and `session_reader`; `channel()` and `session()` are `pub(crate)`.
+  `ComponentContext` carries `Option<ActorRuntime>` instead of the reader
+  (`ComponentContext::session_reader()` builds it, or `detached()` without a
+  runtime). `AgentActor` no longer holds the `StateStore`;
+  `TurnContext::store_channel_state` is gone - the agent stores through its
+  runtime. Test `an_actor_runtime_acts_for_its_own_actor_only`. Not changed:
+  the `ChannelRuntime` still offers `state_store`, `event_bus` and
+  `controller_manager` to the `ChannelLoop` - the channel level, noted
+  above as a question of its own.
+- **2026-09-28** — `subscribe()` chose the topics by kind of actor, hidden
+  (an approver fell into the catch-all arm); at the maintainer's question it
+  became `subscribe(&[OwnTopic])` with `OwnTopic::Actor` and
+  `OwnTopic::Channel`, so every caller says what it subscribes to - one
+  subscription, since the user needs both - and still nothing about others
+  can be subscribed to.

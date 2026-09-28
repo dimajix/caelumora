@@ -158,3 +158,7 @@ the turn again.
   the notes panel without reloading the page - the web UI fetched the notes
   on `AgentChannelStateChanged`; other channels' panels stay empty, as notes
   are per channel.
+- **2026-09-28** — Components now take the `SessionReader` from the actor's
+  runtime ([69](69-scoped-actor-runtime.md)): `ComponentContext` carries
+  `Option<ActorRuntime>`, `ComponentContext::session_reader()` builds the
+  reader from it.
