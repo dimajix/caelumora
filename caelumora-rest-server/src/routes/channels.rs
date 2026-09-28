@@ -7,7 +7,9 @@ use crate::error::ApiError;
 use crate::routes::channel_of;
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
+use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
+use caelumora_model::event::GlobalEvent;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
@@ -204,7 +206,9 @@ pub async fn join_channel(
     // twice - once in the snapshot, once as an event - which clients drop by
     // message id.
     let receiver = channel.subscribe();
-    let mut leaving = channel.watch_leaving();
+    // Membership is announced on the event bus (issue 73).
+    let mut memberships = state.runtime_manager.event_bus().subscribe_channel(channel_id).into_receiver();
+    let membership_of = Arc::downgrade(&channel);
     let viewer = user.security_context();
     let snapshot = if options.snapshot { Some(snapshot_event(&state, &channel, &viewer).await) } else { None };
 
@@ -227,14 +231,22 @@ pub async fn join_channel(
         }
     });
     let updates = crate::sse::resync_on_lag(receiver, format!("channel {}", channel_id), resync);
-    // A user removed from the channel stops receiving it (issue 46).
+    // A user removed from the channel stops receiving it (issue 46). Should
+    // the announcement be lost to a lag, whether they still take part is
+    // asked instead; on reconnecting, `channel_of` answers for them.
     let me = viewer_id(&user);
     let updates = updates.take_until(async move {
+        use tokio::sync::broadcast::error::RecvError;
         loop {
-            match leaving.recv().await {
-                Ok(left) if left == me => break,
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            match memberships.recv().await {
+                Ok(GlobalEvent::UserChannelLeft(_, cid, uid)) if cid == channel_id && ActorId::User(uid) == me => break,
+                Ok(_) => continue,
+                Err(RecvError::Lagged(_)) => {
+                    if membership_of.upgrade().is_none_or(|c| c.actor_by_id(me).is_none()) {
+                        break;
+                    }
+                }
+                Err(RecvError::Closed) => break,
             }
         }
     });
@@ -245,7 +257,7 @@ pub async fn join_channel(
 }
 
 /// The actor the authenticated user is.
-fn viewer_id(user: &AuthenticatedUser) -> caelumora_model::actor::ActorId {
+fn viewer_id(user: &AuthenticatedUser) -> ActorId {
     user.security_context().initiator_id
 }
 

@@ -60,7 +60,7 @@ against it, and what came out of the last attempt.
 | [09](09-creating-channels.md) | done | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
 | [46](46-channel-participants.md) | done | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
 | [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
-| [73](73-watch-leaving-duplicates-events.md) | open | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
+| [73](73-watch-leaving-duplicates-events.md) | done | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
 | [67](67-change-channel-level.md) | open | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |

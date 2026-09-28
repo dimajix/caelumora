@@ -1,6 +1,6 @@
 # 73 — `watch_leaving` duplicates what the event bus announces
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -62,3 +62,7 @@ Tentative recommendation: use the bus and remove `watch_leaving` and
 
 - **2026-09-28** — Issue created at the maintainer's request after
   [46](46-channel-participants.md) introduced `watch_leaving`.
+- **2026-09-28** — Done as recommended: `join_channel` subscribes to the
+  channel's topic on the event bus and ends the stream on the user's
+  `UserChannelLeft`; on a lag it ends if the user no longer has an actor in
+  the channel. `left_tx` and `ChannelLoop::watch_leaving` are gone.

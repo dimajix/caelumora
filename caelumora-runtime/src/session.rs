@@ -1087,19 +1087,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_removed_participant_is_gone_and_told_but_the_approver_stays() {
+    async fn a_removed_participant_is_gone_and_announced_but_the_approver_stays() {
         use caelumora_model::channel::ChannelError;
         let runtime = test_runtime();
         let manager = SessionManager::new(runtime.clone());
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
-        let mut leaving = channel.watch_leaving();
         let mut rx = runtime.event_bus().subscribe_all();
 
         channel.remove_participant(&ctx, other).await.expect("removed");
 
         assert!(!channel.members().iter().any(|m| m.id == other), "no longer a member");
-        assert_eq!(leaving.try_recv().expect("whoever follows the channel is told"), other);
         let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
         assert!(!stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         let events = drain(&mut rx);

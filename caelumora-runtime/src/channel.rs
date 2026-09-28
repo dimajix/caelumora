@@ -68,9 +68,6 @@ pub struct ChannelLoop {
     /// Actors for `run` to start or stop; `run` takes the receiver.
     changes_tx: mpsc::UnboundedSender<ActorChange>,
     changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
-    /// Participants who left, for whoever follows the channel on their
-    /// behalf - e.g. a user's event stream, which ends (issue 46).
-    left_tx: broadcast::Sender<ActorId>,
     recorder: Mutex<Box<dyn Recorder>>,
     state: Arc<Mutex<ChannelState>>,
     state_store: Arc<dyn StateStore>,
@@ -118,7 +115,6 @@ impl ChannelLoop {
         }
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
-        let (left_tx, _) = broadcast::channel(16);
         let channel_loop = Arc::new(Self {
             id,
             session_id,
@@ -129,7 +125,6 @@ impl ChannelLoop {
             mentions: ArcSwap::from_pointee(mentions),
             changes_tx,
             changes_rx: Mutex::new(changes_rx),
-            left_tx,
             recorder: Mutex::new(recorder),
             state,
             state_store,
@@ -214,11 +209,6 @@ impl ChannelLoop {
         }
     }
 
-    /// Participants who leave from now on.
-    pub fn watch_leaving(&self) -> broadcast::Receiver<ActorId> {
-        self.left_tx.subscribe()
-    }
-
     /// Adds `participant` - a participant of the session - to the channel on
     /// behalf of `context` (issue 46), seeing as much of the history as
     /// `history` grants. Stored first (`UpdateChannel`, also asked as
@@ -276,8 +266,10 @@ impl ChannelLoop {
     /// Removes `participant` from the channel on behalf of `context` (issue
     /// 46): stored first (`UpdateChannel`), then its actor stopped - an agent
     /// at once, without finishing a turn; the approver discards its pending
-    /// approvals - and whoever follows the channel on its behalf told. Its
-    /// state is kept, for the record and for when it joins again.
+    /// approvals. The leave is announced by the `ChannelController` on the
+    /// event bus, which is how anyone following the channel learns of it
+    /// (issue 73). Its state is kept, for the record and for when it joins
+    /// again.
     ///
     /// # Errors
     /// `ChannelError::ApproverStays` or `NotAParticipant`; a `StoreError` if
@@ -298,7 +290,6 @@ impl ChannelLoop {
         self.moderator.lock().await.remove_actor(actor);
         self.rebuild_mentions();
         let _ = self.changes_tx.send(ActorChange::Stop(participant));
-        let _ = self.left_tx.send(participant);
         info!("{} left channel {}", participant, self.id);
         Ok(())
     }
