@@ -21,8 +21,8 @@ impl MessageProcessor for TranscriptAppender {
         TRANSCRIPT_APPENDER_KIND
     }
 
-    async fn process_messages(&self, input: Vec<Message>, context: &mut Turn) -> Result<Vec<Message>> {
-        context.extend_transcript(input.clone());
+    async fn process_messages(&self, input: Vec<Message>, turn: &mut Turn) -> Result<Vec<Message>> {
+        turn.extend_transcript(input.clone());
         Ok(input)
     }
 }

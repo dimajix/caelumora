@@ -2,16 +2,16 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
+use caelumora_model::confidentiality::Publication;
 use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::confidentiality::Publication;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
 use chrono::{DateTime, Utc};
-use tracing::{debug, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -108,7 +108,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 
     /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value>;
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value>;
     /// Provides a textual description for a specific tool call
     fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
         let tools = self.tools();
@@ -144,11 +144,11 @@ pub enum ExecutionStatus {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    async fn execute(&self, call: &ToolCall, context: &mut Turn) -> ToolResult<ToolCallResult>;
+    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolCallResult>;
     /// Whether the policy permits `call` in `context`. Checked before asking
     /// anyone for approval, so that users are not asked about calls that
     /// would be refused anyway; `execute` checks again.
-    async fn is_permitted(&self, call: &ToolCall, context: &Turn) -> bool;
+    async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
     fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
     fn tools(&self) -> Vec<Tool>;
@@ -193,8 +193,8 @@ impl DefaultToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, context: &mut Turn) -> ToolResult<ToolCallResult> {
-        let security = &context.security_context();
+    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolCallResult> {
+        let security = &turn.security_context();
         debug!(
             "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
             call.function_name,
@@ -225,14 +225,14 @@ impl ToolExecutor for DefaultToolExecutor {
             let tools = provider.tools();
             if let Some(_tool) = tools.iter().find(|t| t.name == *tool_name) {
                 _execution.status = ExecutionStatus::Running;
-                return match provider.execute(tool_name, &call.arguments, context).await {
+                return match provider.execute(tool_name, &call.arguments, turn).await {
                     Ok(value) => {
                         _execution.status = ExecutionStatus::Completed;
                         _execution.finished_at = Some(Utc::now());
                         Ok(ToolCallResult {
                             id: call.id.clone(),
                             tool_name: call.function_name.clone(),
-                            content: successful_result(value, call.confidentiality, context.publication()),
+                            content: successful_result(value, call.confidentiality, turn.publication()),
                             status: ToolResultStatus::Ok,
                             confidentiality: call.confidentiality,
                         })
@@ -249,8 +249,8 @@ impl ToolExecutor for DefaultToolExecutor {
         Err(ToolError::UnknownTool(tool_name.clone()))
     }
 
-    async fn is_permitted(&self, call: &ToolCall, context: &Turn) -> bool {
-        self.security_manager.check(context.security_context(), ActionType::CallTool(call)).await
+    async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool {
+        self.security_manager.check(turn.security_context(), ActionType::CallTool(call)).await
     }
 
     fn describe(&self, call: &ToolCall) -> ToolResult<String> {

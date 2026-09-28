@@ -8,7 +8,7 @@ use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -112,9 +112,9 @@ impl ToolProvider for CreatePlanToolProvider {
         }]
     }
 
-    async fn execute(&self, _name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, _name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         let incoming = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        match context.take_plan() {
+        match turn.take_plan() {
             Some(mut state) => {
                 let start = state.plan.steps.len();
                 state.plan.summary = incoming.summary;
@@ -128,11 +128,11 @@ impl ToolProvider for CreatePlanToolProvider {
                 // Otherwise (mid Step(k), k < start): leave progress
                 // untouched - the current step continues uninterrupted, and
                 // the new steps get picked up once it converges.
-                context.set_plan(state);
+                turn.set_plan(state);
                 Ok(serde_json::json!({ "status": "steps_added" }))
             }
             None => {
-                context.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
+                turn.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
                 Ok(serde_json::json!({ "status": "accepted" }))
             }
         }

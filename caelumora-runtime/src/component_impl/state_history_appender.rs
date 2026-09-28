@@ -3,7 +3,7 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{
-    ComponentFacets, ComponentRegistry
+    ComponentFacets, ComponentRegistry,
 };
 use crate::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
@@ -23,8 +23,8 @@ impl MessageProcessor for StateHistoryAppender {
         STATE_HISTORY_APPENDER_KIND
     }
 
-    async fn process_messages(&self, input: Vec<Message>, context: &mut Turn) -> Result<Vec<Message>> {
-        context.extend_history(input.clone());
+    async fn process_messages(&self, input: Vec<Message>, turn: &mut Turn) -> Result<Vec<Message>> {
+        turn.extend_history(input.clone());
         Ok(input)
     }
 }

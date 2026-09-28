@@ -17,18 +17,18 @@
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
+use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::{note_id, note_text};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
-use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::session_reader::{ChannelNotes, SessionReader};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::Note;
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde_json::Value;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -84,10 +84,10 @@ impl ToolProvider for PrivateNotesComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         match name {
-            NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, context),
-            REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, context),
+            NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, turn),
+            REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, turn),
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
     }
@@ -96,16 +96,16 @@ impl ToolProvider for PrivateNotesComponent {
 impl PrivateNotesComponent {
     /// `note_private(text)`: notes `text` privately, taken over when the
     /// turn completes.
-    fn execute_note_private(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentNotes::new(context, NoteKind::Private).note(note_text(params)?);
+    fn execute_note_private(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id = AgentNotes::new(turn, NoteKind::Private).note(note_text(params)?);
         Ok(serde_json::json!({ "status": "noted privately", "id": id.0 }))
     }
 
     /// `revoke_private_note(id)`: revokes one of the agent's private notes
     /// of this channel.
-    fn execute_revoke_private_note(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
+    fn execute_revoke_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = note_id(params)?;
-        if AgentNotes::new(context, NoteKind::Private).revoke(id) {
+        if AgentNotes::new(turn, NoteKind::Private).revoke(id) {
             Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you have no private note #{id} in this channel")))

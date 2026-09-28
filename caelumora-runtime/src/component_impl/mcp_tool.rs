@@ -4,8 +4,7 @@ use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
-use tracing::warn;
+use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -15,6 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::warn;
 
 pub const MCP_TOOL_PROVIDER_KIND: &str = "mcp_tool";
 
@@ -221,9 +221,9 @@ impl ToolProvider for McpToolProvider {
         self.cached_tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         let remote_name = self.strip_prefix(name)?.to_string();
-        let security_context = context.security_context().clone();
+        let security_context = turn.security_context().clone();
 
         let call_result: McpResult<Value> = async {
             let auth_header = resolve_auth_header(&self.config.auth, &self.secret_manager, &security_context).await?;

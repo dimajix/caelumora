@@ -10,19 +10,19 @@
 //! input (`PromptPosition::BeforeTurnInput`), not in the system prompt, so
 //! that changing notes do not invalidate the prompt cache (issue 47).
 
+use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
-use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::session_reader::{NotReadable, PublishedNotes, SessionReader};
-use caelumora_model::channel::ChannelId;
-use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::channel::ChannelId;
+use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde_json::Value;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -92,11 +92,11 @@ impl ToolProvider for NotesComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         match name {
-            NOTE_TOOL_NAME => self.execute_note(params, context),
-            REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, context),
-            READ_NOTES_TOOL_NAME => self.execute_read_notes(params, context).await,
+            NOTE_TOOL_NAME => self.execute_note(params, turn),
+            REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, turn),
+            READ_NOTES_TOOL_NAME => self.execute_read_notes(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
     }
@@ -104,15 +104,15 @@ impl ToolProvider for NotesComponent {
 
 impl NotesComponent {
     /// `note(text)`: notes `text`, published when the turn completes.
-    fn execute_note(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentNotes::new(context, NoteKind::Public).note(note_text(params)?);
+    fn execute_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id = AgentNotes::new(turn, NoteKind::Public).note(note_text(params)?);
         Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
     }
 
     /// `revoke_note(id)`: revokes one of the agent's own current notes.
-    fn execute_revoke_note(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
+    fn execute_revoke_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = note_id(params)?;
-        if AgentNotes::new(context, NoteKind::Public).revoke(id) {
+        if AgentNotes::new(turn, NoteKind::Public).revoke(id) {
             Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))

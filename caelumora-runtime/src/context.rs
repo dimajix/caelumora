@@ -49,10 +49,10 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     }
     /// The part for the turn `context` is about to start; empty text for
     /// none.
-    async fn get_prompt(&self, context: &Turn) -> Result<Prompt>;
+    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt>;
 }
 
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
-    async fn current_context(&self, state: &mut Turn) -> Result<()>;
+    async fn current_context(&self, turn: &mut Turn) -> Result<()>;
 }

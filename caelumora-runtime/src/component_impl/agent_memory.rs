@@ -15,8 +15,8 @@
 //! `ToolConfidentiality::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only.
 
-use crate::agent_turn::Turn;
 use crate::agent_memory::AgentMemory;
+use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::note_text;
 use crate::context::{Prompt, PromptPosition, PromptProvider};
@@ -70,10 +70,10 @@ impl ToolProvider for AgentMemoryComponent {
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         match name {
-            REMEMBER_TOOL_NAME => self.execute_remember(params, context),
-            FORGET_TOOL_NAME => self.execute_forget(params, context),
+            REMEMBER_TOOL_NAME => self.execute_remember(params, turn),
+            FORGET_TOOL_NAME => self.execute_forget(params, turn),
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
     }
@@ -82,9 +82,9 @@ impl ToolProvider for AgentMemoryComponent {
 impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
-    fn execute_remember(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
+    fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let text = note_text(params)?;
-        let id = AgentMemory::new(context).remember(text)
+        let id = AgentMemory::new(turn).remember(text)
             .ok_or_else(|| ToolError::ExecutionFailed("nothing can be remembered here".to_string()))?;
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }

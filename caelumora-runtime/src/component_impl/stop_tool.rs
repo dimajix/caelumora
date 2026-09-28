@@ -6,7 +6,7 @@ use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -46,16 +46,16 @@ impl ToolProvider for StopToolProvider {
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, _params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         match name {
             "stop" | "bye" => {
-                info!("Stopping agent {} {}", context.agent_id, context.agent_name);
-                context.request_state(ActorState::Sleeping);
+                info!("Stopping agent {} {}", turn.agent_id, turn.agent_name);
+                turn.request_state(ActorState::Sleeping);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
             "silence" => {
-                info!("Silencing agent {} {}", context.agent_id, context.agent_name);
-                context.request_state(ActorState::Stopping);
+                info!("Silencing agent {} {}", turn.agent_id, turn.agent_name);
+                turn.request_state(ActorState::Stopping);
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {

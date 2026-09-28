@@ -11,7 +11,7 @@ use crate::session_reader::{NotReadable, SessionReader};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource, Message};
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -54,7 +54,7 @@ impl ToolProvider for ChannelHistoryReader {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, context: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         if name != READ_HISTORY_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
@@ -70,7 +70,7 @@ impl ToolProvider for ChannelHistoryReader {
             None => ToolError::ExecutionFailed(format!("reading failed: {e}")),
         })?;
         let (channel, history) = (history.channel, history.history);
-        context.record_knowledge(KnowledgeRef { channel: channel.id, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
+        turn.record_knowledge(KnowledgeRef { channel: channel.id, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
 
         let (messages, more) = select(&history.messages, last, query);
         Ok(serde_json::json!({
