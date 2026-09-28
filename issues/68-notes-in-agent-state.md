@@ -1,6 +1,6 @@
 # 68 — Notes are bound to one channel of the agent
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -65,3 +65,33 @@ live there instead.
   step 3 of [62](62-json-store-concurrent-writes.md): notes an agent creates
   across channels and sessions are a candidate first user of `AgentState`,
   and the current notes might move there.
+- **2026-09-28** — Decided with the maintainer. Since step 3 of
+  [62](62-json-store-concurrent-writes.md), agent memory (`agent_memory`,
+  in `AgentState`) is the "third kind" considered above; private notes and
+  memory overlap in who sees them and in the recall rule, and differ in
+  scope (channel vs. agent, session vs. beyond), in revoking across channels
+  and in branching. Proposed was to retire private notes in favour of
+  memory. Decided instead: **both stay, as alternatives a personality
+  chooses from** - the flexibility the component architecture is for. The
+  seeded personalities show both: one with `memory`, one with
+  `private_notes`. Private notes do not move into `AgentState`.
+  - **Memory is written directly** (`remember`), not committed in a separate
+    step. The deviation from principle 7 in [19](19-memory-tiers.md) is
+    deliberate: what matters is that memory from public channels is not
+    bound to a session - deleting the session keeps the knowledge (the
+    `AgentState` is not deleted with a session). Entries from `session` or
+    `channel` channels stay recallable only there; once that session is
+    gone, nothing can recall them any more.
+  - For memory to outlive a session in practice, the agent has to outlive
+    it too: agents of `SessionScope` are created anew for every session. The
+    seeded memory agent is therefore of `UserScope`, reused in every session
+    of the same user.
+- **2026-09-28** — Implemented in the seeded data: `create_personality`
+  takes `PrivateKnowledge::Memory` or `PrivateKnowledge::PrivateNotes`;
+  `jonathan-assistant` has `agent_memory`, `sassy-assistant`
+  `private_notes` (and the context provider depends on the one it has).
+  Jonathan is `UserScope` in the templates that call him "Jonathan".
+  Verified with fresh stores: Jonathan remembered an entry in a `public`
+  channel; the session was deleted; in a new session he is the same agent
+  and recalls it ("Yes, #1."). No code outside the seed changed - both
+  components existed already.

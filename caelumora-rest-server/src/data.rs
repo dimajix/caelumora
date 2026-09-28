@@ -48,6 +48,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             "jonathan-assistant",
             "A helpful and polite assistant",
             "Your name is Jonathan Heart. You are a self-made millionaire. You always wanted to be a quiz-master.",
+            PrivateKnowledge::Memory,
         );
         store.put_personality(&ctx, &p).await?;
         p
@@ -60,6 +61,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             "sassy-assistant",
             "A sassy and witty assistant",
             "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant who loves to play quiz games.",
+            PrivateKnowledge::PrivateNotes,
         );
         store.put_personality(&ctx, &p).await?;
         p
@@ -111,7 +113,9 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
                     name: "Jonathan".to_string(),
-                    scope: ScopeTemplate::SessionScope,
+                    // One Jonathan per user, in all their sessions: his
+                    // memory outlives each of them (issue 68).
+                    scope: ScopeTemplate::UserScope,
                     personality_id: jonathan.id.clone(),
                 },
                 ParticipantTemplate::Agent {
@@ -150,7 +154,9 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent {
                     name: "Jonathan".to_string(),
-                    scope: ScopeTemplate::SessionScope,
+                    // One Jonathan per user, in all their sessions: his
+                    // memory outlives each of them (issue 68).
+                    scope: ScopeTemplate::UserScope,
                     personality_id: jonathan.id.clone(),
                 },
                 ParticipantTemplate::Agent {
@@ -178,7 +184,20 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     Ok(())
 }
 
-fn create_personality(name: &str, description: &str, system_prompt: &str) -> Personality {
+/// What a seeded personality keeps for itself alone (issue 68): two
+/// alternatives, chosen per personality - the flexibility components are for.
+enum PrivateKnowledge {
+    /// `agent_memory`: across the agent's channels and sessions.
+    Memory,
+    /// `private_notes`: per channel, branching with it.
+    PrivateNotes,
+}
+
+fn create_personality(name: &str, description: &str, system_prompt: &str, private_knowledge: PrivateKnowledge) -> Personality {
+    let (private_id, private_kind) = match private_knowledge {
+        PrivateKnowledge::Memory => ("memory", AGENT_MEMORY_KIND),
+        PrivateKnowledge::PrivateNotes => ("private-notes", PRIVATE_NOTES_KIND),
+    };
     let mut components = ComponentConfig::default();
     components.component_nodes.push(ComponentDescriptor {
         id: "history-appender".to_string(),
@@ -193,7 +212,7 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         id: "context".to_string(),
         kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
         params: serde_json::Value::Null,
-        deps: vec!["system-prompt".to_string(), "notes".to_string(), "private-notes".to_string(), "memory".to_string()],
+        deps: vec!["system-prompt".to_string(), "notes".to_string(), private_id.to_string()],
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
         security_attributes: Default::default(),
@@ -244,17 +263,8 @@ fn create_personality(name: &str, description: &str, system_prompt: &str) -> Per
         security_attributes: Default::default(),
     });
     components.component_nodes.push(ComponentDescriptor {
-        id: "private-notes".to_string(),
-        kind: PRIVATE_NOTES_KIND.to_string(),
-        params: serde_json::Value::Null,
-        deps: vec![],
-        tags: vec![],
-        fail_policy: ComponentFailPolicy::FailClosed,
-        security_attributes: Default::default(),
-    });
-    components.component_nodes.push(ComponentDescriptor {
-        id: "memory".to_string(),
-        kind: AGENT_MEMORY_KIND.to_string(),
+        id: private_id.to_string(),
+        kind: private_kind.to_string(),
         params: serde_json::Value::Null,
         deps: vec![],
         tags: vec![],

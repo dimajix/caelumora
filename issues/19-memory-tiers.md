@@ -325,3 +325,10 @@ built on the commit of point 7.
   recalled by the same rule. The per-user check "every user of the reading
   channel may `ReadChannel` the source" is replaced, because it changed its
   answer whenever someone joined or left.
+- **2026-09-28** — Principle 7 ("knowledge that outlives the session is
+  committed, not written") is deliberately not followed by agent memory
+  ([62](62-json-store-concurrent-writes.md), [68](68-notes-in-agent-state.md)):
+  `remember` writes directly, and entries written in `public` channels are
+  recalled in the agent's other sessions too and survive the deletion of
+  the session they were written in. Knowledge from more confidential
+  channels stays bound to them by the recall rule.
