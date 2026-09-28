@@ -1,6 +1,6 @@
 # 71 — Access-check helpers bloat the interfaces of the entities
 
-**Status:** in progress
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -160,3 +160,16 @@ To be decided with the maintainer before anything is changed.
   AGENTS.md and ARCHITECTURE.md. `history_visible_to` stays on `ChannelLoop`
   for now: the maintainer wants to think about it again, which is why the
   issue stays in progress.
+- **2026-09-28** — `history_visible_to` decided with the maintainer: it stays
+  on `ChannelLoop`, which owns the history and its limits, as the one place
+  the limits are applied - for REST, for `read_history` (through the new
+  `history_with_digest_visible_to`) and for the transcript of a joining
+  agent. Putting it into the `ChannelSessionReader` was considered and
+  rejected: users over REST (the owner may read without an actor in the
+  channel) and the seeding at join time are not readers of an actor. The
+  model keeps `HistoryAccess`, `HistoryStart` and `HistoryLimit` as data
+  only; `HistoryAccess::resolve`, `HistoryStart::visible` and
+  `Channel::visible_history` moved into private functions of the runtime's
+  channel module. That the digest recorded by `read_history` still names
+  the whole history is [72](72-history-digest-ignores-limit.md). Status set
+  to done.

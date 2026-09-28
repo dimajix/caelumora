@@ -10,7 +10,7 @@ use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemor
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, HistoryAccess, Participant};
+use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
@@ -192,10 +192,26 @@ impl ChannelLoop {
     }
 
     /// The part of the history `participant` may see (issue 46): all of it,
-    /// unless they joined later with a limit.
+    /// unless they joined later with a limit. The one place the limits are
+    /// applied - for users over REST, for agents reading the channel and for
+    /// the transcript of an agent that joins.
     pub async fn history_visible_to(&self, participant: ActorId) -> Vec<Message> {
-        let history = self.history().await;
-        self.channel.load().visible_history(participant, history)
+        self.visible_to(participant, self.history().await)
+    }
+
+    /// The visible part of the history with the digest of the history, as
+    /// `history_with_digest` - for readers who record what they read.
+    pub async fn history_with_digest_visible_to(&self, participant: ActorId) -> (Vec<Message>, Option<caelumora_model::digest::Digest>) {
+        let (history, digest) = self.history_with_digest().await;
+        (self.visible_to(participant, history), digest)
+    }
+
+    /// The part of `history` - this channel's - that `participant` may see.
+    fn visible_to(&self, participant: ActorId, history: Vec<Message>) -> Vec<Message> {
+        match self.channel.load().history_limits.iter().find(|l| l.participant == participant) {
+            Some(limit) => visible_from(limit.start, history),
+            None => history,
+        }
     }
 
     /// Participants who leave from now on.
@@ -225,12 +241,12 @@ impl ChannelLoop {
         self.check(context, ActionType::JoinChannel { participant, channel: &classification }, "adding a participant to").await?;
 
         let messages = self.history().await;
-        let start = history.resolve(&messages, chrono::Utc::now());
+        let start = history_start(history, &messages, chrono::Utc::now());
         self.channel.add_participant(context, found.clone(), start).await?;
 
         let started = async {
             if let ActorId::Agent(agent) = participant {
-                self.seed_transcript(agent, self.channel.load().visible_history(participant, messages)).await?;
+                self.seed_transcript(agent, self.visible_to(participant, messages)).await?;
             }
             Self::create_actor(self.channel.clone(), &found, &self.runtime).await
         }.await;
@@ -741,6 +757,40 @@ impl ChannelLoop {
     }
 }
 
+/// Where the view of `history` begins for a participant granted `access`,
+/// fixed now - so that "the last three days" does not move day by day.
+/// `None` if all of it is visible.
+fn history_start(access: HistoryAccess, history: &[Message], now: chrono::DateTime<chrono::Utc>) -> Option<HistoryStart> {
+    let last = || history.last().map(|m| HistoryStart::After(m.id));
+    let from = |index: usize| match index {
+        0 => None,
+        i if i >= history.len() => last(),
+        i => Some(HistoryStart::From(history[i].id)),
+    };
+    match access {
+        HistoryAccess::All => None,
+        HistoryAccess::None => last(),
+        HistoryAccess::LastMessages { count } => from(history.len().saturating_sub(count as usize)),
+        HistoryAccess::LastDays { count } => {
+            let since = now - chrono::Duration::days(i64::from(count));
+            from(history.iter().position(|m| m.timestamp >= since).unwrap_or(history.len()))
+        }
+    }
+}
+
+/// The part of `history` visible from `start` - nothing if the message it
+/// begins at is not there, rather than more than was granted.
+fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
+    let (id, skip) = match start {
+        HistoryStart::From(id) => (id, 0),
+        HistoryStart::After(id) => (id, 1),
+    };
+    match history.iter().position(|m| m.id == id) {
+        Some(index) => history.into_iter().skip(index + skip).collect(),
+        None => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,6 +896,59 @@ mod tests {
         let allowed = channel_with(participants, Arc::new(DummySecurityManager::new())).await;
         allowed.cancel(&context).await.expect("permitted");
         allowed.wakeup(&context).await.expect("permitted");
+    }
+
+    /// Five messages, one a day, the last one `now`.
+    fn daily(now: chrono::DateTime<chrono::Utc>) -> Vec<Message> {
+        (0..5).rev()
+            .map(|days| Message { id: caelumora_model::message::MessageId::new(), timestamp: now - chrono::Duration::days(days), ..Message::default() })
+            .collect()
+    }
+
+    fn ids(history: &[Message]) -> Vec<caelumora_model::message::MessageId> {
+        history.iter().map(|m| m.id).collect()
+    }
+
+    fn granted(access: HistoryAccess, history: &[Message], now: chrono::DateTime<chrono::Utc>) -> Vec<caelumora_model::message::MessageId> {
+        let messages = match history_start(access, history, now) {
+            Some(start) => visible_from(start, history.to_vec()),
+            None => history.to_vec(),
+        };
+        ids(&messages)
+    }
+
+    #[test]
+    fn history_access_all_and_none_grant_everything_and_nothing() {
+        let now = chrono::Utc::now();
+        let history = daily(now);
+        assert_eq!(granted(HistoryAccess::All, &history, now), ids(&history), "All sees every message");
+        assert!(granted(HistoryAccess::None, &history, now).is_empty(), "None sees no earlier message");
+        assert_eq!(history_start(HistoryAccess::None, &[], now), None, "an empty channel has nothing to hide");
+    }
+
+    #[test]
+    fn history_access_last_messages_and_days_cut_the_history() {
+        let now = chrono::Utc::now();
+        let history = daily(now);
+        assert_eq!(granted(HistoryAccess::LastMessages { count: 2 }, &history, now), ids(&history[3..]));
+        assert_eq!(granted(HistoryAccess::LastMessages { count: 9 }, &history, now), ids(&history),
+                   "more than there is grants all of it");
+        assert!(granted(HistoryAccess::LastMessages { count: 0 }, &history, now).is_empty());
+        // Messages 1, 2 and 3 days ago plus today's - within the last three days.
+        assert_eq!(granted(HistoryAccess::LastDays { count: 3 }, &history, now), ids(&history[1..]));
+        assert!(granted(HistoryAccess::LastDays { count: 3 }, &history, now + chrono::Duration::days(10)).is_empty(),
+                "nothing within the last days sees nothing");
+    }
+
+    #[test]
+    fn a_history_start_shows_later_messages_and_nothing_if_its_message_is_gone() {
+        let now = chrono::Utc::now();
+        let mut later = daily(now);
+        let start = HistoryStart::After(later[1].id);
+        later.push(Message { id: caelumora_model::message::MessageId::new(), ..Message::default() });
+        assert_eq!(ids(&visible_from(start, later.clone())), ids(&later[2..]), "messages sent after joining stay visible");
+        assert!(visible_from(HistoryStart::From(caelumora_model::message::MessageId::new()), later).is_empty(),
+                "an unknown start shows nothing rather than everything");
     }
 
     #[tokio::test]

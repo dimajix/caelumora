@@ -206,10 +206,9 @@ impl SessionReader for ChannelSessionReader {
 
     async fn history_of(&self, name: &str) -> Result<ChannelHistory> {
         let channel = self.readable(name).await?;
-        let (messages, digest) = channel.history_with_digest().await;
         // A reader who joined the channel later sees no more of its history
         // than was granted - also through this tool (issue 46).
-        let messages = channel.channel().visible_history(self.runtime.actor(), messages);
+        let (messages, digest) = channel.history_with_digest_visible_to(self.runtime.actor()).await;
         Ok(ChannelHistory { channel: info(&channel), messages, digest })
     }
 

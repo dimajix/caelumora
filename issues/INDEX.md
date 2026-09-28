@@ -60,6 +60,7 @@ against it, and what came out of the last attempt.
 | [09](09-creating-channels.md) | done | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
 | [46](46-channel-participants.md) | done | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
 | [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
+| [73](73-watch-leaving-duplicates-events.md) | open | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
 | [67](67-change-channel-level.md) | open | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
@@ -131,6 +132,7 @@ against it, and what came out of the last attempt.
 | [63](63-reasoning-in-model-input.md) | open | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
 | [66](66-channel-level-in-prompt.md) | done | Private notes and results of tools the channel does not see are not marked as private for the model, which may quote them in its always-published answer. |
+| [72](72-history-digest-ignores-limit.md) | open | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 
@@ -139,7 +141,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [36](36-replace-serde-yaml.md) | done |
-| [71](71-access-helpers-on-entities.md) | in progress | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
+| [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 
 ## Open architecture questions

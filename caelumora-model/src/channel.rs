@@ -3,8 +3,7 @@ use crate::agent::Agent;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::confidentiality::{ChannelClassification, Confidentiality};
 use crate::event::{EventPublisher, GlobalEvent};
-use crate::message::{Message, MessageHistory, MessageId};
-use chrono::{DateTime, Utc};
+use crate::message::{MessageHistory, MessageId};
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
 use crate::security::SecurityContext;
@@ -203,7 +202,8 @@ pub struct Channel {
 }
 
 /// How much of a channel's history a new participant may see, as asked for
-/// when adding them (issue 46).
+/// when adding them (issue 46). Data only: the `ChannelLoop` turns it into a
+/// `HistoryStart` and applies it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryAccess {
@@ -212,28 +212,6 @@ pub enum HistoryAccess {
     None,
     LastDays { count: u32 },
     LastMessages { count: u32 },
-}
-
-impl HistoryAccess {
-    /// Where the view of `history` begins, fixed now - so that "the last
-    /// three days" does not move day by day. `None` if all of it is visible.
-    pub fn resolve(&self, history: &[Message], now: DateTime<Utc>) -> Option<HistoryStart> {
-        let last = || history.last().map(|m| HistoryStart::After(m.id));
-        let from = |index: usize| match index {
-            0 => None,
-            i if i >= history.len() => last(),
-            i => Some(HistoryStart::From(history[i].id)),
-        };
-        match *self {
-            HistoryAccess::All => None,
-            HistoryAccess::None => last(),
-            HistoryAccess::LastMessages { count } => from(history.len().saturating_sub(count as usize)),
-            HistoryAccess::LastDays { count } => {
-                let since = now - chrono::Duration::days(i64::from(count));
-                from(history.iter().position(|m| m.timestamp >= since).unwrap_or(history.len()))
-            }
-        }
-    }
 }
 
 /// Where a participant's view of a channel's history begins.
@@ -245,21 +223,6 @@ pub enum HistoryStart {
     /// After this message: what came before the participant joined is not
     /// visible.
     After(MessageId),
-}
-
-impl HistoryStart {
-    /// The part of `history` visible from here - nothing if the message it
-    /// begins at is not there, rather than more than was granted.
-    pub fn visible(&self, history: Vec<Message>) -> Vec<Message> {
-        let (id, skip) = match *self {
-            HistoryStart::From(id) => (id, 0),
-            HistoryStart::After(id) => (id, 1),
-        };
-        match history.iter().position(|m| m.id == id) {
-            Some(index) => history.into_iter().skip(index + skip).collect(),
-            None => Vec::new(),
-        }
-    }
 }
 
 /// The view of the history granted to one participant.
@@ -291,15 +254,6 @@ impl Channel {
             security_attributes,
             confidentiality: Confidentiality::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
-        }
-    }
-
-    /// The part of `history` - this channel's - that `participant` may see:
-    /// all of it, unless they joined later with a limit (issue 46).
-    pub fn visible_history(&self, participant: ActorId, history: Vec<Message>) -> Vec<Message> {
-        match self.history_limits.iter().find(|l| l.participant == participant) {
-            Some(limit) => limit.start.visible(history),
-            None => history,
         }
     }
 
@@ -371,62 +325,3 @@ pub fn participant_attributes(owner: ActorId, participants: &[Participant]) -> S
     SecurityAttributes { owner_id: owner, contributors }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Five messages, one a day, the last one `now`.
-    fn history(now: DateTime<Utc>) -> Vec<Message> {
-        (0..5).rev()
-            .map(|days| Message { id: MessageId::new(), timestamp: now - chrono::Duration::days(days), ..Message::default() })
-            .collect()
-    }
-
-    fn visible(access: HistoryAccess, history: &[Message], now: DateTime<Utc>) -> Vec<MessageId> {
-        let messages = history.to_vec();
-        let messages = match access.resolve(history, now) {
-            Some(start) => start.visible(messages),
-            None => messages,
-        };
-        messages.into_iter().map(|m| m.id).collect()
-    }
-
-    fn ids(history: &[Message]) -> Vec<MessageId> {
-        history.iter().map(|m| m.id).collect()
-    }
-
-    #[test]
-    fn history_access_all_and_none_grant_everything_and_nothing() {
-        let now = Utc::now();
-        let history = history(now);
-        assert_eq!(visible(HistoryAccess::All, &history, now), ids(&history), "All sees every message");
-        assert!(visible(HistoryAccess::None, &history, now).is_empty(), "None sees no earlier message");
-        assert_eq!(HistoryAccess::None.resolve(&[], now), None, "an empty channel has nothing to hide");
-    }
-
-    #[test]
-    fn history_access_last_messages_and_days_cut_the_history() {
-        let now = Utc::now();
-        let history = history(now);
-        assert_eq!(visible(HistoryAccess::LastMessages { count: 2 }, &history, now), ids(&history[3..]));
-        assert_eq!(visible(HistoryAccess::LastMessages { count: 9 }, &history, now), ids(&history),
-                   "more than there is grants all of it");
-        assert!(visible(HistoryAccess::LastMessages { count: 0 }, &history, now).is_empty());
-        // Messages 1, 2 and 3 days ago plus today's - within the last three days.
-        assert_eq!(visible(HistoryAccess::LastDays { count: 3 }, &history, now), ids(&history[1..]));
-        assert!(visible(HistoryAccess::LastDays { count: 3 }, &history, now + chrono::Duration::days(10)).is_empty(),
-                "nothing within the last days sees nothing");
-    }
-
-    #[test]
-    fn history_start_shows_later_messages_and_nothing_if_its_message_is_gone() {
-        let now = Utc::now();
-        let history = history(now);
-        let start = HistoryStart::After(history[1].id);
-        let mut later = history.clone();
-        later.push(Message { id: MessageId::new(), ..Message::default() });
-        assert_eq!(ids(&start.visible(later.clone())), ids(&later[2..]), "messages sent after joining stay visible");
-        assert!(HistoryStart::From(MessageId::new()).visible(later).is_empty(),
-                "an unknown start shows nothing rather than everything");
-    }
-}
