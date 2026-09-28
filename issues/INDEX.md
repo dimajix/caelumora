@@ -158,6 +158,7 @@ against it, and what came out of the last attempt.
 | [92](92-ledger-for-notes-and-memory.md) | open | `NoteChain` and `MemoryChain` are the same type written twice. |
 | [98](98-context-provider-facet.md) | open | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | open | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
+| [117](117-message-prev-id.md) | open | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
 
 ## Maintenance
 
@@ -166,9 +167,13 @@ against it, and what came out of the last attempt.
 | [36](36-replace-serde-yaml.md) | done | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 | [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
-| [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–111 and their recommended order. |
+| [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
 | [96](96-config-unification.md) | open | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
-| [97](97-small-model-unifications.md) | open | Small duplications in the model and the runtime core, collected. |
+| [97](97-small-model-unifications.md) | open | Six helper functions in five modules define the default confidentiality level. |
+| [112](112-id-types.md) | open | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
+| [113](113-error-shapes.md) | open | "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it. |
+| [114](114-moderator-details.md) | open | `ModeratorActors` uses a concurrent map behind `&mut self`, downcasts for a kind the id already tells, and clones every message twice. |
+| [115](115-filtering-event-sender.md) | open | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |
 | [105](105-seed-data-twice.md) | open | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
 | [109](109-code-hygiene.md) | open | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
 | [110](110-docs-contradicting-code.md) | open | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
@@ -186,6 +191,7 @@ against it, and what came out of the last attempt.
 | [91](91-double-actor-table.md) | open | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
 | [99](99-component-factory-and-tags.md) | open | The component factory is synchronous while building is async, and component tags have no reader. |
 | [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
+| [116](116-session-loop-channel-tables.md) | open | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 
 ## Open architecture questions
 

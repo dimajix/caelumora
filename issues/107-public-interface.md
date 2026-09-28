@@ -29,6 +29,7 @@ its own file and outside tests. The result is three tables in
   only by `actor_impl`, `RuntimeManager::{agent_states, new_moderator}`,
   `Turn::{has_plan, has_tool_calls, requested_state}` (peek + take → take),
   `Transcript::prefix` vs. `prefix_entries`, `Channel::new` (only fixtures),
+  `Envelope::forward_with_response` (≡ `forward_with_event(FullResponseGenerated(m))`),
   `LLMError::describe_chain`, `viewer_id`, `may_read_channel` in REST,
   `TokenService::lifetime_secs`, the cookie and header constants.
 - **Should be `pub(crate)`:** the half of `Turn` only `AgentActor` uses

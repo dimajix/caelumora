@@ -1,6 +1,6 @@
 # Strukturreview — `caelumora-model`, `caelumora-runtime`, `caelumora-rest-server`
 
-Befund vom 2026-09-28. Die daraus abgeleiteten Issues sind [74](../issues/74-refactoring-epic.md) (Epic) und 75–111.
+Befund vom 2026-09-28. Die daraus abgeleiteten Issues sind [74](../issues/74-refactoring-epic.md) (Epic) und 75–117.
 
 Stand: 2026-09-28, auf `main` bei `ed9abe8`.
 

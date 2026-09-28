@@ -22,7 +22,8 @@ Against the rules in AGENTS.md, outside tests:
   `ChannelLoop::spawn_actors`, `handle_stopping`; `SessionLoop::channel_by_name`,
   `ControllerManager::new_agent_controller`, `SessionController::new`;
   `MemoryStore::read_lock`/`write_lock` return `StoreResult` but always
-  `Ok`.
+  `Ok` (30 `?` for nothing), and `get_user`/`find_user_by_name` clone the
+  whole map instead of one entry (`memory.rs:306, 312`).
 - **Locks and clones:** `ChannelLoop::state: Arc<Mutex<…>>` and
   `processing_state: Arc<AtomicU8>` are never cloned; `route_event` clones
   the whole envelope (`channel.rs:658`) though `route_event_impl` only reads;

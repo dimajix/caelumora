@@ -11,7 +11,7 @@ behavioural errors and a number of structural weaknesses: three state
 machines for one fact, turn logic sitting on the actor instead of the turn,
 orchestration in the model, duplicated shapes (chains, stores, run loops,
 lookups, error mappers), and a wider public surface than the code uses. Each
-finding is its own issue, 75–111. This issue is the bracket: it lists them
+finding is its own issue, 75–117. This issue is the bracket: it lists them
 in the recommended order and records what the open issues forbid.
 
 ## Why it matters
@@ -68,14 +68,17 @@ open issue relies on it. The short form:
     [99](99-component-factory-and-tags.md).
 12. [95](95-require-for-security-manager.md), [96](96-config-unification.md),
     [97](97-small-model-unifications.md), [101](101-chain-component-helpers.md),
-    [111](111-tool-parameter-reading.md).
+    [111](111-tool-parameter-reading.md), [112](112-id-types.md),
+    [113](113-error-shapes.md), [114](114-moderator-details.md),
+    [115](115-filtering-event-sender.md), [117](117-message-prev-id.md);
+    [116](116-session-loop-channel-tables.md) together with 91.
 13. [107](107-public-interface.md), [108](108-serde-defaults-for-legacy.md),
     [109](109-code-hygiene.md), [110](110-docs-contradicting-code.md) in one pass each.
 14. [105](105-seed-data-twice.md) — planned separately, it pulls the TUI along.
 
 ## Done when
 
-Every issue 75–111 is `done` or `rejected`, and this one records what
+Every issue 75–117 is `done` or `rejected`, and this one records what
 changed in the order along the way.
 
 ## History
