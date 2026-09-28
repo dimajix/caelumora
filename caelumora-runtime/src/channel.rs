@@ -141,15 +141,10 @@ impl ChannelLoop {
         self.event_tx.subscribe()
     }
 
-    pub async fn history(&self) -> Vec<Message> {
+    /// The whole history, whoever may see it; outside the channel, what a
+    /// participant sees is `visible_history`.
+    pub(crate) async fn history(&self) -> Vec<Message> {
         self.state.lock().await.history.messages()
-    }
-
-    /// The history together with its digest - the state read, for whoever
-    /// records what it read (issue 17).
-    pub async fn history_with_digest(&self) -> (Vec<Message>, Option<caelumora_model::digest::Digest>) {
-        let state = self.state.lock().await;
-        (state.history.messages(), state.history.digest())
     }
 
 
@@ -187,26 +182,22 @@ impl ChannelLoop {
     }
 
     /// The part of the history `participant` may see (issue 46): all of it,
-    /// unless they joined later with a limit. The one place the limits are
-    /// applied - for users over REST, for agents reading the channel and for
-    /// the transcript of an agent that joins.
-    pub async fn history_visible_to(&self, participant: ActorId) -> Vec<Message> {
-        self.visible_to(participant, self.history().await)
+    /// unless they joined later with a limit - with what a reader records as
+    /// read (issue 72). The one place the limits are applied: for users over
+    /// REST, for agents reading the channel and for the transcript of an
+    /// agent that joins.
+    pub async fn visible_history(&self, participant: ActorId) -> VisibleHistory {
+        let (history, digest) = {
+            let state = self.state.lock().await;
+            (state.history.messages(), state.history.digest())
+        };
+        let start = self.history_start_of(participant);
+        VisibleHistory { messages: visible_part(start, history), digest, start }
     }
 
-    /// The visible part of the history with the digest of the history, as
-    /// `history_with_digest` - for readers who record what they read.
-    pub async fn history_with_digest_visible_to(&self, participant: ActorId) -> (Vec<Message>, Option<caelumora_model::digest::Digest>) {
-        let (history, digest) = self.history_with_digest().await;
-        (self.visible_to(participant, history), digest)
-    }
-
-    /// The part of `history` - this channel's - that `participant` may see.
-    fn visible_to(&self, participant: ActorId, history: Vec<Message>) -> Vec<Message> {
-        match self.channel.load().history_limits.iter().find(|l| l.participant == participant) {
-            Some(limit) => visible_from(limit.start, history),
-            None => history,
-        }
+    /// Where `participant`'s view of the history begins; `None`: all of it.
+    fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
+        self.channel.load().history_limits.iter().find(|l| l.participant == participant).map(|l| l.start)
     }
 
     /// Adds `participant` - a participant of the session - to the channel on
@@ -236,7 +227,7 @@ impl ChannelLoop {
 
         let started = async {
             if let ActorId::Agent(agent) = participant {
-                self.seed_transcript(agent, self.visible_to(participant, messages)).await?;
+                self.seed_transcript(agent, visible_part(self.history_start_of(participant), messages)).await?;
             }
             Self::create_actor(self.channel.clone(), &found, &self.runtime).await
         }.await;
@@ -745,6 +736,27 @@ impl ChannelLoop {
         let mut recorder = self.recorder.lock().await;
         recorder.record_receive(&event).await;
         drop(recorder);
+    }
+}
+
+/// The part of a channel's history a participant sees (issue 46), as
+/// `ChannelLoop::visible_history` gives it.
+#[derive(Debug, Clone)]
+pub struct VisibleHistory {
+    /// The messages they see, from `start` on.
+    pub messages: Vec<Message>,
+    /// The digest of the channel's history at the time: up to where it was
+    /// read. It names the whole chain, so it is recorded with `start`.
+    pub digest: Option<caelumora_model::digest::Digest>,
+    /// Where their view begins - from where it was read; `None`: all of it.
+    pub start: Option<HistoryStart>,
+}
+
+/// `history` as seen from `start`: all of it if there is none.
+fn visible_part(start: Option<HistoryStart>, history: Vec<Message>) -> Vec<Message> {
+    match start {
+        Some(start) => visible_from(start, history),
+        None => history,
     }
 }
 

@@ -1,6 +1,6 @@
 # 72 — The recorded read of a history ignores the reader's limit
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -55,3 +55,17 @@ start says "from where".
   `ChannelLoop` ([71](71-access-helpers-on-entities.md)), where it was
   noticed that `history_with_digest_visible_to` returns the digest of the
   whole history.
+- **2026-09-28** — Done with the first option. `KnowledgeSource::History`
+  carries `start: Option<HistoryStart>` next to the digest (absent in old
+  records: all of it). `ChannelLoop` has a single public method for the
+  history, `visible_history(participant) -> VisibleHistory { messages,
+  digest, start }`; `history_with_digest` and
+  `history_with_digest_visible_to` are gone and `history()` is
+  crate-internal, as the maintainer asked for one method rather than pairs
+  with and without digest. Returning the `MessageHistory` itself was
+  considered and rejected: cut at a start it is no longer a valid chain.
+  `read_history` records digest and start; REST passes the start on as
+  `history_start`, and the context panel says "from when it was granted".
+  A correction to the description: the context panel did not resolve
+  history references to messages, so nothing was shown that should not
+  have been - the record was wrong, not yet the display.

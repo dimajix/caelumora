@@ -309,5 +309,10 @@ export interface KnowledgeRef {
   agent_id: ActorId | null;
   agent_name: string | null;
   digest: string | null;
+  /**
+   * For `history`: where the reader's view began if they joined later with a
+   * limit (issue 72) - from or after that message; absent means all of it.
+   */
+  history_start?: {from: string} | {after: string};
 }
 

@@ -1062,9 +1062,14 @@ mod tests {
         assert!(channel.members().iter().any(|m| m.id == other), "a member now");
         let other_user = match other { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
         assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
-        let visible: Vec<_> = channel.history_visible_to(other).await.into_iter().map(|m| m.content).collect();
+        let visible: Vec<_> = channel.visible_history(other).await.messages.into_iter().map(|m| m.content).collect();
         assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
-        assert_eq!(channel.history_visible_to(ctx.initiator_id).await.len(), before.len(), "the others still see everything");
+        assert_eq!(channel.visible_history(ctx.initiator_id).await.messages.len(), before.len(), "the others still see everything");
+        // What a reader records as read says from where (issue 72).
+        let (limited, full) = (channel.visible_history(other).await, channel.visible_history(ctx.initiator_id).await);
+        assert_eq!(limited.start, Some(caelumora_model::channel::HistoryStart::From(before[2].id)), "from the last message");
+        assert_eq!(full.start, None, "all of it");
+        assert_eq!(limited.digest, full.digest, "up to where is the same for both");
         let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         assert_eq!(stored.history_limits.len(), 1, "with the limit");
@@ -1075,7 +1080,7 @@ mod tests {
         // What is written after joining is visible.
         writer.send_message("four".to_string()).await.unwrap();
         history_of(&channel, 4).await;
-        assert_eq!(channel.history_visible_to(other).await.len(), 2);
+        assert_eq!(channel.visible_history(other).await.messages.len(), 2);
 
         let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let again = channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");

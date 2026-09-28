@@ -449,7 +449,7 @@ mod tests {
         let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
         let read = caelumora_model::message::KnowledgeRef {
             channel: Default::default(),
-            source: caelumora_model::message::KnowledgeSource::History { digest: None },
+            source: caelumora_model::message::KnowledgeSource::History { digest: None, start: None },
         };
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());

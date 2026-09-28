@@ -138,7 +138,7 @@ pub async fn get_channel_messages(
     let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
 
     // As much of it as the user may see (issue 46).
-    let messages = channel.history_visible_to(user.security_context().initiator_id).await;
+    let messages = channel.visible_history(user.security_context().initiator_id).await.messages;
 
     Ok(Json(messages))
 }
@@ -161,7 +161,7 @@ pub async fn get_notes(
 /// The state of `channel` right now, for a stream that starts with a
 /// snapshot (issue 34).
 async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> ChannelSnapshot {
-    let (messages, has_more) = recent_messages(channel.history_visible_to(viewer.initiator_id).await);
+    let (messages, has_more) = recent_messages(channel.visible_history(viewer.initiator_id).await.messages);
     let notes = channel.published_notes().await.unwrap_or_else(|e| {
         // The conversation can be shown without them.
         tracing::warn!("Reading the notes of channel {} failed: {:#}", channel.id(), e);
@@ -455,11 +455,11 @@ pub async fn message_context(
 /// session still has them.
 fn knowledge_response(session: &SessionLoop, knowledge: &KnowledgeRef) -> KnowledgeRefResponse {
     let channel = session.channel_by_id(knowledge.channel);
-    let (source, agent_id, digest) = match knowledge.source {
-        KnowledgeSource::Notes { agent, digest } => ("notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest),
-        KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest),
-        KnowledgeSource::History { digest } => ("history", None, digest),
-        KnowledgeSource::Memory { agent, digest } => ("memory", Some(caelumora_model::actor::ActorId::Agent(agent)), digest),
+    let (source, agent_id, digest, history_start) = match knowledge.source {
+        KnowledgeSource::Notes { agent, digest } => ("notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest, None),
+        KnowledgeSource::History { digest, start } => ("history", None, digest, start),
+        KnowledgeSource::Memory { agent, digest } => ("memory", Some(caelumora_model::actor::ActorId::Agent(agent)), digest, None),
     };
     let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
     KnowledgeRefResponse {
@@ -469,6 +469,7 @@ fn knowledge_response(session: &SessionLoop, knowledge: &KnowledgeRef) -> Knowle
         agent_id,
         agent_name,
         digest,
+        history_start,
     }
 }
 

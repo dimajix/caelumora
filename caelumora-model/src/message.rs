@@ -290,8 +290,14 @@ pub enum KnowledgeSource {
     /// An agent's private notes in the channel (issue 51), read by that
     /// agent; the digest of its private note chain.
     PrivateNotes { agent: crate::agent::AgentId, digest: Option<Digest> },
-    /// The channel's history; the digest of it when it was read.
-    History { digest: Option<Digest> },
+    /// The channel's history; the digest of it when it was read - up to
+    /// where - and, for a reader who joined later with a limit, where their
+    /// view began (issue 72). `None`: all of it.
+    History {
+        digest: Option<Digest>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<crate::channel::HistoryStart>,
+    },
     /// An agent's memory (issue 62), read by that agent; the digest of its
     /// memory chain. Recorded with the channel it was read in.
     Memory { agent: crate::agent::AgentId, digest: Option<Digest> },

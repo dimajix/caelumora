@@ -204,6 +204,10 @@ pub struct KnowledgeRefResponse {
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
     pub digest: Option<caelumora_model::digest::Digest>,
+    /// For `"history"`: where the reader's view began, if they joined later
+    /// with a limit (issue 72) - `{"from": id}` or `{"after": id}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_start: Option<caelumora_model::channel::HistoryStart>,
 }
 
 /// One element of a `MessageContextResponse`.

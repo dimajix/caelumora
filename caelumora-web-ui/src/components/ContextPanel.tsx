@@ -100,7 +100,8 @@ function knowledgeLabel(knowledge: KnowledgeRef): string {
     case 'memory':
       return `Memory of ${agent}, as recalled in ${channel}`;
     default:
-      return `History of ${channel}`;
+      // A reader who joined later saw only part of it (issue 72).
+      return knowledge.history_start ? `History of ${channel}, from when it was granted` : `History of ${channel}`;
   }
 }
 

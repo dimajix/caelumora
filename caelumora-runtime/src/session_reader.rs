@@ -20,7 +20,6 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::digest::Digest;
-use caelumora_model::message::Message;
 use caelumora_model::note::Note;
 use caelumora_model::security::AccessQuestions;
 use std::fmt::Debug;
@@ -43,12 +42,12 @@ pub struct ChannelInfo {
     pub name: String,
 }
 
-/// The history of a channel as read, with its digest.
+/// The history of a channel as the reader may see it, with what to record
+/// as read.
 #[derive(Debug, Clone)]
 pub struct ChannelHistory {
     pub channel: ChannelInfo,
-    pub messages: Vec<Message>,
-    pub digest: Option<Digest>,
+    pub history: crate::channel::VisibleHistory,
 }
 
 /// Notes of one agent from one channel.
@@ -208,8 +207,8 @@ impl SessionReader for ChannelSessionReader {
         let channel = self.readable(name).await?;
         // A reader who joined the channel later sees no more of its history
         // than was granted - also through this tool (issue 46).
-        let (messages, digest) = channel.history_with_digest_visible_to(self.runtime.actor()).await;
-        Ok(ChannelHistory { channel: info(&channel), messages, digest })
+        let history = channel.visible_history(self.runtime.actor()).await;
+        Ok(ChannelHistory { channel: info(&channel), history })
     }
 
     async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>> {

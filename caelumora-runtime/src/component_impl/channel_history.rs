@@ -69,11 +69,12 @@ impl ToolProvider for ChannelHistoryReader {
             Some(not_readable) => ToolError::InvalidParameter(not_readable.to_string()),
             None => ToolError::ExecutionFailed(format!("reading failed: {e}")),
         })?;
-        context.record_knowledge(KnowledgeRef { channel: history.channel.id, source: KnowledgeSource::History { digest: history.digest } });
+        let (channel, history) = (history.channel, history.history);
+        context.record_knowledge(KnowledgeRef { channel: channel.id, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
 
         let (messages, more) = select(&history.messages, last, query);
         Ok(serde_json::json!({
-            "channel": history.channel.name,
+            "channel": channel.name,
             "messages": messages.iter().map(|m| serde_json::json!({
                 "from": m.sender_name,
                 "at": m.timestamp.to_rfc3339(),
