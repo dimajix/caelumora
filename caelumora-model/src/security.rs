@@ -52,6 +52,10 @@ pub enum ActionType<'a> {
     UpdateChannel(&'a SecurityAttributes),
     /// Deleting a channel, with its attributes as stored.
     DeleteChannel(&'a SecurityAttributes),
+    /// `participant` joining `channel` (issue 46) - besides `UpdateChannel`,
+    /// which decides who may add participants. Where a policy compares what
+    /// a participant is cleared for with the channel's level (issue 64).
+    JoinChannel { participant: ActorId, channel: &'a ChannelClassification },
     /// Reading a user, e.g. receiving the events about them; carries
     /// attributes owned by the user themselves.
     GetUser(&'a SecurityAttributes),
@@ -235,6 +239,9 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
             ActionType::ReadChannel { source, reader } => source.readable_from(reader),
             ActionType::Publish { label, channel, .. } => channel.admits(label),
+            // Clearances are not modelled yet: whoever may change the
+            // channel may add anyone of the session to it.
+            ActionType::JoinChannel { .. } => true,
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)

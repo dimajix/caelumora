@@ -93,6 +93,15 @@ pub struct RenameSessionRequest {
     pub name: String,
 }
 
+/// A participant of the session to add to a channel (issue 46), with how
+/// much of the channel's history they may see - all of it unless asked.
+#[derive(Debug, Deserialize)]
+pub struct AddParticipantRequest {
+    pub participant: ActorId,
+    #[serde(default)]
+    pub history: caelumora_model::channel::HistoryAccess,
+}
+
 /// A channel to create in a running session (issue 09).
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {

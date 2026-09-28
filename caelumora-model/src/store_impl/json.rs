@@ -990,6 +990,7 @@ mod tests {
             name: "general".to_string(),
             moderator: "broadcast".to_string(),
             confidentiality: crate::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
         };

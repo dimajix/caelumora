@@ -597,6 +597,7 @@ mod tests {
             name: "main".to_string(),
             moderator: "broadcast".to_string(),
             confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: session.security_attributes.clone(),
         }
@@ -1018,6 +1019,126 @@ mod tests {
         main.update_name(&as_user(alice), "lobby".to_string()).await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
         assert_eq!(store.get_channel(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
+        manager.stop_session(running.id()).await;
+    }
+
+    /// Waits until `channel`'s history holds `count` messages.
+    async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<caelumora_model::message::Message> {
+        for _ in 0..100 {
+            let history = channel.history().await;
+            if history.len() >= count {
+                return history;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the channel's history never reached {count} messages");
+    }
+
+    #[tokio::test]
+    async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
+        use caelumora_model::channel::{ChannelError, HistoryAccess};
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let owner = match ctx.initiator_id { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
+        let writer = channel.user_actor(owner).expect("the creator takes part");
+        for text in ["one", "two", "three"] {
+            writer.send_message(text.to_string()).await.unwrap();
+        }
+        let before = history_of(&channel, 3).await;
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        channel.add_participant(&ctx, other, HistoryAccess::LastMessages { count: 1 }).await.expect("a user of the session joins");
+
+        assert!(channel.members().iter().any(|m| m.id == other), "a member now");
+        let other_user = match other { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
+        assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
+        let visible: Vec<_> = channel.history_visible_to(other).await.into_iter().map(|m| m.content).collect();
+        assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
+        assert_eq!(channel.history_visible_to(ctx.initiator_id).await.len(), before.len(), "the others still see everything");
+        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
+        assert_eq!(stored.history_limits.len(), 1, "with the limit");
+        let events = drain(&mut rx);
+        assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelJoined(_, cid, uid) if *cid == channel.id() && *uid == other_user)),
+                "the join is announced: {events:?}");
+
+        // What is written after joining is visible.
+        writer.send_message("four".to_string()).await.unwrap();
+        history_of(&channel, 4).await;
+        assert_eq!(channel.history_visible_to(other).await.len(), 2);
+
+        let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
+        let again = channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");
+        assert!(matches!(refusal(again), ChannelError::AlreadyParticipant { .. }));
+        let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
+        let outside = channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("not in the session");
+        assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
+        manager.stop_session(session.id()).await;
+    }
+
+    #[tokio::test]
+    async fn a_removed_participant_is_gone_and_told_but_the_approver_stays() {
+        use caelumora_model::channel::ChannelError;
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
+        let mut leaving = channel.watch_leaving();
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        channel.remove_participant(&ctx, other).await.expect("removed");
+
+        assert!(!channel.members().iter().any(|m| m.id == other), "no longer a member");
+        assert_eq!(leaving.try_recv().expect("whoever follows the channel is told"), other);
+        let stored = runtime.entity_store().get_channel(&ctx, channel.id()).await.unwrap();
+        assert!(!stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
+        let events = drain(&mut rx);
+        assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelLeft(_, cid, _) if *cid == channel.id())),
+                "the leave is announced: {events:?}");
+
+        let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
+        let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
+        assert!(matches!(refusal(gone), ChannelError::NotAParticipant { .. }));
+        let approver = channel.members().into_iter().find(|m| m.kind == "approver").expect("an approver").id;
+        let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
+        assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
+        manager.stop_session(session.id()).await;
+    }
+
+    #[tokio::test]
+    async fn only_who_may_change_a_channel_adds_or_removes_its_participants() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::channel::HistoryAccess;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::session::Participant;
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
+        let manager = SessionManager::new(runtime);
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice_id, bob_id, carol_id) = (ActorId::User(alice.id), ActorId::User(bob.id), ActorId::User(carol.id));
+        let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.participants = vec![Participant::User(alice), Participant::User(bob), Participant::User(carol)];
+        session.security_attributes = SecurityAttributes { owner_id: alice_id, contributors: vec![bob_id, carol_id] };
+        let running = create(&manager, &as_user(alice_id), session).await.unwrap();
+        let channel = running.create_channel(&as_user(alice_id), spec("side", vec![bob_id])).await.unwrap();
+
+        let refused = channel.add_participant(&as_user(bob_id), carol_id, HistoryAccess::All).await.expect_err("a participant may not");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        let refused = channel.remove_participant(&as_user(bob_id), bob_id).await.expect_err("nor remove anyone");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert_eq!(channel.members().len(), 3, "alice, bob and the approver, unchanged");
+
+        channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");
+        channel.remove_participant(&as_user(alice_id), bob_id).await.expect("the owner may");
+        assert!(channel.members().iter().any(|m| m.id == carol_id) && !channel.members().iter().any(|m| m.id == bob_id));
         manager.stop_session(running.id()).await;
     }
 

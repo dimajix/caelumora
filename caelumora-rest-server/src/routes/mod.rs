@@ -45,9 +45,13 @@ pub fn session_error(error: anyhow::Error, session_id: SessionId, act: &str, doi
 }
 
 /// The channel `channel_id` of `session`, or a `404`.
-pub fn channel_of(session: &SessionLoop, channel_id: ChannelId) -> Result<Arc<ChannelLoop>, ApiError> {
-    session.channel_by_id(channel_id)
-        .ok_or_else(|| ApiError::not_found("channel_not_found", format!("Channel {} does not exist in this session", channel_id)))
+/// The channel `channel_id` of `session`, if `viewer` may read it (issue 70):
+/// one they may not read is reported as absent, like one that does not
+/// exist, so that channels cannot be probed.
+pub async fn channel_of(session: &SessionLoop, channel_id: ChannelId, viewer: &caelumora_model::security::SecurityContext) -> Result<Arc<ChannelLoop>, ApiError> {
+    let not_found = || ApiError::not_found("channel_not_found", format!("Channel {} does not exist in this session", channel_id));
+    let channel = session.channel_by_id(channel_id).ok_or_else(not_found)?;
+    if channel.may_be_read_by(viewer).await { Ok(channel) } else { Err(not_found()) }
 }
 
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a
@@ -69,6 +73,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
         .route("/sessions/{id}/channels/{cid}/notes", get(channels::get_notes))
+        .route("/sessions/{id}/channels/{cid}/participants", post(channels::add_participant))
+        .route("/sessions/{id}/channels/{cid}/participants/{aid}", axum::routing::delete(channels::remove_participant))
         .route(
             "/sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context",
             get(channels::message_context),

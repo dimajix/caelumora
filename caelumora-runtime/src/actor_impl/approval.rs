@@ -53,9 +53,23 @@ impl ApproverActor {
         channel.participants.iter().filter(|p| matches!(p, Participant::User(_))).count()
     }
 
+    /// Follows the channel's participants (issue 46), which its
+    /// `ChannelController` has already changed when the event arrives: an
+    /// agent that left takes its pending approvals with it - they are
+    /// answered as denied, so that nobody keeps waiting for them - and every
+    /// join or leave may decide a pending approval, since the number of users
+    /// changed.
     async fn handle_global_event(&self, event:&GlobalEvent, output: &dyn EventSender) {
         match event {
-            GlobalEvent::AgentChannelJoined(_, cid, _) | GlobalEvent::AgentChannelLeft(_, cid, _) |
+            GlobalEvent::AgentChannelLeft(_, cid, agent) if *cid == self.channel.id() => {
+                if let Err(e) = self.discard_pending_of(*agent, output).await {
+                    warn!("ApproverActor error discarding the approvals of agent {}: {:?}", agent, e);
+                }
+                if let Err(e) = self.recheck_all_pending(output).await {
+                    warn!("ApproverActor error rechecking approvals: {:?}", e);
+                }
+            }
+            GlobalEvent::AgentChannelJoined(_, cid, _) |
             GlobalEvent::UserChannelJoined(_, cid, _) | GlobalEvent::UserChannelLeft(_, cid, _) if *cid == self.channel.id() => {
                 if let Err(e) = self.recheck_all_pending(output).await {
                     warn!("ApproverActor error rechecking approvals: {:?}", e);
@@ -63,6 +77,18 @@ impl ApproverActor {
             }
             _ => {}
         }
+    }
+
+    /// Answers the pending approvals of `agent` as denied and forgets them.
+    async fn discard_pending_of(&self, agent: AgentId, output: &dyn EventSender) -> Result<()> {
+        let mut pending = self.pending.lock().await;
+        let ids: Vec<ApprovalId> = pending.iter().filter(|(_, p)| p.agent_id == agent).map(|(id, _)| *id).collect();
+        for id in ids {
+            if let Some(p) = pending.remove(&id) {
+                self.send_decision(p, ApprovalStatus::Denied, output).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn handle_envelope(&self, env: Envelope, output: &dyn EventSender) -> Result<()> {
@@ -315,7 +341,6 @@ impl Actor for ApproverActor {
                 }
                 maybe_global = global_rx.recv() => {
                     if let Some(event) = maybe_global {
-                        self.channel.process_global_event(&event).await;
                         self.handle_global_event(&event, &*tx).await;
                     }
                 }
@@ -388,6 +413,7 @@ mod tests {
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
             confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
             participants: vec![
                 Participant::User(user1),
                 Participant::Approver(approver.clone()),
@@ -395,10 +421,10 @@ mod tests {
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
 
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
-        let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
+        let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
@@ -479,16 +505,17 @@ mod tests {
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
             confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
             participants: vec![
                 Participant::Approver(approver.clone()),
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
 
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
-        let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
+        let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
@@ -515,8 +542,9 @@ mod tests {
         };
         store.create_user(&caelumora_model::security::SecurityContext::default(), &user1).await.unwrap();
 
-        let join_event = GlobalEvent::UserChannelJoined(session_id, channel_id, user1_id);
-        runtime_manager.event_bus().publish(join_event, Default::default());
+        // Joining goes through the channel's controller, which announces it
+        // (issue 46).
+        channel_controller.add_participant(&caelumora_model::security::SecurityContext::system(), Participant::User(user1.clone()), None).await.unwrap();
 
         // Give some time for the event to be processed
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -593,6 +621,7 @@ mod tests {
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
             confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
             participants: vec![
                 Participant::Approver(approver.clone()),
                 Participant::User(user1.clone()),
@@ -601,10 +630,10 @@ mod tests {
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
 
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), Some(store.clone())));
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
-        let actor = ApproverActor::new(channel_controller, approver, actor_runtime);
+        let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
 
@@ -637,8 +666,7 @@ mod tests {
         tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::User(user1_id), "u1".to_string()), ActorEvent::ApprovalGranted(ApprovalResponse { id: new_approval_id, agent_id }))).await.unwrap();
 
         // 3. User 2 leaves
-        let leave_event = GlobalEvent::UserChannelLeft(session_id, channel_id, user2_id);
-        runtime_manager.event_bus().publish(leave_event, Default::default());
+        channel_controller.remove_participant(&caelumora_model::security::SecurityContext::system(), ActorId::User(user2_id)).await.unwrap();
 
         // Give some time for the event to be processed
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -650,5 +678,64 @@ mod tests {
         } else {
             panic!("Expected ToolExecutionGranted, got {:?}", decision_env.event);
         }
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_leaves_takes_its_pending_approvals_with_it() {
+        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
+        let runtime_manager = Arc::new(
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
+        );
+        let session_id = SessionId::new();
+        let channel_id = ChannelId::new();
+        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::All };
+        let user = User { id: UserId(Uuid::new_v4()), username: "u1".to_string(), email: "".to_string(), roles: vec![], security: Default::default() };
+        let channel = Channel {
+            id: channel_id,
+            session_id,
+            name: "test".to_string(),
+            moderator: "broadcast".to_string(),
+            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
+            participants: vec![Participant::Approver(approver.clone()), Participant::User(user)],
+            security_attributes: caelumora_model::security::SecurityAttributes::default(),
+        };
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
+            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
+        let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));
+        let (tx, rx) = mpsc::channel(100);
+        let (output_tx, mut output_rx) = mpsc::channel(100);
+        let running = actor.clone();
+        tokio::spawn(async move {
+            let a: &dyn Actor = running.as_ref();
+            a.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output_tx))).await.unwrap();
+        });
+
+        let agent_id = AgentId::new();
+        let approval_id = ApprovalId::new();
+        let request = ApprovalRequest {
+            id: approval_id,
+            session_id,
+            channel_id,
+            agent_id,
+            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), confidentiality: Default::default() },
+            description: "test".to_string(),
+        };
+        tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ApprovalRequested(request))).await.unwrap();
+        output_rx.recv().await.expect("the request is put to the users");
+
+        // The agent leaves before anyone decided (issue 46).
+        runtime_manager.event_bus().publish(GlobalEvent::AgentChannelLeft(session_id, channel_id, agent_id), Default::default());
+
+        // Nobody keeps waiting: the request is answered as denied.
+        let decision = tokio::time::timeout(tokio::time::Duration::from_secs(2), output_rx.recv()).await
+            .expect("answered at once")
+            .unwrap();
+        match decision.event {
+            ActorEvent::ApprovalDenied(res) => assert_eq!(res.id, approval_id),
+            other => panic!("Expected ApprovalDenied, got {:?}", other.kind()),
+        }
+        assert!(actor.pending.lock().await.is_empty(), "nothing pending any more");
     }
 }

@@ -1,6 +1,6 @@
 # 46 — Participants cannot be added to or removed from a channel
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions & channels
 
 ## The problem
@@ -119,3 +119,22 @@ they refer to `ActorId`s, not to handles.
   state kept. Since channels live inside the session document, storing a
   channel change would need the `SessionController`; channels become
   entities of their own first: [70](70-channels-as-entities.md).
+- **2026-09-28** — Step 1, runtime and REST. The `ChannelController` is the
+  one place that changes the participants: `add_participant` (with an
+  optional `HistoryStart`) and `remove_participant` recompute the security
+  attributes, store the channel (`UpdateChannel`) and announce the join or
+  leave; `process_global_event` is gone, so an event no longer changes a
+  channel. `Channel.history_limits` holds the boundary per participant
+  (`HistoryAccess::resolve` turns the caller's choice into a
+  `HistoryStart`, a message id); `Channel::visible_history` applies it. The
+  `ChannelLoop` checks `JoinChannel`, starts or stops the actor (the run loop
+  takes changes over a queue and ends once its last actor has ended), tells
+  the moderator and rebuilds the mentions. A joining agent gets the visible
+  history into its transcript, as far as it does not have it - rejoining
+  adds only what it missed. A removed actor is told through `watch_leaving`,
+  which ends a user's SSE stream of the channel; the approver answers a
+  leaving agent's pending approvals as denied, so no turn keeps waiting. A
+  channel the viewer may not read (`GetChannel`) is now answered as absent by
+  REST and left out of lists and snapshots. REST:
+  `POST …/channels/{cid}/participants` (`{participant, history}`) and
+  `DELETE …/channels/{cid}/participants/{aid}`. The web UI follows as step 2.

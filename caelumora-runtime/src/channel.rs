@@ -8,10 +8,10 @@ use crate::runtime::ChannelRuntime;
 use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
+use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, Participant};
+use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, HistoryAccess, Participant};
 use caelumora_model::confidentiality::ChannelClassification;
-use caelumora_model::event::GlobalEvent;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
@@ -47,15 +47,30 @@ struct ActorHandle {
     sender: Box<dyn EventSender>,
 }
 
+/// A change to the actors a running channel runs (issue 46), carried out by
+/// `run`, which owns their tasks.
+enum ActorChange {
+    Start(Arc<dyn Actor>),
+    Stop(ActorId),
+}
+
 #[derive(Debug)]
 pub struct ChannelLoop {
     id: ChannelId,
     session_id: SessionId,
     channel: Arc<ChannelController>,
     runtime: ChannelRuntime,
-    actors: HashMap<ActorId,Arc<dyn Actor>>,
+    /// The actors of the participants; replaced as a whole when someone
+    /// joins or leaves (issue 46), so that every reader sees one set.
+    actors: ArcSwap<HashMap<ActorId, Arc<dyn Actor>>>,
     moderator: Mutex<Box<dyn Moderator>>,
-    mentions: MentionDirectory,
+    mentions: ArcSwap<MentionDirectory>,
+    /// Actors for `run` to start or stop; `run` takes the receiver.
+    changes_tx: mpsc::UnboundedSender<ActorChange>,
+    changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
+    /// Participants who left, for whoever follows the channel on their
+    /// behalf - e.g. a user's event stream, which ends (issue 46).
+    left_tx: broadcast::Sender<ActorId>,
     recorder: Mutex<Box<dyn Recorder>>,
     state: Arc<Mutex<ChannelState>>,
     state_store: Arc<dyn StateStore>,
@@ -102,14 +117,19 @@ impl ChannelLoop {
             warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", id, handle);
         }
 
+        let (changes_tx, changes_rx) = mpsc::unbounded_channel();
+        let (left_tx, _) = broadcast::channel(16);
         let channel_loop = Arc::new(Self {
             id,
             session_id,
             channel: channel_controller,
             runtime,
-            actors,
+            actors: ArcSwap::from_pointee(actors),
             moderator: Mutex::new(moderator),
-            mentions,
+            mentions: ArcSwap::from_pointee(mentions),
+            changes_tx,
+            changes_rx: Mutex::new(changes_rx),
+            left_tx,
             recorder: Mutex::new(recorder),
             state,
             state_store,
@@ -171,6 +191,131 @@ impl ChannelLoop {
         Ok(self.channel.update_name(context, new_name).await?)
     }
 
+    /// Whether `context` may read this channel - its members, its history,
+    /// its events (`GetChannel` with its attributes, issue 70): its owner and
+    /// its participants.
+    pub async fn may_be_read_by(&self, context: &SecurityContext) -> bool {
+        let attributes = self.security_attributes();
+        self.runtime.security_manager().check(context, ActionType::GetChannel(&attributes)).await
+    }
+
+    /// The part of the history `participant` may see (issue 46): all of it,
+    /// unless they joined later with a limit.
+    pub async fn history_visible_to(&self, participant: ActorId) -> Vec<Message> {
+        let history = self.history().await;
+        self.channel.load().visible_history(participant, history)
+    }
+
+    /// Participants who leave from now on.
+    pub fn watch_leaving(&self) -> broadcast::Receiver<ActorId> {
+        self.left_tx.subscribe()
+    }
+
+    /// Adds `participant` - a participant of the session - to the channel on
+    /// behalf of `context` (issue 46), seeing as much of the history as
+    /// `history` grants. Stored first (`UpdateChannel`, also asked as
+    /// `JoinChannel`), then its actor started, the moderator and the mention
+    /// directory told, and the join announced. An agent gets the visible
+    /// history into its transcript, as far as it is not there yet - an agent
+    /// that joins again gets only what it missed.
+    ///
+    /// # Errors
+    /// `ChannelError::NotInSession`, `AlreadyParticipant` or `Forbidden`; a
+    /// `StoreError` if `context` may not change the channel.
+    pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
+        if self.actors.load().contains_key(&participant) {
+            return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
+        }
+        let found = self.runtime.session()
+            .and_then(|s| s.get_session().participants.iter().find(|p| p.actor_id() == participant).cloned())
+            .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
+        let classification = self.classification();
+        self.check(context, ActionType::JoinChannel { participant, channel: &classification }, "adding a participant to").await?;
+
+        let messages = self.history().await;
+        let start = history.resolve(&messages, chrono::Utc::now());
+        self.channel.add_participant(context, found.clone(), start).await?;
+
+        let started = async {
+            if let ActorId::Agent(agent) = participant {
+                self.seed_transcript(agent, self.channel.load().visible_history(participant, messages)).await?;
+            }
+            Self::create_actor(self.channel.clone(), &found, &self.runtime).await
+        }.await;
+        let actor: Arc<dyn Actor> = match started {
+            Ok(actor) => Arc::from(actor),
+            Err(error) => {
+                // Stored, but it cannot run: taken back out, in the runtime's
+                // name - adding it was permitted.
+                if let Err(undo) = self.channel.remove_participant(&SecurityContext::system(), participant).await {
+                    warn!("{} was added to channel {} but could not be started nor removed again: {}", participant, self.id, undo);
+                }
+                return Err(error);
+            }
+        };
+        self.moderator.lock().await.add_actor(actor.clone());
+        self.actors.rcu(|actors| {
+            let mut actors = HashMap::clone(actors);
+            actors.insert(participant, actor.clone());
+            actors
+        });
+        self.rebuild_mentions();
+        let _ = self.changes_tx.send(ActorChange::Start(actor));
+        info!("{} joined channel {}", participant, self.id);
+        Ok(())
+    }
+
+    /// Removes `participant` from the channel on behalf of `context` (issue
+    /// 46): stored first (`UpdateChannel`), then its actor stopped - an agent
+    /// at once, without finishing a turn; the approver discards its pending
+    /// approvals - and whoever follows the channel on its behalf told. Its
+    /// state is kept, for the record and for when it joins again.
+    ///
+    /// # Errors
+    /// `ChannelError::ApproverStays` or `NotAParticipant`; a `StoreError` if
+    /// `context` may not change the channel.
+    pub async fn remove_participant(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+        if matches!(participant, ActorId::Approver(_)) {
+            return Err(ChannelError::ApproverStays { channel: self.id }.into());
+        }
+        let Some(actor) = self.actor_by_id(participant) else {
+            return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
+        };
+        self.channel.remove_participant(context, participant).await?;
+        self.actors.rcu(|actors| {
+            let mut actors = HashMap::clone(actors);
+            actors.remove(&participant);
+            actors
+        });
+        self.moderator.lock().await.remove_actor(actor);
+        self.rebuild_mentions();
+        let _ = self.changes_tx.send(ActorChange::Stop(participant));
+        let _ = self.left_tx.send(participant);
+        info!("{} left channel {}", participant, self.id);
+        Ok(())
+    }
+
+    /// Appends to `agent`'s transcript in this channel the messages of
+    /// `visible` it does not have yet.
+    async fn seed_transcript(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
+        let mut state = self.state_store.get_agent_channel_state(agent, self.id).await?;
+        let known: std::collections::HashSet<_> = state.transcript.messages().iter().map(|m| m.id).collect();
+        let missing: Vec<Message> = visible.into_iter().filter(|m| !known.contains(&m.id)).collect();
+        if !missing.is_empty() {
+            state.transcript.extend(missing);
+            self.state_store.put_agent_channel_state(agent, self.id, &state).await?;
+        }
+        Ok(())
+    }
+
+    fn rebuild_mentions(&self) {
+        let mentions = Self::mention_directory(&self.actors.load());
+        for handle in mentions.ambiguous() {
+            warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", self.id, handle);
+        }
+        self.mentions.store(Arc::new(mentions));
+    }
+
     /// Ends the current turn of every actor in the channel, on behalf of
     /// `context`'s initiator.
     ///
@@ -183,7 +328,7 @@ impl ChannelLoop {
         let channel = self.channel.load();
         self.check(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
         self.processing_state.store(ActorState::Cancelling.into(), Ordering::SeqCst);
-        for actor in self.actors.values() {
+        for actor in self.actors.load().values() {
             actor.cancel().await?;
         }
         Ok(())
@@ -199,7 +344,7 @@ impl ChannelLoop {
     pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
         let channel = self.channel.load();
         self.check(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
-        let asleep = self.actors.values()
+        let asleep = self.actors.load().values()
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name())
             .collect();
@@ -216,7 +361,7 @@ impl ChannelLoop {
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         let channel = self.channel.load();
         self.check(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
-        let actor = self.actors.get(&actor)
+        let actor = self.actors.load().get(&actor).cloned()
             .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
         let was_asleep = actor.state() == ActorState::Sleeping;
         self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
@@ -230,7 +375,7 @@ impl ChannelLoop {
     /// otherwise a user allowed to write but not to wake could not write.
     pub async fn wake_for_delivery(&self) -> Result<()> {
         self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
-        for actor in self.actors.values() {
+        for actor in self.actors.load().values() {
             actor.wakeup().await?;
         }
         Ok(())
@@ -247,15 +392,15 @@ impl ChannelLoop {
     }
 
     pub fn actor_names(&self) -> Vec<String> {
-        self.actors.values().map(|a| a.name()).collect()
+        self.actors.load().values().map(|a| a.name()).collect()
     }
     pub fn actor_ids(&self) -> Vec<ActorId> {
-        self.actors.values().map(|a| a.id()).collect()
+        self.actors.load().values().map(|a| a.id()).collect()
     }
 
     /// All participants of the channel, in no particular order.
     pub fn members(&self) -> Vec<ChannelMember> {
-        self.actors.values()
+        self.actors.load().values()
             .map(|a| {
                 let name = a.name();
                 let handle = Some(handle_of(&name))
@@ -289,7 +434,7 @@ impl ChannelLoop {
     /// their states in the `StateStore`: notes of finished turns only.
     pub async fn published_notes(&self) -> Result<Vec<crate::session_reader::PublishedNotes>> {
         let mut published = Vec::new();
-        for actor in self.actors.values() {
+        for actor in self.actors.load().values() {
             let ActorId::Agent(agent_id) = actor.id() else { continue };
             let state = self.state_store.get_agent_channel_state(agent_id, self.id).await?;
             published.push(crate::session_reader::PublishedNotes {
@@ -306,7 +451,7 @@ impl ChannelLoop {
     /// its state; `None` if it takes no part in the channel. Only for the
     /// agent itself - see `notes::SessionReader::private_notes`.
     pub async fn private_notes(&self, agent: caelumora_model::agent::AgentId) -> Result<Option<(Vec<caelumora_model::note::Note>, Option<caelumora_model::digest::Digest>)>> {
-        if !self.actors.contains_key(&ActorId::Agent(agent)) {
+        if !self.actors.load().contains_key(&ActorId::Agent(agent)) {
             return Ok(None);
         }
         let state = self.state_store.get_agent_channel_state(agent, self.id).await?;
@@ -326,10 +471,10 @@ impl ChannelLoop {
     }
 
     pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
-        self.actors.values().find(|c| c.id() == actor_id).map(|c| c.clone())
+        self.actors.load().get(&actor_id).cloned()
     }
     pub fn actor_by_name(&self, name: &str) -> Option<Arc<dyn Actor>> {
-        self.actors.values().find(|c| c.name() == name).map(|c| c.clone())
+        self.actors.load().values().find(|c| c.name() == name).map(|c| c.clone())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -367,10 +512,10 @@ impl ChannelLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         info!("Channel {}/{} is starting", self.channel.name(), self.id);
-        let mut global_rx = self.runtime.event_bus().subscribe_channel(self.id);
+        let mut changes_rx = self.changes_rx.lock().await;
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
-        let actors = Arc::new(self.spawn_actors(event_tx, &mut join_set)?);
+        let mut actors = self.spawn_actors(event_tx.clone(), &mut join_set)?;
 
         loop {
             tokio::select! {
@@ -379,8 +524,16 @@ impl ChannelLoop {
                         break;
                     }
                 }
-                maybe_global = global_rx.recv() => {
-                    self.handle_global_event(maybe_global, &actors).await;
+                Some(change) = changes_rx.recv() => {
+                    self.apply_change(change, &mut actors, &event_tx, &mut join_set);
+                }
+                // Finished tasks are dropped as they end; once the last one
+                // is gone, the channel stops - the sender kept for actors
+                // joining later keeps the event queue from closing by itself.
+                Some(_) = join_set.join_next(), if !join_set.is_empty() => {
+                    if join_set.is_empty() {
+                        break;
+                    }
                 }
             }
         }
@@ -389,7 +542,26 @@ impl ChannelLoop {
         Ok(())
     }
 
-    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, actors: &Arc<HashMap<ActorId,ActorHandle>>) -> bool {
+    /// Starts or stops an actor as a participant joined or left (issue 46).
+    fn apply_change(&self, change: ActorChange, actors: &mut HashMap<ActorId, ActorHandle>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
+        match change {
+            ActorChange::Start(actor) => {
+                // Joined before `run` started: already running.
+                if !actors.contains_key(&actor.id()) {
+                    let handle = self.spawn_actor(actor, event_tx.clone(), join_set);
+                    actors.insert(handle.id, handle);
+                }
+            }
+            ActorChange::Stop(id) => {
+                if let Some(handle) = actors.remove(&id) {
+                    handle.abort_handle.abort();
+                    info!("Actor {} stopped: it left channel {}", id, self.id);
+                }
+            }
+        }
+    }
+
+    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, actors: &HashMap<ActorId,ActorHandle>) -> bool {
         if let Some(event) = maybe_event {
             let span = crate::logging::envelope_span(&event.context, event.event.kind());
             self.process_envelope(event, actors).instrument(span).await;
@@ -399,7 +571,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn process_envelope(&self, event: Envelope, actors: &Arc<HashMap<ActorId,ActorHandle>>) {
+    async fn process_envelope(&self, event: Envelope, actors: &HashMap<ActorId,ActorHandle>) {
         match event.event {
             // One per streamed chunk: far finer than per message.
             ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) => {
@@ -415,15 +587,9 @@ impl ChannelLoop {
         self.route_event(actors, event).await;
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>, _actors: &Arc<HashMap<ActorId, ActorHandle>>) {
-        if let Some(global_event) = maybe_global {
-            self.channel.process_global_event(&global_event).await;
-        }
-    }
-
     fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
         let mut actors = HashMap::new();
-        for (id, actor) in &self.actors {
+        for (id, actor) in self.actors.load().iter() {
             let handle = self.spawn_actor(actor.clone(), actor_output.clone(), join_set);
             actors.insert(*id, handle);
         };
@@ -463,7 +629,7 @@ impl ChannelLoop {
     fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
         let resolve = |m: &mut Message| {
             if let Some(content) = &m.content {
-                m.mentions = self.mentions.resolve(content);
+                m.mentions = self.mentions.load().resolve(content);
             }
         };
         match &mut event.event {
@@ -484,7 +650,7 @@ impl ChannelLoop {
         }
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             for id in messages.iter().flat_map(|m| m.mentions.iter()) {
-                if let Some(actor) = self.actors.get(id) {
+                if let Some(actor) = self.actors.load().get(id).cloned() {
                     if matches!(id, ActorId::Agent(_)) && actor.state() == ActorState::Sleeping {
                         if let Err(e) = actor.wakeup().await {
                             warn!("Cannot wake mentioned agent {}: {}", id, e);
@@ -495,7 +661,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) {
+    async fn route_event(&self, actors: &HashMap<ActorId,ActorHandle>, event: Envelope) {
         if matches!(event.event, ActorEvent::WakeupRequested) {
             let _ = self.wake_for_delivery().await;
         }
@@ -519,7 +685,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event_impl(&self, actors: &Arc<HashMap<ActorId,ActorHandle>>, event: Envelope) -> bool {
+    async fn route_event_impl(&self, actors: &HashMap<ActorId,ActorHandle>, event: Envelope) -> bool {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
             return true

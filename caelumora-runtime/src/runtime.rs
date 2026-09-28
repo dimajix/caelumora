@@ -103,6 +103,12 @@ impl ChannelRuntime {
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> { self.runtime_manager.new_moderator(kind) }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
+
+    /// The session the channel belongs to, or `None` outside of one (e.g. in
+    /// tests) or once it is gone.
+    pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
+        self.session.get().and_then(Weak::upgrade)
+    }
 }
 
 /// What an actor may subscribe to on the event bus: only what concerns it
