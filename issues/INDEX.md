@@ -50,6 +50,9 @@ against it, and what came out of the last attempt.
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [06](06-context-in-message-for-auditability.md) | done | For a past message there is no way to reconstruct what the agent actually saw when it wrote it. |
 | [62](62-json-store-concurrent-writes.md) | done | Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost. |
+| [77](77-template-swallows-store-errors.md) | open | `ParticipantTemplate::instantiate` treats every store error as "not found" and creates a second agent. |
+| [93](93-entity-store-dialects.md) | open | The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id. |
+| [108](108-serde-defaults-for-legacy.md) | open | Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to. |
 
 ## Sessions and channels
 
@@ -67,6 +70,10 @@ against it, and what came out of the last attempt.
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |
 | [30](30-user-actor-for-authenticated-user.md) | done | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 | [42](42-export-import-chats.md) | open | Chats cannot be exported or imported, so a conversation cannot leave the server it happened on or be brought into another. |
+| [75](75-agent-resumes-half-turn.md) | open | An agent stopped on purpose mid-turn resumes that turn like after a crash, and a resume in `ExecutingTools` re-runs its tools. |
+| [76](76-channel-cancel-flag.md) | open | The channel's own cancel flag suppresses the final response of a cancelled turn, so the other agents' transcripts diverge from the history. |
+| [79](79-user-actor-exits-on-send-error.md) | open | A `UserActor` ends itself when one forward fails, and the three actor run loops differ only in how they handle errors. |
+| [90](90-message-path-wake-and-queue.md) | open | Frontends must wake the channel before sending, the `UserActor` queues every message once more than needed, and perceiving a message begins a turn. |
 
 ## Identity and access management
 
@@ -83,6 +90,9 @@ against it, and what came out of the last attempt.
 | [31](31-session-renewal-from-ui.md) | done | The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input. |
 | [33](33-sse-outlives-its-token.md) | done | An open server-sent event stream is authenticated once, when it connects, and keeps delivering after its token has expired or its user was removed. |
 | [64](64-confidentiality-compartments.md) | open | Confidentiality has ordered levels only; information that may be shared between the channels of one topic or group but not others cannot be expressed. |
+| [87](87-security-context-in-entities.md) | open | Stored agents and users carry a `SecurityContext` that the actors overwrite at start. |
+| [94](94-users-unchecked-in-store.md) | open | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
+| [95](95-require-for-security-manager.md) | open | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
 
 ## Tools and approvals
 
@@ -95,6 +105,11 @@ against it, and what came out of the last attempt.
 | [49](49-plan-step-system-messages.md) | open | Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache. |
 | [52](52-split-tool-providers.md) | done | All built-in tool providers live in one file, and tools added later went to other places, so there is no rule for where a tool goes. |
 | [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
+| [78](78-mcp-requires-approval-ignored.md) | open | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |
+| [81](81-approver-double-id.md) | open | The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting. |
+| [82](82-tool-parameter-parsing.md) | open | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
+| [100](100-tool-executor-table-and-result.md) | open | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |
+| [111](111-tool-parameter-reading.md) | open | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
 
 ## User interaction
 
@@ -109,6 +124,11 @@ against it, and what came out of the last attempt.
 | [44](44-mentions-only-moderator.md) | done | Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned. |
 | [45](45-agent-mentions.md) | open | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
 | [56](56-response-language.md) | open | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
+| [80](80-stored-channel-response.md) | open | A channel that is not running is reported as not changeable and its agents' context as not readable, and the response builders are spread over three modules. |
+| [102](102-rest-channel-lookup.md) | open | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
+| [103](103-rest-error-mappers.md) | open | Six REST functions map runtime errors to problem details with the same pattern. |
+| [104](104-sse-stream-and-subscribe.md) | open | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
+| [106](106-rest-small-findings.md) | open | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
 
 ## Context and knowledge
 
@@ -135,14 +155,37 @@ against it, and what came out of the last attempt.
 | [72](72-history-digest-ignores-limit.md) | done | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
+| [92](92-ledger-for-notes-and-memory.md) | open | `NoteChain` and `MemoryChain` are the same type written twice. |
+| [98](98-context-provider-facet.md) | open | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
+| [101](101-chain-component-helpers.md) | open | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 
 ## Maintenance
 
 | No. | Status | Issue |
 |---|---|---|
-| [36](36-replace-serde-yaml.md) | done |
+| [36](36-replace-serde-yaml.md) | done | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 | [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
-| [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
+| [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
+| [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–111 and their recommended order. |
+| [96](96-config-unification.md) | open | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
+| [97](97-small-model-unifications.md) | open | Small duplications in the model and the runtime core, collected. |
+| [105](105-seed-data-twice.md) | open | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
+| [109](109-code-hygiene.md) | open | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
+| [110](110-docs-contradicting-code.md) | open | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
+
+## Code structure
+
+| No. | Status | Issue |
+|---|---|---|
+| [83](83-turn-logic-on-agent-actor.md) | open | The logic of a turn lives in `AgentActor`, which drives `Turn` through eight to ten setters per step. |
+| [84](84-agent-state-machine.md) | open | The agent's state machine has a state that only forwards and two handlers that differ in one branch. |
+| [85](85-turn-state-in-agent-channel-state.md) | open | The working state of a turn is eleven loose fields of `AgentChannelState`, reset by three overlapping lists. |
+| [86](86-controllers-in-the-model.md) | open | The five controllers write to the store and publish events from inside the model, each built differently. |
+| [88](88-template-instantiation-in-the-model.md) | open | Instantiating a template does store I/O in the model, and both frontends drive the sequence by hand. |
+| [89](89-channel-runtime-delegators.md) | open | `ChannelRuntime` is six methods that forward to `RuntimeManager`. |
+| [91](91-double-actor-table.md) | open | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
+| [99](99-component-factory-and-tags.md) | open | The component factory is synchronous while building is async, and component tags have no reader. |
+| [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
 
 ## Open architecture questions
 
