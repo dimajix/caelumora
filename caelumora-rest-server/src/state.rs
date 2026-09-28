@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 pub struct AppState {
     pub auth: Arc<Auth>,
-    #[allow(dead_code)]
     pub runtime_manager: Arc<RuntimeManager>,
     // Owns the lifecycle of running session loops (start/stop/create/delete).
     pub session_manager: Arc<SessionManager>,

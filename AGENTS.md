@@ -128,6 +128,12 @@ the two that have no reason — naming, construction, error handling — and
 propose aligning them, in whichever direction is the better one. A deliberate
 difference is fine, but say why it exists.
 
+A pure access question - "may they?" asked from outside an entity, to
+decide what to list or offer - is a method of
+`caelumora_model::security::AccessQuestions`, not of the entity (issue 71).
+An operation that checks its permission as part of what it does keeps that
+check itself.
+
 ### Branches
 Until further notice, work and commit directly on `main`. Do not create
 feature branches unless asked to.

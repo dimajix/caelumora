@@ -139,7 +139,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [36](36-replace-serde-yaml.md) | done |
-| [71](71-access-helpers-on-entities.md) | open | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
+| [71](71-access-helpers-on-entities.md) | in progress | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 
 ## Open architecture questions

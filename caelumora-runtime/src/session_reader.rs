@@ -22,6 +22,7 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::digest::Digest;
 use caelumora_model::message::Message;
 use caelumora_model::note::Note;
+use caelumora_model::security::AccessQuestions;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -142,6 +143,14 @@ impl ChannelSessionReader {
         Self { runtime }
     }
 
+    /// Whether the channel `own` may read `source`, as the confidentiality
+    /// rules decide (`AccessQuestions::may_channel_read`).
+    async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop) -> bool {
+        self.runtime.security_manager()
+            .may_channel_read(&own.classification(), own.security_attributes().owner_id, &source.classification())
+            .await
+    }
+
     /// The channel named `name` of the session, if the turn's channel may
     /// read it.
     async fn readable(&self, name: &str) -> Result<Arc<ChannelLoop>> {
@@ -153,7 +162,7 @@ impl ChannelSessionReader {
             let session = self.runtime.session().ok_or_else(not_readable)?;
             session.channel_by_name(name).await.ok_or_else(not_readable)?
         };
-        if own.may_read(&source).await { Ok(source) } else { Err(not_readable()) }
+        if self.may_read(&own, &source).await { Ok(source) } else { Err(not_readable()) }
     }
 }
 
@@ -183,7 +192,7 @@ impl SessionReader for ChannelSessionReader {
         };
         let mut readable = Vec::new();
         for channel in channels {
-            if own.may_read(&channel).await {
+            if self.may_read(&own, &channel).await {
                 readable.push(info(&channel));
             }
         }
@@ -208,7 +217,7 @@ impl SessionReader for ChannelSessionReader {
         let (Some(own), Some(session)) = (self.runtime.channel(), self.runtime.session()) else { return Ok(Vec::new()) };
         let mut found = Vec::new();
         for channel in session.channels() {
-            if channel.id() == own.id() || !own.may_read(&channel).await {
+            if channel.id() == own.id() || !self.may_read(&own, &channel).await {
                 continue;
             }
             if let Some((notes, digest)) = channel.private_notes(agent).await? {

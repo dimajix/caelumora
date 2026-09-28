@@ -1,6 +1,6 @@
 # 71 — Access-check helpers bloat the interfaces of the entities
 
-**Status:** open
+**Status:** in progress
 **Area:** Maintenance
 
 ## The problem
@@ -146,3 +146,17 @@ To be decided with the maintainer before anything is changed.
   (free functions in the entity's file, a helper type per entity, a global
   helper in the security module) are laid out above, with a tentative
   recommendation. Nothing is implemented yet.
+- **2026-09-28** — Decided with the maintainer and implemented: option C,
+  as the extension trait `AccessQuestions` in `caelumora_model::security`
+  with a blanket implementation for every `SecurityManager` (so no policy
+  can answer a question differently from its `ActionType`):
+  `may_read_channel`, `may_change_channel`, `may_channel_read` (with the
+  rule that a channel reads itself, asked in the reader's owner's name) and
+  `may_read_agent_context`. `ChannelLoop::may_be_read_by`,
+  `may_be_changed_by` and `may_read` are gone; REST asks through
+  `state.runtime_manager.security_manager()`, the `SessionReader` through
+  its runtime. `Actor::may_read_context` stays on the trait - only an agent
+  has a context - and uses the trait inside. The rule is recorded in
+  AGENTS.md and ARCHITECTURE.md. `history_visible_to` stays on `ChannelLoop`
+  for now: the maintainer wants to think about it again, which is why the
+  issue stays in progress.

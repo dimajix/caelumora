@@ -162,6 +162,60 @@ pub trait SecurityManager : Debug + Sync + Send {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool;
 }
 
+/// The pure questions "may they?" that are asked from outside an entity -
+/// by clients deciding what to offer, by readers deciding what to show -
+/// each with its name, in one place (issue 71). They only translate a
+/// question into an `ActionType`: the decision is `SecurityManager::check`'s
+/// alone, and since every `SecurityManager` gets them by the blanket
+/// implementation, no policy can answer them differently.
+///
+/// Operations that check their permission as part of what they do (a
+/// channel's `cancel`, a store's `update_channel`) keep their check; a pure
+/// question goes here, not onto the entity.
+#[async_trait]
+pub trait AccessQuestions {
+    /// Whether `context` may read the channel with `channel` attributes -
+    /// its members, its history, its events (`GetChannel`).
+    async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may change the channel with `channel` attributes -
+    /// rename it, add and remove participants (`UpdateChannel`).
+    async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
+
+    /// Whether the channel `reader` may read the notes and history of the
+    /// channel `source` (`ReadChannel`, issues 17 and 61): asked in the name
+    /// of `reader_owner`, who is responsible for what is read into their
+    /// channel. A channel may always read itself.
+    async fn may_channel_read(&self, reader: &ChannelClassification, reader_owner: ActorId, source: &ChannelClassification) -> bool;
+
+    /// Whether `context` may see what the agent with `agent` attributes saw
+    /// when it wrote a message (`ReadAgentContext`, issue 41).
+    async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
+}
+
+#[async_trait]
+impl<T: SecurityManager + ?Sized> AccessQuestions for T {
+    async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::GetChannel(channel)).await
+    }
+
+    async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateChannel(channel)).await
+    }
+
+    async fn may_channel_read(&self, reader: &ChannelClassification, reader_owner: ActorId, source: &ChannelClassification) -> bool {
+        if reader.channel_id == source.channel_id {
+            return true;
+        }
+        let context = SecurityContext::new(reader_owner, reader.session_id, reader.channel_id);
+        self.check(&context, ActionType::ReadChannel { source, reader }).await
+    }
+
+    async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::ReadAgentContext(agent)).await
+    }
+}
+
 #[derive(Debug)]
 pub struct DummySecurityManager {
 }
@@ -290,6 +344,32 @@ mod tests {
 
     async fn allows(actor: ActorId, action: ActionType<'_>) -> bool {
         OwnershipSecurityManager::new().check(&context(actor), action).await
+    }
+
+    #[tokio::test]
+    async fn access_questions_ask_the_policy_and_a_channel_always_reads_itself() {
+        let (alice, bob) = (user(), user());
+        let hers = SecurityAttributes { owner_id: alice, contributors: vec![bob] };
+        let policy = OwnershipSecurityManager::new();
+        assert!(policy.may_read_channel(&context(bob), &hers).await, "a participant reads the channel");
+        assert!(policy.may_change_channel(&context(alice), &hers).await, "the owner changes it");
+        assert!(!policy.may_change_channel(&context(bob), &hers).await, "a participant does not");
+        assert!(!policy.may_read_agent_context(&context(bob), &hers).await, "what an agent saw is its owner's alone");
+
+        /// Refuses everything.
+        #[derive(Debug)]
+        struct DenyAll;
+        #[async_trait]
+        impl SecurityManager for DenyAll {
+            async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
+                false
+            }
+        }
+        let session_id = SessionId::new();
+        let channel = |level| ChannelClassification { session_id, channel_id: ChannelId::new(), level };
+        let (own, other) = (channel(Confidentiality::Channel), channel(Confidentiality::Public));
+        assert!(DenyAll.may_channel_read(&own, alice, &own).await, "a channel reads itself, whatever the policy");
+        assert!(!DenyAll.may_channel_read(&own, alice, &other).await, "another channel only as the policy decides");
     }
 
     #[tokio::test]

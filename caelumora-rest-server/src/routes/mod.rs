@@ -1,6 +1,7 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::ApiError;
 use crate::state::AppState;
+use caelumora_model::security::AccessQuestions;
 use axum::{
     routing::{get, post},
     Router,
@@ -44,14 +45,18 @@ pub fn session_error(error: anyhow::Error, session_id: SessionId, act: &str, doi
     }
 }
 
-/// The channel `channel_id` of `session`, or a `404`.
 /// The channel `channel_id` of `session`, if `viewer` may read it (issue 70):
 /// one they may not read is reported as absent, like one that does not
 /// exist, so that channels cannot be probed.
-pub async fn channel_of(session: &SessionLoop, channel_id: ChannelId, viewer: &caelumora_model::security::SecurityContext) -> Result<Arc<ChannelLoop>, ApiError> {
+pub async fn channel_of(state: &AppState, session: &SessionLoop, channel_id: ChannelId, viewer: &caelumora_model::security::SecurityContext) -> Result<Arc<ChannelLoop>, ApiError> {
     let not_found = || ApiError::not_found("channel_not_found", format!("Channel {} does not exist in this session", channel_id));
     let channel = session.channel_by_id(channel_id).ok_or_else(not_found)?;
-    if channel.may_be_read_by(viewer).await { Ok(channel) } else { Err(not_found()) }
+    if may_read_channel(state, &channel, viewer).await { Ok(channel) } else { Err(not_found()) }
+}
+
+/// Whether `viewer` may read the running `channel` (issue 70).
+pub async fn may_read_channel(state: &AppState, channel: &ChannelLoop, viewer: &caelumora_model::security::SecurityContext) -> bool {
+    state.runtime_manager.security_manager().may_read_channel(viewer, &channel.security_attributes()).await
 }
 
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a

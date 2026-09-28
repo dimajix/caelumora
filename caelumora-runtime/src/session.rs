@@ -944,7 +944,7 @@ mod tests {
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
-        let manager = SessionManager::new(runtime);
+        let manager = SessionManager::new(runtime.clone());
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -961,11 +961,19 @@ mod tests {
         let team = session.create_channel(&alice_ctx, with("team", Confidentiality::Session, vec![bob_id])).await.unwrap();
         let secret = session.create_channel(&alice_ctx, with("secret", Confidentiality::Channel, vec![])).await.unwrap();
 
-        assert!(secret.may_read(&secret).await, "a channel reads itself");
-        assert!(team.may_read(&public).await);
-        assert!(!public.may_read(&team).await, "what public passes on may leave the session");
-        assert!(!team.may_read(&secret).await, "secret stays in its channel");
-        assert!(secret.may_read(&team).await, "although bob, who is in team, is not in secret");
+        let security = runtime.security_manager();
+        let may_read = |reader: &Arc<ChannelLoop>, source: &Arc<ChannelLoop>| {
+            let (reader, source, security) = (reader.clone(), source.clone(), security.clone());
+            async move {
+                use caelumora_model::security::AccessQuestions;
+                security.may_channel_read(&reader.classification(), reader.security_attributes().owner_id, &source.classification()).await
+            }
+        };
+        assert!(may_read(&secret, &secret).await, "a channel reads itself");
+        assert!(may_read(&team, &public).await);
+        assert!(!may_read(&public, &team).await, "what public passes on may leave the session");
+        assert!(!may_read(&team, &secret).await, "secret stays in its channel");
+        assert!(may_read(&secret, &team).await, "although bob, who is in team, is not in secret");
 
         let refused = session.create_channel(&alice_ctx, with("mine", Confidentiality::Private, vec![])).await.expect_err("private is an actor's");
         assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::InvalidConfidentiality(_))), "{refused}");

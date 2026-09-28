@@ -21,7 +21,7 @@ use caelumora_model::confidentiality::{Confidentiality, Publication};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
-use caelumora_model::security::{ActionType, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -1188,7 +1188,7 @@ impl Actor for AgentActor {
 
     async fn may_read_context(&self, caller: &SecurityContext) -> bool {
         let attributes = self.agent_controller.load().security_attributes.clone();
-        self.actor_runtime.security_manager().check(caller, ActionType::ReadAgentContext(&attributes)).await
+        self.actor_runtime.security_manager().may_read_agent_context(caller, &attributes).await
     }
 
     async fn cancel(&self) -> Result<()> {
