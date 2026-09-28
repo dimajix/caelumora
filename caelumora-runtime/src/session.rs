@@ -308,6 +308,11 @@ impl SessionLoop {
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
     handles: DashMap<SessionId, JoinHandle<()>>,
+    /// One lock per session id, held while that session is being started,
+    /// so that a session starts only once however many requests ask for it
+    /// at the same time (issue 62): two loops of one session would run two
+    /// actors per agent and channel, which overwrite each other's state.
+    starts: DashMap<SessionId, Arc<tokio::sync::Mutex<()>>>,
     runtime_manager: Arc<RuntimeManager>,
 }
 
@@ -316,12 +321,19 @@ impl SessionManager {
         Self {
             sessions: DashMap::new(),
             handles: DashMap::new(),
+            starts: DashMap::new(),
             runtime_manager,
         }
     }
 
+    /// The lock held while session `id` is started.
+    fn start_lock(&self, id: SessionId) -> Arc<tokio::sync::Mutex<()>> {
+        self.starts.entry(id).or_default().clone()
+    }
+
     /// Build the runtime loop for an (already-persisted) session, register it, spawn its
-    /// run task, and announce that the session has started running.
+    /// run task, and announce that the session has started running. Called
+    /// with the session's start lock held.
     async fn spawn_session(&self, session: Session) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let attributes = session.security_attributes.clone();
@@ -345,6 +357,8 @@ impl SessionManager {
     /// channels), then start it.
     pub async fn create_session(&self, ctx: &SecurityContext, session: Session) -> Result<Arc<SessionLoop>> {
         let id = session.id;
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
 
         self.runtime_manager.entity_store().create_session(ctx, &session).await?;
 
@@ -359,9 +373,27 @@ impl SessionManager {
 
     /// Load an already-persisted session and start it. Fires `SessionStarted`, but not
     /// `SessionCreated` — the session already exists.
+    ///
+    /// Started once, however many ask at the same time (issue 62): whoever
+    /// comes second waits for the first and gets the session it started -
+    /// if they may read it.
     pub async fn load_session(&self, id: SessionId, security_context: &SecurityContext) -> Result<Arc<SessionLoop>> {
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
+        if let Some(running) = self.running(security_context, id).await? {
+            return Ok(running);
+        }
         let session = self.runtime_manager.entity_store().get_session(security_context, id).await?;
         self.spawn_session(session).await
+    }
+
+    /// The running session `id`, if `context` may read it - asked about
+    /// like a stored one, `GetSession` with its attributes, so that it being
+    /// in memory is no way around the policy (issue 11).
+    async fn running(&self, context: &SecurityContext, id: SessionId) -> Result<Option<Arc<SessionLoop>>> {
+        let Some(session_loop) = self.get_session(id) else { return Ok(None) };
+        self.may(context, ActionType::GetSession(&session_loop.get_session().security_attributes), id, StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
+        Ok(Some(session_loop))
     }
 
     pub fn get_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
@@ -377,11 +409,8 @@ impl SessionManager {
     /// `StoreError::NotFound` if there is no such session or `context` may
     /// not read it; whatever loading or starting it reports otherwise.
     pub async fn open_session(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
-        match self.get_session(id) {
-            Some(session_loop) => {
-                self.may(context, ActionType::GetSession(&session_loop.get_session().security_attributes), id, StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
-                Ok(session_loop)
-            }
+        match self.running(context, id).await? {
+            Some(session_loop) => Ok(session_loop),
             None => self.load_session(id, context).await,
         }
     }
@@ -434,6 +463,7 @@ impl SessionManager {
             .collect();
 
         self.stop_session(id);
+        self.starts.remove(&id);
 
         let event_bus = self.runtime_manager.event_bus();
         for (channel_id, attributes) in channels {
@@ -590,6 +620,29 @@ mod tests {
             "load must not emit SessionCreated, got {:?}", events
         );
 
+        manager.stop_session(session_id);
+    }
+
+    #[tokio::test]
+    async fn a_session_asked_for_at_the_same_time_starts_once() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let ctx = SecurityContext::default();
+        let session = make_session("concurrent");
+        let session_id = session.id;
+        runtime.entity_store().create_session(&ctx, &session).await.unwrap();
+
+        let mut rx = runtime.event_bus().subscribe_all();
+        let (first, second, third) = tokio::join!(
+            manager.open_session(&ctx, session_id),
+            manager.open_session(&ctx, session_id),
+            manager.load_session(session_id, &ctx),
+        );
+        let (first, second, third) = (first.unwrap(), second.unwrap(), third.unwrap());
+        assert!(Arc::ptr_eq(&first, &second) && Arc::ptr_eq(&first, &third), "one loop for all of them");
+
+        let started = drain(&mut rx).into_iter().filter(|e| matches!(e, GlobalEvent::SessionStarted(id) if *id == session_id)).count();
+        assert_eq!(started, 1, "the session started once");
         manager.stop_session(session_id);
     }
 

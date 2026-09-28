@@ -1,6 +1,6 @@
 # 62 — Concurrent writes of one JSON store file fail and can lose state
 
-**Status:** open
+**Status:** in progress
 **Area:** Persistence
 
 ## The problem
@@ -62,3 +62,62 @@ WARN caelumora_runtime::channel: Cannot store state of channel 6537d0a0-...: bac
 - **2026-09-27** — Issue created at the maintainer's request, after the
   warnings appeared while verifying [54](54-private-notes-visible-to-users.md)
   with an agent in two channels.
+- **2026-09-28** — Analysed with the maintainer; three causes, not one:
+  1. **A session can start twice.** `SessionManager::open_session` checks
+     `get_session(id)` and starts the session if it is not running, with
+     nothing in between: concurrent requests (the web UI opens several at
+     once, e.g. the event streams of two channels) each find none and each
+     start one - two `SessionLoop`s, with their own `ChannelLoop`s and
+     `AgentActor`s for the same channels and agents. The log of the check of
+     [54](54-private-notes-visible-to-users.md) shows every `ApproverActor`
+     starting twice and the `UserActor` four times. Two actors of the same
+     agent and channel, two loops of the same channel, write the same files -
+     all three warnings above - and both process messages and overwrite each
+     other's state.
+  2. **The fixed temporary name** in `write_json_atomic`, as described.
+  3. **`AgentState` belongs to the agent but is held by every instance of
+     it**: each `AgentActor` (one per channel) loads its own copy at start and
+     writes it back whole after every step. `AgentState` is empty today, so
+     the lost update is latent; once it holds anything (cross-channel
+     knowledge, generic component state, [65](65-generic-component-state.md)),
+     the last writer wins, and a channel never sees changes made in another.
+  Decided, in this order:
+  1. **Single-flight for sessions:** starting a session is done once per
+     session id; concurrent `open_session` calls wait for the same start
+     instead of each starting one. `create_session` and `stop_session` go
+     through the same mechanism.
+  2. **Unique temporary names** (`<file>.<uuid>.tmp`) and non-blocking file
+     I/O in the JSON stores.
+  3. **One owner per agent and session, changes as deltas:** the
+     `SessionLoop` keeps an `AgentStateHandle` per agent (the state behind a
+     mutex, with its persistence), shared by all `AgentActor`s of that agent
+     through the session handle they already have. The turn no longer holds
+     `&mut AgentState` - a shared lock held across a model call would block
+     every other channel; it reads a snapshot (or the handle) and stages its
+     changes, which `record_turn` applies as deltas to the current state
+     under the lock and persists there. No turn overwrites another's changes,
+     and every next turn sees the current state, from other channels too.
+     Persisted on change only. `AgentChannelState` keeps its single writer
+     (the actor of that agent and channel) and `ChannelState` its (the
+     `ChannelLoop`) - true once step 1 is done; documented.
+  Multiple processes ([21](21-scaling.md)) are not part of this; the stores
+  will need versions / optimistic locking ([03](03-postgres-entity-store.md),
+  [04](04-postgres-state-store.md)), and the handle is where a conflict
+  would be detected and the delta reapplied. Open for step 3: whether it is
+  designed at once as the generic, delta-based state of
+  [65](65-generic-component-state.md), and which first user `AgentState`
+  gets.
+- **2026-09-28** — Step 1 implemented: `SessionManager` keeps a lock per
+  session id (`starts`), held while the session is started; `load_session`
+  takes it and checks again whether the session is running meanwhile, so
+  whoever comes second gets the loop the first started (if they may read
+  it). `open_session` goes through it, `create_session` holds the same lock,
+  `delete_session` drops it. Test `a_session_asked_for_at_the_same_time_starts_once`
+  (fails without the lock). Verified with the web UI: every channel,
+  approver and actor starts once (the user once per channel, an agent once
+  per channel it is in); the warnings about channel state and agent channel
+  state are gone. One warning about the agent state of an agent in three
+  channels remains - cause 3, its three actors writing the same `AgentState`
+  at once, for steps 2 and 3. Still open: `stop_session` is synchronous and
+  does not take the lock, so a stop racing a start of the same session may
+  leave it running.

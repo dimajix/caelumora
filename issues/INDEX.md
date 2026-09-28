@@ -49,7 +49,7 @@ against it, and what came out of the last attempt.
 | [04](04-postgres-state-store.md) | open | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [06](06-context-in-message-for-auditability.md) | done | For a past message there is no way to reconstruct what the agent actually saw when it wrote it. |
-| [62](62-json-store-concurrent-writes.md) | open | Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost. |
+| [62](62-json-store-concurrent-writes.md) | in progress | Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost. |
 
 ## Sessions and channels
 
