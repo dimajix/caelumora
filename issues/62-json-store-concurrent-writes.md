@@ -121,3 +121,14 @@ WARN caelumora_runtime::channel: Cannot store state of channel 6537d0a0-...: bac
   at once, for steps 2 and 3. Still open: `stop_session` is synchronous and
   does not take the lock, so a stop racing a start of the same session may
   leave it running.
+- **2026-09-28** — Step 2 implemented: `write_json_atomic` writes to
+  `<file>.<uuid>.tmp` and removes it again if writing or renaming fails;
+  reading, writing, listing and deleting in the JSON stores use `tokio::fs`
+  instead of blocking `std::fs` (only creating the directories when the
+  store is built stays synchronous); listing skips everything but `*.json`,
+  so temporary files left by a crash are ignored. Test
+  `concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files`
+  (fails with the fixed name). Verified with the web UI: no "Cannot store"
+  warning at all any more, no temporary files left. This only hides cause 3:
+  the actors of an agent in several channels still each write their own
+  copy of `AgentState` whole - which is harmless only while it is empty.
