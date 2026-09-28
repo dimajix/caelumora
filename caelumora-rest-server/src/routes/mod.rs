@@ -68,6 +68,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
+        .route("/sessions/{id}/channels/{cid}/notes", get(channels::get_notes))
         .route(
             "/sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context",
             get(channels::message_context),

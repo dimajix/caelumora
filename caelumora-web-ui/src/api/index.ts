@@ -6,6 +6,7 @@ import type {
   CreateChannelRequest,
   CreateSessionRequest,
   Message,
+  PublishedNotes,
   SessionResponse,
   SessionSnapshot,
   SessionTemplate,
@@ -143,6 +144,13 @@ export const api = {
   },
 
   /** The commands the current user may use in the channel. */
+  /** The notes every agent of a channel published (issue 17). */
+  async getNotes(sessionId: string, channelId: string): Promise<PublishedNotes[]> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/notes`);
+    await ensureOk(res, 'Failed to fetch notes');
+    return res.json();
+  },
+
   async getCommands(sessionId: string, channelId: string): Promise<Command[]> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands`);
     await ensureOk(res, 'Failed to fetch commands');

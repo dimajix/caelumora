@@ -103,3 +103,58 @@ the turn again.
   - A handle for `AgentChannelState` would let other channels read another's
     notes from memory instead of the `StateStore` (`published_notes`,
     `private_notes`); convenient, optional.
+- **2026-09-28** — First intermediate step decided with the maintainer:
+  notes are treated like agent memory.
+  1. `caelumora-runtime/src/notes.rs` is split: it is mostly the
+     `SessionReader` (reading across channels - notes, private notes, and
+     histories), which becomes `session_reader.rs`; the notes logic becomes a
+     wrapper `AgentNotes` in `agent_notes.rs`, like `AgentMemory`, with what
+     `TurnContext` had for notes (`note`, `revoke_note`, `private_note`, ...).
+  2. The `SessionReader` leaves `TurnContext`: it is given to the components
+     that need it (`notes`, `private_notes`, `channel_history`) when they are
+     built, through `ComponentContext` (`None` for session-level components
+     such as commands).
+  3. Generic, like `AgentState` but without a handle (one writer): the model
+     has `AgentChannelChange` and `AgentChannelState::apply`; a turn stages
+     changes in one list instead of `turn_notes` / `turn_private_notes`, and
+     `record_turn` applies them without knowing what they are.
+  4. `turn_scratch` is removed: it was never used.
+  5. `ActorEvent::NotesChanged` is replaced by two generic events without
+     content, `GlobalEvent::AgentStateChanged(AgentId)` - published with the
+     agent's attributes by the `AgentStateHandle` after storing - and
+     `GlobalEvent::AgentChannelStateChanged(SessionId, ChannelId, AgentId)` -
+     published with the channel's attributes by the agent after storing its
+     channel state, which now happens before `FullResponseGenerated`. Whoever
+     may see more fetches it (the web UI reloads the channel's notes). The
+     state is private in part (memory, private notes), so the events say only
+     that it changed; which kind changed is for later. Storing before
+     announcing the end of a turn also closes a gap for other agents, which
+     read notes from the store when their turn begins.
+- **2026-09-28** — First intermediate step implemented:
+  - `session_reader.rs` (was `notes.rs`) with the `SessionReader`, plus
+    `session_reader::detached()`, a reader that reads nothing; `agent_notes.rs`
+    with the wrapper `AgentNotes` (`NoteKind::Public` / `Private`).
+  - The reader is a required part of `ComponentContext` (the maintainer's
+    request: not optional); the agent gives its components a
+    `ChannelSessionReader`, the session's commands get `detached()`. The
+    `notes`, `private_notes` and `channel_history` components hold it; their
+    "no other channels can be read here" branches are gone. Giving
+    components the `ActorRuntime` instead, as the maintainer proposed, waits
+    for [69](69-scoped-actor-runtime.md): as it is, it would let them read
+    around the confidentiality rules.
+  - `AgentChannelChange` / `AgentChannelState::apply`; `TurnContext` has
+    `agent_channel_state()`, `stage_channel_change` and
+    `staged_channel_changes` instead of the note methods, `record_turn`
+    applies the staged changes without knowing them. `turn_notes`,
+    `turn_private_notes` and `turn_scratch` are gone.
+  - `ActorEvent::NotesChanged` is replaced by `GlobalEvent::AgentStateChanged`
+    (announced by the `AgentStateHandle` after storing) and
+    `GlobalEvent::AgentChannelStateChanged` (announced by the agent in
+    `reflect` after storing its channel state, which now happens before
+    `FullResponseGenerated`). The web UI's notes panel listens to the global
+    stream (handed on by the session list through `globalEvents.ts`) and
+    fetches the notes from the new `GET …/channels/{cid}/notes`.
+- **2026-09-28** — Verified in the browser: an agent's public note appears in
+  the notes panel without reloading the page - the web UI fetched the notes
+  on `AgentChannelStateChanged`; other channels' panels stay empty, as notes
+  are per channel.

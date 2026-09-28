@@ -7,7 +7,7 @@
 
 use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::notes::NotReadable;
+use crate::session_reader::{NotReadable, SessionReader};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource, Message};
@@ -25,7 +25,10 @@ const DEFAULT_LAST: usize = 20;
 const MAX_LAST: usize = 100;
 
 #[derive(Debug)]
-pub struct ChannelHistoryReader;
+pub struct ChannelHistoryReader {
+    /// The session's channels.
+    reader: Arc<dyn SessionReader>,
+}
 
 #[async_trait]
 impl ToolProvider for ChannelHistoryReader {
@@ -62,9 +65,7 @@ impl ToolProvider for ChannelHistoryReader {
         let last = params.get("last").and_then(Value::as_u64).map(|n| (n as usize).clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
         let query = params.get("query").and_then(Value::as_str).map(str::trim).filter(|q| !q.is_empty());
 
-        let reader = context.session_reader()
-            .ok_or_else(|| ToolError::ExecutionFailed("no other channels can be read here".to_string()))?;
-        let history = reader.history_of(channel).await.map_err(|e| match e.downcast_ref::<NotReadable>() {
+        let history = self.reader.history_of(channel).await.map_err(|e| match e.downcast_ref::<NotReadable>() {
             Some(not_readable) => ToolError::InvalidParameter(not_readable.to_string()),
             None => ToolError::ExecutionFailed(format!("reading failed: {e}")),
         })?;
@@ -101,9 +102,9 @@ fn select<'a>(messages: &'a [Message], last: usize, query: Option<&str>) -> (Vec
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         CHANNEL_HISTORY_KIND,
-        Box::new(|_descriptor, _context| {
+        Box::new(|_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryReader));
+            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryReader { reader: context.session_reader.clone() }));
             Ok(facets)
         }),
     );

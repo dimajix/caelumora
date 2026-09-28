@@ -17,6 +17,8 @@ use arc_swap::ArcSwap;
 use caelumora_model::agent::{AgentId, AgentState, AgentStateChange};
 use caelumora_model::memory::MemoryId;
 use caelumora_model::message::MessageId;
+use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::store::StateStore;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -37,14 +39,24 @@ pub struct AgentStateHandle {
     /// channels may remember at the same time, and each needs its number at
     /// once to tell the model.
     next_memory_id: AtomicU32,
-    /// Where the state is stored; `None` for a detached handle.
-    state_store: Option<Arc<dyn StateStore>>,
+    /// Where the state is stored and changes are announced, with the
+    /// agent's attributes that decide who hears of them; `None` for a
+    /// detached handle.
+    backing: Option<Backing>,
+}
+
+/// Where an attached handle stores its state and announces its changes.
+#[derive(Debug)]
+struct Backing {
+    state_store: Arc<dyn StateStore>,
+    events: Arc<dyn EventPublisher>,
+    attributes: SecurityAttributes,
 }
 
 impl AgentStateHandle {
-    fn new(agent_id: AgentId, state: AgentState, state_store: Option<Arc<dyn StateStore>>) -> Self {
+    fn new(agent_id: AgentId, state: AgentState, backing: Option<Backing>) -> Self {
         let next_memory_id = AtomicU32::new(state.memory.next_id().0);
-        Self { agent_id, current: ArcSwap::from_pointee(state), write: Mutex::new(()), next_memory_id, state_store }
+        Self { agent_id, current: ArcSwap::from_pointee(state), write: Mutex::new(()), next_memory_id, backing }
     }
 
     /// A handle of an empty state that is kept in memory only and stored
@@ -65,8 +77,9 @@ impl AgentStateHandle {
     }
 
     /// Applies `changes`, made in a turn that ended with message `after`, to
-    /// the state as it is, stores it, and makes it the current state. Nothing
-    /// is changed if storing fails.
+    /// the state as it is, stores it, makes it the current state, and
+    /// announces it as `GlobalEvent::AgentStateChanged`. Nothing is changed
+    /// if storing fails.
     ///
     /// # Errors
     /// Whatever the `StateStore` reports.
@@ -80,11 +93,14 @@ impl AgentStateHandle {
         for change in changes {
             state.apply(change, after);
         }
-        if let Some(store) = &self.state_store {
-            store.put_agent_state(self.agent_id, &state).await
+        if let Some(backing) = &self.backing {
+            backing.state_store.put_agent_state(self.agent_id, &state).await
                 .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
         }
         self.current.store(Arc::new(state));
+        if let Some(backing) = &self.backing {
+            backing.events.publish(GlobalEvent::AgentStateChanged(self.agent_id), backing.attributes.clone());
+        }
         debug!("Applied {} changes to the state of agent {}", count, self.agent_id);
         Ok(())
     }
@@ -96,27 +112,30 @@ impl AgentStateHandle {
 pub struct AgentStates {
     handles: Mutex<HashMap<AgentId, Weak<AgentStateHandle>>>,
     state_store: Arc<dyn StateStore>,
+    events: Arc<dyn EventPublisher>,
 }
 
 impl AgentStates {
-    pub fn new(state_store: Arc<dyn StateStore>) -> Self {
-        Self { handles: Mutex::new(HashMap::new()), state_store }
+    pub fn new(state_store: Arc<dyn StateStore>, events: Arc<dyn EventPublisher>) -> Self {
+        Self { handles: Mutex::new(HashMap::new()), state_store, events }
     }
 
     /// The handle of `agent_id`: the one its other actors hold, or loaded
     /// from the `StateStore` if none does. Loaded once, however many actors
-    /// ask at the same time.
+    /// ask at the same time. `attributes` are the agent's: whoever may read
+    /// the agent hears of changes to its state.
     ///
     /// # Errors
     /// Whatever the `StateStore` reports when loading.
-    pub async fn get(&self, agent_id: AgentId) -> Result<Arc<AgentStateHandle>> {
+    pub async fn get(&self, agent_id: AgentId, attributes: SecurityAttributes) -> Result<Arc<AgentStateHandle>> {
         let mut handles = self.handles.lock().await;
         if let Some(handle) = handles.get(&agent_id).and_then(Weak::upgrade) {
             return Ok(handle);
         }
         let state = self.state_store.get_agent_state(agent_id).await
             .with_context(|| format!("Cannot load the state of agent {}", agent_id))?;
-        let handle = Arc::new(AgentStateHandle::new(agent_id, state, Some(self.state_store.clone())));
+        let backing = Backing { state_store: self.state_store.clone(), events: self.events.clone(), attributes };
+        let handle = Arc::new(AgentStateHandle::new(agent_id, state, Some(backing)));
         handles.retain(|_, h| h.strong_count() > 0);
         handles.insert(agent_id, Arc::downgrade(&handle));
         Ok(handle)
@@ -138,9 +157,9 @@ mod tests {
     #[tokio::test]
     async fn every_actor_of_an_agent_shares_one_state_and_no_change_is_lost() {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        let states = AgentStates::new(store.clone());
+        let states = AgentStates::new(store.clone(), Arc::new(()));
         let agent = AgentId::new();
-        let (in_main, in_research) = (states.get(agent).await.unwrap(), states.get(agent).await.unwrap());
+        let (in_main, in_research) = (states.get(agent, Default::default()).await.unwrap(), states.get(agent, Default::default()).await.unwrap());
         assert!(Arc::ptr_eq(&in_main, &in_research), "one handle for both channels");
 
         // Two turns, each from a snapshot taken before the other's changes.
@@ -160,15 +179,40 @@ mod tests {
     #[tokio::test]
     async fn a_released_state_is_loaded_again_with_what_was_stored() {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        let states = AgentStates::new(store);
+        let states = AgentStates::new(store, Arc::new(()));
         let agent = AgentId::new();
-        let handle = states.get(agent).await.unwrap();
+        let handle = states.get(agent, Default::default()).await.unwrap();
         let id = handle.reserve_memory_id();
         handle.apply(vec![remember(id, "kept")], MessageId::new()).await.unwrap();
         drop(handle);
 
-        let again = states.get(agent).await.unwrap();
+        let again = states.get(agent, Default::default()).await.unwrap();
         assert_eq!(again.current().memory.current()[0].text, "kept");
         assert_eq!(again.reserve_memory_id(), MemoryId(id.0 + 1), "numbering continues after what was stored");
+    }
+
+    #[derive(Debug, Default)]
+    struct Announced(std::sync::Mutex<Vec<GlobalEvent>>);
+
+    impl EventPublisher for Announced {
+        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stored_change_is_announced_without_its_content() {
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let announced = Arc::new(Announced::default());
+        let states = AgentStates::new(store, announced.clone());
+        let agent = AgentId::new();
+        let handle = states.get(agent, Default::default()).await.unwrap();
+
+        handle.apply(Vec::new(), MessageId::new()).await.unwrap();
+        assert!(announced.0.lock().unwrap().is_empty(), "nothing changed, nothing announced");
+        let id = handle.reserve_memory_id();
+        handle.apply(vec![remember(id, "secret")], MessageId::new()).await.unwrap();
+        let events = announced.0.lock().unwrap();
+        assert!(matches!(events.as_slice(), [GlobalEvent::AgentStateChanged(a)] if *a == agent), "{events:?}");
     }
 }

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use crate::session_reader::SessionReader;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {
@@ -33,20 +34,26 @@ pub type ComponentResult<T> = Result<T, ComponentError>;
 
 /// What a component is built with: the facets of the components it
 /// depends on, and the environment of the whole graph - the security
-/// context it is built under and the secrets it may resolve.
+/// context it is built under, the secrets it may resolve, and, for the
+/// components of an agent in a channel, what it may read of the session's
+/// other channels.
 #[derive(Debug, Clone)]
 pub struct ComponentContext {
     pub deps: HashMap<String, ComponentFacets>,
     pub security_context: SecurityContext,
     pub secret_manager: Arc<SecretManager>,
+    /// Read access to the notes and histories of the session's channels
+    /// (issue 17); `session_reader::detached()` outside of a channel, e.g.
+    /// for the commands of a session.
+    pub session_reader: Arc<dyn SessionReader>,
 }
 
 impl ComponentContext {
     /// The context a component graph is built in, without dependencies:
     /// `ComponentContainer::from_config` gives each component this context
     /// with its own dependencies added.
-    pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>) -> Self {
-        Self { deps: HashMap::new(), security_context, secret_manager }
+    pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>, session_reader: Arc<dyn SessionReader>) -> Self {
+        Self { deps: HashMap::new(), security_context, secret_manager, session_reader }
     }
 }
 
@@ -335,6 +342,7 @@ mod tests {
         ComponentContext::new(
             SecurityContext { session_id, ..SecurityContext::default() },
             Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
+            crate::session_reader::detached(),
         )
     }
 

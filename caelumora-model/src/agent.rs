@@ -12,8 +12,7 @@ use crate::store::{EntityStore, StoreResult};
 use crate::tool::ToolCallState;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -188,17 +187,10 @@ pub struct AgentChannelState {
     /// The notes the agent published in this channel (issue 17).
     #[serde(default)]
     pub notes: NoteChain,
-    /// Changes to them made in the current turn, taken over into `notes`
-    /// when the turn completes and discarded if it does not.
-    #[serde(default)]
-    pub turn_notes: Vec<NoteChange>,
     /// The agent's private notes in this channel, which only it reads - and
     /// only where the channel's confidentiality allows (issue 51).
     #[serde(default)]
     pub private_notes: NoteChain,
-    /// Changes to them made in the current turn, like `turn_notes`.
-    #[serde(default)]
-    pub turn_private_notes: Vec<NoteChange>,
     /// Knowledge read in the current turn, each with the number of messages
     /// the turn had produced by then: it counts for the messages after it
     /// (issue 17).
@@ -218,6 +210,11 @@ pub struct AgentChannelState {
     /// to the current state when the turn completes (issue 62).
     #[serde(default)]
     pub turn_agent_changes: Vec<AgentStateChange>,
+    /// Changes to this state made in the current turn - to its notes and
+    /// private notes - applied when the turn completes and discarded if it
+    /// does not (issue 65).
+    #[serde(default)]
+    pub turn_channel_changes: Vec<AgentChannelChange>,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
@@ -237,8 +234,6 @@ pub struct AgentChannelState {
     /// instead of the default `Idle`. Consumed once, at the end of the turn.
     #[serde(default)]
     pub requested_state: Option<ActorState>,
-    #[serde(default)]
-    pub turn_scratch: HashMap<String, Value>,
     #[serde(default)]
     pub turn_context: Vec<Message>,
     #[serde(default)]
@@ -274,7 +269,28 @@ pub enum SeenItem {
     Message(Message),
 }
 
+/// A change to an [`AgentChannelState`], staged by a turn and applied when
+/// the turn completes (issue 65) - like [`AgentStateChange`], but without a
+/// handle: the state of an agent in a channel has one writer, the agent's
+/// actor in that channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentChannelChange {
+    /// A change to the agent's notes in the channel (issue 17).
+    Note(NoteChange),
+    /// A change to its private notes in the channel (issue 51).
+    PrivateNote(NoteChange),
+}
+
 impl AgentChannelState {
+    /// Applies `change`, made in the turn that ended with message `after`
+    /// while the agent's context had the digest `context`.
+    pub fn apply(&mut self, change: AgentChannelChange, after: MessageId, context: Option<Digest>) {
+        match change {
+            AgentChannelChange::Note(change) => self.notes.push(change, after, context),
+            AgentChannelChange::PrivateNote(change) => self.private_notes.push(change, after, context),
+        }
+    }
+
     /// Resolves `reference` in this state: the context prefix it names, with
     /// every prompt part inserted after the entry it followed. `None` if what
     /// it names is not here - a context that is not a prefix of this one, a
@@ -400,5 +416,16 @@ mod tests {
         let mut forgotten = reference;
         forgotten.prompts[0].text = prompt("never recorded");
         assert!(state.resolve(&forgotten).is_none(), "a part whose text was not kept");
+    }
+
+    #[test]
+    fn a_channel_change_goes_to_the_chain_it_names() {
+        use crate::note::{NoteChange, NoteId};
+        let mut state = AgentChannelState::default();
+        let note = |id, text: &str| NoteChange::Note { id: NoteId(id), text: text.to_string() };
+        state.apply(AgentChannelChange::Note(note(1, "public")), MessageId::new(), None);
+        state.apply(AgentChannelChange::PrivateNote(note(1, "private")), MessageId::new(), None);
+        assert_eq!(state.notes.current()[0].text, "public");
+        assert_eq!(state.private_notes.current()[0].text, "private");
     }
 }

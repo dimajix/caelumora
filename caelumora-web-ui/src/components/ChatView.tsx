@@ -25,6 +25,7 @@ import type {
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
 import {confidentialityInfo} from '../confidentiality';
+import {changedChannel, onGlobalEvent} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -111,6 +112,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         if (error instanceof ApiRequestError && error.status === 403) return;
         reportError('Failed to load the commands', error);
       });
+  }, [sessionId, channelId]);
+
+  // The notes follow the global stream: a changed state of an agent in this
+  // channel is announced without content, and the notes are fetched again
+  // (issue 65).
+  useEffect(() => {
+    return onGlobalEvent(event => {
+      if (changedChannel(event) !== channelId) return;
+      api.getNotes(sessionId, channelId)
+        .then(setNotes)
+        .catch(error => reportError('Failed to load the notes', error));
+    });
   }, [sessionId, channelId]);
 
   useEffect(() => {
@@ -201,14 +214,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, notice]);
-        } else if (actorEvent.NotesChanged) {
-          const changed: PublishedNotes = {
-            agent_id: envelope.context.sender_id,
-            name: envelope.context.sender_name,
-            notes: actorEvent.NotesChanged.notes,
-          };
-          const key = JSON.stringify(changed.agent_id);
-          setNotes(prev => [...prev.filter(group => JSON.stringify(group.agent_id) !== key), changed]);
         } else if (actorEvent.PlanStepStarted) {
           setCurrentStep(actorEvent.PlanStepStarted);
         } else if (actorEvent.PlanStepFinished) {

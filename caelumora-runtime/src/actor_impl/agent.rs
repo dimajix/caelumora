@@ -3,7 +3,7 @@ use crate::agent_turn::TurnContext;
 use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
-use crate::notes::{ChannelSessionReader, SessionReader};
+use crate::session_reader::ChannelSessionReader;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{ToolExecutor, ToolProvider};
@@ -65,9 +65,6 @@ struct AgentActorState {
     /// The agent's own state, shared with its actors in other channels and
     /// sessions (issue 62).
     agent_state: Arc<AgentStateHandle>,
-    /// What every turn reads the session's notes and histories through
-    /// (issue 17).
-    session_reader: Arc<dyn SessionReader>,
 }
 
 impl AgentActorState {
@@ -78,7 +75,6 @@ impl AgentActorState {
             &mut self.agent_channel_state,
             self.agent_state.clone(),
         )
-        .with_session_reader(Some(self.session_reader.clone()))
     }
 }
 
@@ -104,7 +100,13 @@ impl AgentActor {
         let components = ComponentContainer::from_config(
             &personality.components,
             &actor_runtime.component_registry(),
-            &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager()),
+            // Its components read the session's other channels through the
+            // agent's runtime (issue 17).
+            &ComponentContext::new(
+                security_context.clone(),
+                actor_runtime.secret_manager(),
+                Arc::new(ChannelSessionReader::new(actor_runtime.clone())),
+            ),
         )
         .await?;
         let context_provider = components.get_all::<dyn ContextProvider>(None)?;
@@ -121,13 +123,12 @@ impl AgentActor {
         agent_channel_state.turn_event_context.channel_id = channel.id;
         agent_channel_state.turn_event_context.sender_id = ActorId::Agent(agent_id);
         agent_channel_state.turn_event_context.sender_name = agent_controller.name();
-        let agent_state = actor_runtime.agent_states().get(agent_id).await?;
+        let agent_state = actor_runtime.agent_states().get(agent_id, agent_controller.load().security_attributes.clone()).await?;
         let processing_state = agent_channel_state.processing_state.clone();
         let state = Mutex::new(AgentActorState {
             agent_id,
             agent_channel_state,
             agent_state,
-            session_reader: Arc::new(ChannelSessionReader::new(actor_runtime.clone())),
         });
 
         Ok(AgentActor {
@@ -491,23 +492,33 @@ impl AgentActor {
     /// (the audit/user-facing trail - see `ChannelLoop::append_history` and
     /// `channel.history()`) only keeps genuinely final messages.
     ///
-    /// Notes changed in the turn are published with it: `NotesChanged`
-    /// follows the turn's `FullResponseGenerated`.
+    /// The turn is taken over and stored before its `FullResponseGenerated`
+    /// announces its end (issue 65): whoever reacts to it - another agent
+    /// whose turn it starts, a user interface reloading notes - reads the
+    /// state as the turn left it. A change of the agent's state in the
+    /// channel is announced as `GlobalEvent::AgentChannelStateChanged` once
+    /// stored; a change of its own state by its `AgentStateHandle`.
     async fn reflect<'a>(&self, turn_context: &mut TurnContext<'a>, output: &dyn EventSender) -> Result<()> {
         let messages = turn_context.messages().clone();
-        let notes_changed = turn_context.record_turn(messages);
+        let channel_state_changed = turn_context.record_turn(messages);
         // The answer is already out: a state that cannot be stored costs the
         // turn's memory, not the turn.
         if let Err(e) = turn_context.commit_agent_state().await {
             warn!("{:#}", e);
         }
+        turn_context.store_channel_state(&self.state_store).await;
+        if channel_state_changed {
+            if let Some(channel) = self.actor_runtime.channel() {
+                self.actor_runtime.event_bus().publish(
+                    GlobalEvent::AgentChannelStateChanged(turn_context.session_id, self.channel_id, self.agent_id),
+                    channel.security_attributes(),
+                );
+            }
+        }
         turn_context.send_event(
             ActorEvent::FullResponseGenerated(Self::final_messages(turn_context)),
             output,
         ).await?;
-        if notes_changed {
-            turn_context.send_event(ActorEvent::NotesChanged { notes: turn_context.notes() }, output).await?;
-        }
         Ok(())
     }
 

@@ -51,3 +51,31 @@ export function sessionChange(event: GlobalEvent): SessionChange {
   if (REFRESHING.has(kind)) return {kind: 'refresh', sessionId};
   return {kind: 'ignore'};
 }
+
+// The global stream is opened once, by the session list; other views hear its
+// events through here instead of opening a stream of their own.
+type GlobalEventListener = (event: GlobalEvent) => void;
+const listeners = new Set<GlobalEventListener>();
+
+/** Calls `listener` with every event of the global stream until the returned function is called. */
+export function onGlobalEvent(listener: GlobalEventListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Hands `event` of the global stream to every listener. */
+export function dispatchGlobalEvent(event: GlobalEvent): void {
+  listeners.forEach(listener => listener(event));
+}
+
+/**
+ * The channel whose state of an agent changed, for `AgentChannelStateChanged`
+ * (issue 65) - its notes, say; `null` for any other event. The event carries
+ * no content: whoever shows the notes fetches them again.
+ */
+export function changedChannel(event: GlobalEvent): string | null {
+  const value = event.AgentChannelStateChanged;
+  return Array.isArray(value) && typeof value[1] === 'string' ? value[1] : null;
+}

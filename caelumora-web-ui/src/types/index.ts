@@ -190,8 +190,6 @@ export interface ActorEvent {
   TurnFailed?: { message: string };
   /** A user ran a command whose answer concerns the whole channel (issue 28). */
   CommandExecuted?: { command: string; output: string };
-  /** The sender's notes changed; its notes as they stand now (issue 17). */
-  NotesChanged?: { notes: Note[] };
 }
 
 /** A user command, as `/help` and completion show it (issue 28). */

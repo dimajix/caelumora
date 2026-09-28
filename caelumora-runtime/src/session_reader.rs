@@ -1,10 +1,11 @@
 //! Reading what other agents and channels of a session know (issue 17).
 //!
 //! Every agent writes only its own notes, into its own state
-//! (`TurnContext::note`, taken over when its turn completes). What others
-//! published is read from their states in the `StateStore`, where an agent's
-//! state is written after every step - so a reader sees notes of finished
-//! turns only, as principle 3 in issue 19 requires. Another channel's notes
+//! (`crate::agent_notes::AgentNotes`, taken over when its turn completes).
+//! What others published is read from their states in the `StateStore`,
+//! where an agent's state is stored before it announces the end of its turn -
+//! so a reader sees notes of finished turns only, as principle 3 in issue 19
+//! requires. Another channel's notes
 //! and history are read only if the reading channel may read that channel
 //! (`ChannelLoop::may_read`, `ActionType::ReadChannel`): decided by the two
 //! channels' confidentiality levels, not by who takes part in them, since an
@@ -91,6 +92,43 @@ pub trait SessionReader: Send + Sync + Debug {
     /// memory, bounded by confidentiality. The own channel's are not among
     /// them: the turn has them itself.
     async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>>;
+}
+
+/// A reader that reads nothing: no channel, no notes, every channel named
+/// not readable - for components built outside of a channel, such as the
+/// commands of a session, and for tests.
+pub fn detached() -> Arc<dyn SessionReader> {
+    Arc::new(DetachedSessionReader)
+}
+
+#[derive(Debug)]
+struct DetachedSessionReader;
+
+#[async_trait]
+impl SessionReader for DetachedSessionReader {
+    fn own_channel(&self) -> Option<ChannelInfo> {
+        None
+    }
+
+    async fn channel_notes(&self) -> Result<Vec<PublishedNotes>> {
+        Ok(Vec::new())
+    }
+
+    async fn readable_channels(&self) -> Result<Vec<ChannelInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn notes_of(&self, name: &str) -> Result<(ChannelInfo, Vec<PublishedNotes>)> {
+        Err(NotReadable(name.to_string()).into())
+    }
+
+    async fn history_of(&self, name: &str) -> Result<ChannelHistory> {
+        Err(NotReadable(name.to_string()).into())
+    }
+
+    async fn private_notes(&self, _agent: AgentId) -> Result<Vec<ChannelNotes>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Reads the session of the channel an actor runs in.

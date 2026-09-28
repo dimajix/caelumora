@@ -22,6 +22,15 @@ pub enum GlobalEvent {
     AgentDeleted(SessionId, AgentId),
     AgentChannelJoined(SessionId, ChannelId, AgentId),
     AgentChannelLeft(SessionId, ChannelId, AgentId),
+    /// The agent's own state changed - its memory (issue 62). Published with
+    /// the agent's attributes once the change is stored; without content,
+    /// since the state is private: whoever may see it fetches it.
+    AgentStateChanged(AgentId),
+    /// The state of an agent in a channel changed - its notes or private
+    /// notes (issue 65). Published with the channel's attributes once it is
+    /// stored, before the agent announces the end of its turn; without
+    /// content, since part of it is private.
+    AgentChannelStateChanged(SessionId, ChannelId, AgentId),
     UserChannelJoined(SessionId, ChannelId, UserId),
     UserChannelLeft(SessionId, ChannelId, UserId),
     UserCreated(UserId),

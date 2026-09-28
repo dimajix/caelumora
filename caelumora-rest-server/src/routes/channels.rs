@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -134,6 +134,21 @@ pub async fn get_channel_messages(
     let messages = channel.history().await;
 
     Ok(Json(messages))
+}
+
+/// The notes every agent of the channel published (issue 17) - what a
+/// client reloads on `GlobalEvent::AgentChannelStateChanged` (issue 65).
+pub async fn get_notes(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
+    let session_id = SessionId(id);
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let channel = channel_of(&session, ChannelId(cid))?;
+    let notes = channel.published_notes().await
+        .map_err(|e| ApiError::internal("notes_failed", &format!("reading the notes of channel {}", cid), &e))?;
+    Ok(Json(notes.into_iter().map(Into::into).collect()))
 }
 
 /// The state of `channel` right now, for a stream that starts with a

@@ -21,7 +21,8 @@ use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::{note_id, note_text};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
-use crate::notes::ChannelNotes;
+use crate::agent_notes::{AgentNotes, NoteKind};
+use crate::session_reader::{ChannelNotes, SessionReader};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -39,7 +40,16 @@ pub const NOTE_PRIVATE_TOOL_NAME: &str = "note_private";
 pub const REVOKE_PRIVATE_NOTE_TOOL_NAME: &str = "revoke_private_note";
 
 #[derive(Debug)]
-pub struct PrivateNotesComponent;
+pub struct PrivateNotesComponent {
+    /// The agent's private notes in the session's other channels.
+    reader: Arc<dyn SessionReader>,
+}
+
+impl PrivateNotesComponent {
+    pub fn new(reader: Arc<dyn SessionReader>) -> Self {
+        Self { reader }
+    }
+}
 
 #[async_trait]
 impl ToolProvider for PrivateNotesComponent {
@@ -87,7 +97,7 @@ impl PrivateNotesComponent {
     /// `note_private(text)`: notes `text` privately, taken over when the
     /// turn completes.
     fn execute_note_private(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
-        let id = context.private_note(note_text(params)?);
+        let id = AgentNotes::new(context, NoteKind::Private).note(note_text(params)?);
         Ok(serde_json::json!({ "status": "noted privately", "id": id.0 }))
     }
 
@@ -95,7 +105,7 @@ impl PrivateNotesComponent {
     /// of this channel.
     fn execute_revoke_private_note(&self, params: &Value, context: &mut TurnContext<'_>) -> ToolResult<Value> {
         let id = note_id(params)?;
-        if context.revoke_private_note(id) {
+        if AgentNotes::new(context, NoteKind::Private).revoke(id) {
             Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you have no private note #{id} in this channel")))
@@ -110,22 +120,19 @@ impl PromptProvider for PrivateNotesComponent {
     }
 
     async fn get_prompt(&self, context: &TurnContext) -> Result<Prompt> {
-        let own = context.private_notes();
-        let mut elsewhere = match context.session_reader() {
-            Some(reader) => reader.private_notes(context.agent_id).await.unwrap_or_else(|e| {
-                // The agent can still answer without them.
-                warn!("Reading the private notes of agent {} failed: {}", context.agent_id, e);
-                Vec::new()
-            }),
-            None => Vec::new(),
-        };
+        let own = AgentNotes::current(context, NoteKind::Private);
+        let mut elsewhere = self.reader.private_notes(context.agent_id).await.unwrap_or_else(|e| {
+            // The agent can still answer without them.
+            warn!("Reading the private notes of agent {} failed: {}", context.agent_id, e);
+            Vec::new()
+        });
         elsewhere.retain(|c| !c.notes.is_empty());
         elsewhere.sort_by(|l, r| l.channel.name.cmp(&r.channel.name));
 
         let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: context.agent_id, digest } };
         let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel.id, c.digest)).collect();
         if !own.is_empty() {
-            knowledge.push(private(context.channel_id, context.private_notes_digest()));
+            knowledge.push(private(context.channel_id, AgentNotes::digest(context, NoteKind::Private)));
         }
         Ok(Prompt { text: render(&own, &elsewhere), knowledge })
     }
@@ -156,10 +163,11 @@ fn render(own: &[Note], elsewhere: &[ChannelNotes]) -> String {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         PRIVATE_NOTES_KIND,
-        Box::new(|_descriptor, _context| {
+        Box::new(|_descriptor, context| {
+            let component = Arc::new(PrivateNotesComponent::new(context.session_reader.clone()));
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(PrivateNotesComponent));
-            facets.insert::<dyn PromptProvider>(Arc::new(PrivateNotesComponent));
+            facets.insert::<dyn ToolProvider>(component.clone());
+            facets.insert::<dyn PromptProvider>(component);
             Ok(facets)
         }),
     );
@@ -168,7 +176,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notes::ChannelInfo;
+    use crate::session_reader::ChannelInfo;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::note::NoteId;
@@ -193,20 +201,20 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent;
+        let tools = PrivateNotesComponent::new(crate::session_reader::detached());
         let mut turn = TurnContext::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
-        turn.note("public".to_string());
+        AgentNotes::new(&mut turn, NoteKind::Public).note("public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted["id"], 1, "its own numbering");
-        assert!(turn.private_notes().is_empty(), "not before the turn completes");
-        assert!(turn.record_turn(Vec::new()), "public notes changed");
-        assert_eq!(turn.private_notes().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
-        assert_eq!(turn.notes().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
+        assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty(), "not before the turn completes");
+        assert!(turn.record_turn(Vec::new()), "the channel state changed");
+        assert_eq!(AgentNotes::current(&turn, NoteKind::Private).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
+        assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
 
         let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
-        assert!(!turn.record_turn(Vec::new()), "only private notes changed: nobody is told");
-        assert!(turn.private_notes().is_empty());
+        assert!(turn.record_turn(Vec::new()), "private notes are part of the channel state too");
+        assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty());
     }
 }

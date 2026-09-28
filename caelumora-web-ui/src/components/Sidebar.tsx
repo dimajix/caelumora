@@ -13,7 +13,7 @@ import {
 import type {ChannelResponse, SessionSnapshot, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {sessionChange} from '../globalEvents';
+import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
 import {NewChannelDialog} from './NewChannelDialog';
@@ -121,13 +121,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
       },
       onEvent: (data) => {
-        let change;
+        let event;
         try {
-          change = sessionChange(JSON.parse(data));
+          event = JSON.parse(data);
         } catch (error) {
           console.error('Failed to parse a global event', error);
           return;
         }
+        dispatchGlobalEvent(event);
+        const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);
         } else if (change.kind === 'rename') {

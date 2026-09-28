@@ -172,9 +172,9 @@ mod tests {
     #[tokio::test]
     async fn what_is_remembered_is_recalled_wherever_its_origin_may_be_read() {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        let states = AgentStates::new(store);
+        let states = AgentStates::new(store, Arc::new(()));
         let agent = AgentId::new();
-        let handle = states.get(agent).await.unwrap();
+        let handle = states.get(agent, Default::default()).await.unwrap();
         let memory = AgentMemoryComponent;
         let (session, other_session) = (SessionId::new(), SessionId::new());
         let (team, public, elsewhere) = (channel(session, Confidentiality::Session), channel(session, Confidentiality::Public), channel(other_session, Confidentiality::Session));

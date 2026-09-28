@@ -5,12 +5,14 @@
 //! in its channel, and handed to its components: it holds the turn's
 //! messages, the context and prompt parts the model is given and where they
 //! came from, pending tool calls and the plan, the changes of the turn not
-//! yet taken over, and access to the agent's own state (issue 62) and to what
-//! the session's other channels published (issue 17). `record_turn` and
-//! `commit_agent_state` take the turn over when it completes.
+//! yet taken over, and generic access to the agent's state in the channel and
+//! to its own state (issues 62, 65). What those states hold is the business
+//! of wrappers such as `crate::agent_notes::AgentNotes` and
+//! `crate::agent_memory::AgentMemory`. `record_turn` and `commit_agent_state`
+//! take the turn over when it completes.
 
 use anyhow::{Context, Result};
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentStateChange};
+use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange};
 use tracing::warn;
 use std::mem;
 use std::sync::Arc;
@@ -24,8 +26,6 @@ use crate::agent_state::AgentStateHandle;
 use caelumora_model::digest::Digest;
 use caelumora_model::agent::TurnKnowledge;
 use caelumora_model::message::{ContextRef, KnowledgeRef, Message, MessageRole, PromptRef};
-use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId};
-use crate::notes::SessionReader;
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -51,7 +51,6 @@ pub struct TurnContext<'a> {
     pub session_id: SessionId,
     pub agent_name: String,
     agent_channel_state: &'a mut AgentChannelState,
-    session_reader: Option<Arc<dyn SessionReader>>,
     /// The agent's own state, shared by all its actors (issue 62). The turn
     /// reads it and stages changes, never holds it.
     agent_state: Arc<AgentStateHandle>,
@@ -65,7 +64,6 @@ impl<'a> TurnContext<'a> {
             session_id: agent_channel_state.turn_event_context.session_id,
             agent_name,
             agent_channel_state,
-            session_reader: None,
             agent_state,
         }
     }
@@ -110,28 +108,13 @@ impl<'a> TurnContext<'a> {
         self.agent_state.apply(changes, self.agent_channel_state.history.last_message_id()).await
     }
 
-    /// Gives the turn read access to what the session's agents and channels
-    /// published (issue 17).
-    pub fn with_session_reader(mut self, reader: Option<Arc<dyn SessionReader>>) -> Self {
-        self.session_reader = reader;
-        self
-    }
-
-    /// Read access to what the session's agents and channels published, if
-    /// the turn has it.
-    pub fn session_reader(&self) -> Option<Arc<dyn SessionReader>> {
-        self.session_reader.clone()
-    }
-
     pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
-        self.agent_channel_state.turn_scratch.clear();
         self.agent_channel_state.turn_context.clear();
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
         self.agent_channel_state.plan = None;
         self.agent_channel_state.turn_prompts.clear();
-        self.agent_channel_state.turn_notes.clear();
-        self.agent_channel_state.turn_private_notes.clear();
+        self.agent_channel_state.turn_channel_changes.clear();
         self.agent_channel_state.turn_knowledge.clear();
         self.agent_channel_state.turn_agent_changes.clear();
         self.agent_channel_state.turn_event_context = event_context;
@@ -145,7 +128,6 @@ impl<'a> TurnContext<'a> {
     }
 
     pub fn finish_turn(&mut self) {
-        self.agent_channel_state.turn_scratch.clear();
         self.agent_channel_state.turn_context.clear();
         self.agent_channel_state.turn_messages.clear();
     }
@@ -287,54 +269,24 @@ impl<'a> TurnContext<'a> {
         }
     }
 
-    /// The agent's notes in this channel as they stand - without the changes
-    /// of the current turn, which count only once it completes.
-    pub fn notes(&self) -> Vec<Note> {
-        self.agent_channel_state.notes.current()
+    /// The agent's state in this channel as it stands: what components read
+    /// their state from (issue 65). Changes the turn made count only once it
+    /// completes.
+    pub fn agent_channel_state(&self) -> &AgentChannelState {
+        self.agent_channel_state
     }
 
-    /// The digest of the agent's notes in this channel, `None` while it has
-    /// none: the state of knowledge a reader of them records.
-    pub fn notes_digest(&self) -> Option<caelumora_model::digest::Digest> {
-        self.agent_channel_state.notes.digest()
+    /// Stages `change` to the agent's state in this channel, applied when the
+    /// turn completes (`record_turn`).
+    pub fn stage_channel_change(&mut self, change: AgentChannelChange) {
+        self.agent_channel_state.turn_channel_changes.push(change);
     }
 
-    /// Notes `text` in this turn and returns the note's number. It is
-    /// published when the turn completes (issue 17).
-    pub fn note(&mut self, text: String) -> NoteId {
-        let state = &mut *self.agent_channel_state;
-        add_note(&state.notes, &mut state.turn_notes, text)
-    }
-
-    /// Revokes the agent's note `id` in this turn: one of its current notes,
-    /// or one noted earlier in this turn. `false` if there is no such note.
-    pub fn revoke_note(&mut self, id: NoteId) -> bool {
-        let state = &mut *self.agent_channel_state;
-        revoke(&state.notes, &mut state.turn_notes, id)
-    }
-
-    /// The agent's private notes in this channel as they stand, without the
-    /// changes of the current turn (issue 51).
-    pub fn private_notes(&self) -> Vec<Note> {
-        self.agent_channel_state.private_notes.current()
-    }
-
-    /// The digest of the agent's private notes in this channel.
-    pub fn private_notes_digest(&self) -> Option<caelumora_model::digest::Digest> {
-        self.agent_channel_state.private_notes.digest()
-    }
-
-    /// Notes `text` privately in this turn, like [`Self::note`]; numbered in
-    /// the private notes, independently of the public ones.
-    pub fn private_note(&mut self, text: String) -> NoteId {
-        let state = &mut *self.agent_channel_state;
-        add_note(&state.private_notes, &mut state.turn_private_notes, text)
-    }
-
-    /// Revokes one of the agent's private notes, like [`Self::revoke_note`].
-    pub fn revoke_private_note(&mut self, id: NoteId) -> bool {
-        let state = &mut *self.agent_channel_state;
-        revoke(&state.private_notes, &mut state.turn_private_notes, id)
+    /// The changes to the agent's state in this channel staged in this turn
+    /// so far - to change as well: a change taken back within the turn is
+    /// simply dropped.
+    pub fn staged_channel_changes(&mut self) -> &mut Vec<AgentChannelChange> {
+        &mut self.agent_channel_state.turn_channel_changes
     }
 
     /// Appends the messages this agent produced in the turn to its context,
@@ -342,9 +294,9 @@ impl<'a> TurnContext<'a> {
     /// produced from: the context before it and the turn's prompt parts
     /// (issues 06, 47).
     ///
-    /// Takes over the notes changed in the turn, public and private, after
-    /// its last message in the history, and returns whether public notes
-    /// changed - which others are told of (issues 17, 51).
+    /// Applies the changes staged to the agent's state in this channel
+    /// (`stage_channel_change`), anchored at the turn's last message in the
+    /// history, and returns whether there were any (issue 65).
     pub fn record_turn(&mut self, messages: Vec<Message>) -> bool {
         let before = self.agent_channel_state.context.extend(messages.clone());
         let prompts = self.agent_channel_state.turn_prompts.clone();
@@ -358,17 +310,13 @@ impl<'a> TurnContext<'a> {
         }
 
         // A message of the history, not an internal step of the context:
-        // what branching (issue 08) will find the notes by.
+        // what branching (issue 08) will find the changes by.
         let after = self.agent_channel_state.history.last_message_id();
         let context = self.agent_channel_state.context.digest();
-        let state = &mut *self.agent_channel_state;
-        for change in mem::take(&mut state.turn_private_notes) {
-            state.private_notes.push(change, after, context);
-        }
-        let changes = mem::take(&mut state.turn_notes);
+        let changes = mem::take(&mut self.agent_channel_state.turn_channel_changes);
         let changed = !changes.is_empty();
         for change in changes {
-            state.notes.push(change, after, context);
+            self.agent_channel_state.apply(change, after, context);
         }
         changed
     }
@@ -432,38 +380,6 @@ impl<'a> TurnContext<'a> {
             .context(format!("Actor {} failed to send event", self.agent_id))?;
         Ok(())
     }
-}
-
-/// Adds a note with `text` to the changes `turn` of a turn on `chain`, and
-/// returns its number: one more than any in the chain or the turn.
-fn add_note(chain: &NoteChain, turn: &mut Vec<NoteChange>, text: String) -> NoteId {
-    let written_now = turn.iter().filter_map(|c| match c {
-        NoteChange::Note { id, .. } => Some(id.0),
-        NoteChange::Revoke { .. } => None,
-    }).max();
-    let id = match written_now {
-        Some(highest) => NoteId(highest + 1),
-        None => chain.next_id(),
-    };
-    turn.push(NoteChange::Note { id, text });
-    id
-}
-
-/// Revokes note `id` in the changes `turn` of a turn on `chain`: one of the
-/// chain's current notes, or one noted earlier in the turn, which is then
-/// simply dropped. `false` if there is no such note.
-fn revoke(chain: &NoteChain, turn: &mut Vec<NoteChange>, id: NoteId) -> bool {
-    if let Some(index) = turn.iter().position(|c| matches!(c, NoteChange::Note { id: noted, .. } if *noted == id)) {
-        // Noted and revoked in the same turn: it was never published.
-        turn.remove(index);
-        return true;
-    }
-    let revoked_now = turn.iter().any(|c| matches!(c, NoteChange::Revoke { id: revoked } if *revoked == id));
-    if revoked_now || !chain.current().iter().any(|n| n.id == id) {
-        return false;
-    }
-    turn.push(NoteChange::Revoke { id });
-    true
 }
 
 #[cfg(test)]

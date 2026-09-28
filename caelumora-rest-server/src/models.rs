@@ -36,8 +36,9 @@ pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
     pub messages: Vec<Message>,
     pub has_more: bool,
-    /// The notes every agent of the channel published (issue 17); changes
-    /// follow as `NotesChanged` events.
+    /// The notes every agent of the channel published (issue 17); a change
+    /// is announced as `AgentChannelStateChanged` on the event stream, and
+    /// the notes reloaded from `GET …/channels/{cid}/notes` (issue 65).
     pub notes: Vec<PublishedNotesResponse>,
 }
 
@@ -49,8 +50,8 @@ pub struct PublishedNotesResponse {
     pub notes: Vec<caelumora_model::note::Note>,
 }
 
-impl From<caelumora_runtime::notes::PublishedNotes> for PublishedNotesResponse {
-    fn from(published: caelumora_runtime::notes::PublishedNotes) -> Self {
+impl From<caelumora_runtime::session_reader::PublishedNotes> for PublishedNotesResponse {
+    fn from(published: caelumora_runtime::session_reader::PublishedNotes) -> Self {
         Self { agent_id: published.agent, name: published.name, notes: published.notes }
     }
 }

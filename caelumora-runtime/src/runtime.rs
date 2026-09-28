@@ -177,7 +177,7 @@ impl RuntimeManager {
 
         let event_bus = Arc::new(EventBus::new(security_manager.clone()));
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
-        let agent_states = Arc::new(crate::agent_state::AgentStates::new(state_store.clone()));
+        let agent_states = Arc::new(crate::agent_state::AgentStates::new(state_store.clone(), event_bus.clone()));
 
         Ok(Self {
             security_manager,
@@ -203,7 +203,8 @@ impl RuntimeManager {
     pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
-        let context = ComponentContext::new(security, self.secret_manager());
+        // Commands run outside of any channel: they read none.
+        let context = ComponentContext::new(security, self.secret_manager(), crate::session_reader::detached());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.

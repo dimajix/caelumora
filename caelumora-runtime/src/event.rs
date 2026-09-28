@@ -241,6 +241,14 @@ impl EventBus {
                 //topics_to_notify.push(SubscriptionTopic::Channel(*cid));
                 topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
+            GlobalEvent::AgentStateChanged(aid) => {
+                topics_to_notify.push(SubscriptionTopic::Agent(*aid));
+            }
+            GlobalEvent::AgentChannelStateChanged(sid, cid, aid) => {
+                topics_to_notify.push(SubscriptionTopic::Session(*sid));
+                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
+                topics_to_notify.push(SubscriptionTopic::Agent(*aid));
+            }
             GlobalEvent::UserCreated(uid) | GlobalEvent::UserUpdated(uid, _) | GlobalEvent::UserDeleted(uid) => {
                 topics_to_notify.push(SubscriptionTopic::User(*uid));
             }

@@ -196,3 +196,9 @@ WARN caelumora_runtime::channel: Cannot store state of channel 6537d0a0-...: bac
     only translates tool calls and renders its prompt part.
   - Notes are not reworked now: they are to follow this pattern in
     [65](65-generic-component-state.md).
+- **2026-09-28** — Step 3 verified in the browser (fresh stores): the agent
+  remembered an entry in `main` (`session`); it is stored in its
+  `AgentState` with that origin, written only when the turn completed, and
+  the agent recalls it in `research` (`session`) and in `vault` (`channel`) -
+  both may read `main`. No "Cannot store" warning in the log. Still open:
+  `stop_session` does not take the start lock.
