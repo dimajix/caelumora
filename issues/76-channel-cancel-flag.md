@@ -1,6 +1,6 @@
 # 76 — The channel's cancel flag suppresses the final response and is a third state machine
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -70,3 +70,21 @@ it.
   (`work/2026-09-28-code-review.md`, section 1, error 2 and 3.1.1). The
   maintainer added the requirement that a cancel is asynchronous from
   another thread and must reach the model call quickly; recorded above.
+- **2026-09-28** — Done, with one deviation from "drop the flag": the flag
+  had a second effect besides the bug - after a cancel nobody was asked to
+  respond until a user spoke again - and the maintainer wanted that kept.
+  `ChannelLoop` now has a `quiet: AtomicBool` with that one meaning:
+  `route_event_impl` drops the `ResponseRequested` forwards while it is
+  set and delivers everything else, so transcripts keep up with the
+  history. `ActorState::Active` and the public byte conversions are gone.
+  `Actor::cancel`/`wakeup` are synchronous and infallible;
+  `ChannelLoop::wake_for_delivery` too, so REST and the TUI lost a failure
+  path. A cancel reaches the model without touching `LLMClient`: the agent
+  holds a `CancellationToken` per turn, `cancel` cancels it after the state
+  transition, and the streaming loop `select!`s on it next to the stream -
+  returning drops the stream and with it the request. Two tests: the quiet
+  channel, and a cancel interrupting a model that never answers.
+  `RuntimeManager::new` now takes the model client as an argument like
+  every other service it holds, instead of building Ollama from the
+  environment itself; the test passes a stand-in, the binaries
+  `OllamaClient::default()`.

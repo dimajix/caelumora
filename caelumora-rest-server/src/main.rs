@@ -2,6 +2,7 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::runtime::RuntimeManager;
+use caelumora_runtime::llm_impl::ollama::OllamaClient;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use std::sync::Arc;
@@ -67,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         secret_manager.clone(),
         security_manager.clone(),
         config.commands.clone(),
+        Arc::new(OllamaClient::default()),
     )?);
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 

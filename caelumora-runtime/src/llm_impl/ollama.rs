@@ -346,7 +346,7 @@ impl Default for OllamaClient {
 }
 
 impl OllamaClient {
-    pub fn from_env() -> Self {
+    fn from_env() -> Self {
         Self {
             http: reqwest::Client::new(),
             base_url: env::var("OLLAMA_BASE_URL")

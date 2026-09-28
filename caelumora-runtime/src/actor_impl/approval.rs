@@ -359,6 +359,7 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm_impl::ollama::OllamaClient;
     use crate::command::CommandExecutor;
     use crate::runtime::ChannelRuntime;
     use caelumora_model::command::default_commands;
@@ -385,7 +386,7 @@ mod tests {
     async fn test_approval_actor_any_strategy() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap(),
         );
 
         let agent_id = AgentId::new();
@@ -488,7 +489,7 @@ mod tests {
     async fn test_approval_actor_dynamic_membership() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap(),
         );
 
         let session_id = SessionId::new();
@@ -598,7 +599,7 @@ mod tests {
     async fn test_approval_actor_leave_decision() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap(),
         );
 
         let session_id = SessionId::new();
@@ -684,7 +685,7 @@ mod tests {
     async fn an_agent_that_leaves_takes_its_pending_approvals_with_it() {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let runtime_manager = Arc::new(
-            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands()).unwrap(),
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap(),
         );
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();

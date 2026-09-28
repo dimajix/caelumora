@@ -21,6 +21,7 @@ use caelumora_runtime::component_impl::state_history_appender::STATE_HISTORY_APP
 use caelumora_runtime::component_impl::static_system_prompt_provider::STATIC_SYSTEM_PROMPT_PROVIDER_KIND;
 use caelumora_runtime::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
+use caelumora_runtime::llm_impl::ollama::OllamaClient;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use caelumora_runtime::logging::{self, LogTarget};
@@ -301,7 +302,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                 }
                             }
                             UserInput::Message(text) => {
-                                let _ = channel.wake_for_delivery().await;
+                                channel.wake_for_delivery();
                                 let span_id = user_actor.send_message(text).await?;
                                 tracing::debug!(span_id = %span_id, "Message sent");
                             }
@@ -387,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
         secret_manager,
         security_manager.clone(),
         config.commands.clone(),
+        Arc::new(OllamaClient::default()),
     )?);
     let template = setup_templates(&entity_store).await?;
 

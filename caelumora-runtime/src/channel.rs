@@ -21,7 +21,7 @@ use caelumora_model::user::UserId;
 use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
@@ -71,7 +71,10 @@ pub struct ChannelLoop {
     recorder: Mutex<Box<dyn Recorder>>,
     state: Arc<Mutex<ChannelState>>,
     state_store: Arc<dyn StateStore>,
-    processing_state: Arc<AtomicU8>,
+    /// Set by `cancel`, cleared when the channel is woken: while set, what is
+    /// said is still delivered, but nobody is asked to respond to it
+    /// (`route_event_impl`). The turns themselves are cancelled on the actors.
+    quiet: AtomicBool,
     event_tx: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
     run_lock: Mutex<()>
@@ -128,7 +131,7 @@ impl ChannelLoop {
             recorder: Mutex::new(recorder),
             state,
             state_store,
-            processing_state: Arc::new(AtomicU8::new(ActorState::Idle.into())),
+            quiet: AtomicBool::new(false),
             event_tx,
             max_route_decisions: 100,
             run_lock: Mutex::new(())
@@ -312,7 +315,8 @@ impl ChannelLoop {
     }
 
     /// Ends the current turn of every actor in the channel, on behalf of
-    /// `context`'s initiator.
+    /// `context`'s initiator, and keeps the channel quiet - nobody is asked
+    /// to respond - until it is woken again, usually by the next message.
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
@@ -322,9 +326,9 @@ impl ChannelLoop {
     pub async fn cancel(&self, context: &SecurityContext) -> Result<()> {
         let channel = self.channel.load();
         self.check(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
-        self.processing_state.store(ActorState::Cancelling.into(), Ordering::SeqCst);
+        self.quiet.store(true, Ordering::SeqCst);
         for actor in self.actors.load().values() {
-            actor.cancel().await?;
+            actor.cancel();
         }
         Ok(())
     }
@@ -343,7 +347,7 @@ impl ChannelLoop {
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name())
             .collect();
-        self.wake_for_delivery().await?;
+        self.wake_for_delivery();
         Ok(asleep)
     }
 
@@ -359,8 +363,8 @@ impl ChannelLoop {
         let actor = self.actors.load().get(&actor).cloned()
             .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
         let was_asleep = actor.state() == ActorState::Sleeping;
-        self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
-        actor.wakeup().await?;
+        self.quiet.store(false, Ordering::SeqCst);
+        actor.wakeup();
         Ok(was_asleep)
     }
 
@@ -368,12 +372,11 @@ impl ChannelLoop {
     /// a message, a mention, a `WakeupRequested`. That is the consequence of
     /// an action already permitted, so it carries no permission of its own -
     /// otherwise a user allowed to write but not to wake could not write.
-    pub async fn wake_for_delivery(&self) -> Result<()> {
-        self.processing_state.store(ActorState::Active.into(), Ordering::SeqCst);
+    pub fn wake_for_delivery(&self) {
+        self.quiet.store(false, Ordering::SeqCst);
         for actor in self.actors.load().values() {
-            actor.wakeup().await?;
+            actor.wakeup();
         }
-        Ok(())
     }
 
     /// Asks the `SecurityManager` about `action`, turning a refusal into a
@@ -632,9 +635,7 @@ impl ChannelLoop {
             for id in messages.iter().flat_map(|m| m.mentions.iter()) {
                 if let Some(actor) = self.actors.load().get(id).cloned() {
                     if matches!(id, ActorId::Agent(_)) && actor.state() == ActorState::Sleeping {
-                        if let Err(e) = actor.wakeup().await {
-                            warn!("Cannot wake mentioned agent {}: {}", id, e);
-                        }
+                        actor.wakeup();
                     }
                 }
             }
@@ -643,7 +644,7 @@ impl ChannelLoop {
 
     async fn route_event(&self, actors: &HashMap<ActorId,ActorHandle>, event: Envelope) {
         if matches!(event.event, ActorEvent::WakeupRequested) {
-            let _ = self.wake_for_delivery().await;
+            self.wake_for_delivery();
         }
         self.wake_mentioned(&event).await;
 
@@ -653,12 +654,7 @@ impl ChannelLoop {
         //    }
         //}
 
-        let is_cancelling = ActorState::from(self.processing_state.load(Ordering::SeqCst)) == ActorState::Cancelling;
-        let broadcast = if !is_cancelling {
-            self.route_event_impl(actors, event.clone()).await
-        } else {
-            true // cancellation only suppresses internal routing, not external visibility
-        };
+        let broadcast = self.route_event_impl(actors, event.clone()).await;
 
         if broadcast {
             let _ = self.event_tx.send(event);
@@ -676,6 +672,7 @@ impl ChannelLoop {
         let mut moderator = self.moderator.lock().await;
         let decision = moderator.route(&event).await;
         drop(moderator);
+        let quiet = self.quiet.load(Ordering::SeqCst);
 
         // First, route all messages to all agents...
         for route in decision.forwards {
@@ -683,6 +680,13 @@ impl ChannelLoop {
 
             // Do not propagate message to sender again
             if target_id == event.context.sender_id {
+                continue;
+            }
+            // A cancelled channel stays quiet until it is woken: what was said
+            // still reaches everyone, so that every transcript keeps up with
+            // the history, but nobody is asked to answer it.
+            if quiet && matches!(route.1.event, ActorEvent::ResponseRequested) {
+                debug!(to = %target_id, "Not asking for a response: the channel is quiet after a cancel");
                 continue;
             }
 
@@ -797,6 +801,7 @@ fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm_impl::ollama::OllamaClient;
     use crate::command::CommandExecutor;
     use crate::component::ComponentImpl;
     use crate::component_impl::help_command::HelpCommandProvider;
@@ -845,7 +850,7 @@ mod tests {
     async fn channel_with(participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands()).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -894,7 +899,7 @@ mod tests {
         }
         // Waking because something is on its way is not a wakeup of its own:
         // it follows from an action that was permitted.
-        refused.wake_for_delivery().await.expect("delivering does not ask");
+        refused.wake_for_delivery();
 
         let allowed = channel_with(participants, Arc::new(DummySecurityManager::new())).await;
         allowed.cancel(&context).await.expect("permitted");
@@ -1088,7 +1093,7 @@ mod tests {
         let agent_id = ActorId::Agent(agent.id);
 
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands()).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -1104,5 +1109,126 @@ mod tests {
         assert!(!helper.may_read_context(&as_user(&bob)).await, "bob only takes part in the channel");
         let bobs_actor = channel.actor_by_id(ActorId::User(bob.id)).unwrap();
         assert!(!bobs_actor.may_read_context(&as_user(&alice)).await, "a user has nothing to read");
+    }
+
+    /// Answers every event with the same decision: tell `to` what was said,
+    /// and ask it to respond.
+    #[derive(Debug)]
+    struct AskBack(ActorId);
+
+    #[async_trait::async_trait]
+    impl crate::moderator::Moderator for AskBack {
+        async fn route(&mut self, event: &Envelope) -> crate::moderator::RouteDecision {
+            vec![(self.0, event.clone()), (self.0, event.forward_with_event(ActorEvent::ResponseRequested))].into()
+        }
+        fn add_actor(&mut self, _: Arc<dyn Actor>) {}
+        fn remove_actor(&mut self, _: Arc<dyn Actor>) {}
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_channel_delivers_what_is_said_but_asks_nobody_until_it_is_woken() {
+        use caelumora_model::actor::EventContext;
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(DummySecurityManager::new())).await;
+        let bob = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        *channel.moderator.lock().await = Box::new(AskBack(bob));
+        let (tx, mut rx) = mpsc::channel(8);
+        let abort_handle = tokio::spawn(async {}).abort_handle();
+        let actors = HashMap::from([(bob, ActorHandle { id: bob, abort_handle, sender: Box::new(InMemoryEventSender::new(tx)) })]);
+        let said = Envelope::new(
+            context.clone(),
+            EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+            ActorEvent::FullResponseGenerated(vec![Message::default()]),
+        );
+        let delivered = |rx: &mut mpsc::Receiver<Envelope>| {
+            let mut kinds = Vec::new();
+            while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
+            kinds
+        };
+
+        channel.cancel(&context).await.expect("permitted");
+        channel.route_event(&actors, said.clone()).await;
+        assert_eq!(delivered(&mut rx), ["FullResponseGenerated"], "what was said still arrives, but nobody is asked");
+
+        channel.wake_for_delivery();
+        channel.route_event(&actors, said).await;
+        assert_eq!(delivered(&mut rx), ["FullResponseGenerated", "ResponseRequested"], "woken, the channel asks again");
+    }
+
+    /// A model whose answer never comes: what a cancel has to interrupt.
+    #[derive(Debug)]
+    struct NeverAnswers;
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for NeverAnswers {
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
+            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+        {
+            Box::pin(futures::stream::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
+        use caelumora_model::agent::{Agent, Personality, PersonalityId};
+        use caelumora_model::meta::{Metadata, Scope};
+        use caelumora_model::store::EntityStore;
+        use std::time::Duration;
+
+        let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
+        let store = Arc::new(MemoryStore::new());
+        let personality = Personality {
+            reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
+            id: PersonalityId::new(),
+            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            components: Default::default(),
+            security_attributes: Default::default(),
+        };
+        store.put_personality(&SecurityContext::system(), &personality).await.unwrap();
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.clone());
+        let agent_id = ActorId::Agent(agent.id);
+
+        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(NeverAnswers)).unwrap());
+        let channel = Channel::new(
+            SessionId::new(),
+            "main".to_string(),
+            "broadcast".to_string(),
+            vec![Participant::User(alice.clone()), Participant::Agent(agent)],
+            SecurityAttributes::default(),
+        );
+        let executor = CommandExecutor::empty(runtime.security_manager());
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        // The message makes the agent start a turn, which waits for a model
+        // that never answers.
+        channel.user_actor(alice.id).unwrap().send_message("hello".to_string()).await.unwrap();
+        let helper = channel.actor_by_id(agent_id).unwrap();
+        let settled = |wanted: ActorState| {
+            let helper = helper.clone();
+            async move { while helper.state() != wanted { tokio::time::sleep(Duration::from_millis(10)).await } }
+        };
+        tokio::time::timeout(Duration::from_secs(5), settled(ActorState::Planning)).await.expect("the agent starts a turn");
+
+        channel.cancel(&context).await.expect("permitted");
+
+        // The turn ends at once - with an empty answer, so that observers
+        // stop waiting - instead of when the model would have answered.
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == agent_id && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) {
+                    break envelope;
+                }
+            }
+        }).await.expect("the cancelled turn ends without the model");
+        assert!(matches!(ended.event, ActorEvent::FullResponseGenerated(ref messages) if messages.is_empty()));
+        tokio::time::timeout(Duration::from_secs(5), settled(ActorState::Idle)).await.expect("the agent is idle again");
+        running.abort();
     }
 }

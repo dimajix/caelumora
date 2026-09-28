@@ -5,7 +5,6 @@ use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, Comp
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
-use crate::llm_impl::ollama::OllamaClient;
 use crate::moderator::Moderator;
 use crate::moderator_impl::broadcast::BroadcastPolicy;
 use crate::moderator_impl::mentions_only::MentionsOnlyPolicy;
@@ -296,13 +295,15 @@ impl RuntimeManager {
     /// stores were built with, not a second one made up here. `commands` are
     /// the global user commands (`AppConfig::commands`) - likewise an
     /// argument, so that a binary cannot drop the configured ones for a
-    /// default.
+    /// default. `llm_client` is the model every agent talks to, for the same
+    /// reason: the binary configures it, and a test passes a stand-in.
     pub fn new(
         state_store: Arc<dyn StateStore>,
         entity_store: Arc<dyn EntityStore>,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
         commands: ComponentConfig,
+        llm_client: Arc<dyn LLMClient>,
     ) -> Result<Self> {
         let mut component_registry = ComponentRegistry::new(entity_store.clone());
         crate::component_impl::register_all(&mut component_registry);
@@ -316,7 +317,7 @@ impl RuntimeManager {
             state_store,
             entity_store,
             secret_manager,
-            llm_client: Arc::new(OllamaClient::default()),
+            llm_client,
             component_registry: Arc::new(component_registry),
             event_bus,
             controller_manager,
@@ -390,6 +391,7 @@ impl RuntimeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm_impl::ollama::OllamaClient;
     use caelumora_model::agent::{Agent, AgentId};
     use caelumora_model::command::default_commands;
     use caelumora_model::security::DummySecurityManager;
@@ -399,7 +401,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands()).unwrap());
+        let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
         ChannelRuntime::new(manager, commands)
     }

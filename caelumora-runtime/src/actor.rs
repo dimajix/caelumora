@@ -29,14 +29,14 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// Returns the current processing state of the actor.
     fn state(&self) -> ActorState;
 
-    /// Wakes up the actor from a Sleep state.
-    async fn wakeup(&self) -> Result<()> {
-        Ok(())
-    }
+    /// Wakes the actor from `Sleeping`. Synchronous and infallible on
+    /// purpose: it is called from other tasks and must take effect at once.
+    fn wakeup(&self) {}
 
-    async fn cancel(&self) -> Result<()> {
-        Ok(())
-    }
+    /// Ends the actor's current turn. Synchronous and infallible on
+    /// purpose: a cancel comes from another task and must reach a running
+    /// model call without waiting for anything.
+    fn cancel(&self) {}
 
     /// What this actor's model saw when it produced the message `message`:
     /// its context and system prompt (issue 06), on behalf of `caller`.

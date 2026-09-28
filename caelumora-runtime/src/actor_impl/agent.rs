@@ -29,6 +29,7 @@ use std::mem;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct AgentActor {
@@ -51,6 +52,11 @@ pub struct AgentActor {
     // State
     state: Mutex<AgentActorState>,
     processing_state: Arc<ProcessingStateHolder>,
+    /// Cancelled by `cancel` while a turn runs, replaced when the next one
+    /// begins: the streaming loop waits on it next to the model's stream, so
+    /// that a cancel drops the request instead of waiting for its next
+    /// chunk. A `std` mutex, because `cancel` is synchronous.
+    turn_cancel: std::sync::Mutex<CancellationToken>,
     loop_count: AtomicI32,
     max_iterations: i32,
 }
@@ -134,6 +140,7 @@ impl AgentActor {
             reasoning_confidentiality: personality.reasoning_confidentiality,
             state,
             processing_state,
+            turn_cancel: std::sync::Mutex::new(CancellationToken::new()),
             loop_count: AtomicI32::new(0),
             max_iterations: 25,
         })
@@ -308,7 +315,13 @@ impl AgentActor {
             classification,
             publication,
         );
+        *self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = CancellationToken::new();
         Ok(())
+    }
+
+    /// The token of the current turn, cancelled by `cancel`.
+    fn turn_token(&self) -> CancellationToken {
+        self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
     }
 
     /// What the agent may publish to its channel in the turn beginning now
@@ -881,17 +894,21 @@ impl AgentActor {
         );
         let internal_message = executing_plan && !finalizing_plan;
 
+        let cancelled = self.turn_token();
         let mut response = self.call_llm(turn).await;
         use futures::stream::TryStreamExt;
-        while let Some(event) = response
-            .try_next()
-            .await
-            .with_context(|| "Error during LLM stream".to_string())?
-        {
-            if self.processing_state.load() == ActorState::Cancelling {
-                info!("Stopping for cancelled agent {} {}", self.id, agent_name);
-                return Ok(ActorState::Cancelling);
-            }
+        loop {
+            // A cancel wins over the next chunk, and returning drops the
+            // stream - and with it the request to the model.
+            let next = tokio::select! {
+                biased;
+                _ = cancelled.cancelled() => {
+                    info!("Stopping for cancelled agent {} {}", self.id, agent_name);
+                    return Ok(ActorState::Cancelling);
+                }
+                next = response.try_next() => next.with_context(|| "Error during LLM stream".to_string())?,
+            };
+            let Some(event) = next else { break };
 
             match event {
                 MessageEvent::Partial(mut message) => {
@@ -1111,7 +1128,6 @@ impl Actor for AgentActor {
                 ActorState::Planning => Some(self.handle_llm_turn(&mut turn, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut turn, &*output).await?),
-                ActorState::Active => unreachable!("AgentActor never assigns itself ActorState::Active"),
             }) }.instrument(span.clone()).await;
 
             // A failure inside a turn ends the turn, not the agent (issue 02).
@@ -1149,7 +1165,7 @@ impl Actor for AgentActor {
         self.processing_state.load()
     }
 
-    async fn wakeup(&self) -> Result<()> {
+    fn wakeup(&self) {
         // Called for every agent on every user message, sleeping or not.
         debug!(
             "Waking up agent {} {}",
@@ -1162,7 +1178,6 @@ impl Actor for AgentActor {
             ActorState::Sleeping => Some(ActorState::Idle),
             _ => None,
         });
-        Ok(())
     }
 
     async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
@@ -1185,18 +1200,23 @@ impl Actor for AgentActor {
         self.actor_runtime.security_manager().may_read_agent_context(caller, &attributes).await
     }
 
-    async fn cancel(&self) -> Result<()> {
+    fn cancel(&self) {
         info!(
             "Cancelling agent {} {}",
             self.id,
             self.agent_controller.name()
         );
-        self.processing_state.transition(|s| match s {
-            ActorState::WaitingForApproval | ActorState::Active | ActorState::ExecutingTools | ActorState::Planning
+        // The state first, so that the run loop keeps `Cancelling` whatever
+        // the interrupted step returns; then the token, which interrupts a
+        // model call in flight. Outside a turn there is nothing to cancel.
+        let state = self.processing_state.transition(|s| match s {
+            ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning
                 => Some(ActorState::Cancelling),
             _ => None,
         });
-        Ok(())
+        if state == ActorState::Cancelling {
+            self.turn_token().cancel();
+        }
     }
 }
 

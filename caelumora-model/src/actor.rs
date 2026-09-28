@@ -321,9 +321,6 @@ impl Envelope {
 pub enum ActorState {
     #[default]
     Idle,
-    /// Kept only because `ChannelLoop` reuses this enum for its own, unrelated
-    /// cancel/wakeup tri-state. `AgentActor` never assigns this to itself anymore.
-    Active,
     /// Calling the LLM and streaming its response - covers everything from
     /// initial research/deliberation through proposing or extending a plan
     /// to executing its steps, and the ordinary single-shot tool loop for
@@ -341,11 +338,11 @@ pub enum ActorState {
     WaitingForApproval,
 }
 
-impl From<u8> for ActorState {
-    fn from(v: u8) -> Self {
+impl ActorState {
+    /// The state behind the byte `ProcessingStateHolder` stores.
+    fn from_raw(v: u8) -> Self {
         match v {
             0 => ActorState::Idle,
-            1 => ActorState::Active,
             2 => ActorState::Cancelling,
             3 => ActorState::Sleeping,
             4 => ActorState::Stopping,
@@ -356,13 +353,10 @@ impl From<u8> for ActorState {
             _ => ActorState::Idle,
         }
     }
-}
 
-impl From<ActorState> for u8 {
-    fn from(s: ActorState) -> Self {
-        match s {
+    fn raw(self) -> u8 {
+        match self {
             ActorState::Idle => 0,
-            ActorState::Active => 1,
             ActorState::Cancelling => 2,
             ActorState::Sleeping => 3,
             ActorState::Stopping => 4,
@@ -382,16 +376,16 @@ pub struct ProcessingStateHolder {
 impl ProcessingStateHolder {
     pub fn new(state: ActorState) -> Self {
         Self {
-            state: AtomicU8::new(state.into())
+            state: AtomicU8::new(state.raw())
         }
     }
 
     pub fn load(&self) -> ActorState {
-        ActorState::from(self.state.load(Ordering::SeqCst))
+        ActorState::from_raw(self.state.load(Ordering::SeqCst))
     }
 
     pub fn store(&self, state: ActorState) {
-        self.state.store(state.into(), Ordering::SeqCst);
+        self.state.store(state.raw(), Ordering::SeqCst);
     }
 
     /// The core "CAS Loop" logic.
@@ -402,7 +396,7 @@ impl ProcessingStateHolder {
     {
         let mut current_raw = self.state.load(Ordering::SeqCst);
         loop {
-            let current_state = ActorState::from(current_raw);
+            let current_state = ActorState::from_raw(current_raw);
 
             // 1. Execute the decision logic provided by the caller
             // We return Option: Some(new_state) to transition, None to do nothing.
@@ -417,7 +411,7 @@ impl ProcessingStateHolder {
             // If no, it returns Err(actual_value_now_in_memory).
             match self.state.compare_exchange(
                 current_raw,
-                next_state.into(),
+                next_state.raw(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
@@ -439,14 +433,13 @@ impl ProcessingStateHolder {
 pub mod processing_state_serde {
     use super::*;
     use serde::{Deserializer, Serializer};
-    use std::sync::atomic::Ordering;
 
     // Serialization: Arc<ProcessingStateHolder> -> ProcessingState (String/Enum)
     pub fn serialize<S>(val: &Arc<ProcessingStateHolder>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let state = ActorState::from(val.state.load(Ordering::SeqCst));
+        let state = val.load();
         state.serialize(serializer)
     }
 
@@ -472,16 +465,15 @@ mod tests {
 
     #[test]
     fn test_processing_state_conversion() {
-        assert_eq!(u8::from(ActorState::Idle), 0);
-        assert_eq!(u8::from(ActorState::Active), 1);
-        assert_eq!(u8::from(ActorState::WaitingForApproval), 5);
-        assert_eq!(ActorState::from(5), ActorState::WaitingForApproval);
-        assert_eq!(u8::from(ActorState::Planning), 6);
-        assert_eq!(u8::from(ActorState::ExecutingTools), 7);
-        assert_eq!(u8::from(ActorState::Reflecting), 8);
-        assert_eq!(ActorState::from(6), ActorState::Planning);
-        assert_eq!(ActorState::from(7), ActorState::ExecutingTools);
-        assert_eq!(ActorState::from(8), ActorState::Reflecting);
+        assert_eq!(ActorState::Idle.raw(), 0);
+        assert_eq!(ActorState::WaitingForApproval.raw(), 5);
+        assert_eq!(ActorState::from_raw(5), ActorState::WaitingForApproval);
+        assert_eq!(ActorState::Planning.raw(), 6);
+        assert_eq!(ActorState::ExecutingTools.raw(), 7);
+        assert_eq!(ActorState::Reflecting.raw(), 8);
+        assert_eq!(ActorState::from_raw(6), ActorState::Planning);
+        assert_eq!(ActorState::from_raw(7), ActorState::ExecutingTools);
+        assert_eq!(ActorState::from_raw(8), ActorState::Reflecting);
     }
 
     #[test]
