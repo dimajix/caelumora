@@ -8,7 +8,7 @@
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
 use caelumora_model::memory::{Memory, MemoryChange, MemoryId};

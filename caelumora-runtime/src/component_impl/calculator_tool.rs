@@ -1,7 +1,7 @@
 //! The `calculator_tool` component: a tool that evaluates mathematical
 //! expressions.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;

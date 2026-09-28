@@ -1,4 +1,5 @@
-use crate::actor::{Actor, MessageContextError, TurnContext};
+use crate::actor::{Actor, MessageContextError};
+use crate::agent_turn::TurnContext;
 use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;

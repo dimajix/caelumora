@@ -1,7 +1,7 @@
 //! The `state_history_appender` component: keeps the agent's history up to
 //! date with what it perceives.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{
     ComponentFacets, ComponentRegistry
 };

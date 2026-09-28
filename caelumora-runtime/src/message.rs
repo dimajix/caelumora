@@ -2,7 +2,7 @@
 //! messages an agent perceives (`PerceiveInProcessor`) or emits
 //! (`EmitOutProcessor`), and may change them.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use async_trait::async_trait;
 use caelumora_model::message::Message;
 

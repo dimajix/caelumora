@@ -15,7 +15,7 @@
 //! `ToolConfidentiality::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::agent_memory::AgentMemory;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::note_text;

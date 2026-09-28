@@ -1,7 +1,7 @@
 //! The `state_context_appender` component: keeps the agent's stored
 //! context up to date with what it perceives.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;

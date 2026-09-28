@@ -3,7 +3,7 @@
 //! (issue 47). Their implementations are components of their own, e.g.
 //! `state_context_provider` and `static_system_prompt_provider`.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::message::KnowledgeRef;

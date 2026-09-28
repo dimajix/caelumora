@@ -1,4 +1,4 @@
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;

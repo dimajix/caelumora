@@ -1,7 +1,7 @@
 //! The `create_plan_tool` component: the `create_plan` tool, and the planning
 //! prompt that nudges the model towards it (extended planning).
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptProvider};
 use crate::tool::{ToolError, ToolProvider, ToolResult};

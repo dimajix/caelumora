@@ -1,7 +1,7 @@
 //! The `static_system_prompt_provider` component: a fixed prompt part, the
 //! system prompt by default (parameters `prompt` and `position`).
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use anyhow::Result;

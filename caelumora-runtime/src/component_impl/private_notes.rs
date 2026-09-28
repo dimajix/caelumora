@@ -17,7 +17,7 @@
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::{note_id, note_text};
 use crate::context::{Prompt, PromptPosition, PromptProvider};

@@ -1,7 +1,7 @@
 //! The `state_context_provider` component: the agent's stored context with
 //! the prompt parts of the `PromptProvider`s it depends on (issue 47).
 
-use crate::actor::{ContextItem, TurnContext};
+use crate::agent_turn::{ContextItem, TurnContext};
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;

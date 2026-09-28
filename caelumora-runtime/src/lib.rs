@@ -12,6 +12,7 @@ pub mod tool;
 pub mod actor;
 pub mod agent_memory;
 pub mod agent_state;
+pub mod agent_turn;
 pub mod actor_impl;
 pub mod channel;
 pub mod command;

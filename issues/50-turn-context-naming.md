@@ -54,3 +54,7 @@ more often, and the confusion will cost more.
 - **2026-09-25** — Issue created while defining the terms in
   [19](19-memory-tiers.md); renaming to `input` was proposed and deferred,
   since the name did not convince.
+- **2026-09-28** — `TurnContext` (with `ContextItem`) moved from
+  `caelumora-runtime/src/actor.rs` to its own module
+  `caelumora-runtime/src/agent_turn.rs` at the maintainer's request;
+  `actor.rs` keeps the `Actor` trait and `MessageContextError`.

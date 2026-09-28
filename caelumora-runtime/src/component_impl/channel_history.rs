@@ -5,7 +5,7 @@
 //! every read is recorded as a
 //! `KnowledgeRef` with the turn's messages.
 
-use crate::actor::TurnContext;
+use crate::agent_turn::TurnContext;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::notes::NotReadable;
 use crate::tool::{ToolError, ToolProvider, ToolResult};
