@@ -156,8 +156,19 @@ impl ChannelLoop {
         self.channel.load().security_attributes.clone()
     }
 
-    pub async fn update_name(&self, new_name: String) {
-        self.channel.update_name(new_name).await;
+    /// The channel as it is now.
+    pub fn channel(&self) -> Channel {
+        (**self.channel.load()).clone()
+    }
+
+    /// Renames the channel on behalf of `context`: stored first, which is
+    /// where the permission is checked (`UpdateChannel`, issue 70).
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// channel, or whatever else storing it reports.
+    pub async fn update_name(&self, context: &SecurityContext, new_name: String) -> Result<()> {
+        Ok(self.channel.update_name(context, new_name).await?)
     }
 
     /// Ends the current turn of every actor in the channel, on behalf of

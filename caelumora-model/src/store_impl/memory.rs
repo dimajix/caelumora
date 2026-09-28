@@ -1,5 +1,5 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::channel::{ChannelId, ChannelState};
+use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::session::{Session, SessionId, SessionState};
@@ -19,6 +19,7 @@ pub struct MemoryStore {
     session_templates: RwLock<HashMap<String, SessionTemplate>>,
     agents: RwLock<HashMap<AgentId, Agent>>,
     sessions: RwLock<HashMap<SessionId, Session>>,
+    channels: RwLock<HashMap<ChannelId, Channel>>,
     users: RwLock<HashMap<UserId, User>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
@@ -48,6 +49,7 @@ impl MemoryStore {
             session_templates: Default::default(),
             agents: Default::default(),
             sessions: Default::default(),
+            channels: Default::default(),
             users: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
@@ -251,6 +253,40 @@ impl EntityStore for MemoryStore {
         access.allow(ActionType::ListSessions).await?;
         let all = self.read_lock(&self.sessions, |v| v.values().cloned().collect())?;
         Ok(access.filter(all, |a| ActionType::GetSession(a)).await)
+    }
+
+    // Channels (issue 70)
+    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
+        self.access(ctx).create(value, |a| ActionType::CreateChannel(a)).await?;
+        self.write_lock(&self.channels, |v| {
+            if v.contains_key(&value.id) {
+                return Err(StoreError::Conflict(format!("channel {} already exists", value.id)));
+            }
+            v.insert(value.id, value.clone());
+            Ok(())
+        })?
+    }
+
+    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
+        let found = self.read_lock(&self.channels, |v| v.get(&id).cloned())?;
+        self.access(ctx).read(found, |a| ActionType::GetChannel(a), "channel", id.to_string()).await
+    }
+
+    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
+        let stored = self.read_lock(&self.channels, |v| v.get(&value.id).cloned())?;
+        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::UpdateChannel(a), "channel", value.id.to_string()).await?;
+        self.write_lock(&self.channels, |v| {
+            v.insert(value.id, value.clone());
+        })
+    }
+
+    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
+        let stored = self.read_lock(&self.channels, |v| v.get(&id).cloned())?;
+        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::DeleteChannel(a)).await? {
+            return Ok(false);
+        }
+        let removed = self.write_lock(&self.channels, |v| v.remove(&id))?;
+        Ok(removed.is_some())
     }
 
     // Users

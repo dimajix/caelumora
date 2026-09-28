@@ -105,3 +105,17 @@ they refer to `ActorId`s, not to handles.
   only as good as the control over who joins: adding participants must be
   checked against the channel's level (e.g. `ActionType::JoinChannel`) -
   part of this issue.
+- **2026-09-28** — Decided with the maintainer: adding and removing
+  participants are operations of the `ChannelLoop` (like `cancel`, `wakeup`),
+  not of the `SessionLoop`, which will only add participants new to the
+  session. When adding, the caller chooses how much history the newcomer may
+  see - all, none, the last n days or the last n messages - stored as a fixed
+  boundary (a message id), so it does not move day by day; it limits what an
+  agent gets into its transcript, what a user gets over REST and in the
+  snapshot, and `read_history` on the own channel. Notes stay visible to
+  everyone, "written on paper". Only the owner adds and removes, checked
+  also as `ActionType::JoinChannel` with the channel's classification. A
+  removed agent is stopped at once, its pending approvals are discarded, its
+  state kept. Since channels live inside the session document, storing a
+  channel change would need the `SessionController`; channels become
+  entities of their own first: [70](70-channels-as-entities.md).

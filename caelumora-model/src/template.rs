@@ -143,7 +143,9 @@ impl Secured for SessionTemplate {
 }
 
 impl SessionTemplate {
-    pub async fn instantiate(&self, name:String, context:&SessionContext, mapping: HashMap<String, ParticipantId>) -> TemplateResult<Session> {
+    /// Builds a session and its channels - documents of their own, which the
+    /// session lists by id (issue 70).
+    pub async fn instantiate(&self, name:String, context:&SessionContext, mapping: HashMap<String, ParticipantId>) -> TemplateResult<(Session, Vec<Channel>)> {
         let now = Utc::now();
 
         let mut named_participants = Vec::new();
@@ -172,7 +174,7 @@ impl SessionTemplate {
                 ..Metadata::default()
             },
             participants,
-            channels,
+            channels: channels.iter().map(|c: &Channel| c.id).collect(),
             commands: self.commands.clone(),
             created_at: now,
             updated_at: now,
@@ -181,7 +183,7 @@ impl SessionTemplate {
         // NOTE: persistence is intentionally the caller's responsibility (SessionManager), so
         // that session lifecycle events can be emitted at the point of creation. This just
         // builds the in-memory session.
-        Ok(session)
+        Ok((session, channels))
     }
 }
 
@@ -295,15 +297,16 @@ mod tests {
         };
         let mapping = HashMap::from([("user".to_string(), ParticipantId::UserId(alice.id))]);
 
-        let session = template.instantiate("s".to_string(), &context, mapping).await
+        let (session, channels) = template.instantiate("s".to_string(), &context, mapping).await
             .expect("the template's \"user\" is alice, whatever her username");
+        assert_eq!(session.channels, vec![channels[0].id], "the session lists its channels by id");
 
-        let users: Vec<_> = session.channels[0].participants.iter()
+        let users: Vec<_> = channels[0].participants.iter()
             .filter_map(|p| match p { Participant::User(u) => Some(u.id), _ => None })
             .collect();
         assert_eq!(users, vec![alice.id]);
         assert_eq!(session.commands.component_nodes.len(), 2, "the session keeps its template's commands");
-        assert_eq!(session.channels[0].confidentiality, crate::confidentiality::Confidentiality::Session);
+        assert_eq!(channels[0].confidentiality, crate::confidentiality::Confidentiality::Session);
 
         // A channel cannot be private: that level is an actor's.
         let mut private = template.clone();

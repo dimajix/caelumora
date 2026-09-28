@@ -6,7 +6,8 @@ use crate::event::{EventPublisher, GlobalEvent};
 use crate::message::MessageHistory;
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
-use crate::store::EntityStore;
+use crate::security::SecurityContext;
+use crate::store::{EntityStore, StoreResult};
 use crate::user::User;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,9 @@ pub enum ChannelUpdateEvent {
     NameChanged(String),
 }
 
+/// The one writer of a channel's document (issue 70): changes are stored
+/// first - where the permission is checked, on the channel's own attributes
+/// - and only then taken over live and announced.
 #[derive(Debug)]
 pub struct ChannelController {
     id: ChannelId,
@@ -38,6 +42,9 @@ pub struct ChannelController {
     channel: ArcSwap<Channel>,
     event_publisher: Arc<dyn EventPublisher>,
     entity_store: Option<Arc<dyn EntityStore>>,
+    /// Held while the channel is changed and stored, so that two changes
+    /// cannot overwrite each other.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl ChannelController {
@@ -50,6 +57,7 @@ impl ChannelController {
             channel: ArcSwap::from_pointee(channel),
             event_publisher,
             entity_store,
+            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -65,28 +73,34 @@ impl ChannelController {
         self.channel.load().name.clone()
     }
 
-    pub async fn update_name(&self, new_name: String) {
+    /// Renames the channel on behalf of `ctx` (`UpdateChannel`).
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied` included;
+    /// the channel is then unchanged.
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name);
-        self.process_channel_update(&event).await;
-        let attributes = self.channel.load().security_attributes.clone();
-        self.event_publisher.publish(GlobalEvent::ChannelUpdated(self.session_id, self.id, event), attributes);
+        self.update(ctx, &event).await
     }
 
-    async fn process_channel_update(&self, event: &ChannelUpdateEvent) {
+    /// Applies `event`, stores the channel, takes it over and announces it.
+    async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
+        let _writing = self.write_lock.lock().await;
+        let mut channel = (**self.channel.load()).clone();
         match event {
-            ChannelUpdateEvent::NameChanged(name) => {
-                let mut channel = (**self.channel.load()).clone();
-                channel.name = name.clone();
-                self.channel.store(Arc::new(channel));
-            }
+            ChannelUpdateEvent::NameChanged(name) => channel.name = name.clone(),
         }
+        if let Some(store) = &self.entity_store {
+            store.update_channel(ctx, &channel).await?;
+        }
+        let attributes = channel.security_attributes.clone();
+        self.channel.store(Arc::new(channel));
+        self.event_publisher.publish(GlobalEvent::ChannelUpdated(self.session_id, self.id, event.clone()), attributes);
+        Ok(())
     }
 
     pub async fn process_global_event(&self, event: &GlobalEvent) {
         match event {
-            GlobalEvent::ChannelUpdated(_, cid, update) if *cid == self.id => {
-                self.process_channel_update(update).await;
-            }
             GlobalEvent::AgentChannelJoined(_, cid, aid) if *cid == self.id => {
                 if let Some(store) = &self.entity_store {
                     // Keeping the channel in step with an event: the join

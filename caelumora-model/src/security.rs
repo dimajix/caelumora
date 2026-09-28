@@ -43,6 +43,15 @@ pub enum ActionType<'a> {
     UpdateSession(&'a SecurityAttributes),
     DeleteSession(&'a SecurityAttributes),
     ListSessions,
+    /// Reading a channel, carrying its attributes (issue 70).
+    GetChannel(&'a SecurityAttributes),
+    /// Creating a channel, with the attributes of the new channel.
+    CreateChannel(&'a SecurityAttributes),
+    /// Changing a channel - its name, its participants - with its attributes
+    /// as stored.
+    UpdateChannel(&'a SecurityAttributes),
+    /// Deleting a channel, with its attributes as stored.
+    DeleteChannel(&'a SecurityAttributes),
     /// Reading a user, e.g. receiving the events about them; carries
     /// attributes owned by the user themselves.
     GetUser(&'a SecurityAttributes),
@@ -219,6 +228,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetSessionTemplate(a)
             | ActionType::GetAgent(a)
             | ActionType::GetSession(a)
+            | ActionType::GetChannel(a)
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
             | ActionType::CancelChannel(a)
@@ -229,6 +239,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)
             | ActionType::CreateSession(a)
+            | ActionType::CreateChannel(a)
             | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -238,6 +249,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ReadAgentContext(a)
             | ActionType::UpdateSession(a)
             | ActionType::DeleteSession(a)
+            | ActionType::UpdateChannel(a)
+            | ActionType::DeleteChannel(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::FindPersonality

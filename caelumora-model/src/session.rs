@@ -81,27 +81,27 @@ impl SessionController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
-    pub async fn add_channel(&self, ctx: &SecurityContext, channel: Channel) -> StoreResult<()> {
+    pub async fn add_channel(&self, ctx: &SecurityContext, channel: ChannelId) -> StoreResult<()> {
         let _guard = self.write_lock.lock().await;
         let mut session = (**self.session.load()).clone();
         session.channels.push(channel);
         self.store(ctx, session).await
     }
 
-    /// Removes the channel `channel_id` from the session on behalf of `ctx`,
-    /// like [`Self::add_channel`], and returns it.
+    /// Removes the channel `channel_id` from the session's list on behalf of
+    /// `ctx`, like [`Self::add_channel`]. The channel itself is deleted by
+    /// the caller.
     ///
     /// # Errors
     /// `StoreError::NotFound` if the session has no such channel; whatever
     /// the store reports otherwise. The session is then unchanged.
-    pub async fn remove_channel(&self, ctx: &SecurityContext, channel_id: ChannelId) -> StoreResult<Channel> {
+    pub async fn remove_channel(&self, ctx: &SecurityContext, channel_id: ChannelId) -> StoreResult<()> {
         let _guard = self.write_lock.lock().await;
         let mut session = (**self.session.load()).clone();
-        let index = session.channels.iter().position(|c| c.id == channel_id)
+        let index = session.channels.iter().position(|c| *c == channel_id)
             .ok_or_else(|| StoreError::NotFound { entity: "channel", id: channel_id.to_string() })?;
-        let channel = session.channels.remove(index);
-        self.store(ctx, session).await?;
-        Ok(channel)
+        session.channels.remove(index);
+        self.store(ctx, session).await
     }
 
     /// Stores `session` as changed by `ctx` and takes it over live.
@@ -168,7 +168,9 @@ pub struct Session {
     pub id: SessionId,
     pub metadata: Metadata,
     pub participants: Vec<Participant>,
-    pub channels: Vec<Channel>,
+    /// The session's channels by id, in order; each is a document of its own
+    /// (issue 70).
+    pub channels: Vec<ChannelId>,
     /// The session's own user commands, copied from its template when it was
     /// created, so that a running session keeps its set (issue 28).
     #[serde(default)]

@@ -1,5 +1,5 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::channel::{ChannelId, ChannelState};
+use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityManager;
@@ -47,6 +47,7 @@ impl JsonFileStore {
             self.session_templates_dir(),
             self.agents_dir(),
             self.sessions_dir(),
+            self.channels_dir(),
             self.users_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
@@ -79,6 +80,10 @@ impl JsonFileStore {
 
     fn sessions_dir(&self) -> PathBuf {
         self.root.join("runtime").join("sessions")
+    }
+
+    fn channels_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("channels")
     }
 
     fn agent_states_dir(&self) -> PathBuf {
@@ -116,6 +121,10 @@ impl JsonFileStore {
 
     fn session_path(&self, id: SessionId) -> PathBuf {
         self.sessions_dir().join(format!("{id}.json"))
+    }
+
+    fn channel_path(&self, id: ChannelId) -> PathBuf {
+        self.channels_dir().join(format!("{id}.json"))
     }
 
     fn user_path(&self, id: UserId) -> PathBuf {
@@ -485,6 +494,41 @@ impl EntityStore for JsonFileStore {
             .map(|p| p.value)
             .collect();
         Ok(access.filter(sessions, |a| ActionType::GetSession(a)).await)
+    }
+
+    // Channels (durable definitions, issue 70)
+    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
+        self.access(ctx).create(value, |a| ActionType::CreateChannel(a)).await?;
+        let path = self.channel_path(value.id);
+        if path.exists() {
+            return Err(StoreError::Conflict(format!("channel {} already exists", value.id)));
+        }
+        debug!("Creating channel at {}", path.display());
+        write_json_atomic(&path, &Persisted { schema_version: 1, persisted_at: Utc::now(), value }).await
+    }
+
+    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
+        let loaded = read_json_opt::<Persisted<Channel>>(&self.channel_path(id)).await?.map(|p| p.value);
+        self.access(ctx).read(loaded, |a| ActionType::GetChannel(a), "channel", id.to_string()).await
+    }
+
+    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
+        let path = self.channel_path(value.id);
+        let stored = read_json_opt::<Persisted<Channel>>(&path).await?.map(|p| p.value);
+        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::UpdateChannel(a), "channel", value.id.to_string()).await?;
+        debug!("Updating channel at {}", path.display());
+        write_json_atomic(&path, &Persisted { schema_version: 1, persisted_at: Utc::now(), value }).await
+    }
+
+    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
+        // Its state is the `StateStore`'s: the caller deletes it there.
+        let channel = read_json_opt::<Persisted<Channel>>(&self.channel_path(id)).await?.map(|p| p.value);
+        if !self.access(ctx).delete(channel.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::DeleteChannel(a)).await? {
+            return Ok(false);
+        }
+        let removed = delete_if_exists(&self.channel_path(id)).await?;
+        info!("Deleted channel {}", id);
+        Ok(removed)
     }
 
     // Users (durable definitions)
@@ -959,7 +1003,7 @@ mod tests {
                 ..Metadata::default()
             },
             participants: Vec::new(),
-            channels: vec![channel],
+            channels: vec![channel.id],
             created_at: Utc::now(),
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(),

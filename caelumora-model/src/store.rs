@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::channel::{ChannelId, ChannelState};
+use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityContext;
@@ -55,6 +55,13 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
+
+    // Channels (issue 70): documents of their own, which the session lists
+    // by id.
+    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
+    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
+    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
+    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
 
     // Users
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;

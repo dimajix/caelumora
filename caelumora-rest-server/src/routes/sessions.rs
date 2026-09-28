@@ -37,11 +37,11 @@ pub async fn create_session(
     let name = payload.name.unwrap_or_else(|| template.metadata.name.clone());
     let mut mapping = HashMap::new();
     mapping.insert("user".to_string(), ParticipantId::UserId(owner));
-    let session = template.instantiate(name, &context, mapping).await
+    let (session, channels) = template.instantiate(name, &context, mapping).await
         .map_err(|e| ApiError::internal("template_invalid", &format!("instantiating template '{}'", template.metadata.name), &e.into()))?;
 
     // `create_session` persists the session, emits its lifecycle events, and starts it.
-    let session_loop = state.session_manager.create_session(&ctx, session).await
+    let session_loop = state.session_manager.create_session(&ctx, session, channels).await
         .map_err(|e| ApiError::internal("session_start_failed", "starting the new session", &e))?;
 
     let meta =  session_loop.get_session().metadata.clone();

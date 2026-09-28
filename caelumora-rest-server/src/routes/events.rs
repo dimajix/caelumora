@@ -78,7 +78,14 @@ pub(crate) async fn describe_session(state: &AppState, session: Session, viewer:
             session_snapshot((**running.get_session()).clone(), channels)
         }
         None => {
-            let channels = session.channels.iter().map(stored_channel_response).collect();
+            // The channels are documents of their own (issue 70): those the
+            // viewer may read.
+            let mut channels = Vec::new();
+            for id in &session.channels {
+                if let Ok(channel) = state.entity_store.get_channel(viewer, *id).await {
+                    channels.push(stored_channel_response(&channel));
+                }
+            }
             session_snapshot(session, channels)
         }
     }

@@ -411,11 +411,11 @@ async fn main() -> anyhow::Result<()> {
     };
     let mut mapping = HashMap::new();
     mapping.insert("user".to_string(), ParticipantId::UserId(owner));
-    let session = template.instantiate("default-session".to_string(), &context, mapping).await?;
+    let (session, channels) = template.instantiate("default-session".to_string(), &context, mapping).await?;
 
     // SessionManager owns persistence, spawning the run loop, and lifecycle events.
     let session_manager = SessionManager::new(runtime.clone());
-    let session_loop = session_manager.create_session(&context.security, session).await?;
+    let session_loop = session_manager.create_session(&context.security, session, channels).await?;
 
     let channel = session_loop
         .channel_by_name("main")
