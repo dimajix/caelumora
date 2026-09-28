@@ -199,6 +199,14 @@ impl ChannelLoop {
         self.runtime.security_manager().check(context, ActionType::GetChannel(&attributes)).await
     }
 
+    /// Whether `context` may change this channel - rename it, add and remove
+    /// participants (`UpdateChannel`, the question storing it asks): so that
+    /// a client offers it only where it works (issue 46).
+    pub async fn may_be_changed_by(&self, context: &SecurityContext) -> bool {
+        let attributes = self.security_attributes();
+        self.runtime.security_manager().check(context, ActionType::UpdateChannel(&attributes)).await
+    }
+
     /// The part of the history `participant` may see (issue 46): all of it,
     /// unless they joined later with a limit.
     pub async fn history_visible_to(&self, participant: ActorId) -> Vec<Message> {
@@ -216,8 +224,8 @@ impl ChannelLoop {
     /// `history` grants. Stored first (`UpdateChannel`, also asked as
     /// `JoinChannel`), then its actor started, the moderator and the mention
     /// directory told, and the join announced. An agent gets the visible
-    /// history into its transcript, as far as it is not there yet - an agent
-    /// that joins again gets only what it missed.
+    /// history into its transcript; an agent that joins again gets only what
+    /// was said after the last message it has (see `seed_transcript`).
     ///
     /// # Errors
     /// `ChannelError::NotInSession`, `AlreadyParticipant` or `Forbidden`; a
@@ -296,11 +304,16 @@ impl ChannelLoop {
     }
 
     /// Appends to `agent`'s transcript in this channel the messages of
-    /// `visible` it does not have yet.
+    /// `visible` after the last one it has - what it missed while it was
+    /// away. The transcript is only ever appended to, so older messages that
+    /// a wider history grants on rejoining would land after the agent's own
+    /// later answers; they are left to `read_history` instead, and the
+    /// transcript stays in the order things were said.
     async fn seed_transcript(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state_store.get_agent_channel_state(agent, self.id).await?;
         let known: std::collections::HashSet<_> = state.transcript.messages().iter().map(|m| m.id).collect();
-        let missing: Vec<Message> = visible.into_iter().filter(|m| !known.contains(&m.id)).collect();
+        let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
+        let missing: Vec<Message> = visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect();
         if !missing.is_empty() {
             state.transcript.extend(missing);
             self.state_store.put_agent_channel_state(agent, self.id, &state).await?;
@@ -864,6 +877,29 @@ mod tests {
         let allowed = channel_with(participants, Arc::new(DummySecurityManager::new())).await;
         allowed.cancel(&context).await.expect("permitted");
         allowed.wakeup(&context).await.expect("permitted");
+    }
+
+    #[tokio::test]
+    async fn a_rejoining_agent_gets_what_it_missed_but_nothing_older() {
+        use caelumora_model::message::MessageId;
+        let alice = user("alice");
+        let channel = channel_with(vec![Participant::User(alice)], Arc::new(DummySecurityManager::new())).await;
+        let agent = caelumora_model::agent::AgentId::new();
+        let message = |text: &str| Message { id: MessageId::new(), content: Some(text.to_string()), ..Message::default() };
+        let (one, two, three, four) = (message("one"), message("two"), message("three"), message("four"));
+        let transcript = |channel: Arc<ChannelLoop>| async move {
+            channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()
+                .transcript.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
+        };
+
+        // Joined seeing the last message only.
+        channel.seed_transcript(agent, vec![three.clone()]).await.unwrap();
+        assert_eq!(transcript(channel.clone()).await, ["three"]);
+
+        // Rejoined with all of it: "four" was missed, "one" and "two" are
+        // older than what it has and would come after it.
+        channel.seed_transcript(agent, vec![one, two, three, four]).await.unwrap();
+        assert_eq!(transcript(channel.clone()).await, ["three", "four"], "in the order things were said");
     }
 
     fn command_error(error: &anyhow::Error) -> &crate::command::CommandError {

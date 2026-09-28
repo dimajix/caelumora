@@ -7,6 +7,7 @@ import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
 import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenPrompt} from '../types';
 import {api} from '../api';
+import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
 import {mergeToolResults} from '../messages';
@@ -17,12 +18,6 @@ const SHOWN_AT_FIRST = 10;
 // A message's context never changes: what was fetched once is kept for as
 // long as the page runs.
 const cache = new Map<string, MessageContextResponse>();
-
-/** The part of an `ActorId` the REST API addresses an actor by. */
-function actorUuid(id: Message['sender_id']): string | null {
-  if (!id || typeof id === 'string') return null;
-  return Object.values(id)[0] ?? null;
-}
 
 /** Why a context is not shown, if the server answered that it cannot be. */
 function refusal(error: unknown): string | null {

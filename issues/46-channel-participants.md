@@ -1,6 +1,6 @@
 # 46 — Participants cannot be added to or removed from a channel
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -138,3 +138,16 @@ they refer to `ActorId`s, not to handles.
   REST and left out of lists and snapshots. REST:
   `POST …/channels/{cid}/participants` (`{participant, history}`) and
   `DELETE …/channels/{cid}/participants/{aid}`. The web UI follows as step 2.
+- **2026-09-28** — Step 2, web UI. Channel responses carry `can_change`
+  (`UpdateChannel`); where it is set, the member list offers "Add
+  participant" (a dialog with the session's participants not yet in the
+  channel and the history choice) and a remove button per member except the
+  approver. The channel is fetched again on `AgentChannelJoined`/`Left` and
+  `UserChannelJoined`/`Left` for it. Tried in the browser: an agent added with
+  the last message sees exactly that one, also through `read_history`, and is
+  stopped on removal. That trial showed that an agent rejoining with a wider
+  history got the older messages appended after its own answers; decided
+  with the maintainer: a rejoining agent's transcript gets only what was said
+  after the last message it has, older ones stay reachable through
+  `read_history`. Where access helpers such as `may_be_changed_by` should
+  live is [71](71-access-helpers-on-entities.md). Status set to done.

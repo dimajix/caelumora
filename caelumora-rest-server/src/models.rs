@@ -130,6 +130,9 @@ pub struct ChannelResponse {
     pub moderator: String,
     /// How far the channel's contents may travel (issue 61).
     pub confidentiality: Confidentiality,
+    /// Whether the requesting user may rename the channel and add or remove
+    /// its participants (issue 46).
+    pub can_change: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -43,6 +43,8 @@ export interface ChannelResponse {
   moderator: string;
   /** How far the channel's contents may travel (issue 61). */
   confidentiality: ChannelConfidentiality;
+  /** Whether you may rename it and add or remove participants (issue 46). */
+  can_change: boolean;
 }
 
 /** How far a piece of information may travel (issue 61), from the most open. */
@@ -245,6 +247,22 @@ export interface CreateChannelRequest {
   participants: ActorId[];
   /** How far the channel's contents may travel; the server's default if absent. */
   confidentiality?: ChannelConfidentiality;
+}
+
+/**
+ * How much of a channel's history a participant added later may see
+ * (issue 46): all of it, none, the last `count` messages or days.
+ */
+export type HistoryAccess =
+  | {kind: 'all'}
+  | {kind: 'none'}
+  | {kind: 'last_messages'; count: number}
+  | {kind: 'last_days'; count: number};
+
+export interface AddParticipantRequest {
+  /** A participant of the session. */
+  participant: ActorId;
+  history: HistoryAccess;
 }
 
 export type ApprovalStatus = 'Approved' | 'Denied';

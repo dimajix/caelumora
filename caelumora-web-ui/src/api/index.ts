@@ -1,4 +1,5 @@
 import type {
+  AddParticipantRequest,
   ChannelResponse,
   Command,
   CommandReply,
@@ -100,6 +101,24 @@ export const api = {
     });
     await ensureOk(res, 'Failed to create the channel');
     return res.json();
+  },
+
+  async addParticipant(sessionId: string, channelId: string, participant: AddParticipantRequest): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(participant),
+    });
+    await ensureOk(res, 'Failed to add the participant');
+    return res.json();
+  },
+
+  /** `actorUuid` is the id of the user or agent, without its kind. */
+  async removeParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`, {
+      method: 'DELETE',
+    });
+    await ensureOk(res, 'Failed to remove the participant');
   },
 
   async deleteChannel(sessionId: string, channelId: string): Promise<void> {

@@ -121,7 +121,7 @@ pub async fn channel_response(channel: &ChannelLoop, viewer: &SecurityContext) -
         };
         members.push(ChannelMemberResponse { id: member.id, name: member.name, handle: member.handle, kind: member.kind, can_read_context });
     }
-    ChannelResponse { id: channel.id(), name: channel.name(), members, moderator: channel.moderator(), confidentiality: channel.classification().level }
+    ChannelResponse { id: channel.id(), name: channel.name(), members, moderator: channel.moderator(), confidentiality: channel.classification().level, can_change: channel.may_be_changed_by(viewer).await }
 }
 
 pub async fn get_channel_messages(

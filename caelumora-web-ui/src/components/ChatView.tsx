@@ -8,6 +8,8 @@ import {
   ScrollText,
   Send,
   Square,
+  UserMinus,
+  UserPlus,
   Users,
   Wrench,
 } from 'lucide-react';
@@ -25,7 +27,7 @@ import type {
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
 import {confidentialityInfo} from '../confidentiality';
-import {changedChannel, onGlobalEvent} from '../globalEvents';
+import {changedChannel, membershipChangedChannel, onGlobalEvent} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -34,7 +36,8 @@ import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView} from './MessageView';
 import {formatArguments, mergeToolResults} from '../messages';
 import {ContextPanel} from './ContextPanel';
-import {actorKey, mentionQueryAt} from '../mention';
+import {AddParticipantDialog} from './AddParticipantDialog';
+import {actorKey, actorUuid, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
@@ -83,6 +86,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
   const [contextOf, setContextOf] = useState<{channelId: string; message: Message} | null>(null);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
+  // Whether the dialog to add a participant is open (issue 46).
+  const [isAddingParticipant, setIsAddingParticipant] = useState(false);
 
   // The server returns members in no particular order.
   const members: ChannelMember[] = [...(channel?.members ?? [])].sort((l, r) => l.name.localeCompare(r.name));
@@ -125,6 +130,32 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         .catch(error => reportError('Failed to load the notes', error));
     });
   }, [sessionId, channelId]);
+
+  // The members follow the global stream as well: someone joined or left, and
+  // the channel is fetched again (issue 46). Whoever was removed can no
+  // longer fetch it and keeps what they saw until they leave the channel.
+  useEffect(() => {
+    return onGlobalEvent(event => {
+      if (membershipChangedChannel(event) !== channelId) return;
+      api.getChannel(sessionId, channelId)
+        .then(setChannel)
+        .catch(error => {
+          if (error instanceof ApiRequestError && error.status === 404) return;
+          reportError('Failed to load the channel', error);
+        });
+    });
+  }, [sessionId, channelId]);
+
+  const removeParticipant = async (member: ChannelMember) => {
+    const uuid = actorUuid(member.id);
+    if (!uuid) return;
+    try {
+      await api.removeParticipant(sessionId, channelId, uuid);
+      setChannel(prev => prev && {...prev, members: prev.members.filter(m => actorKey(m.id) !== actorKey(member.id))});
+    } catch (error) {
+      reportError(`Failed to remove ${member.name}`, error);
+    }
+  };
 
   useEffect(() => {
     const handleSnapshot = (data: string) => {
@@ -594,6 +625,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         </div>
       </div>
 
+      {isAddingParticipant && channel && (
+        <AddParticipantDialog
+          sessionId={sessionId}
+          channel={channel}
+          onAdded={(updated) => { setChannel(updated); setIsAddingParticipant(false); }}
+          onClose={() => setIsAddingParticipant(false)}
+        />
+      )}
       {contextOf && contextOf.channelId === channelId ? (
         <ContextPanel
           key={contextOf.message.id}
@@ -648,14 +687,34 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             </div>
           )}
           <div className="space-y-2">
-            {members.map((member, idx) => (
-              <div key={idx} className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+            {members.map(member => (
+              <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{member.name}</span>
-                {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500">@{member.handle}</span>}
+                <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{member.name}</span>
+                {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{member.handle}</span>}
+                {/* The approver belongs to every channel and cannot be removed. */}
+                {channel?.can_change && member.kind !== 'approver' && (
+                  <button
+                    onClick={() => void removeParticipant(member)}
+                    className="ml-auto p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    title={`Remove ${member.name} from the channel`}
+                    aria-label={`Remove ${member.name} from the channel`}
+                  >
+                    <UserMinus size={14} />
+                  </button>
+                )}
               </div>
             ))}
           </div>
+          {channel?.can_change && (
+            <button
+              onClick={() => setIsAddingParticipant(true)}
+              className="mt-3 flex items-center gap-2 px-2 py-1 rounded-md text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-100"
+            >
+              <UserPlus size={14} />
+              <span>Add participant</span>
+            </button>
+          )}
           </>)}
         </div>
       </div>

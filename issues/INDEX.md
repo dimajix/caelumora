@@ -58,7 +58,7 @@ against it, and what came out of the last attempt.
 | [07](07-session-deletion-audit.md) | in progress | Deletion works since `540e482`; what remains open is whether and how a deletion is recorded. |
 | [08](08-retry-and-edit-past-answers.md) | open | A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one. |
 | [09](09-creating-channels.md) | done | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
-| [46](46-channel-participants.md) | in progress | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
+| [46](46-channel-participants.md) | done | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
 | [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
 | [67](67-change-channel-level.md) | open | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
@@ -139,6 +139,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [36](36-replace-serde-yaml.md) | done |
+| [71](71-access-helpers-on-entities.md) | open | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 
 ## Open architecture questions

@@ -70,6 +70,18 @@ export function dispatchGlobalEvent(event: GlobalEvent): void {
   listeners.forEach(listener => listener(event));
 }
 
+const MEMBERSHIP = new Set(['AgentChannelJoined', 'AgentChannelLeft', 'UserChannelJoined', 'UserChannelLeft']);
+
+/**
+ * The channel someone joined or left (issue 46), for the membership events;
+ * `null` for any other event. Whoever shows the members fetches them again.
+ */
+export function membershipChangedChannel(event: GlobalEvent): string | null {
+  const [kind, value] = Object.entries(event)[0] ?? [];
+  if (!kind || !MEMBERSHIP.has(kind)) return null;
+  return Array.isArray(value) && typeof value[1] === 'string' ? value[1] : null;
+}
+
 /**
  * The channel whose state of an agent changed, for `AgentChannelStateChanged`
  * (issue 65) - its notes, say; `null` for any other event. The event carries

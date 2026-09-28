@@ -57,6 +57,12 @@ export function actorKey(id: ActorId): string {
   return `${kind}:${value}`;
 }
 
+/** The part of an `ActorId` the REST API addresses an actor by. */
+export function actorUuid(id: ActorId | undefined): string | null {
+  if (!id || typeof id === 'string') return null;
+  return Object.values(id)[0] ?? null;
+}
+
 /** The handles of the members a message mentions, i.e. the mentions to highlight. */
 export function mentionedHandles(message: Message, members: ChannelMember[]): Set<string> {
   const keys = new Set((message.mentions ?? []).map(actorKey));
