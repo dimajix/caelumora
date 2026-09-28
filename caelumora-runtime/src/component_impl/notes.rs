@@ -284,14 +284,14 @@ mod tests {
             assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), &mut turn).await;
             assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");
-            assert!(turn.record_turn(Vec::new()), "the turn changed notes");
+            assert!(turn.commit_turn().await.channel_state_changed, "the turn changed notes");
             assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), &mut turn).await.unwrap();
-            turn.record_turn(Vec::new());
+            turn.commit_turn().await;
             let notes = AgentNotes::current(&turn, NoteKind::Public);
             assert_eq!(notes.iter().map(|n| (n.id.0, n.text.as_str())).collect::<Vec<_>>(), [(2, "coffee")], "a new number for the new version");
         }
@@ -301,7 +301,7 @@ mod tests {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
             turn.next_turn(Default::default(), Default::default());
-            assert!(!turn.record_turn(Vec::new()));
+            assert!(!turn.commit_turn().await.channel_state_changed);
         }
     }
 }

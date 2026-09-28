@@ -207,14 +207,14 @@ mod tests {
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted["id"], 1, "its own numbering");
         assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty(), "not before the turn completes");
-        assert!(turn.record_turn(Vec::new()), "the channel state changed");
+        assert!(turn.commit_turn().await.channel_state_changed, "the channel state changed");
         assert_eq!(AgentNotes::current(&turn, NoteKind::Private).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
         assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
 
         let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
-        assert!(turn.record_turn(Vec::new()), "private notes are part of the channel state too");
+        assert!(turn.commit_turn().await.channel_state_changed, "private notes are part of the channel state too");
         assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty());
     }
 }

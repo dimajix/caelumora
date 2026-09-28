@@ -489,26 +489,13 @@ impl AgentActor {
     /// channel is announced as `GlobalEvent::AgentChannelStateChanged` once
     /// stored; a change of its own state by its `AgentStateHandle`.
     async fn reflect<'a>(&self, turn: &mut Turn<'a>, output: &dyn EventSender) -> Result<()> {
-        let messages = turn.messages().clone();
-        let channel_state_changed = turn.record_turn(messages);
-        // The answer is already out: a state that cannot be stored costs the
-        // turn's memory, not the turn.
-        if let Err(e) = turn.commit_agent_state().await {
-            warn!("{:#}", e);
-        }
+        let committed = turn.commit_turn().await;
         self.store_channel_state(turn).await;
-        if channel_state_changed {
+        if committed.channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
         }
-        turn.send_event(
-            ActorEvent::FullResponseGenerated(Self::final_messages(turn)),
-            output,
-        ).await?;
+        turn.send_event(ActorEvent::FullResponseGenerated(committed.final_messages), output).await?;
         Ok(())
-    }
-
-    fn final_messages(turn: &Turn) -> Vec<Message> {
-        turn.messages().iter().filter(|m| !m.internal).cloned().collect()
     }
 
     async fn apply_stage_processors<'a, T>(
@@ -625,9 +612,7 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id, agent_name, error);
 
-        turn.take_tool_calls();
-        turn.take_plan();
-        turn.finish_turn();
+        turn.abandon_turn();
 
         let message = crate::error::user_message(error)
             .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
@@ -726,7 +711,6 @@ impl AgentActor {
         // has to tell observers (e.g. the web UI) that generation stopped,
         // the same way handle_reflecting does unconditionally.
         self.reflect(turn, output).await?;
-        turn.finish_turn();
 
         info!("Agent {} {} finished cancelling", self.id, self.agent_controller.name());
 
@@ -1039,7 +1023,6 @@ impl AgentActor {
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
         self.reflect(turn, output).await?;
-        turn.finish_turn();
         debug!("Finished generating messages for agent {} {}", self.id, agent_name);
 
         // Use requested state
@@ -1387,8 +1370,8 @@ mod tests {
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
     }
 
-    #[test]
-    fn final_messages_filters_out_internal_messages() {
+    #[tokio::test]
+    async fn committing_a_turn_answers_with_its_final_messages_and_clears_its_work() {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
@@ -1400,9 +1383,11 @@ mod tests {
         turn.push_message(internal);
         turn.push_message(final_answer.clone());
 
-        let final_messages = AgentActor::final_messages(&turn);
-        assert_eq!(final_messages.len(), 1);
-        assert_eq!(final_messages[0].id, final_answer.id);
+        let committed = turn.commit_turn().await;
+        assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
+        assert_eq!(committed.final_messages[0].id, final_answer.id);
+        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "but of the transcript");
+        assert!(turn.messages().is_empty() && turn.context().is_empty(), "nothing of the turn's work is stored with the state");
     }
 
     #[test]

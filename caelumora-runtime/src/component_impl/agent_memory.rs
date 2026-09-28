@@ -5,7 +5,7 @@
 //! It translates the tools `remember` and `forget` and renders the prompt
 //! part; the logic is `crate::agent_memory::AgentMemory`. Changes are applied
 //! to the agent's state as it is when the turn completes
-//! (`Turn::commit_agent_state`), so that actors of the same agent in
+//! (`Turn::commit_turn`), so that actors of the same agent in
 //! other channels and sessions neither lose nor overwrite them. The prompt
 //! part shows the entries that may be recalled in the current channel: those
 //! written in a channel it may read (`ChannelClassification::readable_from`,
@@ -187,7 +187,7 @@ mod tests {
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
-            turn.commit_agent_state().await.unwrap();
+            turn.commit_turn().await;
         }
 
         // ... which another actor of the agent recalls in a channel that may
@@ -205,7 +205,7 @@ mod tests {
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err());
         turn.set_classification(Some(team));
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
-        turn.commit_agent_state().await.unwrap();
+        turn.commit_turn().await;
         assert!(handle.current().memory.current().is_empty());
     }
 }

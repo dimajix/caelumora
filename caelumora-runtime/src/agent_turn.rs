@@ -8,13 +8,15 @@
 //! yet taken over, and generic access to the agent's state in the channel and
 //! to its own state (issues 62, 65). What those states hold is the business
 //! of wrappers such as `crate::agent_notes::AgentNotes` and
-//! `crate::agent_memory::AgentMemory`. `record_turn` and `commit_agent_state`
-//! take the turn over when it completes.
+//! `crate::agent_memory::AgentMemory`. A turn is begun with `next_turn`, taken
+//! over with `commit_turn` when it completes, and discarded with
+//! `abandon_turn` when it fails.
 
 use anyhow::{Context, Result};
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange};
 use std::mem;
 use std::sync::Arc;
+use tracing::warn;
 
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
@@ -28,6 +30,17 @@ use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolCallState;
+
+/// What is still needed of a turn once it is taken over (`commit_turn`).
+#[derive(Debug)]
+pub struct CommittedTurn {
+    /// The messages that are not internal: the turn's answer, for
+    /// `FullResponseGenerated`.
+    pub final_messages: Vec<Message>,
+    /// Whether the agent's state in the channel changed, to be announced
+    /// once stored.
+    pub channel_state_changed: bool,
+}
 
 #[derive(Debug)]
 pub struct Turn<'a> {
@@ -71,7 +84,7 @@ impl<'a> Turn<'a> {
     }
 
     /// Stages `change` to the agent's own state, applied when the turn
-    /// completes (`commit_agent_state`).
+    /// completes (`commit_turn`).
     pub fn stage_agent_change(&mut self, change: AgentStateChange) {
         self.agent_channel_state.turn_agent_changes.push(change);
     }
@@ -81,16 +94,47 @@ impl<'a> Turn<'a> {
         &self.agent_channel_state.turn_agent_changes
     }
 
-    /// Applies the changes the turn made to the agent's own state to that
-    /// state as it is now (issue 62), anchored at the last message of the
-    /// agent's history in this channel. Called when the turn completes,
-    /// after `record_turn`.
+    /// Takes the completed turn over (issues 06, 17, 47, 62, 65):
     ///
-    /// # Errors
-    /// Whatever storing the state reports; the changes are then lost.
-    pub async fn commit_agent_state(&mut self) -> Result<()> {
+    /// - appends the messages the agent produced (`push_message`) to its
+    ///   transcript, and those that are not internal to its history, each
+    ///   with what it was produced from - the transcript before it, the
+    ///   turn's prompt parts and what it had read;
+    /// - applies the changes staged to its state in this channel, anchored at
+    ///   the turn's last message in the history;
+    /// - applies the changes staged to its own state to that state as it is
+    ///   now. The answer is already out, so a state that cannot be stored
+    ///   costs the turn's memory, not the turn: it is logged;
+    /// - clears the turn's working state (context, messages, plan, tool
+    ///   calls), so that none of it is stored with the channel state.
+    ///
+    /// What is still needed afterwards is returned.
+    pub async fn commit_turn(&mut self) -> CommittedTurn {
+        let channel_state_changed = self.record_turn();
         let changes = mem::take(&mut self.agent_channel_state.turn_agent_changes);
-        self.agent_state.apply(changes, self.agent_channel_state.history.last_message_id()).await
+        if let Err(e) = self.agent_state.apply(changes, self.agent_channel_state.history.last_message_id()).await {
+            warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
+        }
+        let final_messages = self.agent_channel_state.turn_messages.iter().filter(|m| !m.internal).cloned().collect();
+        self.clear_work();
+        CommittedTurn { final_messages, channel_state_changed }
+    }
+
+    /// Discards the turn after it failed: its working state, the changes it
+    /// staged and what it read - none of it is taken over.
+    pub fn abandon_turn(&mut self) {
+        self.clear_work();
+        self.agent_channel_state.turn_channel_changes.clear();
+        self.agent_channel_state.turn_agent_changes.clear();
+        self.agent_channel_state.turn_knowledge.clear();
+    }
+
+    /// Clears what the turn worked with.
+    fn clear_work(&mut self) {
+        self.agent_channel_state.turn_context.clear();
+        self.agent_channel_state.turn_messages.clear();
+        self.agent_channel_state.plan = None;
+        self.agent_channel_state.tool_calls.clear();
     }
 
     pub fn next_turn(&mut self, event_context: EventContext, security_context: SecurityContext) {
@@ -109,11 +153,6 @@ impl<'a> Turn<'a> {
     /// `correlation_id`) that tie the turn to the envelope that started it.
     pub fn event_context(&self) -> &EventContext {
         &self.agent_channel_state.turn_event_context
-    }
-
-    pub fn finish_turn(&mut self) {
-        self.agent_channel_state.turn_context.clear();
-        self.agent_channel_state.turn_messages.clear();
     }
 
     /// The context of the turn as the model is given it: the conversation,
@@ -264,7 +303,7 @@ impl<'a> Turn<'a> {
     }
 
     /// Stages `change` to the agent's state in this channel, applied when the
-    /// turn completes (`record_turn`).
+    /// turn completes (`commit_turn`).
     pub fn stage_channel_change(&mut self, change: AgentChannelChange) {
         self.agent_channel_state.turn_channel_changes.push(change);
     }
@@ -276,15 +315,10 @@ impl<'a> Turn<'a> {
         &mut self.agent_channel_state.turn_channel_changes
     }
 
-    /// Appends the messages this agent produced in the turn to its context,
-    /// and those that are not internal to its history - each with what it was
-    /// produced from: the context before it and the turn's prompt parts
-    /// (issues 06, 47).
-    ///
-    /// Applies the changes staged to the agent's state in this channel
-    /// (`stage_channel_change`), anchored at the turn's last message in the
-    /// history, and returns whether there were any (issue 65).
-    pub fn record_turn(&mut self, messages: Vec<Message>) -> bool {
+    /// The part of `commit_turn` that concerns the agent's state in this
+    /// channel; returns whether changes were staged to it.
+    fn record_turn(&mut self) -> bool {
+        let messages = self.agent_channel_state.turn_messages.clone();
         let before = self.agent_channel_state.transcript.extend(messages.clone());
         let prompts = self.prompt_refs();
         let knowledge = mem::take(&mut self.agent_channel_state.turn_knowledge);
@@ -406,8 +440,8 @@ mod tests {
         assert!(ctx.plan().is_none());
     }
 
-    #[test]
-    fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
+    #[tokio::test]
+    async fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
         use caelumora_model::agent::{AgentChannelState, AgentId, SeenItem};
         use caelumora_model::message::{MessageId, MessageRole};
 
@@ -425,7 +459,9 @@ mod tests {
                 .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest }));
             turn.set_context(items);
             assert_eq!(turn.context().len(), 2, "the prompt is given to the model as a message");
-            turn.record_turn(vec![first.clone(), second.clone()]);
+            turn.push_message(first.clone());
+            turn.push_message(second.clone());
+            turn.commit_turn().await;
         }
 
         let seen = state.seen_context_of(second.id).expect("the agent produced it");
@@ -448,8 +484,7 @@ mod tests {
             turn.record_knowledge(read);
             turn.record_knowledge(read);
             turn.push_message(after.clone());
-            let messages = turn.messages().clone();
-            turn.record_turn(messages);
+            turn.commit_turn().await;
         }
         let knowledge_of = |id| state.recorded_context_of(id).unwrap().knowledge;
         assert!(knowledge_of(before.id).is_empty(), "produced before the read");

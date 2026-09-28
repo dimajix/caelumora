@@ -3,7 +3,7 @@
 //!
 //! Both are chains in the agent's `AgentChannelState`; `Turn` offers
 //! only generic access to that state - reading it, staging
-//! `AgentChannelChange`s that `record_turn` applies when the turn completes -
+//! `AgentChannelChange`s that `commit_turn` applies when the turn completes -
 //! and knows nothing of notes (issue 65). [`AgentNotes`] is the logic on top:
 //! numbering, noting, revoking. The `notes` and `private_notes` components use
 //! it; anything else that works with an agent's notes in a turn uses it too.
