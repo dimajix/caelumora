@@ -70,7 +70,7 @@ against it, and what came out of the last attempt.
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |
 | [30](30-user-actor-for-authenticated-user.md) | done | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 | [42](42-export-import-chats.md) | open | Chats cannot be exported or imported, so a conversation cannot leave the server it happened on or be brought into another. |
-| [75](75-agent-resumes-half-turn.md) | open | An agent stopped on purpose mid-turn resumes that turn like after a crash, and a resume in `ExecutingTools` re-runs its tools. |
+| [75](75-agent-resumes-half-turn.md) | done | An agent stopped on purpose mid-turn resumes that turn like after a crash, and a resume in `ExecutingTools` re-runs its tools. |
 | [76](76-channel-cancel-flag.md) | done | The channel's own cancel flag suppresses the final response of a cancelled turn, so the other agents' transcripts diverge from the history. |
 | [79](79-user-actor-exits-on-send-error.md) | open | A `UserActor` ends itself when one forward fails, and the three actor run loops differ only in how they handle errors. |
 | [90](90-message-path-wake-and-queue.md) | open | Frontends must wake the channel before sending, the `UserActor` queues every message once more than needed, and perceiving a message begins a turn. |

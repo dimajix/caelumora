@@ -38,6 +38,13 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// model call without waiting for anything.
     fn cancel(&self) {}
 
+    /// Ends the actor for good, because it left the channel (issue 75): a
+    /// turn under way is abandoned, not kept for a resume. Synchronous like
+    /// `cancel`; an actor with state ends its own task once that state is
+    /// stored consistent, the channel closes its inbox and aborts it only
+    /// if it does not end by itself.
+    fn stop(&self) {}
+
     /// What this actor's model saw when it produced the message `message`:
     /// its context and system prompt (issue 06), on behalf of `caller`.
     /// Only agents have one; every other actor answers `NotRecorded`.

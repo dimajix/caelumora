@@ -23,6 +23,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
@@ -46,6 +47,10 @@ struct ActorHandle {
     abort_handle: AbortHandle,
     sender: Box<dyn EventSender>,
 }
+
+/// How long a stopped actor gets to end its task by itself before it is
+/// aborted (issue 75): a tool that hangs is the case this is for.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
@@ -281,8 +286,9 @@ impl ChannelLoop {
             actors.remove(&participant);
             actors
         });
-        self.moderator.lock().await.remove_actor(actor);
+        self.moderator.lock().await.remove_actor(actor.clone());
         self.rebuild_mentions();
+        actor.stop();
         let _ = self.changes_tx.send(ActorChange::Stop(participant));
         info!("{} left channel {}", participant, self.id);
         Ok(())
@@ -536,9 +542,21 @@ impl ChannelLoop {
                 }
             }
             ActorChange::Stop(id) => {
+                // Dropping the handle closes the actor's inbox; told to stop
+                // (`Actor::stop`), it ends its task itself once its state is
+                // stored consistent. Only if it does not - a tool that hangs -
+                // is it aborted.
                 if let Some(handle) = actors.remove(&id) {
-                    handle.abort_handle.abort();
-                    info!("Actor {} stopped: it left channel {}", id, self.id);
+                    let abort_handle = handle.abort_handle.clone();
+                    let (channel, actor) = (self.id, id);
+                    tokio::spawn(async move {
+                        tokio::time::sleep(STOP_GRACE).await;
+                        if !abort_handle.is_finished() {
+                            warn!("Actor {} did not stop by itself after leaving channel {}: aborted", actor, channel);
+                            abort_handle.abort();
+                        }
+                    });
+                    info!("Actor {} is stopping: it left channel {}", id, self.id);
                 }
             }
         }
@@ -1169,12 +1187,21 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
+    /// A running channel with alice and an agent whose model never answers,
+    /// the agent already in a turn: what a cancel or a stop has to end.
+    struct Stuck {
+        channel: Arc<ChannelLoop>,
+        context: SecurityContext,
+        agent: caelumora_model::agent::AgentId,
+        helper: Arc<dyn Actor>,
+        events: broadcast::Receiver<Envelope>,
+        running: tokio::task::JoinHandle<Result<()>>,
+    }
+
+    async fn stuck_in_a_model_call() -> Stuck {
         use caelumora_model::agent::{Agent, Personality, PersonalityId};
         use caelumora_model::meta::{Metadata, Scope};
         use caelumora_model::store::EntityStore;
-        use std::time::Duration;
 
         let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
         let store = Arc::new(MemoryStore::new());
@@ -1189,7 +1216,7 @@ mod tests {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.clone());
-        let agent_id = ActorId::Agent(agent.id);
+        let agent_id = agent.id;
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(NeverAnswers)).unwrap());
@@ -1200,20 +1227,32 @@ mod tests {
             vec![Participant::User(alice.clone()), Participant::Agent(agent)],
             SecurityAttributes::default(),
         );
+        // Stored, so that leaving it can be stored too.
+        runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         let executor = CommandExecutor::empty(runtime.security_manager());
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
-        let mut events = channel.subscribe();
+        let events = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         // The message makes the agent start a turn, which waits for a model
         // that never answers.
         channel.user_actor(alice.id).unwrap().send_message("hello".to_string()).await.unwrap();
-        let helper = channel.actor_by_id(agent_id).unwrap();
-        let settled = |wanted: ActorState| {
-            let helper = helper.clone();
-            async move { while helper.state() != wanted { tokio::time::sleep(Duration::from_millis(10)).await } }
-        };
-        tokio::time::timeout(Duration::from_secs(5), settled(ActorState::Planning)).await.expect("the agent starts a turn");
+        let helper = channel.actor_by_id(ActorId::Agent(agent_id)).unwrap();
+        settled(&helper, ActorState::Planning).await;
+        Stuck { channel, context, agent: agent_id, helper, events, running }
+    }
+
+    /// Waits for `actor` to reach `wanted`.
+    async fn settled(actor: &Arc<dyn Actor>, wanted: ActorState) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while actor.state() != wanted { tokio::time::sleep(Duration::from_millis(10)).await }
+        }).await.unwrap_or_else(|_| panic!("the agent does not reach {wanted:?}, it is {:?}", actor.state()));
+    }
+
+    #[tokio::test]
+    async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
+        let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
+        let agent_id = ActorId::Agent(agent);
 
         channel.cancel(&context).await.expect("permitted");
 
@@ -1228,7 +1267,34 @@ mod tests {
             }
         }).await.expect("the cancelled turn ends without the model");
         assert!(matches!(ended.event, ActorEvent::FullResponseGenerated(ref messages) if messages.is_empty()));
-        tokio::time::timeout(Duration::from_secs(5), settled(ActorState::Idle)).await.expect("the agent is idle again");
+        settled(&helper, ActorState::Idle).await;
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_removed_agent_abandons_its_turn_and_leaves_an_idle_state_behind() {
+        let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
+
+        channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
+
+        // The turn ends without an answer - nothing is announced - and the
+        // state in the store is the one a later actor of the agent starts
+        // from: idle, with no turn to resume.
+        settled(&helper, ActorState::Idle).await;
+        let stored = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+                if state.processing_state.load() == ActorState::Idle { break state }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the idle state is stored");
+        assert!(stored.turn_messages.is_empty() && stored.turn_context.is_empty() && stored.tool_calls.is_empty(), "the turn was abandoned");
+        assert!(stored.transcript.messages().is_empty(), "nothing of it was recorded");
+        while let Ok(envelope) = events.try_recv() {
+            assert!(!matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) || envelope.context.sender_id != ActorId::Agent(agent), "a stopped agent announces no answer");
+        }
+        // The channel is still running: alice is still in it.
+        assert!(!running.is_finished());
         running.abort();
     }
 }

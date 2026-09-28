@@ -68,6 +68,17 @@ pub fn timed_out_result() -> String {
     )
 }
 
+/// The result for a call that was approved but has no result when its
+/// agent is loaded again (issue 75): the server stopped before the call
+/// ran, or before its result was stored. The runtime cannot tell which, so
+/// it never runs the call again - the model decides.
+pub fn not_executed_result() -> String {
+    unsuccessful_result(
+        ToolResultStatus::Failed,
+        "This tool call was not executed: the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
+    )
+}
+
 /// The result for a call the policy does not permit. Deliberately without the
 /// reason: telling the model why describes the policy to something that may
 /// try to route around it. The reason is in the log.

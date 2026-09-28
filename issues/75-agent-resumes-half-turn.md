@@ -1,6 +1,6 @@
 # 75 — A resumed turn cannot tell a crash from a deliberate stop, and re-runs its tools
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -69,3 +69,19 @@ and never re-executes an effect.
   after a crash is the intent. The issue was rewritten the same day to what
   remains: distinguishing a deliberate stop from a crash, and not re-running
   tools.
+- **2026-09-28** — Done. `Actor::stop` (synchronous, like `cancel`) is what
+  `remove_participant` calls: the agent cancels a model call in flight,
+  abandons a turn under way at the next step boundary, stores itself idle
+  and ends its task; the channel closes its inbox and aborts it only after
+  a grace period (`STOP_GRACE`, 5 s) if it does not end by itself. `cancel`
+  and the stop tool already committed their turn, so only a crash leaves a
+  turn in the store. On load, `AgentActor::prepare_resume` applies the
+  resume rules; every state resumes as it is except `ExecutingTools`, where
+  approved calls without a result are answered as not executed
+  (`crate::tool::not_executed_result`, status `Failed`) so that the model
+  decides again - instead of the "resume as `Planning` with the tool calls
+  discarded" considered above, which would have left the assistant message
+  with the calls without results and the staged changes of finished calls
+  orphaned. Tests: a removed agent leaves an idle state with no turn
+  behind and announces nothing; the resume rule on an `ExecutingTools`
+  state.

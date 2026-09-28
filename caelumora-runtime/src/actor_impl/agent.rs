@@ -26,7 +26,7 @@ use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultS
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -57,6 +57,9 @@ pub struct AgentActor {
     /// that a cancel drops the request instead of waiting for its next
     /// chunk. A `std` mutex, because `cancel` is synchronous.
     turn_cancel: std::sync::Mutex<CancellationToken>,
+    /// Set by `stop`: the actor left the channel, and its run loop ends at
+    /// the next step boundary, abandoning a turn under way.
+    stopping: AtomicBool,
     loop_count: AtomicI32,
     max_iterations: i32,
 }
@@ -109,6 +112,10 @@ impl AgentActor {
         let tool_executor = actor_runtime.new_tool_executor(tool_providers)?;
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
+        let not_executed = Self::prepare_resume(&mut agent_channel_state);
+        if not_executed > 0 {
+            warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
+        }
         // A state that has not had a turn here yet gets the channel as it is
         // now; a turn under way keeps the channel as it was when it began.
         if agent_channel_state.turn_classification.channel_id != channel.id {
@@ -141,6 +148,7 @@ impl AgentActor {
             state,
             processing_state,
             turn_cancel: std::sync::Mutex::new(CancellationToken::new()),
+            stopping: AtomicBool::new(false),
             loop_count: AtomicI32::new(0),
             max_iterations: 25,
         })
@@ -299,6 +307,35 @@ impl AgentActor {
         if let Err(e) = self.actor_runtime.store_channel_state(turn.agent_channel_state()).await {
             warn!("Cannot store agent channel state of agent {}: {:#}", self.agent_id, e);
         }
+    }
+
+    /// Makes a loaded state fit to run from (issue 75). A state stored
+    /// between two steps of a turn is a turn to resume - the server
+    /// stopped or crashed in the middle of it - and most states resume as
+    /// they are: `Planning` repeats the model call, `Reflecting` the
+    /// reflection, `WaitingForApproval` keeps waiting, `Cancelling` and
+    /// `Stopping` end the turn. A deliberate end never leaves a turn in the
+    /// store (`stop`, `cancel`, the stop tool).
+    ///
+    /// `ExecutingTools` is the exception: a tool may have run without its
+    /// result being stored, and running it again would repeat its effect
+    /// (issue 20). Every approved call without a result is answered as not
+    /// executed, so that the next step builds the tool message and the
+    /// model decides again; results already stored stay. Returns how many
+    /// calls were answered so.
+    fn prepare_resume(state: &mut AgentChannelState) -> usize {
+        if state.processing_state.load() != ActorState::ExecutingTools {
+            return 0;
+        }
+        let mut answered = 0;
+        for call in &mut state.tool_calls {
+            if call.status == ApprovalStatus::Approved && call.result.is_none() {
+                call.result_status = ToolResultStatus::Failed;
+                call.result = Some(crate::tool::not_executed_result());
+                answered += 1;
+            }
+        }
+        answered
     }
 
     /// Begins a turn in answer to the envelope with `event_context` and
@@ -1102,6 +1139,9 @@ impl Actor for AgentActor {
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
+        if Self::is_turn_state(self.processing_state.load()) {
+            info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.processing_state.load());
+        }
 
         let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Actor]);
 
@@ -1141,6 +1181,20 @@ impl Actor for AgentActor {
                 }
                 Err(e) => return Err(e),
             };
+
+            // Told to stop, the actor is leaving the channel: a turn under
+            // way is not resumed later, so it is abandoned rather than
+            // stored (issue 75). `is_turn_state` of the current state covers
+            // a step that ended; the live state covers a cancel that landed
+            // during a waiting state.
+            if self.stopping.load(Ordering::SeqCst) {
+                if Self::is_turn_state(current_state) || Self::is_turn_state(self.processing_state.load()) {
+                    turn.abandon_turn();
+                }
+                self.processing_state.store(ActorState::Idle);
+                self.store_channel_state(&turn).await;
+                break;
+            }
 
             self.store_channel_state(&turn).await;
 
@@ -1218,6 +1272,14 @@ impl Actor for AgentActor {
             self.turn_token().cancel();
         }
     }
+
+    fn stop(&self) {
+        info!("Stopping agent {} {}: it left the channel", self.id, self.agent_controller.name());
+        self.stopping.store(true, Ordering::SeqCst);
+        // Interrupts a model call in flight; the run loop then sees the
+        // flag and abandons the turn instead of reflecting on it.
+        self.turn_token().cancel();
+    }
 }
 
 #[cfg(test)]
@@ -1234,6 +1296,40 @@ mod tests {
     use caelumora_model::plan::{PlanId, PlanState};
     use chrono::Utc;
     use uuid::Uuid;
+
+    #[test]
+    fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
+        use caelumora_model::approval::ApprovalId;
+        use caelumora_model::tool::ToolConfidentiality;
+        let call = |status: ApprovalStatus, result: Option<&str>| ToolCallState {
+            id: ApprovalId::new(),
+            status,
+            tool_call: ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC },
+            description: String::new(),
+            result: result.map(str::to_string),
+            result_status: ToolResultStatus::Ok,
+        };
+        let state_in = |actor_state: ActorState| AgentChannelState {
+            processing_state: Arc::new(ProcessingStateHolder::new(actor_state)),
+            tool_calls: vec![call(ApprovalStatus::Approved, None), call(ApprovalStatus::Approved, Some("done")), call(ApprovalStatus::Pending, None)],
+            ..AgentChannelState::default()
+        };
+
+        let mut executing = state_in(ActorState::ExecutingTools);
+        assert_eq!(AgentActor::prepare_resume(&mut executing), 1, "one approved call had no result");
+        let [unfinished, finished, pending] = executing.tool_calls.as_slice() else { panic!("three calls") };
+        assert_eq!(unfinished.result_status, ToolResultStatus::Failed);
+        assert!(unfinished.result.as_deref().unwrap_or_default().contains("not executed"), "the model is told: {:?}", unfinished.result);
+        assert_eq!(finished.result.as_deref(), Some("done"), "a stored result stays");
+        assert!(pending.result.is_none(), "a call nobody approved is still waiting");
+
+        // Every other state resumes as it is.
+        for other in [ActorState::Planning, ActorState::WaitingForApproval, ActorState::Reflecting, ActorState::Idle] {
+            let mut state = state_in(other);
+            assert_eq!(AgentActor::prepare_resume(&mut state), 0, "{other:?}");
+            assert!(state.tool_calls[0].result.is_none());
+        }
+    }
 
     fn make_message(content: &str) -> Message {
         Message {
