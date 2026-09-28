@@ -273,6 +273,20 @@ pub struct PromptRef {
     pub after: Option<Digest>,
 }
 
+/// An element of the context a `ContextProvider` hands a turn (issue 47):
+/// the conversation, with the prompt parts placed where the provider wants
+/// them. The provider decides where each part goes; the turn keeps the items
+/// as given, and derives from them both what the model is sent and where
+/// each prompt part was placed (`PromptRef`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContextItem {
+    /// An entry of the stored context, with the digest it has there.
+    Conversation { message: Message, digest: Digest },
+    /// A prompt part - the system prompt, notes, ... - that is not part of
+    /// the conversation, given to the model in `role`.
+    Prompt { role: MessageRole, text: String },
+}
+
 /// Knowledge from another place an agent's model was given (issue 17): what
 /// was read, from which channel, as the digest of the state read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

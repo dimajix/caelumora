@@ -1,7 +1,8 @@
 //! The `state_context_provider` component: the agent's stored context with
 //! the prompt parts of the `PromptProvider`s it depends on (issue 47).
 
-use crate::agent_turn::{ContextItem, Turn};
+use crate::agent_turn::Turn;
+use caelumora_model::message::ContextItem;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
@@ -41,7 +42,10 @@ impl ContextProvider for StateContextProvider {
             }
         }
 
-        let mut conversation = state.transcript_items();
+        // The transcript, each entry with its digest for `set_context`.
+        let mut conversation: Vec<ContextItem> = state.agent_channel_state().transcript.entries().iter()
+            .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest })
+            .collect();
         if !before_input.is_empty() {
             // The newest message is the turn's input - unless the agent wrote
             // it itself, in a turn that has none (e.g. after `/wakeup`).

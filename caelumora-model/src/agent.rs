@@ -220,9 +220,6 @@ pub struct AgentChannelState {
     /// in the history point to (issues 06, 47).
     #[serde(default)]
     pub prompts: BTreeMap<Digest, String>,
-    /// The prompt parts of the current turn, where they were placed.
-    #[serde(default)]
-    pub turn_prompts: Vec<PromptRef>,
     /// Pending tool calls
     #[serde(default)]
     pub tool_calls: Vec<ToolCallState>,
@@ -234,8 +231,12 @@ pub struct AgentChannelState {
     /// instead of the default `Idle`. Consumed once, at the end of the turn.
     #[serde(default)]
     pub requested_state: Option<ActorState>,
+    /// The context of the current turn as its `ContextProvider` gave it:
+    /// what the model is sent and where the prompt parts were placed are
+    /// both derived from it (issue 47). Stored, so that a turn waiting for
+    /// an approval can be recorded after a restart.
     #[serde(default)]
-    pub turn_context: Vec<Message>,
+    pub turn_context: Vec<crate::message::ContextItem>,
     #[serde(default)]
     pub turn_messages: Vec<Message>,
     #[serde(default)]

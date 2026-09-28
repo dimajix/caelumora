@@ -22,25 +22,12 @@ use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelClassification, Publication};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::digest::Digest;
 use caelumora_model::agent::TurnKnowledge;
-use caelumora_model::message::{ContextRef, KnowledgeRef, Message, MessageRole, PromptRef};
+use caelumora_model::message::{ContextItem, ContextRef, KnowledgeRef, Message, PromptRef};
 use caelumora_model::plan::{PlanProgress, PlanState};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolCallState;
-
-/// An element of the context a `ContextProvider` hands a turn (issue 47):
-/// the conversation, with the prompt parts placed where the provider wants
-/// them. The provider decides where each part goes; the turn records it.
-#[derive(Debug, Clone)]
-pub enum ContextItem {
-    /// An entry of the stored context, with the digest it has there.
-    Conversation { message: Message, digest: Digest },
-    /// A prompt part - the system prompt, notes, ... - that is not part of
-    /// the conversation, given to the model in `role`.
-    Prompt { role: MessageRole, text: String },
-}
 
 #[derive(Debug)]
 pub struct Turn<'a> {
@@ -111,7 +98,6 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.turn_messages.clear();
         self.agent_channel_state.requested_state = None;
         self.agent_channel_state.plan = None;
-        self.agent_channel_state.turn_prompts.clear();
         self.agent_channel_state.turn_channel_changes.clear();
         self.agent_channel_state.turn_knowledge.clear();
         self.agent_channel_state.turn_agent_changes.clear();
@@ -130,8 +116,37 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.turn_messages.clear();
     }
 
-    pub fn context(&self) -> &Vec<Message> {
-        &self.agent_channel_state.turn_context
+    /// The context of the turn as the model is given it: the conversation,
+    /// with every prompt part as a message of the agent in its role.
+    pub fn context(&self) -> Vec<Message> {
+        self.agent_channel_state.turn_context.iter()
+            .map(|item| match item {
+                ContextItem::Conversation { message, .. } => message.clone(),
+                ContextItem::Prompt { role, text } => Message {
+                    role: *role,
+                    content: Some(text.clone()),
+                    sender_id: ActorId::Agent(self.agent_id),
+                    sender_name: self.agent_name.clone(),
+                    ..Default::default()
+                },
+            })
+            .collect()
+    }
+
+    /// Where the turn's prompt parts were placed: each by the digest of its
+    /// text, with the transcript entry it followed (issue 47).
+    fn prompt_refs(&self) -> Vec<PromptRef> {
+        let mut after = None;
+        let mut prompts = Vec::new();
+        for item in &self.agent_channel_state.turn_context {
+            match item {
+                ContextItem::Conversation { digest, .. } => after = Some(*digest),
+                ContextItem::Prompt { role, text } => {
+                    prompts.push(PromptRef { text: caelumora_model::digest::prompt(text), role: *role, after });
+                }
+            }
+        }
+        prompts
     }
     pub fn messages(&self) -> &Vec<Message> {
         &self.agent_channel_state.turn_messages
@@ -142,41 +157,22 @@ impl<'a> Turn<'a> {
     }
 
     pub fn full_context(&self) -> Vec<Message> {
-        let mut context = self.agent_channel_state.turn_context.clone();
+        let mut context = self.context();
         context.extend_from_slice(self.agent_channel_state.turn_messages.as_slice());
         context
     }
 
-    /// Sets the context of the turn: the messages the model is given, in
-    /// order. Every prompt part is kept by digest and recorded with the
-    /// entry it follows, so that what the agent saw can be told later
-    /// (issues 06, 47); where it goes is the caller's decision.
+    /// Sets the context of the turn: the conversation with the prompt parts
+    /// where the caller placed them. Every prompt part's text is kept once by
+    /// digest, so that what the agent saw can be told later (issues 06, 47).
     pub fn set_context(&mut self, items: Vec<ContextItem>) {
-        let mut messages = Vec::with_capacity(items.len());
-        let mut prompts = Vec::new();
-        let mut after = None;
-        for item in items {
-            match item {
-                ContextItem::Conversation { message, digest } => {
-                    messages.push(message);
-                    after = Some(digest);
-                }
-                ContextItem::Prompt { role, text } => {
-                    let digest = caelumora_model::digest::prompt(&text);
-                    self.agent_channel_state.prompts.entry(digest).or_insert_with(|| text.clone());
-                    prompts.push(PromptRef { text: digest, role, after });
-                    messages.push(Message {
-                        role,
-                        content: Some(text),
-                        sender_id: ActorId::Agent(self.agent_id),
-                        sender_name: self.agent_name.clone(),
-                        ..Default::default()
-                    });
-                }
+        for item in &items {
+            if let ContextItem::Prompt { text, .. } = item {
+                let digest = caelumora_model::digest::prompt(text);
+                self.agent_channel_state.prompts.entry(digest).or_insert_with(|| text.clone());
             }
         }
-        self.agent_channel_state.turn_context = messages;
-        self.agent_channel_state.turn_prompts = prompts;
+        self.agent_channel_state.turn_context = items;
     }
 
     pub fn push_message(&mut self, message: Message) {
@@ -234,17 +230,10 @@ impl<'a> Turn<'a> {
     pub fn transcript(&self) -> Vec<Message> {
         self.agent_channel_state.transcript.messages()
     }
-    /// The stored context as items for [`Self::set_context`], each with its
-    /// digest.
-    pub fn transcript_items(&self) -> Vec<ContextItem> {
-        self.agent_channel_state.transcript.entries().iter()
-            .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest })
-            .collect()
-    }
     pub fn extend_transcript(&mut self, messages: Vec<Message>) {
         self.agent_channel_state.transcript.extend(messages);
     }
-    pub fn extend_state_history(&mut self, messages: Vec<Message>) {
+    pub fn extend_history(&mut self, messages: Vec<Message>) {
         self.agent_channel_state.history.extend(messages);
     }
 
@@ -297,7 +286,7 @@ impl<'a> Turn<'a> {
     /// history, and returns whether there were any (issue 65).
     pub fn record_turn(&mut self, messages: Vec<Message>) -> bool {
         let before = self.agent_channel_state.transcript.extend(messages.clone());
-        let prompts = self.agent_channel_state.turn_prompts.clone();
+        let prompts = self.prompt_refs();
         let knowledge = mem::take(&mut self.agent_channel_state.turn_knowledge);
         for (index, (message, transcript)) in messages.into_iter().zip(before).enumerate() {
             if !message.internal {
@@ -373,6 +362,7 @@ impl<'a> Turn<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::message::MessageRole;
     use caelumora_model::plan::{Plan, PlanId, PlanStep};
 
     fn make_plan_state() -> PlanState {
@@ -431,7 +421,8 @@ mod tests {
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let mut items = vec![system()];
-            items.extend(turn.transcript_items());
+            items.extend(turn.agent_channel_state().transcript.entries().iter()
+                .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest }));
             turn.set_context(items);
             assert_eq!(turn.context().len(), 2, "the prompt is given to the model as a message");
             turn.record_turn(vec![first.clone(), second.clone()]);

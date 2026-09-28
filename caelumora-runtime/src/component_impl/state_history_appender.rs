@@ -24,7 +24,7 @@ impl MessageProcessor for StateHistoryAppender {
     }
 
     async fn process_messages(&self, input: Vec<Message>, context: &mut Turn) -> Result<Vec<Message>> {
-        context.extend_state_history(input.clone());
+        context.extend_history(input.clone());
         Ok(input)
     }
 }
