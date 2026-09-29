@@ -568,6 +568,18 @@ mod tests {
     use caelumora_model::store_impl::memory::MemoryStore;
     use uuid::Uuid;
 
+    /// `users` as participants, recorded in the store the session reads
+    /// them from (issue 120).
+    async fn record_users(manager: &SessionManager, users: &[&caelumora_model::user::User]) -> Vec<caelumora_model::session::Participant> {
+        let store = manager.runtime_manager.entity_store();
+        let mut participants = Vec::new();
+        for user in users {
+            store.create_user(&SecurityContext::system(), user).await.unwrap();
+            participants.push(caelumora_model::session::Participant::User(user.id));
+        }
+        participants
+    }
+
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
@@ -800,13 +812,12 @@ mod tests {
     /// user's context and a second user of the session.
     async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, caelumora_model::actor::ActorId) {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::session::Participant;
         use caelumora_model::user::{User, UserId};
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (owner, other) = (user("owner"), user("other"));
         let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
         let mut session = make_session("with-users");
-        session.participants = vec![Participant::User(owner), Participant::User(other)];
+        session.participants = record_users(manager, &[&owner, &other]).await;
         session.security_attributes = SecurityAttributes { owner_id, contributors: Vec::new() };
         let ctx = SecurityContext::new(owner_id, session.id, Default::default());
         let session_loop = create(&manager, &ctx, session).await.expect("the session starts");
@@ -931,7 +942,6 @@ mod tests {
     async fn only_who_may_change_the_session_creates_or_deletes_its_channels() {
         use caelumora_model::actor::ActorId;
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
-        use caelumora_model::session::Participant;
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
@@ -946,7 +956,7 @@ mod tests {
         let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
         let mut session = make_session("hers");
         session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice.id), contributors: vec![ActorId::User(bob.id)] };
-        session.participants = vec![Participant::User(alice), Participant::User(bob)];
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let main = session.channel_by_name("main").await.unwrap().id();
 
@@ -964,7 +974,6 @@ mod tests {
     async fn a_channel_reads_another_by_their_confidentiality_not_by_who_takes_part() {
         use caelumora_model::actor::ActorId;
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
-        use caelumora_model::session::Participant;
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
@@ -980,7 +989,7 @@ mod tests {
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers");
         session.security_attributes = SecurityAttributes { owner_id: alice_id, contributors: vec![bob_id] };
-        session.participants = vec![Participant::User(alice), Participant::User(bob)];
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
         let with = |name: &str, level, participants| ChannelSpec { confidentiality: Some(level), ..spec(name, participants) };
@@ -1151,7 +1160,6 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::channel::HistoryAccess;
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
-        use caelumora_model::session::Participant;
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
@@ -1164,7 +1172,7 @@ mod tests {
         let (alice_id, bob_id, carol_id) = (ActorId::User(alice.id), ActorId::User(bob.id), ActorId::User(carol.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers");
-        session.participants = vec![Participant::User(alice), Participant::User(bob), Participant::User(carol)];
+        session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
         session.security_attributes = SecurityAttributes { owner_id: alice_id, contributors: vec![bob_id, carol_id] };
         let running = create(&manager, &as_user(alice_id), session).await.unwrap();
         let channel = running.create_channel(&as_user(alice_id), spec("side", vec![bob_id])).await.unwrap();

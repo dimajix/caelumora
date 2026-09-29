@@ -335,5 +335,6 @@ Two technical words are not tiers: **state** is the container the `StateStore` k
 ## Relations
 *   Each **Session** can contain one or more **Channels**.
 *   Each **Channel** has multiple **Participants** (Actors).
+*   Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`, `Participant::Agent(AgentId)` - not as copies (issue 120). The records live in the `EntityStore`: a channel reads them when it builds its actors, as the runtime, and leaves out (with a warning) one that no longer exists; REST reads their names the same way, since taking part in a session makes a name known to everyone in it. An approver has no record of its own and is held whole.
 *   A single **Agent** can be a participant in multiple sessions/channels.
 *   Within each session, each agent maintains its own `AgentState` and cognitive cycle within the `AgentActor`.

@@ -161,7 +161,16 @@ impl ChannelLoop {
         // The participants the channel has; `run` starts their tasks.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {
-            let actor = Self::create_actor(channel_loop.channel.clone(), participant, &channel_loop.runtime).await?;
+            let actor = match Self::create_actor(channel_loop.channel.clone(), participant, &channel_loop.runtime).await {
+                Ok(actor) => actor,
+                // A user or agent deleted since it joined: the channel runs
+                // without it rather than not at all (issue 120).
+                Err(error) if matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. })) => {
+                    warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             channel_loop.adopt(Arc::from(actor)).await;
         }
         Ok(channel_loop)
@@ -512,13 +521,19 @@ impl ChannelLoop {
     async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
         let (session_id, channel_id) = { let c = channel.load(); (c.session_id, c.id) };
         let actor_runtime = runtime.new_actor_runtime(participant.actor_id(), session_id, channel_id);
+        // The records are read as the runtime: that they take part was
+        // permitted when they joined (issue 120).
+        let store = runtime.entity_store();
+        let system = SecurityContext::system();
         match participant {
-            Participant::User(user) => {
-                let actor = UserActor::new(&channel.load(), user.clone(), actor_runtime).await?;
+            Participant::User(id) => {
+                let user = store.get_user(&system, *id).await?;
+                let actor = UserActor::new(&channel.load(), user, actor_runtime).await?;
                 Ok(Box::new(actor))
             },
-            Participant::Agent(agent) => {
-                let actor = AgentActor::new(&channel.load(), agent.clone(), actor_runtime).await?;
+            Participant::Agent(id) => {
+                let agent = store.get_agent(&system, *id).await?;
+                let actor = AgentActor::new(&channel.load(), agent, actor_runtime).await?;
                 Ok(Box::new(actor))
             },
             Participant::Approver(approver) => {
@@ -850,6 +865,7 @@ fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::store::EntityStore;
     use crate::llm_impl::ollama::OllamaClient;
     use crate::command::CommandExecutor;
     use crate::component::ComponentImpl;
@@ -895,8 +911,20 @@ mod tests {
         }
     }
 
-    async fn channel_with(participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
+    /// A channel of `users`, who are recorded in the store its actors are
+    /// read from.
+    async fn channel_with(users: &[&User], security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let store = Arc::new(MemoryStore::new());
+        let mut participants = Vec::new();
+        for user in users {
+            store.create_user(&SecurityContext::system(), user).await.unwrap();
+            participants.push(Participant::User(user.id));
+        }
+        channel_of(store, participants, security).await
+    }
+
+    /// A channel of `participants`, whose actors are read from `store`.
+    async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let channel = Channel::new(
@@ -915,13 +943,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_participant_that_no_longer_exists_is_left_out() {
+        let alice = user("alice");
+        let store = Arc::new(MemoryStore::new());
+        store.create_user(&SecurityContext::system(), &alice).await.unwrap();
+        let (gone_user, gone_agent) = (UserId::new(), caelumora_model::agent::AgentId::new());
+
+        let channel = channel_of(
+            store,
+            vec![Participant::User(alice.id), Participant::User(gone_user), Participant::Agent(gone_agent)],
+            Arc::new(DummySecurityManager::new()),
+        ).await;
+
+        assert!(channel.user_actor(alice.id).is_some(), "the others take part");
+        assert!(channel.actor_by_id(ActorId::User(gone_user)).is_none(), "a deleted user has no actor");
+        assert!(channel.actor_by_id(ActorId::Agent(gone_agent)).is_none(), "nor has a deleted agent");
+    }
+
+    #[tokio::test]
     async fn every_user_has_their_own_actor_and_a_stranger_has_none() {
         let alice = user("alice");
         let bob = user("bob");
-        let channel = channel_with(
-            vec![Participant::User(alice.clone()), Participant::User(bob.clone())],
-            Arc::new(DummySecurityManager::new()),
-        ).await;
+        let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
 
         for participant in [&alice, &bob] {
             let actor = channel.user_actor(participant.id).expect("a participant has an actor");
@@ -935,9 +978,7 @@ mod tests {
     async fn cancelling_and_waking_deliberately_ask_the_security_manager() {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let participants = vec![Participant::User(alice)];
-
-        let refused = channel_with(participants.clone(), Arc::new(DenyAll)).await;
+        let refused = channel_with(&[&alice], Arc::new(DenyAll)).await;
         for error in [
             refused.cancel(&context).await.expect_err("cancelling is refused"),
             refused.wakeup(&context).await.expect_err("waking is refused"),
@@ -949,7 +990,7 @@ mod tests {
         // it follows from an action that was permitted.
         refused.wake_for_delivery();
 
-        let allowed = channel_with(participants, Arc::new(DummySecurityManager::new())).await;
+        let allowed = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         allowed.cancel(&context).await.expect("permitted");
         allowed.wakeup(&context).await.expect("permitted");
     }
@@ -1011,7 +1052,7 @@ mod tests {
     async fn a_rejoining_agent_gets_what_it_missed_but_nothing_older() {
         use caelumora_model::message::MessageId;
         let alice = user("alice");
-        let channel = channel_with(vec![Participant::User(alice)], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let agent = caelumora_model::agent::AgentId::new();
         let message = |text: &str| Message { id: MessageId::new(), content: Some(text.to_string()), ..Message::default() };
         let (one, two, three, four) = (message("one"), message("two"), message("three"), message("four"));
@@ -1039,7 +1080,7 @@ mod tests {
         let alice = user("alice");
         // `/wakeup` is hidden from everybody.
         let policy = Policy(|action| !matches!(action, ActionType::ShowCommand("wakeup")));
-        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(policy)).await;
+        let channel = channel_with(&[&alice], Arc::new(policy)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
@@ -1066,7 +1107,7 @@ mod tests {
     #[tokio::test]
     async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
         let alice = user("alice");
-        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
@@ -1095,19 +1136,19 @@ mod tests {
     async fn wakeup_reports_refusals_and_unknown_agents() {
         let alice = user("alice");
         let refuse_waking = Policy(|action| !matches!(action, ActionType::WakeChannel(_)));
-        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(refuse_waking)).await;
+        let channel = channel_with(&[&alice], Arc::new(refuse_waking)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let error = actor.execute_command("wakeup", "").await.expect_err("waking is refused");
         assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "{error}");
         assert!(crate::error::is_forbidden(&error), "{error}");
 
         let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand("wakeup")));
-        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(refuse_running)).await;
+        let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
         assert!(matches!(command_error(&error), crate::command::CommandError::Forbidden(_)), "visible but not runnable: {error}");
 
-        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let error = actor.execute_command("wakeup", "@nobody").await.expect_err("no such agent");
         assert!(matches!(command_error(&error), crate::command::CommandError::InvalidArguments { .. }), "{error}");
@@ -1140,13 +1181,18 @@ mod tests {
         let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, ActorId::User(alice.id));
         let agent_id = ActorId::Agent(agent.id);
 
+        for user in [&alice, &bob] {
+            store.create_user(&SecurityContext::system(), user).await.unwrap();
+        }
+        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
             "broadcast".to_string(),
-            vec![Participant::User(alice.clone()), Participant::User(bob.clone()), Participant::Agent(agent)],
+            vec![Participant::User(alice.id), Participant::User(bob.id), Participant::Agent(agent.id)],
             SecurityAttributes::default(),
         );
         let executor = CommandExecutor::empty(runtime.security_manager());
@@ -1178,7 +1224,7 @@ mod tests {
         use caelumora_model::actor::EventContext;
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let channel = channel_with(vec![Participant::User(alice.clone())], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let bob = ActorId::Agent(caelumora_model::agent::AgentId::new());
         *channel.moderator.lock().await = Box::new(AskBack(bob));
         let (tx, mut rx) = mpsc::channel(8);
@@ -1255,6 +1301,8 @@ mod tests {
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.initiator_id);
         let agent_id = agent.id;
+        store.create_user(&SecurityContext::system(), &alice).await.unwrap();
+        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), model).unwrap());
@@ -1263,8 +1311,8 @@ mod tests {
             "main".to_string(),
             "broadcast".to_string(),
             vec![
-                Participant::User(alice.clone()),
-                Participant::Agent(agent),
+                Participant::User(alice.id),
+                Participant::Agent(agent_id),
                 Participant::Approver(caelumora_model::approval::Approver { id: caelumora_model::approval::ApproverId::new(), strategy: caelumora_model::approval::ApprovalStrategy::Any }),
             ],
             SecurityAttributes::default(),

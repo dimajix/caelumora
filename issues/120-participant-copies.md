@@ -1,6 +1,6 @@
 # 120 — Sessions and channels store copies of their participants
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions and channels
 
 ## The problem
@@ -61,3 +61,19 @@ and restarts.
   sessions are the remaining place where a user's `email` and `roles`
   travel with every session. The maintainer suggested that the session use
   a `UserController` to take changes in.
+- **2026-09-29** — Agreed with the maintainer: (1) participants hold ids;
+  (2) option A - the running session keeps one `UserController` and one
+  `AgentController` per participant, handed to the actors; (3) agents in
+  the same go; (4) names for REST read as the system; (5) a participant
+  that no longer exists is left out. In two steps: ids first, with the
+  actors loading their records themselves, then the controllers into the
+  session.
+- **2026-09-29** — Step 1: `Participant::User(UserId)` and
+  `Participant::Agent(AgentId)`; the approver stays whole. Instantiating a
+  template checks that the user exists and records the id.
+  `ChannelLoop::create_actor` reads the user or agent from the store as
+  the system; building a channel leaves out, with a `warn!`, a
+  participant whose record is gone, while adding one that does not exist
+  is an error. REST's `describe_participant` reads names from the store
+  as the system, and shows `(unknown)` without a handle for a record that
+  is gone. `ChannelRuntime::entity_store` is new.

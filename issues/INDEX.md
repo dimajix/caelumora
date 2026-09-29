@@ -74,7 +74,7 @@ against it, and what came out of the last attempt.
 | [76](76-channel-cancel-flag.md) | done | The channel's own cancel flag suppresses the final response of a cancelled turn, so the other agents' transcripts diverge from the history. |
 | [79](79-user-actor-exits-on-send-error.md) | done | A `UserActor` ends itself when one forward fails, and the three actor run loops differ only in how they handle errors. |
 | [90](90-message-path-wake-and-queue.md) | open | Frontends must wake the channel before sending, the `UserActor` queues every message once more than needed, and perceiving a message begins a turn. |
-| [120](120-participant-copies.md) | open | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
+| [120](120-participant-copies.md) | in progress | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
 
 ## Identity and access management
 

@@ -161,7 +161,7 @@ pub mod tests {
         let resolved = pt.instantiate(&context, &HashMap::new()).await.unwrap();
 
         if let Participant::Agent(agent) = resolved {
-            assert_eq!(agent.id, existing.id);
+            assert_eq!(agent, existing.id);
         } else {
             panic!("Expected agent participant");
         }
@@ -201,8 +201,8 @@ pub mod tests {
             panic!("Expected agent participant");
         };
 
-        assert_eq!(created.id, fetched.id);
-        assert_eq!(created.personality_id, personality.id);
+        assert_eq!(created, fetched);
+        assert_eq!(store.get_agent(&ctx, created).await.unwrap().personality_id, personality.id);
     }
 
     #[tokio::test]

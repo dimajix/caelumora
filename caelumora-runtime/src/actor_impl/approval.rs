@@ -406,7 +406,7 @@ mod tests {
             confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
-                Participant::User(user1),
+                Participant::User(user1.id),
                 Participant::Approver(approver.clone()),
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
@@ -537,7 +537,7 @@ mod tests {
 
         // Joining goes through the channel's controller, which announces it
         // (issue 46).
-        channel_controller.add_participant(&caelumora_model::security::SecurityContext::system(), Participant::User(user1.clone()), None).await.unwrap();
+        channel_controller.add_participant(&caelumora_model::security::SecurityContext::system(), Participant::User(user1.id), None).await.unwrap();
 
         // Give some time for the event to be processed
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -617,8 +617,8 @@ mod tests {
             history_limits: Vec::new(),
             participants: vec![
                 Participant::Approver(approver.clone()),
-                Participant::User(user1.clone()),
-                Participant::User(user2.clone()),
+                Participant::User(user1.id),
+                Participant::User(user2.id),
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
@@ -691,7 +691,7 @@ mod tests {
             moderator: "broadcast".to_string(),
             confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
-            participants: vec![Participant::Approver(approver.clone()), Participant::User(user)],
+            participants: vec![Participant::Approver(approver.clone()), Participant::User(user.id)],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();

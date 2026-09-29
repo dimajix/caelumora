@@ -1,11 +1,11 @@
 use crate::actor::ActorId;
-use crate::agent::Agent;
+use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::confidentiality::{ChannelClassification, Confidentiality};
 use crate::message::{MessageHistory, MessageId};
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
-use crate::user::User;
+use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -129,18 +129,23 @@ impl ChannelState {
     }
 }
 
+/// Who takes part in a session or channel. Users and agents by reference:
+/// their records live in the `EntityStore` and are read from there, so
+/// that no session keeps a copy that goes stale or shows more of them than
+/// their name (issue 120). An approver has no record of its own; it is
+/// kept here whole.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Participant {
-    User(User),
-    Agent(Agent),
+    User(UserId),
+    Agent(AgentId),
     Approver(Approver),
 }
 
 impl Participant {
     pub fn actor_id(&self) -> ActorId {
         match self {
-            Participant::User(user) => ActorId::User(user.id),
-            Participant::Agent(agent) => ActorId::Agent(agent.id),
+            Participant::User(id) => ActorId::User(*id),
+            Participant::Agent(id) => ActorId::Agent(*id),
             Participant::Approver(approver) => ActorId::Approver(approver.id),
         }
     }

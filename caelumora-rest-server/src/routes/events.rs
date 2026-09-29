@@ -5,10 +5,12 @@ use axum::{
     extract::{Query, State},
     response::sse::{Event, Sse},
 };
+use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::mention::handle_of;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
+use caelumora_model::store::EntityStore;
 use futures::stream::Stream;
 use futures::StreamExt;
 use std::convert::Infallible;
@@ -78,7 +80,7 @@ pub(crate) async fn describe_session(state: &AppState, session: Session, viewer:
                     channels.push(crate::routes::channels::channel_response(state, &channel, viewer).await);
                 }
             }
-            session_snapshot((**running.get_session()).clone(), channels)
+            session_snapshot(state, (**running.get_session()).clone(), channels).await
         }
         None => {
             // The channels are documents of their own (issue 70): those the
@@ -86,10 +88,10 @@ pub(crate) async fn describe_session(state: &AppState, session: Session, viewer:
             let mut channels = Vec::new();
             for id in &session.channels {
                 if let Ok(channel) = state.entity_store.get_channel(viewer, *id).await {
-                    channels.push(stored_channel_response(&channel));
+                    channels.push(stored_channel_response(state.entity_store.as_ref(), &channel).await);
                 }
             }
-            session_snapshot(session, channels)
+            session_snapshot(state, session, channels).await
         }
     }
 }
@@ -99,11 +101,12 @@ async fn snapshot_event(state: &Arc<AppState>, user: &AuthenticatedUser) -> Even
     Event::default().event("snapshot").data(serde_json::to_string(&snapshot).unwrap_or_default())
 }
 
-fn session_snapshot(session: Session, channels: Vec<ChannelResponse>) -> SessionSnapshot {
-    let participants = session.participants.iter().map(|participant| {
-        let (id, name, kind) = describe_participant(participant);
-        ParticipantResponse { id, name, kind: kind.to_string() }
-    }).collect();
+async fn session_snapshot(state: &AppState, session: Session, channels: Vec<ChannelResponse>) -> SessionSnapshot {
+    let mut participants = Vec::new();
+    for participant in &session.participants {
+        let (id, name, kind) = describe_participant(state.entity_store.as_ref(), participant).await;
+        participants.push(ParticipantResponse { id, name: name.unwrap_or_else(|| UNKNOWN.to_string()), kind: kind.to_string() });
+    }
     SessionSnapshot {
         id: session.id,
         name: session.metadata.name.clone(),
@@ -113,25 +116,34 @@ fn session_snapshot(session: Session, channels: Vec<ChannelResponse>) -> Session
     }
 }
 
-/// The id, name and kind of a participant, as the API shows them.
-fn describe_participant(participant: &Participant) -> (caelumora_model::actor::ActorId, String, &'static str) {
+/// What a participant is called whose user or agent no longer exists.
+const UNKNOWN: &str = "(unknown)";
+
+/// The id, name and kind of a participant, as the API shows them. The name
+/// is read from the store, as the runtime: taking part in a session makes
+/// a name known to everybody in it - it stands at every message - even
+/// where the record itself is not theirs to read (issue 120). `None` for a
+/// user or agent that no longer exists.
+async fn describe_participant(store: &dyn EntityStore, participant: &Participant) -> (ActorId, Option<String>, &'static str) {
+    let system = SecurityContext::system();
     match participant {
-        Participant::User(u) => (caelumora_model::actor::ActorId::User(u.id), u.username.clone(), "user"),
-        Participant::Agent(a) => (caelumora_model::actor::ActorId::Agent(a.id), a.metadata.name.clone(), "agent"),
-        Participant::Approver(a) => (caelumora_model::actor::ActorId::Approver(a.id), "Approver".to_string(), "approver"),
+        Participant::User(id) => (ActorId::User(*id), store.get_user(&system, *id).await.ok().map(|u| u.username), "user"),
+        Participant::Agent(id) => (ActorId::Agent(*id), store.get_agent(&system, *id).await.ok().map(|a| a.metadata.name), "agent"),
+        Participant::Approver(a) => (ActorId::Approver(a.id), Some("Approver".to_string()), "approver"),
     }
 }
 
 /// A channel of a session that is not running, described by the store rather
 /// than by its actors.
-fn stored_channel_response(channel: &Channel) -> ChannelResponse {
-    let members = channel.participants.iter().map(|participant| {
-        let (id, name, kind) = describe_participant(participant);
-        let handle = Some(handle_of(&name)).filter(|h| !h.is_empty() && kind != "approver");
+async fn stored_channel_response(store: &dyn EntityStore, channel: &Channel) -> ChannelResponse {
+    let mut members = Vec::new();
+    for participant in &channel.participants {
+        let (id, name, kind) = describe_participant(store, participant).await;
+        let handle = name.as_deref().map(handle_of).filter(|h| !h.is_empty() && kind != "approver");
         // Not running: there is no actor to ask; opening the channel starts
         // it, and its own snapshot says.
-        ChannelMemberResponse { id, name, handle, kind: kind.to_string(), can_read_context: false }
-    }).collect();
+        members.push(ChannelMemberResponse { id, name: name.unwrap_or_else(|| UNKNOWN.to_string()), handle, kind: kind.to_string(), can_read_context: false });
+    }
 
     ChannelResponse { id: channel.id, name: channel.name.clone(), members, moderator: channel.moderator.clone(), confidentiality: channel.confidentiality, can_change: false }
 }
@@ -143,27 +155,33 @@ mod tests {
     use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::SessionId;
+    use caelumora_model::store_impl::memory::MemoryStore;
     use caelumora_model::user::{User, UserId};
     use uuid::Uuid;
 
-    #[test]
-    fn a_stopped_session_is_described_by_the_store() {
+    #[tokio::test]
+    async fn a_stopped_session_is_described_by_the_store() {
         let user = User {
             id: UserId::new(),
             username: "Alice Example".to_string(),
             email: String::new(),
             roles: Vec::new(),
         };
+        // Refuses everything but the system: the names are read as the
+        // runtime, whoever asks.
+        let store = MemoryStore::with_security_manager(Arc::new(caelumora_model::security::OwnershipSecurityManager::new()));
+        store.create_user(&SecurityContext::system(), &user).await.unwrap();
         let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+        let gone = UserId::new();
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
             "broadcast".to_string(),
-            vec![Participant::User(user.clone()), Participant::Approver(approver)],
+            vec![Participant::User(user.id), Participant::User(gone), Participant::Approver(approver)],
             SecurityAttributes::default(),
         );
 
-        let response = stored_channel_response(&channel);
+        let response = stored_channel_response(&store, &channel).await;
 
         assert_eq!(response.name, "main");
         let alice = response.members.iter().find(|m| m.name == "Alice Example").expect("the user is a member");
@@ -171,5 +189,8 @@ mod tests {
         assert_eq!(alice.kind, "user");
         let approver = response.members.iter().find(|m| m.kind == "approver").expect("the approver is a member");
         assert!(approver.handle.is_none(), "an approver cannot be mentioned");
+        let gone = response.members.iter().find(|m| m.id == ActorId::User(gone)).expect("a deleted user is still listed");
+        assert_eq!(gone.name, UNKNOWN);
+        assert!(gone.handle.is_none(), "and cannot be mentioned");
     }
 }

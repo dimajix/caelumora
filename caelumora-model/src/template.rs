@@ -214,8 +214,10 @@ impl ParticipantTemplate {
                         None
                     }
                 }).ok_or_else(|| TemplateError::MappingNotFound(name.clone()))?;
-                let user = context.entity_store.get_user(&context.security, id).await?;
-                Participant::User(user)
+                // Only to find out that the user exists: the participant is
+                // the reference (issue 120).
+                context.entity_store.get_user(&context.security, id).await?;
+                Participant::User(id)
             },
             ParticipantTemplate::Agent { ref name, ref scope, personality_id } => {
                 let agent_id = mapping.get(name).and_then(|id| {
@@ -246,7 +248,7 @@ impl ParticipantTemplate {
                         }
                     }
                 };
-                Participant::Agent(agent)
+                Participant::Agent(agent.id)
             },
             ParticipantTemplate::Approver => {
                 Participant::Approver(Approver {
@@ -307,7 +309,7 @@ mod tests {
         assert_eq!(session.channels, vec![channels[0].id], "the session lists its channels by id");
 
         let users: Vec<_> = channels[0].participants.iter()
-            .filter_map(|p| match p { Participant::User(u) => Some(u.id), _ => None })
+            .filter_map(|p| match p { Participant::User(u) => Some(*u), _ => None })
             .collect();
         assert_eq!(users, vec![alice.id]);
         assert_eq!(session.commands.component_nodes.len(), 2, "the session keeps its template's commands");
@@ -369,7 +371,7 @@ mod tests {
         let context = context_with(store);
         let Participant::Agent(first) = agent.instantiate(&context, &HashMap::new()).await.expect("created") else { panic!("an agent") };
         let Participant::Agent(again) = agent.instantiate(&context, &HashMap::new()).await.expect("found") else { panic!("an agent") };
-        assert_eq!(first.id, again.id, "the same agent, not a second one");
+        assert_eq!(first, again, "the same agent, not a second one");
 
         // A lookup that fails is an error, not a reason to make another.
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::with_security_manager(Arc::new(NoAgentLookup)));

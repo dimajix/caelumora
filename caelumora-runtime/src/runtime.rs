@@ -96,6 +96,8 @@ impl ChannelRuntime {
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime_manager.state_store() }
 
+    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
+
     pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
