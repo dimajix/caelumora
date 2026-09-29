@@ -299,6 +299,7 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::Confidentiality;
     use crate::llm_impl::ollama::OllamaClient;
     use caelumora_model::command::default_commands;
     use crate::command::CommandExecutor;
@@ -312,7 +313,16 @@ mod tests {
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())));
-        let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
+        let channel = Channel {
+            id: ChannelId::new(),
+            session_id: SessionId::new(),
+            name: "main".to_string(),
+            moderator: "broadcast".to_string(),
+            participants: Vec::new(),
+            security_attributes: SecurityAttributes::default(),
+            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
+        };
         let user = caelumora_model::user::User {
             id: caelumora_model::user::UserId::new(),
             username: "alice".to_string(),

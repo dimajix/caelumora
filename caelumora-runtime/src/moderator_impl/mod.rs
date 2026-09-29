@@ -54,7 +54,7 @@ impl<P: ResponderPolicy> PolicyModerator<P> {
             None => self.policy.choose(self.actors.actor_candidates(messages)),
         };
         for id in responders {
-            routes.push((id, event.forward_with_event(ActorEvent::ResponseRequested)));
+            routes.push((id, event.forward(ActorEvent::ResponseRequested)));
         }
         routes
     }
@@ -130,7 +130,7 @@ impl ModeratorActors {
             return Vec::new();
         }
 
-        let forward_event = event.forward_with_response(user_messages);
+        let forward_event = event.forward(ActorEvent::FullResponseGenerated(user_messages));
         self.agent_actors.keys()
             .chain(self.user_actors.keys())
             .filter(|id| !sender_ids.contains(id))

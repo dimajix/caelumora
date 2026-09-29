@@ -210,7 +210,7 @@ impl AgentChannelState {
     /// prefix.
     pub fn resolve(&self, reference: &ContextRef) -> Option<SeenContext> {
         let entries = match &reference.transcript {
-            Some(digest) => self.transcript.prefix_entries(digest)?,
+            Some(digest) => self.transcript.prefix(digest)?,
             None => &[],
         };
         let prompt = |p: &PromptRef| -> Option<ContextItem> {

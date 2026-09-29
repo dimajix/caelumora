@@ -74,20 +74,6 @@ impl Secured for Channel {
 }
 
 impl Channel {
-    pub fn new(session_id: SessionId, name: String, moderator: String, participants: Vec<Participant>, security_attributes: SecurityAttributes) -> Self {
-        let id = ChannelId(Uuid::new_v4());
-        Self {
-            id,
-            session_id,
-            name,
-            moderator,
-            participants,
-            security_attributes,
-            confidentiality: Confidentiality::CHANNEL_DEFAULT,
-            history_limits: Vec::new(),
-        }
-    }
-
     /// The channel as the confidentiality rules see it.
     pub fn classification(&self) -> ChannelClassification {
         ChannelClassification { session_id: self.session_id, channel_id: self.id, level: self.confidentiality }
@@ -105,7 +91,16 @@ impl Channel {
             }));
         }
         let security_attributes = participant_attributes(owner, &participants);
-        Self { confidentiality, ..Self::new(session_id, name, moderator, participants, security_attributes) }
+        Self {
+            id: ChannelId::new(),
+            session_id,
+            name,
+            moderator,
+            participants,
+            security_attributes,
+            confidentiality,
+            history_limits: Vec::new(),
+        }
     }
 }
 

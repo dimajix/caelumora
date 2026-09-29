@@ -241,15 +241,10 @@ impl Transcript {
         self.messages.entries()
     }
 
-    /// The messages of the transcript `digest` names: this transcript up to
+    /// The entries of the transcript `digest` names: this transcript up to
     /// and including the entry with that digest, or `None` if it is not a
     /// prefix of this transcript.
-    pub fn prefix(&self, digest: &Digest) -> Option<Vec<Message>> {
-        Some(self.prefix_entries(digest)?.iter().map(|e| e.message.clone()).collect())
-    }
-
-    /// The entries of the transcript `digest` names, like [`Self::prefix`].
-    pub fn prefix_entries(&self, digest: &Digest) -> Option<&[TranscriptEntry]> {
+    pub fn prefix(&self, digest: &Digest) -> Option<&[TranscriptEntry]> {
         self.messages.prefix(digest)
     }
 }
@@ -468,7 +463,7 @@ mod tests {
         context.push(make_message(id(3)));
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
-        assert_eq!(prefix.iter().map(|m| m.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
+        assert_eq!(prefix.iter().map(|e| e.message.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
         assert!(context.prefix(&crate::digest::prompt("elsewhere")).is_none());
     }
 

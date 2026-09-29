@@ -109,3 +109,20 @@ comment saying why it is public.
   subscribe_agent, subscribe_user}` and `EventSubscription::try_recv` - the
   bus is not touched in this issue - `Turn::transcript`, which only a
   test calls, and `Message::metadata`, which stays part of the message.
+- **2026-09-29** — One caller. Already gone: `SessionLoop::cancel_channel`
+  ([102](102-rest-channel-lookup.md)), `SessionManager::load_session`,
+  `Turn::has_tool_calls`, `viewer_id` and `may_read_channel` in REST.
+  Changed now: `Envelope::forward_with_response` is gone and
+  `forward_with_event` is `forward(event)`, the one way to pass an envelope
+  on; `Transcript::prefix` returns the entries, like `Chain::prefix`, and
+  the copying variant only tests used is gone; `Channel::new` is inlined
+  into `Channel::build`, its only caller outside of tests - every other
+  channel, like every session, is built as a literal. Kept, for symmetry
+  or by decision: the `ChannelRuntime` delegators (rejected in
+  [89](89-channel-runtime-delegators.md)), `RuntimeManager::{new_moderator,
+  new_recorder, agent_states}` among their siblings, `ChannelLoop::{wakeup,
+  wakeup_actor, actor_ids, channel}`, `Turn::requested_state` next to
+  `request_state`, `LLMError::describe_chain` next to `redact_endpoint`,
+  and the REST server's constants and `TokenService::lifetime_secs` (a
+  binary crate, where `pub` means the crate anyway). The `ActorRuntime`
+  methods belong to the `pub(crate)` pass.

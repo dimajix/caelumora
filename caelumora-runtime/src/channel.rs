@@ -905,6 +905,7 @@ fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::store::EntityStore;
     use crate::llm_impl::ollama::OllamaClient;
     use crate::command::CommandExecutor;
@@ -967,13 +968,16 @@ mod tests {
     async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
-        let channel = Channel::new(
-            SessionId::new(),
-            "main".to_string(),
-            "broadcast".to_string(),
+        let channel = Channel {
+            id: ChannelId::new(),
+            session_id: SessionId::new(),
+            name: "main".to_string(),
+            moderator: "broadcast".to_string(),
             participants,
-            SecurityAttributes::default(),
-        );
+            security_attributes: SecurityAttributes::default(),
+            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
+        };
         let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
         let executor = CommandExecutor::new(
             runtime.security_manager(),
@@ -1206,7 +1210,7 @@ mod tests {
     #[async_trait::async_trait]
     impl crate::moderator::Moderator for AskBack {
         async fn route(&mut self, event: &Envelope) -> crate::moderator::RouteDecision {
-            vec![(self.0, event.clone()), (self.0, event.forward_with_event(ActorEvent::ResponseRequested))].into()
+            vec![(self.0, event.clone()), (self.0, event.forward(ActorEvent::ResponseRequested))].into()
         }
         fn add_actor(&mut self, _: Arc<dyn Actor>) {}
         fn remove_actor(&mut self, _: ActorId) {}
@@ -1323,17 +1327,20 @@ mod tests {
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), model).unwrap());
-        let channel = Channel::new(
-            SessionId::new(),
-            "main".to_string(),
-            "broadcast".to_string(),
-            vec![
+        let channel = Channel {
+            id: ChannelId::new(),
+            session_id: SessionId::new(),
+            name: "main".to_string(),
+            moderator: "broadcast".to_string(),
+            participants: vec![
                 Participant::User(alice.id),
                 Participant::Agent(agent_id),
                 Participant::Approver(caelumora_model::approval::Approver { id: caelumora_model::approval::ApproverId::new(), strategy: caelumora_model::approval::ApprovalStrategy::Any }),
             ],
-            SecurityAttributes::default(),
-        );
+            security_attributes: SecurityAttributes::default(),
+            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
+        };
         // Stored, so that leaving it can be stored too.
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         let executor = CommandExecutor::empty(runtime.security_manager());

@@ -215,15 +215,9 @@ impl Envelope {
         }
     }
 
-    pub fn forward_with_response(&self, messages:Vec<Message>) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.clone(),
-            context: self.context.clone(),
-            event: ActorEvent::FullResponseGenerated(messages)
-        }
-    }
-    pub fn forward_with_event(&self, event:ActorEvent) -> Self {
+    /// The same envelope - sender, contexts - with `event` instead, e.g. a
+    /// moderator passing an answer on.
+    pub fn forward(&self, event: ActorEvent) -> Self {
         Self {
             timestamp: Utc::now(),
             security: self.security.clone(),
