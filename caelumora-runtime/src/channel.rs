@@ -1386,7 +1386,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::component_impl::stop_tool::STOP_TOOL_PROVIDER_KIND.to_string(),
+            kind: crate::component_impl::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1430,7 +1430,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_PROVIDER_KIND.to_string(),
+            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1469,7 +1469,7 @@ mod tests {
         let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::default() };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "plan".to_string(),
-            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND.to_string(),
+            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,

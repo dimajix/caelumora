@@ -48,17 +48,11 @@ impl NoteKind {
     }
 }
 
-/// One of an agent's note chains in a channel, as a turn sees it.
-pub struct AgentNotes<'t, 'a> {
-    turn: &'t mut Turn<'a>,
-    kind: NoteKind,
-}
+/// An agent's note chains in a channel, as a turn sees them: every function
+/// takes the turn and which chain.
+pub struct AgentNotes;
 
-impl<'t, 'a> AgentNotes<'t, 'a> {
-    pub fn new(turn: &'t mut Turn<'a>, kind: NoteKind) -> Self {
-        Self { turn, kind }
-    }
-
+impl AgentNotes {
     /// The notes as they stand - without the changes of the current turn,
     /// which count only once it completes.
     pub fn current(turn: &Turn, kind: NoteKind) -> Vec<Note> {
@@ -73,9 +67,8 @@ impl<'t, 'a> AgentNotes<'t, 'a> {
 
     /// Notes `text` in this turn and returns the note's number: one more than
     /// any in the chain or noted earlier in the turn.
-    pub fn note(&mut self, text: String) -> NoteId {
-        let kind = self.kind;
-        let noted_now = self.turn.staged_channel_changes().iter()
+    pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
+        let noted_now = turn.staged_channel_changes().iter()
             .filter_map(|c| match kind.of(c) {
                 Some(NoteChange::Note { id, .. }) => Some(id.0),
                 _ => None,
@@ -83,27 +76,26 @@ impl<'t, 'a> AgentNotes<'t, 'a> {
             .max();
         let id = match noted_now {
             Some(highest) => NoteId(highest + 1),
-            None => kind.chain(self.turn.agent_channel_state()).next_id(),
+            None => kind.chain(turn.agent_channel_state()).next_id(),
         };
-        self.turn.stage_channel_change(kind.change(NoteChange::Note { id, text }));
+        turn.stage_channel_change(kind.change(NoteChange::Note { id, text }));
         id
     }
 
     /// Revokes note `id`: one of the current notes, or one noted earlier in
     /// this turn, which is then simply dropped - it was never published.
     /// `false` if there is no such note.
-    pub fn revoke(&mut self, id: NoteId) -> bool {
-        let kind = self.kind;
-        let staged = self.turn.staged_channel_changes();
+    pub fn revoke(turn: &mut Turn, kind: NoteKind, id: NoteId) -> bool {
+        let staged = turn.staged_channel_changes();
         if let Some(index) = staged.iter().position(|c| matches!(kind.of(c), Some(NoteChange::Note { id: noted, .. }) if *noted == id)) {
             staged.remove(index);
             return true;
         }
         let revoked_now = staged.iter().any(|c| matches!(kind.of(c), Some(NoteChange::Revoke { id: revoked }) if *revoked == id));
-        if revoked_now || !kind.chain(self.turn.agent_channel_state()).current().iter().any(|n| n.id == id) {
+        if revoked_now || !kind.chain(turn.agent_channel_state()).current().iter().any(|n| n.id == id) {
             return false;
         }
-        self.turn.stage_channel_change(kind.change(NoteChange::Revoke { id }));
+        turn.stage_channel_change(kind.change(NoteChange::Revoke { id }));
         true
     }
 }

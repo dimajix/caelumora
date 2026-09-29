@@ -1,6 +1,6 @@
 # 101 — The three chain components repeat their helpers, and `AgentNotes`/`AgentMemory` are structs for no reason
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -58,3 +58,23 @@ differs from the next one.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 4.1.4, 4.2.3, 4.2.5).
+- **2026-09-29** — Done, as discussed with the maintainer.
+  Helpers: `tool::text_argument` and `id_argument` replace `note_text`,
+  `note_id` and the inline `IdArgument` (now gone). Instead of a shared
+  `read_error`, the `SessionReader` returns a typed
+  `session_reader::ReadError` (`NotReadable` | `Failed`) with
+  `From<ReadError> for ToolError`, so `notes` and `channel_history` pass
+  it on with `?` and nothing downcasts any more. The three `render`
+  functions are built on `context::render_sections(preamble, &[Section])`.
+  `AgentNotes` and `AgentMemory` have only associated functions
+  (`AgentNotes::note(turn, kind, text)`, `AgentMemory::forget(turn, id)`,
+  ...), which matches their read functions. `AgentMemory::remember` explains
+  why memory numbers are reserved on the shared handle and are not derived
+  like note numbers. Naming: kind constants `<KIND>_KIND` (no
+  `_PROVIDER`), `ChannelHistoryReader` → `ChannelHistoryComponent`,
+  `StaticPromptProvider` → `StaticSystemPromptProvider`, tool and command
+  names as constants, `facets` everywhere, struct literals instead of
+  trivial `new`s, `turn` as the parameter name. The command kinds stay in
+  the model on purpose, because `default_commands` names them, and a comment
+  there says so. The convention is written down in ARCHITECTURE.md under
+  the built-in components.

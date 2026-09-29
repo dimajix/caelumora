@@ -80,7 +80,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
         component_nodes: vec![ComponentDescriptor {
             security_attributes: Default::default(),
             id: "test-echo".to_string(),
-            kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
+            kind: mcp_tool::MCP_TOOL_KIND.to_string(),
             params,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
@@ -147,7 +147,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
             &ComponentDescriptor {
                 security_attributes: Default::default(),
                 id: "shared-echo".to_string(),
-                kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
+                kind: mcp_tool::MCP_TOOL_KIND.to_string(),
                 params: json!({ "url": url }),
                 tags: vec![],
                 fail_policy: ComponentFailPolicy::FailOpen,

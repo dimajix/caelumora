@@ -10,7 +10,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub const CALCULATOR_TOOL_PROVIDER_KIND: &str = "calculator_tool";
+pub const CALCULATOR_TOOL_KIND: &str = "calculator_tool";
+
+pub const CALCULATE_TOOL_NAME: &str = "calculate";
 
 #[derive(Debug)]
 pub struct CalculatorToolProvider;
@@ -19,7 +21,7 @@ pub struct CalculatorToolProvider;
 impl ToolProvider for CalculatorToolProvider {
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
-            name: "calculate".to_string(),
+            name: CALCULATE_TOOL_NAME.to_string(),
             description: "Evaluates a mathematical expression".to_string(),
             parameters: ToolParameters::object(
                 vec![("expression", ToolParameters::string("Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')"))],
@@ -30,8 +32,8 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut Turn) -> ToolResult<Value> {
-        if name == "calculate" {
+    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
+        if name == CALCULATE_TOOL_NAME {
             #[derive(Deserialize)]
             struct Calculate { expression: String }
             let Calculate { expression } = arguments(params)?;
@@ -48,7 +50,7 @@ impl ToolProvider for CalculatorToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CALCULATOR_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>(),
+        ComponentKind::new(CALCULATOR_TOOL_KIND).provides::<dyn ToolProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider));
@@ -80,7 +82,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result = provider.execute("calculate", &params, &mut turn).await.unwrap();
+            let result = provider.execute(CALCULATE_TOOL_NAME, &params, &mut turn).await.unwrap();
             let val = result.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
@@ -93,7 +95,7 @@ mod tests {
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute("calculate", &params, &mut turn).await;
+        let result = provider.execute(CALCULATE_TOOL_NAME, &params, &mut turn).await;
         assert!(result.is_err());
     }
 }

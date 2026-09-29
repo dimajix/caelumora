@@ -8,7 +8,9 @@ use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
 use serde_json::Value;
 use std::sync::Arc;
 
-pub const ECHO_TOOL_PROVIDER_KIND: &str = "echo_tool";
+pub const ECHO_TOOL_KIND: &str = "echo_tool";
+
+pub const ECHO_TOOL_NAME: &str = "echo";
 
 #[derive(Debug)]
 pub struct EchoToolProvider;
@@ -17,7 +19,7 @@ pub struct EchoToolProvider;
 impl ToolProvider for EchoToolProvider {
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
-            name: "echo".to_string(),
+            name: ECHO_TOOL_NAME.to_string(),
             description: "Echoes the input back".to_string(),
             parameters: ToolParameters::object(
                 vec![("message", ToolParameters::string("Input message to be echoed back"))],
@@ -28,8 +30,8 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _context: &mut Turn) -> ToolResult<Value> {
-        if name == "echo" {
+    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
+        if name == ECHO_TOOL_NAME {
             Ok(params.clone())
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
@@ -39,7 +41,7 @@ impl ToolProvider for EchoToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(ECHO_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>(),
+        ComponentKind::new(ECHO_TOOL_KIND).provides::<dyn ToolProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(EchoToolProvider));

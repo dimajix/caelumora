@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, HELP_COMMAND_KIND};
 use std::sync::Arc;
 
-const HELP: &str = "help";
+pub const HELP_COMMAND_NAME: &str = "help";
 
 /// `/help [command]`: lists the commands the user may see, or describes one.
 /// The answer is for the user alone.
@@ -24,7 +24,7 @@ fn signature(command: &Command) -> String {
 impl CommandProvider for HelpCommandProvider {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: HELP.to_string(),
+            name: HELP_COMMAND_NAME.to_string(),
             description: "Lists the commands you can use, or describes one.".to_string(),
             usage: Some("[command]".to_string()),
         }]

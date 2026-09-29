@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub const CREATE_PLAN_TOOL_PROVIDER_KIND: &str = "create_plan_tool";
+pub const CREATE_PLAN_TOOL_KIND: &str = "create_plan_tool";
 
 pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 
@@ -45,7 +45,7 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self, _context: &Turn) -> Result<Prompt> {
+    async fn get_prompt(&self, _turn: &Turn) -> Result<Prompt> {
         Ok(PLANNING_SYSTEM_PROMPT.to_string().into())
     }
 }
@@ -153,7 +153,7 @@ impl ToolProvider for CreatePlanToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CREATE_PLAN_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        ComponentKind::new(CREATE_PLAN_TOOL_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CreatePlanToolProvider));

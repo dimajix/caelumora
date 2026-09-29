@@ -410,7 +410,7 @@ impl AgentActor {
     async fn apply_stage_processors<'a, T>(
         processors: &[ComponentImpl<T>],
         mut input: Vec<Message>,
-        context: &mut Turn<'a>,
+        turn: &mut Turn<'a>,
     ) -> Result<Vec<Message>>
     where
         T: MessageProcessor + ?Sized + Send + Sync,
@@ -419,7 +419,7 @@ impl AgentActor {
             let current = mem::take(&mut input);
             match stage_processor
                 .facet
-                .process_messages(current, context)
+                .process_messages(current, turn)
                 .await
             {
                 Ok(output) => {
@@ -1034,7 +1034,7 @@ mod tests {
     use crate::component_impl::transcript_appender::TranscriptAppender;
     use crate::component_impl::state_context_provider::StateContextProvider;
     use crate::component_impl::state_history_appender::StateHistoryAppender;
-    use crate::component_impl::static_system_prompt_provider::StaticPromptProvider;
+    use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
     use chrono::Utc;
@@ -1174,7 +1174,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         turn.begin();
-        let brief = || part(Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
+        let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
 
         let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         open.current_context(&mut turn).await.expect("a part that fails open is left out");
@@ -1191,8 +1191,8 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let provider = StateContextProvider {
             prompt_providers: vec![
-                part(Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed),
-                part(Arc::new(StaticPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
+                part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed),
+                part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
             ],
         };
         let contents = |turn: &Turn| turn.context().iter()

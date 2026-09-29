@@ -11,17 +11,17 @@ use std::sync::Arc;
 pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
 
 #[derive(Debug)]
-pub struct StaticPromptProvider {
+pub struct StaticSystemPromptProvider {
     pub prompt: String,
     pub position: PromptPosition,
 }
 
 #[async_trait]
-impl PromptProvider for StaticPromptProvider {
+impl PromptProvider for StaticSystemPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self, _context: &Turn) -> Result<Prompt> {
+    async fn get_prompt(&self, _turn: &Turn) -> Result<Prompt> {
         Ok(self.prompt.clone().into())
     }
 }
@@ -40,12 +40,12 @@ pub fn register(registry: &mut ComponentRegistry) {
                     .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string()))?,
             };
 
-            let mut capabilities = ComponentFacets::empty();
-            capabilities.insert::<dyn PromptProvider>(Arc::new(StaticPromptProvider {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PromptProvider>(Arc::new(StaticSystemPromptProvider {
                 prompt,
                 position,
             }));
-            Ok(capabilities)
+            Ok(facets)
         },
     );
 }

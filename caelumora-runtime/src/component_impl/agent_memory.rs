@@ -13,21 +13,20 @@
 //! `session` channel within that session, from a `channel` channel only
 //! there. Only those can be forgotten here. Both tools are
 //! `ToolConfidentiality::HIDDEN`: like private notes, memory is the agent's
-//! own, seen by its owner in the context panel only.
+//! own, seen by its owner in the context panel only. Its entries are
+//! numbered differently from notes, on purpose: see `AgentMemory::remember`.
 
 use crate::agent_memory::AgentMemory;
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::component_impl::notes::note_text;
-use crate::context::{Prompt, PromptPosition, PromptProvider};
-use crate::tool::{arguments, IdArgument, ToolError, ToolProvider, ToolResult};
+use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::tool::{id_argument, text_argument, ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde_json::Value;
-use std::fmt::Write;
 use std::sync::Arc;
 
 pub const AGENT_MEMORY_KIND: &str = "agent_memory";
@@ -83,15 +82,14 @@ impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
     fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let text = note_text(params)?;
-        let id = AgentMemory::new(turn).remember(text);
+        let id = AgentMemory::remember(turn, text_argument(params)?);
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
-    fn execute_forget(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
-        let IdArgument::<MemoryId> { id } = arguments(params)?;
-        if AgentMemory::new(context).forget(id) {
+    fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id: MemoryId = id_argument(params)?;
+        if AgentMemory::forget(turn, id) {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -105,14 +103,14 @@ impl PromptProvider for AgentMemoryComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, context: &Turn) -> Result<Prompt> {
-        let recalled = AgentMemory::recalled(context);
+    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
+        let recalled = AgentMemory::recalled(turn);
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
         let knowledge = vec![KnowledgeRef {
-            channel: context.channel_id(),
-            source: KnowledgeSource::Memory { agent: context.agent_id, digest: AgentMemory::digest(context) },
+            channel: turn.channel_id(),
+            source: KnowledgeSource::Memory { agent: turn.agent_id, digest: AgentMemory::digest(turn) },
         }];
         Ok(Prompt { text: render(&recalled), knowledge })
     }
@@ -120,24 +118,22 @@ impl PromptProvider for AgentMemoryComponent {
 
 /// The prompt part for what the agent recalls here.
 fn render(recalled: &[Memory]) -> String {
-    let mut text = String::from(
+    let preamble = format!(
         "[What you remember - from this and your other conversations, as far as it may be known here. \
         No other participant sees it; only the person responsible for you can inspect it. Do not quote or \
-        reveal it in your answers. Change it with `remember` and `forget`.]\n",
+        reveal it in your answers. Change it with `{REMEMBER_TOOL_NAME}` and `{FORGET_TOOL_NAME}`.]"
     );
-    for memory in recalled {
-        let _ = writeln!(text, "- #{}: {}", memory.id, memory.text);
-    }
-    text
+    render_sections(&preamble, &[Section::lines(recalled.iter().map(|m| format!("#{}: {}", m.id, m.text)).collect())])
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, _context| {
+            let component = Arc::new(AgentMemoryComponent);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AgentMemoryComponent));
-            facets.insert::<dyn PromptProvider>(Arc::new(AgentMemoryComponent));
+            facets.insert::<dyn ToolProvider>(component.clone());
+            facets.insert::<dyn PromptProvider>(component);
             Ok(facets)
         },
     );

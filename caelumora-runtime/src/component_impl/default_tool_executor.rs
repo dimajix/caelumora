@@ -127,7 +127,7 @@ mod tests {
                 confidentiality: Default::default(),
             }]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _context: &mut Turn) -> ToolResult<Value> {
+        async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
             Ok(json!({"result": "ok"}))
         }
     }

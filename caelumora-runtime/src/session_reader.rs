@@ -14,7 +14,7 @@
 
 use crate::channel::ChannelLoop;
 use crate::runtime::ActorRuntime;
-use anyhow::Result;
+use crate::tool::ToolError;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
@@ -58,12 +58,32 @@ pub struct ChannelNotes {
     pub digest: Option<Digest>,
 }
 
-/// A channel that cannot be read: it does not exist, or the users of the
-/// reading channel may not read it. Deliberately one case, so that a reader
-/// cannot probe which channels exist.
+/// Why a read failed - worded for the model that asked, which is how a tool
+/// reports it (`From<ReadError> for ToolError`).
 #[derive(Debug, thiserror::Error)]
-#[error("there is no channel named \"{0}\" that can be read from here")]
-pub struct NotReadable(pub String);
+pub enum ReadError {
+    /// A channel that cannot be read: it does not exist, or the users of the
+    /// reading channel may not read it. Deliberately one case, so that a
+    /// reader cannot probe which channels exist.
+    #[error("there is no channel named \"{0}\" that can be read from here")]
+    NotReadable(String),
+    /// Reading a channel that may be read failed.
+    #[error("reading failed: {0}")]
+    Failed(#[from] anyhow::Error),
+}
+
+pub type ReadResult<T> = std::result::Result<T, ReadError>;
+
+/// A channel that cannot be read is the model's to correct; a failed read
+/// is a failure of the tool.
+impl From<ReadError> for ToolError {
+    fn from(error: ReadError) -> Self {
+        match error {
+            ReadError::NotReadable(_) => ToolError::InvalidParameter(error.to_string()),
+            ReadError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
+        }
+    }
+}
 
 /// Read access to what the agents and channels of a session published,
 /// given to a turn.
@@ -73,25 +93,25 @@ pub trait SessionReader: Send + Sync + Debug {
     fn own_channel(&self) -> Option<ChannelInfo>;
     /// The notes every agent of the turn's own channel published, in no
     /// particular order.
-    async fn channel_notes(&self) -> Result<Vec<PublishedNotes>>;
+    async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>>;
     /// The channels of the session whose notes and history may be read from
     /// the turn's channel, its own included, by name.
-    async fn readable_channels(&self) -> Result<Vec<ChannelInfo>>;
+    async fn readable_channels(&self) -> ReadResult<Vec<ChannelInfo>>;
     /// The notes published in the channel named `name`.
     ///
     /// # Errors
-    /// [`NotReadable`] if there is no such channel or it may not be read.
-    async fn notes_of(&self, name: &str) -> Result<(ChannelInfo, Vec<PublishedNotes>)>;
+    /// [`ReadError::NotReadable`] if there is no such channel or it may not be read.
+    async fn notes_of(&self, name: &str) -> ReadResult<(ChannelInfo, Vec<PublishedNotes>)>;
     /// The history of the channel named `name`.
     ///
     /// # Errors
-    /// [`NotReadable`] if there is no such channel or it may not be read.
-    async fn history_of(&self, name: &str) -> Result<ChannelHistory>;
+    /// [`ReadError::NotReadable`] if there is no such channel or it may not be read.
+    async fn history_of(&self, name: &str) -> ReadResult<ChannelHistory>;
     /// The private notes `agent` wrote in the other channels of the session
     /// that the turn's channel may read (issue 51) - its agent session
     /// memory, bounded by confidentiality. The own channel's are not among
     /// them: the turn has them itself.
-    async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>>;
+    async fn private_notes(&self, agent: AgentId) -> ReadResult<Vec<ChannelNotes>>;
 }
 
 /// A reader that reads nothing: no channel, no notes, every channel named
@@ -110,23 +130,23 @@ impl SessionReader for DetachedSessionReader {
         None
     }
 
-    async fn channel_notes(&self) -> Result<Vec<PublishedNotes>> {
+    async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {
         Ok(Vec::new())
     }
 
-    async fn readable_channels(&self) -> Result<Vec<ChannelInfo>> {
+    async fn readable_channels(&self) -> ReadResult<Vec<ChannelInfo>> {
         Ok(Vec::new())
     }
 
-    async fn notes_of(&self, name: &str) -> Result<(ChannelInfo, Vec<PublishedNotes>)> {
-        Err(NotReadable(name.to_string()).into())
+    async fn notes_of(&self, name: &str) -> ReadResult<(ChannelInfo, Vec<PublishedNotes>)> {
+        Err(ReadError::NotReadable(name.to_string()))
     }
 
-    async fn history_of(&self, name: &str) -> Result<ChannelHistory> {
-        Err(NotReadable(name.to_string()).into())
+    async fn history_of(&self, name: &str) -> ReadResult<ChannelHistory> {
+        Err(ReadError::NotReadable(name.to_string()))
     }
 
-    async fn private_notes(&self, _agent: AgentId) -> Result<Vec<ChannelNotes>> {
+    async fn private_notes(&self, _agent: AgentId) -> ReadResult<Vec<ChannelNotes>> {
         Ok(Vec::new())
     }
 }
@@ -152,8 +172,8 @@ impl ChannelSessionReader {
 
     /// The channel named `name` of the session, if the turn's channel may
     /// read it.
-    async fn readable(&self, name: &str) -> Result<Arc<ChannelLoop>> {
-        let not_readable = || NotReadable(name.to_string()).into();
+    async fn readable(&self, name: &str) -> ReadResult<Arc<ChannelLoop>> {
+        let not_readable = || ReadError::NotReadable(name.to_string());
         let own = self.runtime.channel().ok_or_else(not_readable)?;
         let source = if own.name() == name {
             own.clone()
@@ -175,15 +195,15 @@ impl SessionReader for ChannelSessionReader {
         self.runtime.channel().map(|c| info(&c))
     }
 
-    async fn channel_notes(&self) -> Result<Vec<PublishedNotes>> {
+    async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {
         match self.runtime.channel() {
-            Some(channel) => channel.published_notes().await,
+            Some(channel) => Ok(channel.published_notes().await?),
             // Not attached to a channel (yet): nothing is published.
             None => Ok(Vec::new()),
         }
     }
 
-    async fn readable_channels(&self) -> Result<Vec<ChannelInfo>> {
+    async fn readable_channels(&self) -> ReadResult<Vec<ChannelInfo>> {
         let Some(own) = self.runtime.channel() else { return Ok(Vec::new()) };
         let channels = match own.session() {
             Some(session) => session.channels(),
@@ -198,12 +218,12 @@ impl SessionReader for ChannelSessionReader {
         Ok(readable)
     }
 
-    async fn notes_of(&self, name: &str) -> Result<(ChannelInfo, Vec<PublishedNotes>)> {
+    async fn notes_of(&self, name: &str) -> ReadResult<(ChannelInfo, Vec<PublishedNotes>)> {
         let channel = self.readable(name).await?;
         Ok((info(&channel), channel.published_notes().await?))
     }
 
-    async fn history_of(&self, name: &str) -> Result<ChannelHistory> {
+    async fn history_of(&self, name: &str) -> ReadResult<ChannelHistory> {
         let channel = self.readable(name).await?;
         // A reader who joined the channel later sees no more of its history
         // than was granted - also through this tool (issue 46).
@@ -211,7 +231,7 @@ impl SessionReader for ChannelSessionReader {
         Ok(ChannelHistory { channel: info(&channel), history })
     }
 
-    async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>> {
+    async fn private_notes(&self, agent: AgentId) -> ReadResult<Vec<ChannelNotes>> {
         let Some(own) = self.runtime.channel() else { return Ok(Vec::new()) };
         let Some(session) = own.session() else { return Ok(Vec::new()) };
         let mut found = Vec::new();

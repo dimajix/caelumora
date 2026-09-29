@@ -11,7 +11,11 @@ use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
 
-pub const STOP_TOOL_PROVIDER_KIND: &str = "stop_tool";
+pub const STOP_TOOL_KIND: &str = "stop_tool";
+
+pub const STOP_TOOL_NAME: &str = "stop";
+pub const BYE_TOOL_NAME: &str = "bye";
+pub const SILENCE_TOOL_NAME: &str = "silence";
 
 #[derive(Debug)]
 pub struct StopToolProvider;
@@ -23,21 +27,21 @@ impl ToolProvider for StopToolProvider {
         let required: Vec<String> = vec![];
         vec![
             Tool {
-                name: "stop".to_string(),
+                name: STOP_TOOL_NAME.to_string(),
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
                 confidentiality: ToolConfidentiality::PUBLIC,
             },
             Tool {
-                name: "bye".to_string(),
+                name: BYE_TOOL_NAME.to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
                 confidentiality: ToolConfidentiality::PUBLIC,
             },
             Tool {
-                name: "silence".to_string(),
+                name: SILENCE_TOOL_NAME.to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
                 requires_approval: true,
@@ -48,12 +52,12 @@ impl ToolProvider for StopToolProvider {
 
     async fn execute(&self, name: &str, _params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         match name {
-            "stop" | "bye" => {
+            STOP_TOOL_NAME | BYE_TOOL_NAME => {
                 info!("Stopping agent {} {}", turn.agent_id, turn.agent_name);
                 turn.request_state(ActorState::Sleeping);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
-            "silence" => {
+            SILENCE_TOOL_NAME => {
                 info!("Silencing agent {} {}", turn.agent_id, turn.agent_name);
                 turn.request_state(ActorState::Idle);
                 Ok(serde_json::json!({ "status": "silent" }))
@@ -67,7 +71,7 @@ impl ToolProvider for StopToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(STOP_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>(),
+        ComponentKind::new(STOP_TOOL_KIND).provides::<dyn ToolProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider));
@@ -89,16 +93,16 @@ mod tests {
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
         turn.begin();
 
-        let result = provider.execute("stop", &json!({}), &mut turn).await.unwrap();
+        let result = provider.execute(STOP_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
         assert_eq!(result["status"], "stopped");
         assert_eq!(turn.requested_state(), Some(ActorState::Sleeping), "the turn ends, the agent sleeps");
-        provider.execute("silence", &json!({}), &mut turn).await.unwrap();
+        provider.execute(SILENCE_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
         assert_eq!(turn.requested_state(), Some(ActorState::Idle), "the turn ends, the agent waits");
 
         let tools = provider.tools();
         assert_eq!(tools.len(), 3);
-        assert_eq!(tools[0].name, "stop");
-        assert_eq!(tools[1].name, "bye");
-        assert_eq!(tools[2].name, "silence");
+        assert_eq!(tools[0].name, STOP_TOOL_NAME);
+        assert_eq!(tools[1].name, BYE_TOOL_NAME);
+        assert_eq!(tools[2].name, SILENCE_TOOL_NAME);
     }
 }

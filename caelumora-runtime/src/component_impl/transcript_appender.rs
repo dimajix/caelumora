@@ -29,9 +29,9 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(TRANSCRIPT_APPENDER_KIND).provides::<dyn PerceiveInProcessor>(),
         |_descriptor, _context| {
-            let mut capabilities = ComponentFacets::empty();
-            capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(TranscriptAppender { }));
-            Ok(capabilities)
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PerceiveInProcessor>(Arc::new(TranscriptAppender { }));
+            Ok(facets)
         },
     );
 }

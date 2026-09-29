@@ -9,6 +9,11 @@
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use serde::{Deserialize, Serialize};
 
+// Unlike every other kind constant, these two live in the model, not next to
+// their component in the runtime: `default_commands` - the serde default of
+// `AppConfig::commands` - names them, and the model does not know the
+// runtime (issue 101).
+
 /// Component kind of the built-in `/help` command.
 pub const HELP_COMMAND_KIND: &str = "help_command";
 /// Component kind of the built-in `/wakeup` command.

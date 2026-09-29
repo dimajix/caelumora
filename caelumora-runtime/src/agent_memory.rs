@@ -13,16 +13,10 @@ use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
 use caelumora_model::memory::{Memory, MemoryChange, MemoryId};
 
-/// An agent's memory as a turn sees it.
-pub struct AgentMemory<'t, 'a> {
-    turn: &'t mut Turn<'a>,
-}
+/// An agent's memory as a turn sees it: every function takes the turn.
+pub struct AgentMemory;
 
-impl<'t, 'a> AgentMemory<'t, 'a> {
-    pub fn new(turn: &'t mut Turn<'a>) -> Self {
-        Self { turn }
-    }
-
+impl AgentMemory {
     /// What may be recalled in `turn`'s channel: entries written in a
     /// channel it may read (`ChannelClassification::readable_from`, rule 2
     /// of issue 61), as the memory is now - without the turn's own changes.
@@ -41,27 +35,34 @@ impl<'t, 'a> AgentMemory<'t, 'a> {
 
     /// Remembers `text`, as written in the turn's channel - taken over when
     /// the turn completes. Returns its number.
-    pub fn remember(&mut self, text: String) -> MemoryId {
-        let origin = self.turn.classification();
-        let id = self.turn.agent_state().reserve_memory_id();
-        self.turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remember { id, text }, origin });
+    ///
+    /// Unlike a note's, the number is reserved on the agent's shared state
+    /// handle (`AgentStateHandle::reserve_memory_id`) instead of being
+    /// derived from the memory and the turn's staged changes: several actors
+    /// of one agent - in other channels and sessions - remember at the same
+    /// time, and would otherwise hand out the same number. Deliberately the
+    /// one exception to "commit, don't write" (issue 19).
+    pub fn remember(turn: &mut Turn, text: String) -> MemoryId {
+        let origin = turn.classification();
+        let id = turn.agent_state().reserve_memory_id();
+        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remember { id, text }, origin });
         id
     }
 
     /// Forgets entry `id` if it may be recalled here or was remembered
     /// earlier in this turn, and is not forgotten already - taken over when
     /// the turn completes. Returns whether it was.
-    pub fn forget(&mut self, id: MemoryId) -> bool {
-        let origin = self.turn.classification();
-        let recalled = Self::recalled(self.turn).iter().any(|m| m.id == id);
-        let staged = |wanted: fn(&MemoryChange, MemoryId) -> bool| self.turn.staged_agent_changes().iter()
+    pub fn forget(turn: &mut Turn, id: MemoryId) -> bool {
+        let origin = turn.classification();
+        let recalled = Self::recalled(turn).iter().any(|m| m.id == id);
+        let staged = |wanted: fn(&MemoryChange, MemoryId) -> bool| turn.staged_agent_changes().iter()
             .any(|c| matches!(c, AgentStateChange::Memory { change, .. } if wanted(change, id)));
         let remembered_now = staged(|c, id| matches!(c, MemoryChange::Remember { id: r, .. } if *r == id));
         let forgotten = staged(|c, id| matches!(c, MemoryChange::Forget { id: f } if *f == id));
         if !(recalled || remembered_now) || forgotten {
             return false;
         }
-        self.turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Forget { id }, origin });
+        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Forget { id }, origin });
         true
     }
 }

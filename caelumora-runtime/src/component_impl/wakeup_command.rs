@@ -7,7 +7,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
 use std::sync::Arc;
 
-const WAKEUP: &str = "wakeup";
+pub const WAKEUP_COMMAND_NAME: &str = "wakeup";
 
 /// `/wakeup [agent]`: wakes the sleeping agents of the channel, or one of
 /// them. Everybody in the channel is told, since it changes who answers.
@@ -18,11 +18,11 @@ pub struct WakeupCommandProvider;
 /// a failure, described only as far as `user_message` allows.
 fn channel_error(error: anyhow::Error) -> CommandError {
     if crate::error::is_forbidden(&error) {
-        return CommandError::Forbidden(WAKEUP.to_string());
+        return CommandError::Forbidden(WAKEUP_COMMAND_NAME.to_string());
     }
     tracing::warn!("/wakeup failed: {:#}", error);
     let reason = crate::error::user_message(&error).unwrap_or_else(|| "see the server log".to_string());
-    CommandError::Failed { command: WAKEUP.to_string(), reason }
+    CommandError::Failed { command: WAKEUP_COMMAND_NAME.to_string(), reason }
 }
 
 fn names(names: &[String]) -> String {
@@ -37,7 +37,7 @@ fn names(names: &[String]) -> String {
 impl CommandProvider for WakeupCommandProvider {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: WAKEUP.to_string(),
+            name: WAKEUP_COMMAND_NAME.to_string(),
             description: "Wakes the sleeping agents of this channel, or the one named.".to_string(),
             usage: Some("[agent]".to_string()),
         }]
@@ -67,7 +67,7 @@ impl CommandProvider for WakeupCommandProvider {
             } else {
                 format!("no agent '{}' in this channel; the agents are {}", wanted, names(&handles))
             };
-            return Err(CommandError::InvalidArguments { command: WAKEUP.to_string(), reason });
+            return Err(CommandError::InvalidArguments { command: WAKEUP_COMMAND_NAME.to_string(), reason });
         };
 
         let was_asleep = context.channel.wakeup_actor(context.issuer, agent.id).await.map_err(channel_error)?;

@@ -7,7 +7,7 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::session_reader::{NotReadable, SessionReader};
+use crate::session_reader::SessionReader;
 use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource, Message};
@@ -26,13 +26,13 @@ const DEFAULT_LAST: usize = 20;
 const MAX_LAST: usize = 100;
 
 #[derive(Debug)]
-pub struct ChannelHistoryReader {
+pub struct ChannelHistoryComponent {
     /// The session's channels.
     reader: Arc<dyn SessionReader>,
 }
 
 #[async_trait]
-impl ToolProvider for ChannelHistoryReader {
+impl ToolProvider for ChannelHistoryComponent {
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: READ_HISTORY_TOOL_NAME.to_string(),
@@ -75,10 +75,7 @@ impl ToolProvider for ChannelHistoryReader {
         let last = last.map(|n| n.clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
         let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
-        let history = self.reader.history_of(channel).await.map_err(|e| match e.downcast_ref::<NotReadable>() {
-            Some(not_readable) => ToolError::InvalidParameter(not_readable.to_string()),
-            None => ToolError::ExecutionFailed(format!("reading failed: {e}")),
-        })?;
+        let history = self.reader.history_of(channel).await?;
         let (channel, history) = (history.channel, history.history);
         turn.record_knowledge(KnowledgeRef { channel: channel.id, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
 
@@ -115,7 +112,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>(),
         |_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryReader { reader: context.session_reader() }));
+            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent { reader: context.session_reader() }));
             Ok(facets)
         },
     );

@@ -29,9 +29,9 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(STATE_HISTORY_APPENDER_KIND).provides::<dyn PerceiveInProcessor>(),
         |_descriptor, _context| {
-            let mut capabilities = ComponentFacets::empty();
-            capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryAppender { }));
-            Ok(capabilities)
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryAppender { }));
+            Ok(facets)
         },
     );
 }

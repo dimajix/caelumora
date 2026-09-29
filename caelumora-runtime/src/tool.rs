@@ -36,11 +36,26 @@ pub fn arguments<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
     T::deserialize(params).map_err(|e| ToolError::InvalidParameter(e.to_string()))
 }
 
-/// The arguments of a tool that takes the number of an entry, e.g. a note
-/// to revoke.
-#[derive(Deserialize)]
-pub struct IdArgument<T> {
-    pub id: T,
+/// The parameter `id` of a tool that takes the number of an entry, e.g. a
+/// note to revoke.
+pub fn id_argument<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
+    #[derive(Deserialize)]
+    struct Id<T> { id: T }
+    let Id { id } = arguments(params)?;
+    Ok(id)
+}
+
+/// The parameter `text` of a tool that notes or remembers something,
+/// trimmed; an empty one is no text.
+pub fn text_argument(params: &Value) -> ToolResult<String> {
+    #[derive(Deserialize)]
+    struct Text { text: String }
+    let Text { text } = arguments(params)?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
+    }
+    Ok(text.to_string())
 }
 
 /// What the model is given as the result of a tool call that produced none
@@ -248,8 +263,10 @@ mod tests {
         assert!(matches!(&missing, ToolError::InvalidParameter(m) if m.contains("`text`")), "serde names what is missing: {missing}");
         let wrong = arguments::<Note>(&json!({ "text": 5 })).unwrap_err();
         assert!(matches!(&wrong, ToolError::InvalidParameter(m) if m.contains("invalid type")), "{wrong}");
-        let IdArgument { id } = arguments::<IdArgument<caelumora_model::note::NoteId>>(&json!({ "id": 3 })).unwrap();
+        let id: caelumora_model::note::NoteId = id_argument(&json!({ "id": 3 })).unwrap();
         assert_eq!(id.0, 3);
+        assert_eq!(text_argument(&json!({ "text": "  tea " })).unwrap(), "tea", "trimmed");
+        assert!(matches!(text_argument(&json!({ "text": " " })), Err(ToolError::InvalidParameter(_))), "empty is no text");
     }
 
     #[derive(Debug)]
@@ -268,7 +285,7 @@ mod tests {
                 confidentiality: Default::default(),
             }]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _context: &mut Turn) -> ToolResult<Value> {
+        async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
             Ok(json!({"result": "ok"}))
         }
     }

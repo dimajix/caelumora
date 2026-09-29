@@ -41,6 +41,49 @@ impl From<String> for Prompt {
     }
 }
 
+/// One section of a prompt part that lists entries, e.g. the notes of one
+/// agent: an optional heading, then one `- ` line per entry.
+#[derive(Debug, Clone, Default)]
+pub struct Section {
+    pub heading: Option<String>,
+    pub lines: Vec<String>,
+}
+
+impl Section {
+    /// A section under `heading`.
+    pub fn new(heading: impl Into<String>, lines: Vec<String>) -> Self {
+        Self { heading: Some(heading.into()), lines }
+    }
+
+    /// A section without a heading.
+    pub fn lines(lines: Vec<String>) -> Self {
+        Self { heading: None, lines }
+    }
+}
+
+/// The text of a prompt part that lists entries: `preamble`, then each
+/// section that has entries. Empty if none has: a part with nothing to list
+/// is no part.
+pub fn render_sections(preamble: &str, sections: &[Section]) -> String {
+    let sections: Vec<&Section> = sections.iter().filter(|s| !s.lines.is_empty()).collect();
+    if sections.is_empty() {
+        return String::new();
+    }
+    let mut text = format!("{preamble}\n");
+    for section in sections {
+        if let Some(heading) = &section.heading {
+            text.push_str(heading);
+            text.push('\n');
+        }
+        for line in &section.lines {
+            text.push_str("- ");
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text
+}
+
 /// Contributes a prompt part: the system prompt, or other text the model is
 /// given besides the conversation. `StateContextProvider` composes the parts
 /// of every one of the agent's providers, by position, in the order of its
@@ -63,4 +106,20 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
     async fn current_context(&self, turn: &mut Turn) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sections_are_rendered_under_the_preamble_and_empty_ones_left_out() {
+        let text = render_sections("[Notes]", &[
+            Section::new("Yours:", vec!["#1: tea".to_string()]),
+            Section::new("Of Sassy:", Vec::new()),
+            Section::lines(vec!["coffee".to_string()]),
+        ]);
+        assert_eq!(text, "[Notes]\nYours:\n- #1: tea\n- coffee\n");
+        assert_eq!(render_sections("[Notes]", &[Section::new("Yours:", Vec::new())]), "", "nothing to list is no part");
+    }
 }

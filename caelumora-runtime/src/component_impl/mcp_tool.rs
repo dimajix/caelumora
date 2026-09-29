@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
 
-pub const MCP_TOOL_PROVIDER_KIND: &str = "mcp_tool";
+pub const MCP_TOOL_KIND: &str = "mcp_tool";
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpError {
@@ -254,7 +254,7 @@ impl ToolProvider for McpToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(MCP_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>(),
+        ComponentKind::new(MCP_TOOL_KIND).provides::<dyn ToolProvider>(),
         |descriptor, context| async move {
             let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
                 .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {}", e)))?;

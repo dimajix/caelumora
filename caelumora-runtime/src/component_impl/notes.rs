@@ -13,9 +13,9 @@
 use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{Prompt, PromptPosition, PromptProvider};
-use crate::session_reader::{NotReadable, PublishedNotes, SessionReader};
-use crate::tool::{arguments, IdArgument, ToolError, ToolProvider, ToolResult};
+use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::session_reader::{PublishedNotes, SessionReader};
+use crate::tool::{arguments, id_argument, text_argument, ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -25,7 +25,6 @@ use caelumora_model::note::{Note, NoteId};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
-use std::fmt::Write;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -39,12 +38,6 @@ pub const READ_NOTES_TOOL_NAME: &str = "read_notes";
 pub struct NotesComponent {
     /// What the other agents and channels of the session published.
     reader: Arc<dyn SessionReader>,
-}
-
-impl NotesComponent {
-    pub fn new(reader: Arc<dyn SessionReader>) -> Self {
-        Self { reader }
-    }
 }
 
 #[async_trait]
@@ -106,14 +99,14 @@ impl ToolProvider for NotesComponent {
 impl NotesComponent {
     /// `note(text)`: notes `text`, published when the turn completes.
     fn execute_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentNotes::new(turn, NoteKind::Public).note(note_text(params)?);
+        let id = AgentNotes::note(turn, NoteKind::Public, text_argument(params)?);
         Ok(serde_json::json!({ "status": "noted", "id": id.0 }))
     }
 
     /// `revoke_note(id)`: revokes one of the agent's own current notes.
     fn execute_revoke_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = note_id(params)?;
-        if AgentNotes::new(turn, NoteKind::Public).revoke(id) {
+        let id: NoteId = id_argument(params)?;
+        if AgentNotes::revoke(turn, NoteKind::Public, id) {
             Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))
@@ -122,17 +115,17 @@ impl NotesComponent {
 
     /// `read_notes(channel?)`: the notes of the channel named, or of every
     /// channel that may be read, each read recorded as knowledge.
-    async fn execute_read_notes(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
+    async fn execute_read_notes(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         #[derive(Deserialize)]
         struct ReadNotes { #[serde(default)] channel: Option<String> }
         let ReadNotes { channel } = arguments(params)?;
         let reader = &self.reader;
         let channels = match channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-            Some(name) => vec![reader.notes_of(name).await.map_err(read_error)?],
+            Some(name) => vec![reader.notes_of(name).await?],
             None => {
                 let mut all = Vec::new();
-                for channel in reader.readable_channels().await.map_err(read_error)? {
-                    all.push(reader.notes_of(&channel.name).await.map_err(read_error)?);
+                for channel in reader.readable_channels().await? {
+                    all.push(reader.notes_of(&channel.name).await?);
                 }
                 all
             }
@@ -142,7 +135,7 @@ impl NotesComponent {
             let mut notes = Vec::new();
             for agent_notes in published {
                 if let Some(reference) = notes_ref(channel.id, &agent_notes) {
-                    context.record_knowledge(reference);
+                    turn.record_knowledge(reference);
                 }
                 for note in agent_notes.notes {
                     notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
@@ -151,34 +144,6 @@ impl NotesComponent {
             listed.push(serde_json::json!({ "channel": channel.name, "notes": notes }));
         }
         Ok(serde_json::json!({ "channels": listed }))
-    }
-}
-
-/// The parameter `text` of a tool that notes or remembers something,
-/// trimmed; an empty one is no note.
-pub(crate) fn note_text(params: &Value) -> ToolResult<String> {
-    #[derive(Deserialize)]
-    struct Text { text: String }
-    let Text { text } = arguments(params)?;
-    let text = text.trim();
-    if text.is_empty() {
-        return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
-    }
-    Ok(text.to_string())
-}
-
-/// The parameter `id` of a tool that revokes a note.
-pub(crate) fn note_id(params: &Value) -> ToolResult<NoteId> {
-    let IdArgument { id } = arguments(params)?;
-    Ok(id)
-}
-
-/// A failed read as the model is told it: which channel cannot be read, or
-/// that reading failed.
-fn read_error(error: anyhow::Error) -> ToolError {
-    match error.downcast_ref::<NotReadable>() {
-        Some(not_readable) => ToolError::InvalidParameter(not_readable.to_string()),
-        None => ToolError::ExecutionFailed(format!("reading failed: {error}")),
     }
 }
 
@@ -194,26 +159,26 @@ impl PromptProvider for NotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, context: &Turn) -> Result<Prompt> {
-        let own = ActorId::Agent(context.agent_id);
+    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
+        let own = ActorId::Agent(turn.agent_id);
         let mut others = match self.reader.channel_notes().await {
             Ok(published) => published,
             Err(e) => {
                 // The agent can still answer without the others' notes.
-                warn!("Reading the notes of channel {} failed: {}", context.channel_id(), e);
+                warn!("Reading the notes of channel {} failed: {}", turn.channel_id(), e);
                 Vec::new()
             }
         };
         others.retain(|p| p.agent != own && !p.notes.is_empty());
         others.sort_by(|l, r| l.name.cmp(&r.name));
-        let own_notes = AgentNotes::current(context, NoteKind::Public);
+        let own_notes = AgentNotes::current(turn, NoteKind::Public);
         let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
 
         // What the part shows, as knowledge read (issue 17).
-        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(context.channel_id(), p)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel_id(), p)).collect();
         if !own_notes.is_empty() {
-            let own_digest = AgentNotes::digest(context, NoteKind::Public);
-            knowledge.push(KnowledgeRef { channel: context.channel_id(), source: KnowledgeSource::Notes { agent: context.agent_id, digest: own_digest } });
+            let own_digest = AgentNotes::digest(turn, NoteKind::Public);
+            knowledge.push(KnowledgeRef { channel: turn.channel_id(), source: KnowledgeSource::Notes { agent: turn.agent_id, digest: own_digest } });
         }
         Ok(Prompt { text, knowledge })
     }
@@ -222,30 +187,17 @@ impl PromptProvider for NotesComponent {
 /// The prompt part for `own` notes and those of `others` by name; empty if
 /// there are none.
 fn render<'a>(own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>) -> String {
-    let mut text = String::new();
-    let mut list = |heading: &str, notes: &[Note]| {
-        let _ = writeln!(text, "{heading}");
-        for note in notes {
-            let _ = writeln!(text, "- #{}: {}", note.id, note.text);
-        }
-    };
-    if !own.is_empty() {
-        list("Your notes (change them with `note` and `revoke_note`):", own);
-    }
-    for (name, notes) in others {
-        list(&format!("Notes of {name}:"), notes);
-    }
-    if text.is_empty() {
-        return text;
-    }
-    format!("[Notes in this channel - what its participants noted to remember.]\n{text}")
+    let numbered = |notes: &[Note]| notes.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect();
+    let mut sections = vec![Section::new(format!("Your notes (change them with `{NOTE_TOOL_NAME}` and `{REVOKE_NOTE_TOOL_NAME}`):"), numbered(own))];
+    sections.extend(others.map(|(name, notes)| Section::new(format!("Notes of {name}:"), numbered(notes))));
+    render_sections("[Notes in this channel - what its participants noted to remember.]", &sections)
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
-            let component = Arc::new(NotesComponent::new(context.session_reader()));
+            let component = Arc::new(NotesComponent { reader: context.session_reader() });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);
@@ -282,7 +234,7 @@ mod tests {
     #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(crate::session_reader::detached());
+        let tools = NotesComponent { reader: crate::session_reader::detached() };
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.begin();
