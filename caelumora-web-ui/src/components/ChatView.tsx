@@ -23,6 +23,7 @@ import type {
   Message,
   PlanStepEvent,
   PublishedNotes,
+  UserResponse,
 } from '../types';
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
@@ -56,9 +57,11 @@ type Suggestion =
 interface ChatViewProps {
   sessionId: string;
   channelId: string;
+  /** Who is logged in: only a participant follows the channel live. */
+  user: UserResponse;
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
@@ -107,6 +110,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
             return !!m.handle && (m.handle.startsWith(query) || m.name.toLowerCase().includes(query));
           })
           .map(member => ({kind: 'mention', member}));
+
+  // Whether the logged-in user takes part in this channel; `undefined` until
+  // the channel is known. Joining or leaving changes it (the members follow
+  // the global stream), and the view follows.
+  const participant = channel?.id === channelId
+    ? channel.members.some(m => typeof m.id !== 'string' && m.id.User === user.id)
+    : undefined;
 
   useEffect(() => {
     api.getCommands(sessionId, channelId)
@@ -257,6 +267,23 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       }
     };
 
+    // Not known yet: the channel is fetched first, and this runs again.
+    if (participant === undefined) {
+      let cancelled = false;
+      api.getChannel(sessionId, channelId)
+        .then(found => { if (!cancelled) setChannel(found); })
+        .catch(error => reportError('Failed to load the channel', error));
+      return () => { cancelled = true; };
+    }
+    // Only a participant follows a channel live, through their own actor
+    // (issue 104); anyone else who may read it sees its history as it is.
+    if (!participant) {
+      let cancelled = false;
+      api.getMessages(sessionId, channelId)
+        .then(history => { if (!cancelled) setMessages(history); })
+        .catch(error => reportError('Failed to load the messages', error));
+      return () => { cancelled = true; };
+    }
     // The stream itself delivers the state it starts from, so there is no
     // window between loading the history and subscribing in which a message
     // could be missed (issue 34).
@@ -264,7 +291,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
       onSnapshot: handleSnapshot,
       onEvent: handleMessage,
     });
-  }, [sessionId, channelId]);
+  }, [sessionId, channelId, participant]);
 
 
   useEffect(() => {
@@ -540,6 +567,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
         )}
 
         <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+          {participant === false ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center p-2">
+              You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.
+            </p>
+          ) : (
           <form onSubmit={handleSendMessage} className="flex space-x-2">
             <div className="relative flex-1 flex">
               {suggestions.length > 0 && (
@@ -622,6 +654,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId }) => {
               </button>
             )}
           </form>
+          )}
         </div>
       </div>
 

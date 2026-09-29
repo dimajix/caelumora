@@ -9,7 +9,6 @@ use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
-use caelumora_model::event::GlobalEvent;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
@@ -22,7 +21,6 @@ use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_runtime::actor::MessageContextError;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
-use futures::StreamExt;
 use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -185,83 +183,29 @@ fn recent_messages(history: Vec<Message>) -> (Vec<Message>, bool) {
     (history.into_iter().skip(start).collect(), has_more)
 }
 
-/// The snapshot as an SSE event. Named, so that clients that do not know it
-/// (and the events that follow, which stay unnamed) are unaffected.
-async fn snapshot_event(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> Event {
-    let snapshot = channel_snapshot(state, channel, viewer).await;
-    Event::default().event("snapshot").data(serde_json::to_string(&snapshot).unwrap_or_default())
-}
-
+/// Follows a channel live (issue 104): only as one of its participants,
+/// through the user's own actor - the stream ends when the user leaves the
+/// channel, or it stops or is deleted. Starts with a snapshot if asked.
 pub async fn join_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     Query(options): Query<StreamOptions>,
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let session_id = SessionId(id);
-    let channel_id = ChannelId(cid);
-
-    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
-    let channel = channel_of(&state, &session_loop, channel_id, &user.security_context()).await?;
-
-    // Subscribe *before* reading the state: nothing that happens while the
+    let session_loop = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
+    let viewer = user.security_context();
+    let channel = channel_of(&state, &session_loop, ChannelId(cid), &viewer).await?;
+    // Watched *before* the state is read: nothing that happens while the
     // snapshot is assembled is lost. The price is that an event can arrive
     // twice - once in the snapshot, once as an event - which clients drop by
     // message id.
-    let receiver = channel.subscribe();
-    // Membership is announced on the event bus (issue 73).
-    let mut memberships = state.runtime_manager.event_bus().subscribe_channel(channel_id).into_receiver();
-    let membership_of = Arc::downgrade(&channel);
-    let viewer = user.security_context();
-    let snapshot = if options.snapshot { Some(snapshot_event(&state, &channel, &viewer).await) } else { None };
-
-    // A client that falls behind gets a fresh snapshot, if it asked for them.
-    // Held weakly: a deleted channel must be dropped, which closes its event
-    // sender and so ends this stream (issue 09).
-    let channel = Arc::downgrade(&channel);
-    let resync_state = state.clone();
-    let resync = options.snapshot.then(|| {
-        move || {
-            let channel = channel.upgrade();
-            let viewer = viewer.clone();
-            let state = resync_state.clone();
-            async move {
-                match channel {
-                    Some(channel) => snapshot_event(&state, &channel, &viewer).await,
-                    None => Event::default().comment("the channel was deleted"),
-                }
-            }
-        }
-    });
-    let updates = crate::sse::resync_on_lag(receiver, format!("channel {}", channel_id), resync);
-    // A user removed from the channel stops receiving it (issue 46). Should
-    // the announcement be lost to a lag, whether they still take part is
-    // asked instead; on reconnecting, `channel_of` answers for them.
-    let me = viewer_id(&user);
-    let updates = updates.take_until(async move {
-        use tokio::sync::broadcast::error::RecvError;
-        loop {
-            match memberships.recv().await {
-                Ok(GlobalEvent::UserChannelLeft(_, cid, uid)) if cid == channel_id && ActorId::User(uid) == me => break,
-                Ok(_) => continue,
-                Err(RecvError::Lagged(_)) => {
-                    if membership_of.upgrade().is_none_or(|c| c.actor_by_id(me).is_none()) {
-                        break;
-                    }
-                }
-                Err(RecvError::Closed) => break,
-            }
-        }
-    });
-
-    let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
-    // The stream ends with the session token that authenticated it (issue 33).
-    Ok(Sse::new(crate::sse::bounded_by_token(&user, sse_stream)))
-}
-
-/// The actor the authenticated user is.
-fn viewer_id(user: &AuthenticatedUser) -> ActorId {
-    user.security_context().initiator_id
+    let watch = user_actor_of(&channel, &user)?.watch()
+        .map_err(|e| ApiError::internal("channel_unavailable", "following the channel", &e))?;
+    let snapshot = move || {
+        let (state, channel, viewer) = (state.clone(), channel.clone(), viewer.clone());
+        async move { channel_snapshot(&state, &channel, &viewer).await }
+    };
+    Ok(Sse::new(crate::sse::stream(&user, options.snapshot, watch.events, format!("channel {}", cid), snapshot, watch.ended.cancelled_owned()).await))
 }
 
 /// Adds a participant of the session to the channel (issue 46), with as

@@ -12,7 +12,6 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use caelumora_model::store::EntityStore;
 use futures::stream::Stream;
-use futures::StreamExt;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -26,22 +25,12 @@ pub async fn global_events(
     // Only the events about what this user may read (issue 39), decided by
     // the same policy as reading it through the store.
     let receiver = state.runtime_manager.event_bus().subscribe_as(user.security_context()).into_receiver();
-    let snapshot = if options.snapshot { Some(snapshot_event(&state, &user).await) } else { None };
-
-    // A client that falls behind gets a fresh snapshot, as on a channel's
-    // stream (issue 38).
-    let resync = options.snapshot.then(|| {
-        let state = state.clone();
-        move || {
-            let state = state.clone();
-            async move { snapshot_event(&state, &user).await }
-        }
-    });
-    let updates = crate::sse::resync_on_lag(receiver, "the global stream".to_string(), resync);
-
-    let sse_stream = futures::stream::iter(snapshot.into_iter().map(Ok)).chain(updates);
-    // The stream ends with the session token that authenticated it (issue 33).
-    Sse::new(crate::sse::bounded_by_token(&user, sse_stream))
+    let snapshot = move || {
+        let (state, user) = (state.clone(), user);
+        async move { global_snapshot(&state, &user).await }
+    };
+    // Open until the token that authenticated it expires (issue 33).
+    Sse::new(crate::sse::stream(&user, options.snapshot, receiver, "the global stream".to_string(), snapshot, std::future::pending()).await)
 }
 
 /// Every session the user may read, with its channels, as the sessions'
@@ -94,11 +83,6 @@ pub(crate) async fn describe_session(state: &AppState, session: Session, viewer:
             session_snapshot(state, session, channels).await
         }
     }
-}
-
-async fn snapshot_event(state: &Arc<AppState>, user: &AuthenticatedUser) -> Event {
-    let snapshot = global_snapshot(state, user).await;
-    Event::default().event("snapshot").data(serde_json::to_string(&snapshot).unwrap_or_default())
 }
 
 async fn session_snapshot(state: &AppState, session: Session, channels: Vec<ChannelResponse>) -> SessionSnapshot {

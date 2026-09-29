@@ -77,6 +77,7 @@ against it, and what came out of the last attempt.
 | [90](90-message-path-wake-and-queue.md) | done | Frontends must wake the channel before sending, the `UserActor` queues every message once more than needed, and perceiving a message begins a turn. |
 | [120](120-participant-copies.md) | done | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
 | [121](121-agent-controller-per-process.md) | done | An agent that takes part in several running sessions has one controller in each, so its document has more than one writer. |
+| [124](124-observer-participants.md) | open | Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live. |
 
 ## Identity and access management
 
@@ -96,6 +97,7 @@ against it, and what came out of the last attempt.
 | [87](87-security-context-in-entities.md) | done | Stored agents and users carry a `SecurityContext` that the actors overwrite at start. |
 | [94](94-users-unchecked-in-store.md) | done | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
 | [95](95-require-for-security-manager.md) | done | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
+| [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
 
 ## Tools and approvals
 
@@ -131,7 +133,7 @@ against it, and what came out of the last attempt.
 | [80](80-stored-channel-response.md) | open | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | open | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
 | [103](103-rest-error-mappers.md) | open | Six REST functions map runtime errors to problem details with the same pattern. |
-| [104](104-sse-stream-and-subscribe.md) | open | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
+| [104](104-sse-stream-and-subscribe.md) | done | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
 | [106](106-rest-small-findings.md) | done | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
 
 ## Context and knowledge

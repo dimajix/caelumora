@@ -473,6 +473,16 @@ impl ChannelLoop {
         Ok(was_asleep)
     }
 
+    /// Tells every actor of the channel to stop for good (`Actor::stop`) -
+    /// for a channel that is deleted: nothing of it is resumed, and whoever
+    /// follows it through their actor is told it ended, whether or not the
+    /// actors' tasks ever ran (issue 104).
+    pub(crate) fn stop_actors(&self) {
+        for actor in self.actors.load().values() {
+            actor.stop();
+        }
+    }
+
     /// Wakes the channel's actors because something is on its way to them:
     /// a `WakeupRequested` - which a user's actor sends with every message -
     /// or a mention. That is the consequence of an action already permitted,

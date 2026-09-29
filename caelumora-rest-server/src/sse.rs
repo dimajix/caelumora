@@ -79,6 +79,53 @@ where
         .chain(ending)
 }
 
+/// `value` as a named event - `snapshot` - serialized as JSON. Named, so that
+/// clients that do not know the name (and the events that follow, which stay
+/// unnamed) are unaffected.
+pub fn named_event(name: &str, value: &impl Serialize) -> Event {
+    Event::default().event(name).data(json(value))
+}
+
+/// `value` as JSON, or - should it not serialize - nothing, and a warning:
+/// an event without data rather than a broken stream.
+fn json(value: &impl Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_else(|e| {
+        tracing::warn!("An SSE event could not be serialized: {}", e);
+        String::new()
+    })
+}
+
+/// One server-sent event stream (issue 104): the snapshot `snapshot`
+/// produces, if the client asked for one (`with_snapshot`); then the events
+/// of `receiver` - with a fresh snapshot instead of a gap when the client
+/// falls behind, see [`resync_on_lag`]; until `until` completes, or the
+/// token that authenticated the request is about to expire (see
+/// [`bounded_by_token`]). `what` names the stream in the log.
+pub async fn stream<T, V, S, F, U>(
+    user: &AuthenticatedUser,
+    with_snapshot: bool,
+    receiver: broadcast::Receiver<T>,
+    what: String,
+    snapshot: S,
+    until: U,
+) -> impl Stream<Item = Result<Event, Infallible>> + Send
+where
+    T: Serialize + Clone + Send + 'static,
+    V: Serialize,
+    S: Fn() -> F + Send + Sync + 'static,
+    F: Future<Output = V> + Send,
+    U: Future<Output = ()> + Send + 'static,
+{
+    let snapshot = Arc::new(snapshot);
+    let first = if with_snapshot { Some(named_event("snapshot", &snapshot().await)) } else { None };
+    let resync = with_snapshot.then(|| move || {
+        let snapshot = snapshot.clone();
+        async move { named_event("snapshot", &snapshot().await) }
+    });
+    let updates = resync_on_lag(receiver, what, resync).take_until(until);
+    bounded_by_token(user, stream::iter(first.map(Ok)).chain(updates))
+}
+
 /// The events of `receiver` as server-sent events, each serialized as JSON.
 ///
 /// When the client falls behind and events are lost, it is sent what
@@ -101,7 +148,7 @@ where
         let what = what.clone();
         async move {
             match item {
-                Ok(value) => Ok(Event::default().data(serde_json::to_string(&value).unwrap_or_default())),
+                Ok(value) => Ok(Event::default().data(json(&value))),
                 Err(BroadcastStreamRecvError::Lagged(lost)) => {
                     tracing::warn!("SSE client of {} fell behind and lost {} events", what, lost);
                     match snapshot {

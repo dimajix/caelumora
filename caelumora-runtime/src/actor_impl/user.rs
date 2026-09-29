@@ -17,7 +17,8 @@ use tracing::{debug, info, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Capacity of the queue towards a subscriber (see `UserActor::subscribe`).
@@ -38,6 +39,18 @@ pub struct UserActor {
     // Where envelopes routed to this user go, if anyone listens: see
     // `subscribe`. A plain lock, never held across an await.
     subscriber: std::sync::Mutex<Option<Sender<Envelope>>>,
+    // Cancelled when the actor ends - it left the channel, or the channel
+    // stopped: what ends every `watch` (issue 104).
+    ended: CancellationToken,
+}
+
+/// The channel as a user follows it (issue 104): every event the channel
+/// publishes, until `ended` - when the user's actor ends, because they left
+/// the channel or it stopped. Only a participant follows a channel live, and
+/// only through their actor.
+pub struct ChannelWatch {
+    pub events: broadcast::Receiver<Envelope>,
+    pub ended: CancellationToken,
 }
 
 impl UserActor {
@@ -60,6 +73,7 @@ impl UserActor {
             user_rx: Mutex::new(urx),
             user_tx: utx,
             subscriber: std::sync::Mutex::new(None),
+            ended: CancellationToken::new(),
         })
     }
 
@@ -156,6 +170,17 @@ impl UserActor {
         rx
     }
 
+    /// Follows the channel as this user: see `ChannelWatch`.
+    ///
+    /// # Errors
+    /// If the channel is gone.
+    pub fn watch(&self) -> Result<ChannelWatch> {
+        let channel = self.actor_runtime.channel()
+            .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
+        // A child: whoever watches can end their own watch, not the actor.
+        Ok(ChannelWatch { events: channel.subscribe(), ended: self.ended.child_token() })
+    }
+
     fn handle_actor_envelope(&self, maybe_event: Option<Envelope>) -> bool {
         match maybe_event {
             Some(event) => {
@@ -199,15 +224,19 @@ impl UserActor {
     }
 }
 
-/// The actor's queue as its task holds it: closed when the task ends - also
-/// when it is aborted with its channel - so that what the user sends to a
+/// The end of the actor's task, however it ends - also when it is aborted
+/// with its channel: the queue closes, so that what the user sends to a
 /// stopped channel fails at once instead of filling a queue nobody reads
-/// (issue 90).
-struct ClosedOnDrop<'a>(tokio::sync::MutexGuard<'a, Receiver<Envelope>>);
+/// (issue 90), and every watch ends (issue 104).
+struct EndOfRun<'a> {
+    queue: tokio::sync::MutexGuard<'a, Receiver<Envelope>>,
+    ended: &'a CancellationToken,
+}
 
-impl Drop for ClosedOnDrop<'_> {
+impl Drop for EndOfRun<'_> {
     fn drop(&mut self) {
-        self.0.close();
+        self.queue.close();
+        self.ended.cancel();
     }
 }
 
@@ -229,6 +258,12 @@ impl Actor for UserActor {
         ActorState::Idle
     }
 
+    /// Ends the actor: it left the channel (issue 46). Its task ends, and
+    /// with it every watch.
+    fn stop(&self) {
+        self.ended.cancel();
+    }
+
     fn event_filter(&self) -> fn(&Envelope) -> bool {
         |_| true
     }
@@ -238,25 +273,22 @@ impl Actor for UserActor {
         mut rx: Box<dyn EventReceiver>,
         tx: Box<dyn EventSender>,
     ) -> anyhow::Result<()> {
-        let mut user_rx = ClosedOnDrop(self.user_rx.try_lock()
-            .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?);
-
-        let mut rx_closed = false;
-        let mut user_rx_closed = false;
+        let queue = self.user_rx.try_lock()
+            .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
+        let mut run = EndOfRun { queue, ended: &self.ended };
 
         info!("UserActor {} is starting", self.id());
-        while !rx_closed || !user_rx_closed {
+        // Until the channel closes this actor's inbox - the user left, or
+        // the channel stopped - or the actor is told to stop.
+        loop {
             tokio::select! {
-                maybe_event = rx.recv(), if !rx_closed => {
-                    rx_closed = self.handle_actor_envelope(maybe_event);
+                maybe_event = rx.recv() => {
+                    if self.handle_actor_envelope(maybe_event) { break }
                 }
-                maybe_message = user_rx.0.recv(), if !user_rx_closed => {
-                    match maybe_message {
-                        Some(envelope) => if !self.forward(envelope, &*tx).await { break },
-                        None => user_rx_closed = true,
-                    }
+                Some(envelope) = run.queue.recv() => {
+                    if !self.forward(envelope, &*tx).await { break }
                 }
-                else => break,
+                _ = self.ended.cancelled() => break,
             }
         }
         info!("UserActor {} has finished", self.id());

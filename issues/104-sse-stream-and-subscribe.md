@@ -1,6 +1,6 @@
 # 104 — Two identical SSE builds, and a channel stream's membership loop lives in the server
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -49,3 +49,29 @@ first, bug included.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 5.2.3 and 5.4.1).
+- **2026-09-29** — Done, as decided with the maintainer. One builder:
+  `sse::stream(user, with_snapshot, receiver, what, snapshot, until)` -
+  snapshot, resync on lag, end at the token's expiry or when `until`
+  completes; `sse::named_event` replaces both `snapshot_event`s, and an
+  event that does not serialize is a `warn!` instead of a silent empty
+  `data:`. Not `ChannelLoop::subscribe_as` as considered: after issue 90
+  the maintainer's rule is that a user talks to their actor, never to the
+  channel, and that only a participant follows a channel live (later also
+  a read-only one, issue [124](124-observer-participants.md); an invisible
+  admin with a way of their own is issue [125](125-invisible-admin.md)).
+  So the channel stream is `UserActor::watch()`: the channel's broadcast,
+  ended by a token the actor cancels when it stops (leaving) and when its
+  task ends (a guard, so also when aborted). `join_channel` is now
+  `channel_of` → `user_actor_of` → `watch` → `sse::stream`: no event bus,
+  no `Weak`, no membership loop. On the way: the `UserActor`'s loop did not
+  end when it left a channel (its own queue never closes; the 5-second
+  watchdog aborted it) - it now ends with its inbox or when stopped; and
+  deleting a channel stops its actors explicitly (`ChannelLoop::
+  stop_actors`), since actors whose tasks never ran would otherwise never
+  end their watches. A reader who is no participant gets `403` on the
+  stream and still reads the history; the web UI fetches the channel
+  first, follows it live only as a participant, and otherwise shows the
+  history with a hint instead of the input. Checked in the browser (local
+  login): a message and an `@`-mentioned agent's answer arrive live;
+  after removing the user over REST the view turns to history-only, also
+  on a fresh load, without console errors.

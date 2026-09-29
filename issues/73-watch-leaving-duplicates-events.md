@@ -66,3 +66,4 @@ Tentative recommendation: use the bus and remove `watch_leaving` and
   channel's topic on the event bus and ends the stream on the user's
   `UserChannelLeft`; on a lag it ends if the user no longer has an actor in
   the channel. `left_tx` and `ChannelLoop::watch_leaving` are gone.
+- **2026-09-29** — Continued by [104](104-sse-stream-and-subscribe.md): the REST server no longer listens for `UserChannelLeft` to end a removed user's channel stream. The stream is followed through the user's actor (`UserActor::watch`) and ends with it; the announcement on the bus stays what it was, for everyone else.

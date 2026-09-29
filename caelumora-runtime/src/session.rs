@@ -244,6 +244,7 @@ impl SessionLoop {
         }
 
         let task = self.channels.remove(&channel_id).and_then(|(_, entry)| entry.task);
+        running.stop_actors();
         let event_bus = self.runtime_manager.event_bus();
         if let Some(task) = task {
             task.abort();
@@ -1217,6 +1218,30 @@ mod tests {
         let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
         let outside = channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("not in the session");
         assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
+        manager.stop_session(session.id()).await;
+    }
+
+    #[tokio::test]
+    async fn a_users_watch_ends_when_they_leave_or_the_channel_is_deleted() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let owner = ctx.initiator_id.as_user_id().unwrap();
+        let within = |ended: tokio_util::sync::CancellationToken| async move {
+            tokio::time::timeout(std::time::Duration::from_secs(5), ended.cancelled_owned()).await
+        };
+
+        // Leaving ends it.
+        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
+        let theirs = channel.user_actor(other.as_user_id().unwrap()).unwrap().watch().unwrap();
+        let mine = channel.user_actor(owner).unwrap().watch().unwrap();
+        channel.remove_participant(&ctx, other).await.expect("removed");
+        within(theirs.ended).await.expect("the watch of whoever left ends");
+        assert!(!mine.ended.is_cancelled(), "everybody else's goes on");
+
+        // So does deleting the channel, for everybody.
+        session.delete_channel(&ctx, channel.id()).await.expect("deleted");
+        within(mine.ended).await.expect("a deleted channel is watched by nobody");
         manager.stop_session(session.id()).await;
     }
 
