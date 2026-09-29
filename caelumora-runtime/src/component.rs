@@ -609,10 +609,6 @@ impl ComponentContainer {
         Ok(Self { graph: Some(graph) })
     }
 
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
     /// Every component that provides `T` - with `tag`, if one is given - in
     /// the order of the configuration.
     pub fn get_all<T>(&self, tag: Option<&str>) -> Vec<ComponentImpl<T>>

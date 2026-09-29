@@ -145,13 +145,6 @@ pub enum MessageEvent {
 }
 
 
-pub fn format_conversation(messages:&[Message]) -> String {
-    messages.iter()
-        .map(|m| format!("{:?}:{}> {}", m.role, m.sender_name,  m.content.clone().unwrap_or(String::new()).as_str()))
-        .reduce(|l,r| l + "\n" + r.as_str())
-        .unwrap_or(String::new())
-}
-
 /// A message of a `Transcript`, with the digest of the transcript up to and
 /// including it (issue 06).
 #[derive(Debug, Clone, Serialize, Deserialize)]

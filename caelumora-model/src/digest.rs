@@ -17,11 +17,6 @@ use std::str::FromStr;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Digest([u8; 32]);
 
-impl Digest {
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
 
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

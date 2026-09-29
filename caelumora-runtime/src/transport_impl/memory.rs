@@ -18,13 +18,6 @@ impl InMemoryEventReceiver {
             uncommitted: Vec::new(),
         }
     }
-
-    /// Insert events at the front of the buffer (used for crash-recovery pre-load).
-    pub fn prepend(&mut self, events: Vec<Envelope>) {
-        for event in events.into_iter().rev() {
-            self.buffer.push_front(event);
-        }
-    }
 }
 
 #[async_trait]
@@ -54,25 +47,6 @@ impl EventReceiver for InMemoryEventReceiver {
                 self.buffer.push_back(event);
             }
         }
-    }
-
-    fn drain_matching(&mut self, predicate: EventPredicate) -> Vec<Envelope> {
-        let mut matched = Vec::new();
-        let mut remaining = VecDeque::new();
-        while let Some(event) = self.buffer.pop_front() {
-            if predicate(&event) {
-                self.uncommitted.push(event.clone());
-                matched.push(event);
-            } else {
-                remaining.push_back(event);
-            }
-        }
-        self.buffer = remaining;
-        matched
-    }
-
-    fn take_buffered(&mut self) -> Vec<Envelope> {
-        std::mem::take(&mut self.buffer).into_iter().collect()
     }
 
     async fn commit(&mut self) -> TransportResult<()> {

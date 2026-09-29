@@ -39,9 +39,9 @@ pub trait EventSender: Send + Sync {
     fn try_send(&self, event: Envelope) -> TransportResult<()>;
 }
 
-/// A test on an event, for `EventReceiver::recv_matching` and
-/// `drain_matching`. Spelt with its lifetime bound for every reference, so
-/// that `async_trait` does not bind it to one lifetime of the future.
+/// A test on an event, for `EventReceiver::recv_matching`. Spelt with its
+/// lifetime bound for every reference, so that `async_trait` does not bind it
+/// to one lifetime of the future.
 pub type EventPredicate = for<'a> fn(&'a Envelope) -> bool;
 
 /// Transport-agnostic inbound receiver with selective extraction and Kafka-style commit.
@@ -53,15 +53,8 @@ pub trait EventReceiver: Send {
 
     /// Block until an event matching `predicate` arrives.
     /// Non-matching events are stored in an internal buffer and returned by
-    /// subsequent `recv()` calls or `take_buffered()`.
+    /// subsequent `recv()` calls.
     async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope>;
-
-    /// Non-blocking: drain all currently buffered events that match `predicate`,
-    /// leaving the rest in the buffer.
-    fn drain_matching(&mut self, predicate: EventPredicate) -> Vec<Envelope>;
-
-    /// Take all internally buffered (held) events, clearing the buffer.
-    fn take_buffered(&mut self) -> Vec<Envelope>;
 
     /// Commit all events delivered since the last commit.
     /// In-memory transport: no-op. Persistent transports: advance offset / send ack.

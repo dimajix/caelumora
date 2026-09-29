@@ -92,3 +92,20 @@ comment saying why it is public.
   need an owned `Channel` or keep it across an `await` clone it themselves;
   `Turn::agent_id`/`agent_name` are private fields behind getters; the tests
   in `caelumora-model/src/store.rs` are a private `mod tests`.
+- **2026-09-29** — No caller at all. Already gone: `SessionState` and its
+  store methods, `ToolExecution`/`ExecutionStatus`, `ToolExecutor::providers`,
+  `MessageProcessor::name`, `UserController::update_username`,
+  `ApproverController`, `AppState.state_store`; `ActorId::as_user_id` has a
+  caller now (`SessionManager::create_from_template`). Removed now:
+  `Envelope::{forward, respond, with_event, with_security}`,
+  `ActorEvent::from_message_event`, `format_conversation`,
+  `Digest::as_bytes`, all three `STAGE_*` constants
+  (the stages are facets since [99](99-component-factory-and-tags.md)),
+  `ChannelLoop::{actor_names, actor_by_name}`,
+  `EventReceiver::{drain_matching, take_buffered}`,
+  `InMemoryEventReceiver::prepend`, `OllamaClient::with_think`,
+  `ComponentContainer::empty`. Left as they are, by decision:
+  `EventBus::{subscribe_all, subscribe_session, subscribe_channel,
+  subscribe_agent, subscribe_user}` and `EventSubscription::try_recv` - the
+  bus is not touched in this issue - `Turn::transcript`, which only a
+  test calls, and `Message::metadata`, which stays part of the message.

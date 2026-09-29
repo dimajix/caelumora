@@ -357,12 +357,6 @@ impl OllamaClient {
                 .and_then(|v| v.parse::<bool>().ok()),
         }
     }
-
-    /// Explicitly enable or disable thinking, overriding the model's default.
-    pub fn with_think(mut self, think: Option<bool>) -> Self {
-        self.think = think;
-        self
-    }
 }
 
 #[async_trait]

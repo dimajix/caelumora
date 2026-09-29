@@ -3,10 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 
-pub const STAGE_PERCEIVE: &str = "perceive";
-pub const STAGE_PLAN: &str = "plan";
-pub const STAGE_EMIT: &str = "emit";
-
 /// The components of a personality, a template or the configuration -
 /// written by hand (configuration, seed files), so the fields with a
 /// default may be left out there (issue 108).

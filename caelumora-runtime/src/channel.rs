@@ -502,9 +502,6 @@ impl ChannelLoop {
         Ok(self.runtime.security_manager().require(context, action, || ChannelError::Forbidden { action: what, channel }).await?)
     }
 
-    pub fn actor_names(&self) -> Vec<String> {
-        self.actors.load().values().map(|a| a.name()).collect()
-    }
     pub fn actor_ids(&self) -> Vec<ActorId> {
         self.actors.load().values().map(|a| a.id()).collect()
     }
@@ -568,9 +565,6 @@ impl ChannelLoop {
 
     pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         self.actors.load().get(&actor_id).cloned()
-    }
-    pub fn actor_by_name(&self, name: &str) -> Option<Arc<dyn Actor>> {
-        self.actors.load().values().find(|c| c.name() == name).map(|c| c.clone())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are

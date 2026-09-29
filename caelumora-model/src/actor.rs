@@ -1,7 +1,7 @@
 use crate::agent::AgentId;
 use crate::approval::{ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
-use crate::message::{Message, MessageEvent};
+use crate::message::Message;
 use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
@@ -153,20 +153,6 @@ impl ActorEvent {
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
         }
     }
-
-    pub fn from_message_event(event: MessageEvent) -> Self {
-        match event {
-            MessageEvent::Partial(msg) => {
-                ActorEvent::PartialMessageGenerated(msg)
-            }
-            MessageEvent::Complete(msg) => {
-                ActorEvent::CompleteMessageGenerated(msg)
-            }
-            MessageEvent::EndOfTurn(vec) => {
-                ActorEvent::FullResponseGenerated(vec)
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -229,14 +215,6 @@ impl Envelope {
         }
     }
 
-    pub fn forward(&self) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.clone(),
-            context: self.context.clone(),
-            event: self.event.clone(),
-        }
-    }
     pub fn forward_with_response(&self, messages:Vec<Message>) -> Self {
         Self {
             timestamp: Utc::now(),
@@ -252,24 +230,6 @@ impl Envelope {
             context: self.context.clone(),
             event
         }
-    }
-
-    pub fn respond(&self, sender_id:ActorId, sender_name:String, messages:Vec<Message>) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            security: self.security.next(sender_id),
-            context: self.context.next(sender_id, sender_name),
-            event: ActorEvent::FullResponseGenerated(messages)
-        }
-    }
-
-    pub fn with_event(mut self, event: ActorEvent) -> Self {
-        self.event = event;
-        self
-    }
-    pub fn with_security(mut self, security_context: SecurityContext) -> Self {
-        self.security = security_context;
-        self
     }
 
     /// Short, human-readable summary of this envelope's event, used for logging.
