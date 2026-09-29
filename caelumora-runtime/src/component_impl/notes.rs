@@ -15,7 +15,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::session_reader::{NotReadable, PublishedNotes, SessionReader};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, IdArgument, ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -23,6 +23,7 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -122,8 +123,11 @@ impl NotesComponent {
     /// `read_notes(channel?)`: the notes of the channel named, or of every
     /// channel that may be read, each read recorded as knowledge.
     async fn execute_read_notes(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
+        #[derive(Deserialize)]
+        struct ReadNotes { #[serde(default)] channel: Option<String> }
+        let ReadNotes { channel } = arguments(params)?;
         let reader = &self.reader;
-        let channels = match params.get("channel").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty()) {
+        let channels = match channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             Some(name) => vec![reader.notes_of(name).await.map_err(read_error)?],
             None => {
                 let mut all = Vec::new();
@@ -150,9 +154,13 @@ impl NotesComponent {
     }
 }
 
-/// The parameter `text` of a tool that notes something, trimmed.
+/// The parameter `text` of a tool that notes or remembers something,
+/// trimmed; an empty one is no note.
 pub(crate) fn note_text(params: &Value) -> ToolResult<String> {
-    let text = params.get("text").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    #[derive(Deserialize)]
+    struct Text { text: String }
+    let Text { text } = arguments(params)?;
+    let text = text.trim();
     if text.is_empty() {
         return Err(ToolError::InvalidParameter("'text' must not be empty".to_string()));
     }
@@ -161,10 +169,8 @@ pub(crate) fn note_text(params: &Value) -> ToolResult<String> {
 
 /// The parameter `id` of a tool that revokes a note.
 pub(crate) fn note_id(params: &Value) -> ToolResult<NoteId> {
-    params.get("id").and_then(Value::as_u64)
-        .and_then(|id| u32::try_from(id).ok())
-        .map(NoteId)
-        .ok_or_else(|| ToolError::InvalidParameter("'id' must be the number of one of your notes".to_string()))
+    let IdArgument { id } = arguments(params)?;
+    Ok(id)
 }
 
 /// A failed read as the model is told it: which channel cannot be read, or

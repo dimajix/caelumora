@@ -3,9 +3,10 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -31,11 +32,11 @@ impl ToolProvider for CalculatorToolProvider {
 
     async fn execute(&self, name: &str, params: &Value, _context: &mut Turn) -> ToolResult<Value> {
         if name == "calculate" {
-            let expression = params["expression"]
-                .as_str()
-                .ok_or_else(|| ToolError::InvalidParameter("Missing 'expression' parameter".to_string()))?;
+            #[derive(Deserialize)]
+            struct Calculate { expression: String }
+            let Calculate { expression } = arguments(params)?;
 
-            let result = meval::eval_str(expression)
+            let result = meval::eval_str(&expression)
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e)))?;
 
             serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))

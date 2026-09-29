@@ -4,7 +4,7 @@
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptProvider};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
@@ -67,8 +67,7 @@ struct CreatePlanStepArg {
 /// model's to correct - `InvalidParameter`, not a failure of the tool
 /// (issue 82) - and serde's message says what is wrong with them.
 pub fn parse_plan(args: &Value) -> ToolResult<Plan> {
-    let args: CreatePlanArgs = serde_json::from_value(args.clone())
-        .map_err(|e| ToolError::InvalidParameter(format!("not a plan: {e}")))?;
+    let args: CreatePlanArgs = arguments(args)?;
 
     Ok(Plan {
         id: PlanId::new(),
@@ -169,6 +168,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::ToolError;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 

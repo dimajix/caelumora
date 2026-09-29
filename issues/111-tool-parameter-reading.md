@@ -1,6 +1,6 @@
 # 111 — Tools read their parameters in four different styles
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -53,3 +53,18 @@ numbered entries. Decide before the next tool is written.
 - **2026-09-28** — Split off from [82](82-tool-parameter-parsing.md) at the
   maintainer's request; from the structure review
   (`work/2026-09-28-code-review.md`, 4.2.4).
+- **2026-09-29** — Done as recommended. `crate::tool::arguments::<T>(params)`
+  reads a call's arguments as a struct that names the tool's parameters
+  and turns a mismatch into `InvalidParameter` with serde's message; no
+  arguments at all read as an empty object. Every built-in tool that
+  reads parameters uses it: `note`, `note_private`, `remember` (through
+  `note_text`), `revoke_note`, `revoke_private_note`, `forget` (through
+  the generic `IdArgument<T>` - `NoteId` and `MemoryId` deserialise
+  themselves, so no `id_param` helper was needed), `read_notes`,
+  `read_history`, `calculate` and `create_plan`. Checks that are not about
+  the shape - an empty text, an empty channel name - stay with the tool.
+  Echo and MCP still pass their arguments through. What the model is told
+  changed where serde now words it: "missing field `text`" instead of
+  "'text' must not be empty" for a missing field, and a `last` that is
+  not a whole number is refused instead of silently replaced by the
+  default. A test covers the helper.

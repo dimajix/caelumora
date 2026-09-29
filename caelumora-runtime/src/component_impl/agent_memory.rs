@@ -20,7 +20,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::component_impl::notes::note_text;
 use crate::context::{Prompt, PromptPosition, PromptProvider};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, IdArgument, ToolError, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::memory::{Memory, MemoryId};
@@ -90,10 +90,7 @@ impl AgentMemoryComponent {
 
     /// `forget(id)`: forgets an entry that may be recalled here.
     fn execute_forget(&self, params: &Value, context: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = params.get("id").and_then(Value::as_u64)
-            .and_then(|id| u32::try_from(id).ok())
-            .map(MemoryId)
-            .ok_or_else(|| ToolError::InvalidParameter("'id' must be the number of something you remember".to_string()))?;
+        let IdArgument::<MemoryId> { id } = arguments(params)?;
         if AgentMemory::new(context).forget(id) {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {

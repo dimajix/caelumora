@@ -7,6 +7,7 @@ use caelumora_model::security::{ActionType, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
@@ -27,6 +28,25 @@ pub enum ToolError {
 }
 
 pub type ToolResult<T> = Result<T, ToolError>;
+
+/// The arguments of a tool call read as `T`, the struct that names the
+/// tool's parameters - the one way built-in tools read their parameters
+/// (issue 111). Arguments that do not fit are the model's to correct:
+/// `InvalidParameter` with serde's account of what is wrong ("missing field
+/// `text`", "invalid type: …"). No arguments at all read as an empty object,
+/// so that a tool whose parameters are all optional accepts them.
+pub fn arguments<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
+    let empty = Value::Object(Default::default());
+    let params = if params.is_null() { &empty } else { params };
+    T::deserialize(params).map_err(|e| ToolError::InvalidParameter(e.to_string()))
+}
+
+/// The arguments of a tool that takes the number of an entry, e.g. a note
+/// to revoke.
+#[derive(Deserialize)]
+pub struct IdArgument<T> {
+    pub id: T,
+}
 
 /// What the model is given as the result of a tool call that produced none
 /// (issue 15): a small JSON object with the `status` and a `message` that
@@ -297,6 +317,25 @@ mod tests {
 
     use caelumora_model::security::DummySecurityManager;
     use serde_json::json;
+
+    #[test]
+    fn arguments_are_read_as_a_struct_and_what_does_not_fit_is_the_models_to_correct() {
+        #[derive(Deserialize, Debug)]
+        struct Note { text: String, #[serde(default)] channel: Option<String> }
+        #[derive(Deserialize, Debug)]
+        struct Optional { #[serde(default)] channel: Option<String> }
+
+        let note: Note = arguments(&json!({ "text": "hello", "extra": 1 })).expect("unknown fields are ignored");
+        assert_eq!((note.text.as_str(), note.channel), ("hello", None));
+        assert!(arguments::<Optional>(&Value::Null).is_ok(), "no arguments are an empty object");
+
+        let missing = arguments::<Note>(&json!({})).unwrap_err();
+        assert!(matches!(&missing, ToolError::InvalidParameter(m) if m.contains("`text`")), "serde names what is missing: {missing}");
+        let wrong = arguments::<Note>(&json!({ "text": 5 })).unwrap_err();
+        assert!(matches!(&wrong, ToolError::InvalidParameter(m) if m.contains("invalid type")), "{wrong}");
+        let IdArgument { id } = arguments::<IdArgument<caelumora_model::note::NoteId>>(&json!({ "id": 3 })).unwrap();
+        assert_eq!(id.0, 3);
+    }
 
     #[derive(Debug)]
     struct MockToolProvider {

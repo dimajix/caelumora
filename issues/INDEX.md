@@ -109,7 +109,7 @@ against it, and what came out of the last attempt.
 | [81](81-approver-double-id.md) | done | The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting. |
 | [82](82-tool-parameter-parsing.md) | done | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
 | [100](100-tool-executor-table-and-result.md) | open | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |
-| [111](111-tool-parameter-reading.md) | open | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
+| [111](111-tool-parameter-reading.md) | done | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
 | [118](118-malformed-call-put-up-for-approval.md) | done | A tool call with invalid arguments is put up for approval as "No description" and fails only after a user approved it. |
 
 ## User interaction

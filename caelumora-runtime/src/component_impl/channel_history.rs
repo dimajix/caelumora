@@ -8,10 +8,11 @@
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::session_reader::{NotReadable, SessionReader};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource, Message};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -58,12 +59,21 @@ impl ToolProvider for ChannelHistoryReader {
         if name != READ_HISTORY_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
-        let channel = params.get("channel").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+        #[derive(Deserialize)]
+        struct ReadHistory {
+            channel: String,
+            #[serde(default)]
+            last: Option<usize>,
+            #[serde(default)]
+            query: Option<String>,
+        }
+        let ReadHistory { channel, last, query } = arguments(params)?;
+        let channel = channel.trim();
         if channel.is_empty() {
             return Err(ToolError::InvalidParameter("'channel' must name a channel".to_string()));
         }
-        let last = params.get("last").and_then(Value::as_u64).map(|n| (n as usize).clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
-        let query = params.get("query").and_then(Value::as_str).map(str::trim).filter(|q| !q.is_empty());
+        let last = last.map(|n| n.clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
+        let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
         let history = self.reader.history_of(channel).await.map_err(|e| match e.downcast_ref::<NotReadable>() {
             Some(not_readable) => ToolError::InvalidParameter(not_readable.to_string()),
