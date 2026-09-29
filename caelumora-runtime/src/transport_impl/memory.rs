@@ -1,4 +1,4 @@
-use crate::transport::{EventReceiver, EventSender, TransportError, TransportResult};
+use crate::transport::{EventPredicate, EventReceiver, EventSender, TransportError, TransportResult};
 use async_trait::async_trait;
 use caelumora_model::actor::Envelope;
 use std::collections::VecDeque;
@@ -39,24 +39,10 @@ impl EventReceiver for InMemoryEventReceiver {
         Some(event)
     }
 
-    async fn recv_matching(&mut self, predicate: fn(&Envelope) -> bool) -> Option<Envelope> {
-        // async_trait concretizes fn(&Envelope) -> bool to fn(&'concrete Envelope) -> bool
-        // (binding the reference lifetime to a specific outer lifetime), which prevents the
-        // predicate from being called with references created inside the async block.
-        // Transmuting to the true HRTB form is safe: fn pointer types have the same runtime
-        // representation regardless of lifetime annotation, and all predicates in this codebase
-        // are pure observers that never store the reference they inspect.
-        let pred: for<'a> fn(&'a Envelope) -> bool =
-            unsafe { std::mem::transmute(predicate) };
-
-        let mut i = 0;
-        while i < self.buffer.len() {
-            if pred(&self.buffer[i]) {
-                let event = self.buffer.remove(i).unwrap();
-                self.uncommitted.push(event.clone());
-                return Some(event);
-            }
-            i += 1;
+    async fn recv_matching(&mut self, pred: EventPredicate) -> Option<Envelope> {
+        if let Some(event) = self.buffer.iter().position(pred).and_then(|i| self.buffer.remove(i)) {
+            self.uncommitted.push(event.clone());
+            return Some(event);
         }
         loop {
             let event = self.rx.recv().await?;
@@ -70,7 +56,7 @@ impl EventReceiver for InMemoryEventReceiver {
         }
     }
 
-    fn drain_matching(&mut self, predicate: fn(&Envelope) -> bool) -> Vec<Envelope> {
+    fn drain_matching(&mut self, predicate: EventPredicate) -> Vec<Envelope> {
         let mut matched = Vec::new();
         let mut remaining = VecDeque::new();
         while let Some(event) = self.buffer.pop_front() {

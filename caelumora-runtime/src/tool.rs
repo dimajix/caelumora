@@ -226,14 +226,8 @@ impl DefaultToolExecutor {
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolCallResult> {
         let security = &turn.security_context();
-        debug!(
-            "Executing tool '{}' (initiator: {:?}, sender: {:?}, session: {}, channel: {})",
-            call.function_name,
-            security.initiator_id,
-            security.caller_id,
-            security.session_id,
-            security.channel_id
-        );
+        // Session, channel and agent are on the turn's span.
+        debug!(tool = %call.function_name, initiator = %security.initiator_id, "Executing tool");
 
         let agent_id = security.caller_id.as_agent_id()
             .ok_or_else(|| ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)))?;

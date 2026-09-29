@@ -74,13 +74,14 @@ pub struct McpToolProvider {
     secret_manager: Arc<SecretManager>,
 }
 
-impl McpToolProvider {
-    fn prefix(&self) -> String {
-        format!("{}__", self.descriptor_id)
-    }
+/// Between the component id and the remote name of a tool: an MCP tool is
+/// offered as `<component id>__<remote name>`.
+const NAME_SEPARATOR: &str = "__";
 
+impl McpToolProvider {
     fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
-        name.strip_prefix(self.prefix().as_str())
+        name.strip_prefix(self.descriptor_id.as_str())
+            .and_then(|rest| rest.strip_prefix(NAME_SEPARATOR))
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
     }
 }
@@ -130,7 +131,7 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
             let description = t.description.map(|d| d.to_string()).unwrap_or_default();
             let schema = Value::Object((*t.input_schema).clone());
             Tool {
-                name: format!("{}__{}", descriptor_id, t.name),
+                name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
                 requires_approval: config.requires_approval,
@@ -348,7 +349,6 @@ mod tests {
             secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
         };
 
-        assert_eq!(provider.prefix(), "github-mcp__");
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
         assert!(provider.strip_prefix("unrelated_tool").is_err());

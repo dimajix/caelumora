@@ -267,7 +267,7 @@ impl RuntimeManager {
         security_manager: Arc<dyn SecurityManager>,
         commands: ComponentConfig,
         llm_client: Arc<dyn LLMClient>,
-    ) -> Result<Self> {
+    ) -> Self {
         let mut component_registry = ComponentRegistry::new(entity_store.clone());
         crate::component_impl::register_all(&mut component_registry);
 
@@ -275,7 +275,7 @@ impl RuntimeManager {
         let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
         let agent_states = Arc::new(crate::agent_state::AgentStates::new(state_store.clone(), event_bus.clone()));
 
-        Ok(Self {
+        Self {
             security_manager,
             state_store,
             entity_store,
@@ -286,7 +286,7 @@ impl RuntimeManager {
             controller_manager,
             commands,
             agent_states,
-        })
+        }
     }
 
     /// The executor for the user commands of `session`: the global ones and
@@ -364,7 +364,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())));
         let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
         ChannelRuntime::new(manager, commands, Default::default())
     }

@@ -159,7 +159,7 @@ impl ChannelSessionReader {
             own.clone()
         } else {
             let session = self.runtime.session().ok_or_else(not_readable)?;
-            session.channel_by_name(name).await.ok_or_else(not_readable)?
+            session.channel_by_name(name).ok_or_else(not_readable)?
         };
         if self.may_read(&own, &source).await { Ok(source) } else { Err(not_readable()) }
     }

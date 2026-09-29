@@ -136,6 +136,8 @@ impl TokenService {
         let secure = if self.secure_cookie { "; Secure" } else { "" };
         let http_only = if http_only { "; HttpOnly" } else { "" };
         let cookie = format!("{name}={value}{http_only}; SameSite=Strict; Path=/; Max-Age={max_age}{secure}");
+        // The only values are a JWT (base64url and dots), a timestamp or
+        // nothing, and the names are constants: all visible ASCII.
         HeaderValue::from_str(&cookie).expect("a token and a timestamp are valid header values")
     }
 

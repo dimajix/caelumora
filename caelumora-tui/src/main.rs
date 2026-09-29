@@ -389,7 +389,7 @@ async fn main() -> anyhow::Result<()> {
         security_manager.clone(),
         config.commands.clone(),
         Arc::new(OllamaClient::default()),
-    )?);
+    ));
     let template = setup_templates(&entity_store).await?;
 
     let session_id = SessionId(Uuid::new_v4());
@@ -422,7 +422,6 @@ async fn main() -> anyhow::Result<()> {
 
     let channel = session_loop
         .channel_by_name("main")
-        .await
         .ok_or_else(|| anyhow::anyhow!("Cannot find main channel in session"))?;
 
     // Start the interactive loop

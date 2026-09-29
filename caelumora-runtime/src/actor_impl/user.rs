@@ -263,7 +263,7 @@ mod tests {
     async fn user_actor() -> UserActor {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())));
         let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())), Default::default());
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
         let user = caelumora_model::user::User {

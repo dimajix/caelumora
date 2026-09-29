@@ -548,7 +548,7 @@ impl ChannelLoop {
         let mut changes_rx = self.changes_rx.lock().await;
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
-        let mut running = self.spawn_actors(event_tx.clone(), &mut join_set)?;
+        let mut running = self.spawn_actors(event_tx.clone(), &mut join_set);
 
         loop {
             tokio::select! {
@@ -633,14 +633,10 @@ impl ChannelLoop {
     }
 
     /// Starts the tasks of the channel's actors as `run` begins.
-    fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
-        let mut running = HashMap::new();
-        for (id, actor) in self.actors.load().iter() {
-            let handle = self.spawn_actor(actor.clone(), actor_output.clone(), join_set);
-            running.insert(*id, handle);
-        };
-
-        Ok(running)
+    fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> HashMap<ActorId,ActorHandle> {
+        self.actors.load().iter()
+            .map(|(id, actor)| (*id, self.spawn_actor(actor.clone(), actor_output.clone(), join_set)))
+            .collect()
     }
 
     fn spawn_actor(&self, actor: Arc<dyn Actor>, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
@@ -717,14 +713,14 @@ impl ChannelLoop {
         //    }
         //}
 
-        let broadcast = self.route_event_impl(running, event.clone()).await;
+        let broadcast = self.route_event_impl(running, &event).await;
 
         if broadcast {
             let _ = self.event_tx.send(event);
         }
     }
 
-    async fn route_event_impl(&self, running: &HashMap<ActorId,ActorHandle>, event: Envelope) -> bool {
+    async fn route_event_impl(&self, running: &HashMap<ActorId,ActorHandle>, event: &Envelope) -> bool {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
             return true
@@ -733,7 +729,7 @@ impl ChannelLoop {
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
         let mut moderator = self.moderator.lock().await;
-        let decision = moderator.route(&event).await;
+        let decision = moderator.route(event).await;
         drop(moderator);
         let quiet = self.quiet.load(Ordering::SeqCst);
 
@@ -931,7 +927,7 @@ mod tests {
     /// A channel of `participants`, whose actors are read from `store`.
     async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(OllamaClient::default())));
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -1192,7 +1188,7 @@ mod tests {
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -1310,7 +1306,7 @@ mod tests {
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), model).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), model));
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),

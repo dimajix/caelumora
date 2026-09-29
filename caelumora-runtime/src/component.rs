@@ -195,42 +195,36 @@ impl ComponentContainer {
         context: &ComponentContext,
     ) -> ComponentResult<Self> {
 
-        let mut indegree: HashMap<String, usize> = HashMap::new();
-        let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
-        let mut config_by_id: HashMap<String, &ComponentDescriptor> = HashMap::new();
+        // Kahn's algorithm over the descriptors themselves, so that the
+        // order yields them without a second lookup by id.
+        let mut indegree: HashMap<&str, usize> = HashMap::new();
+        let mut dependents: HashMap<&str, Vec<&ComponentDescriptor>> = HashMap::new();
 
         for node in &config.component_nodes {
-            if config_by_id.insert(node.id.clone(), node).is_some() {
+            if indegree.insert(node.id.as_str(), node.deps.len()).is_some() {
                 return Err(ComponentError::DuplicateId(node.id.clone()));
             }
-            indegree.insert(node.id.clone(), 0);
-            outgoing.entry(node.id.clone()).or_default();
         }
 
         for node in &config.component_nodes {
             for dep in &node.deps {
-                if !config_by_id.contains_key(dep) {
+                if !indegree.contains_key(dep.as_str()) {
                     return Err(ComponentError::UnknownDependency { component: node.id.clone(), dependency: dep.clone() });
                 }
-                *indegree.get_mut(&node.id).unwrap() += 1;
-                outgoing.entry(dep.clone()).or_default().push(node.id.clone());
+                dependents.entry(dep.as_str()).or_default().push(node);
             }
         }
 
-        let mut queue: VecDeque<String> = indegree
-            .iter()
-            .filter_map(|(id, degree)| if *degree == 0 { Some(id.clone()) } else { None })
-            .collect();
-        let mut ordered = Vec::with_capacity(config.component_nodes.len());
+        let mut queue: VecDeque<&ComponentDescriptor> = config.component_nodes.iter().filter(|node| node.deps.is_empty()).collect();
+        let mut ordered: Vec<&ComponentDescriptor> = Vec::with_capacity(config.component_nodes.len());
 
-        while let Some(id) = queue.pop_front() {
-            ordered.push(id.clone());
-            if let Some(children) = outgoing.get(&id) {
-                for child in children {
-                    let degree = indegree.get_mut(child).unwrap();
+        while let Some(node) = queue.pop_front() {
+            ordered.push(node);
+            for &child in dependents.get(node.id.as_str()).into_iter().flatten() {
+                if let Some(degree) = indegree.get_mut(child.id.as_str()) {
                     *degree -= 1;
                     if *degree == 0 {
-                        queue.push_back(child.clone());
+                        queue.push_back(child);
                     }
                 }
             }
@@ -241,8 +235,10 @@ impl ComponentContainer {
         }
 
         let mut nodes: HashMap<String, ComponentNode> = HashMap::new();
-        for id in ordered.iter().cloned() {
-            let node_config = config_by_id.get(&id).unwrap();
+        let mut node_order = Vec::with_capacity(ordered.len());
+        for node_config in ordered {
+            let id = node_config.id.clone();
+            node_order.push(id.clone());
 
             let mut dep_facets = HashMap::new();
             for dep_id in &node_config.deps {
@@ -271,7 +267,7 @@ impl ComponentContainer {
 
         Ok(Self {
             nodes,
-            node_order: ordered,
+            node_order,
         })
     }
 

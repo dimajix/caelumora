@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         security_manager.clone(),
         config.commands.clone(),
         Arc::new(OllamaClient::default()),
-    )?);
+    ));
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
     setup_initial_data(&entity_store, &args.user).await?;

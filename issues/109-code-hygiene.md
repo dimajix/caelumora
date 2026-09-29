@@ -1,6 +1,6 @@
 # 109 — `unwrap`, `unsafe`, infallible `Result`s, idle locks and clones
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -54,3 +54,27 @@ only justified cases with a comment; no `unsafe` in the runtime.
   (`work/2026-09-28-code-review.md`, section 6).
 - **2026-09-29** — The `c.result.unwrap()` in the agent actor is gone
   with [83](83-turn-logic-on-agent-actor.md).
+- **2026-09-29** — Done in one pass. `unsafe` in `transport_impl/memory.rs`
+  replaced by `transport::EventPredicate` (`for<'a> fn(&'a Envelope) -> bool`),
+  and the buffer search no longer unwraps. The approver's timeout uses
+  `to_std()` as the "already past" test. The component build's topological
+  sort works on the descriptors themselves (no lookups by id, no `unwrap`,
+  and the start order follows the configuration instead of a hash map).
+  `digest::to_json` `expect`s with its justification; the cookie `expect` in
+  `auth.rs` got a comment. `RuntimeManager::new`, `ChannelLoop::spawn_actors`
+  and `SessionLoop::channel_by_name` no longer return a `Result`/are no
+  longer `async`; the `MemoryStore` lock helpers return their value, and the
+  state getters clone one entry instead of the whole map. `route_event_impl`
+  takes the envelope by reference; the agent fetches its tools once per
+  model call instead of per chunk; `McpToolProvider::strip_prefix` no longer
+  formats (`NAME_SEPARATOR`). `DefaultToolExecutor::execute` logs tool and
+  initiator as fields (the rest is on the turn span); Ollama logs the number
+  of messages and the redacted endpoint instead of every id and the URL.
+  Already gone before this pass: `handle_stopping`, the infallible
+  controller constructors, `ChannelLoop`'s `Arc`ed state and atomic, the
+  double clone in `record_turn` (one clone remains - transcript and history
+  each keep their own copy). Left as they are, deliberately:
+  `find_user_by_name` in both stores is a filtered `list` (so it needs the
+  list permission, like the JSON store) - a lookup under the lock would
+  change what it checks; and `unsafe` remains only in an Ollama test around
+  `env::set_var`, which Rust 2024 requires.

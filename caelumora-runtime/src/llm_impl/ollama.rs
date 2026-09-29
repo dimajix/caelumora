@@ -373,7 +373,7 @@ impl LLMClient for OllamaClient {
         tools: &[caelumora_model::tool::Tool],
     ) -> BoxStream<'static, LLMResult<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
-        let message_ids: Vec<_> = context.iter().map(|m| m.id).collect();
+        let message_count = context.len();
         let prev_id = context.iter().map(|m| m.id).last().unwrap_or(MessageId::default());
 
         let ollama_tools: Vec<_> = tools
@@ -405,10 +405,10 @@ impl LLMClient for OllamaClient {
 
         let output = stream! {
             debug!(
-                "ollama: sending chat request model={}, context={:?}, url={}",
+                "ollama: sending chat request model={}, messages={}, endpoint={}",
                 model,
-                message_ids,
-                url
+                message_count,
+                endpoint
             );
             let response = match http.post(url).json(&request).send().await {
                 Ok(response) => response,

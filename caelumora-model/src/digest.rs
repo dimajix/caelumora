@@ -161,8 +161,12 @@ fn write_canonical(value: &Value, out: &mut String) {
     }
 }
 
+/// `value` as JSON, for hashing. The types hashed here derive `Serialize`
+/// and have no maps with non-string keys, so conversion cannot fail; were it
+/// to, hashing `Null` instead would give different contents the same digest,
+/// which an integrity check must not do silently.
 fn to_json<T: Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
+    serde_json::to_value(value).expect("hashed model types serialise to JSON")
 }
 
 /// The digest of a chain of messages ending in `message`, whose predecessor

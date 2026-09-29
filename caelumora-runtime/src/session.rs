@@ -153,7 +153,7 @@ impl SessionLoop {
         self.channels.get(&channel_id).map(|entry| entry.channel.clone())
     }
 
-    pub async fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
+    pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
         self.channels.iter().find(|entry| entry.channel.name() == name).map(|entry| entry.channel.clone())
     }
 
@@ -594,7 +594,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap())
+        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())))
     }
 
     fn make_session(name: &str) -> Session {
@@ -948,7 +948,7 @@ mod tests {
         assert!(matches!(missing.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })));
 
         // The last channel may go too; the session keeps running without.
-        let main = session.channel_by_name("main").await.unwrap().id();
+        let main = session.channel_by_name("main").unwrap().id();
         session.delete_channel(&ctx, main).await.expect("the last channel may be deleted");
         assert!(session.channels().is_empty());
         session.create_channel(&ctx, spec("again", vec![])).await.expect("and a new one created");
@@ -988,7 +988,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
         let manager = SessionManager::new(runtime);
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
@@ -999,7 +999,7 @@ mod tests {
         session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice.id), contributors: vec![ActorId::User(bob.id)] };
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
-        let main = session.channel_by_name("main").await.unwrap().id();
+        let main = session.channel_by_name("main").unwrap().id();
 
         let refused = session.create_channel(&bob_ctx, spec("bobs", vec![])).await.expect_err("a contributor may not");
         assert!(crate::error::is_forbidden(&refused), "{refused}");
@@ -1020,7 +1020,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
         let manager = SessionManager::new(runtime.clone());
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
@@ -1063,7 +1063,7 @@ mod tests {
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(states.clone(), entities.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(states.clone(), entities.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())));
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores");
@@ -1088,14 +1088,14 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
         let manager = SessionManager::new(runtime);
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers");
         session.security_attributes = SecurityAttributes { owner_id: alice, contributors: vec![bob] };
         let running = create(&manager, &as_user(alice), session).await.unwrap();
-        let main = running.channel_by_name("main").await.unwrap();
+        let main = running.channel_by_name("main").unwrap();
 
         let refused = main.update_name(&as_user(bob), "bobs".to_string()).await.expect_err("a contributor may not");
         assert!(crate::error::is_forbidden(&refused), "{refused}");
@@ -1206,7 +1206,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -1239,7 +1239,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
         let manager = SessionManager::new(runtime);
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());

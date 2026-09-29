@@ -19,7 +19,7 @@ use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, P
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
-use caelumora_model::tool::{ToolCall, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
@@ -267,9 +267,9 @@ impl AgentActor {
     /// could still call, since reasoning comes before the call it leads to.
     /// Knowledge read from other channels adds nothing: a channel reads only
     /// what reaches no further than its own contents (rule 2), so the
-    /// channel admits it anyway.
-    fn label(&self, message: &mut Message, turn: &Turn, complete: bool) {
-        let tools = self.tool_executor.tools();
+    /// channel admits it anyway. `tools` are the agent's tools, fetched once
+    /// per model call rather than per streamed chunk.
+    fn label(&self, message: &mut Message, turn: &Turn, tools: &[Tool], complete: bool) {
         let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.confidentiality).unwrap_or_default();
         for call in &mut message.tool_calls {
             call.confidentiality = declared(&call.function_name);
@@ -717,6 +717,7 @@ impl AgentActor {
 
         let cancelled = self.turn_token();
         let mut response = self.call_llm(turn).await;
+        let tools = self.tool_executor.tools();
         use futures::stream::TryStreamExt;
         loop {
             // A cancel wins over the next chunk, and returning drops the
@@ -735,7 +736,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    self.label(&mut message, turn, false);
+                    self.label(&mut message, turn, &tools, false);
                     message.internal = internal_message;
                     if let Some(msg) = self.respond_partial(message, turn).await {
                         turn.send_event(Self::event_for(msg, true), output).await?;
@@ -744,7 +745,7 @@ impl AgentActor {
                 MessageEvent::Complete(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    self.label(&mut message, turn, true);
+                    self.label(&mut message, turn, &tools, true);
                     message.internal = internal_message;
 
                     self.request_approvals(&message.tool_calls, turn, output).await?;

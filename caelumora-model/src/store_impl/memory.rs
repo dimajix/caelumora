@@ -62,23 +62,25 @@ impl MemoryStore {
         Access::new(self.security_manager.as_ref(), ctx)
     }
 
-    fn read_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> StoreResult<R>
+    // A poisoned lock is used anyway: the locks are held only by the
+    // closures passed here, none of which can leave a map half-changed.
+    fn read_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> R
     where
         F: FnOnce(&T) -> R,
     {
         match lock.read() {
-            Ok(guard) => Ok(f(&guard)),
-            Err(poisoned) => Ok(f(poisoned.get_ref())),
+            Ok(guard) => f(&guard),
+            Err(poisoned) => f(poisoned.get_ref()),
         }
     }
 
-    fn write_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> StoreResult<R>
+    fn write_lock<T, F, R>(&self, lock: &RwLock<T>, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
     {
         match lock.write() {
-            Ok(mut guard) => Ok(f(&mut guard)),
-            Err(mut poisoned) => Ok(f(poisoned.get_mut())),
+            Ok(mut guard) => f(&mut guard),
+            Err(mut poisoned) => f(poisoned.get_mut()),
         }
     }
 }
@@ -95,38 +97,37 @@ impl MemoryStore {
             }
             v.insert(key, value.clone());
             Ok(())
-        })?
+        })
     }
 
     async fn get_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<T>
     where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
-        let found = self.read_lock(map, |v| v.get(key).cloned())?;
+        let found = self.read_lock(map, |v| v.get(key).cloned());
         self.access(ctx).read(found, kind.get, kind.entity, key.to_string()).await
     }
 
     async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(&key).cloned())?;
+        let stored = self.read_lock(map, |v| v.get(&key).cloned());
         self.access(ctx).change(stored.as_ref(), kind.get, kind.update, kind.entity, key.to_string()).await?;
-        self.write_lock(map, |v| {
-            v.insert(key, value.clone());
-        })
+        self.write_lock(map, |v| v.insert(key, value.clone()));
+        Ok(())
     }
 
     async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
     where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
-        let stored = self.read_lock(map, |v| v.get(key).cloned())?;
+        let stored = self.read_lock(map, |v| v.get(key).cloned());
         if !self.access(ctx).delete(stored.as_ref(), kind.get, kind.delete).await? {
             return Ok(false);
         }
-        self.write_lock(map, |v| v.remove(key).is_some())
+        Ok(self.write_lock(map, |v| v.remove(key).is_some()))
     }
 
     async fn list_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
     where K: Eq + Hash + Send + Sync, T: Secured + Clone + Send + Sync {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
-        let all = self.read_lock(map, |v| v.values().cloned().collect())?;
+        let all = self.read_lock(map, |v| v.values().cloned().collect());
         Ok(access.filter(all, kind.get).await)
     }
 }
@@ -269,45 +270,36 @@ impl EntityStore for MemoryStore {
 #[async_trait]
 impl StateStore for MemoryStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
-        let values = self.read_lock(&self.agent_channel_states, |v| v.clone())?;
-        Ok(values.get(&(agent_id, channel_id)).cloned().unwrap_or_default())
+        Ok(self.read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default())
     }
 
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()> {
-        self.write_lock(&self.agent_channel_states, |v| {
-            v.insert((agent_id, channel_id), state.clone());
-        })
+        self.write_lock(&self.agent_channel_states, |v| v.insert((agent_id, channel_id), state.clone()));
+        Ok(())
     }
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
-        let values = self.read_lock(&self.agent_states, |v| v.clone())?;
-        Ok(values.get(&agent_id).cloned().unwrap_or_default())
+        Ok(self.read_lock(&self.agent_states, |v| v.get(&agent_id).cloned()).unwrap_or_default())
     }
 
     async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
-        self.write_lock(&self.agent_states, |v| {
-            v.insert(agent_id, state.clone());
-        })
+        self.write_lock(&self.agent_states, |v| v.insert(agent_id, state.clone()));
+        Ok(())
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
-        let values = self.read_lock(&self.channel_states, |v| v.clone())?;
-        require_entity(values.get(&channel_id).cloned(), "channel_state", channel_id.to_string())
+        require_entity(self.read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()), "channel_state", channel_id.to_string())
     }
 
     async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()> {
-        self.write_lock(&self.channel_states, |v| {
-            v.insert(channel_id, state.clone());
-        })
+        self.write_lock(&self.channel_states, |v| v.insert(channel_id, state.clone()));
+        Ok(())
     }
 
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
-        self.write_lock(&self.channel_states, |v| {
-            v.remove(&channel_id);
-        })?;
-        self.write_lock(&self.agent_channel_states, |v| {
-            v.retain(|(_, cid), _| *cid != channel_id);
-        })
+        self.write_lock(&self.channel_states, |v| v.remove(&channel_id));
+        self.write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
+        Ok(())
     }
 
 }
