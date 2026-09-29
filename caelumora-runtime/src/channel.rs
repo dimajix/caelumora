@@ -1338,6 +1338,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_turn_is_stored_with_the_step_that_comes_next() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolConfidentiality};
+
+        // The model calls a tool that needs no approval, and then never
+        // answers again: the agent waits in `Planning` with the result.
+        let calculate = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), confidentiality: ToolConfidentiality::PUBLIC }],
+            ..Message::default()
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "calculator".to_string(),
+            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_PROVIDER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: vec![],
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { channel, agent, running, .. } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
+
+        // What a crash now would leave: `Planning`, with the tool's result
+        // in the turn - so that a resume asks the model about the result
+        // instead of asking again for the call or running the tool twice.
+        let stored = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+                let has_result = state.turn.as_ref().is_some_and(|t| t.messages.iter().any(|m| !m.tool_results.is_empty()));
+                if has_result && state.processing_state == ActorState::Planning { break state }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("stored in Planning, with the tool's result");
+        assert!(stored.turn.is_some_and(|t| t.tool_calls.is_empty()), "the calls of the step are done");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;

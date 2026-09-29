@@ -94,3 +94,16 @@ also holds a synchronisation primitive:
   *was* in, not the one it goes to. After a `Planning` step that produced
   tool calls, a crash resumes `Planning` and asks the model again with its
   own tool-call message already in the context.
+- **2026-09-29** — The finding above, fixed at the maintainer's request as
+  part of this issue: the run loop now sets the next state first and then
+  stores, so the store holds the step that comes next. Resuming then does
+  what the state says - `Planning` asks the model with everything the
+  turn has so far, tool results included; `ExecutingTools` means the tools
+  of that step were about to run, and calls without a result are answered
+  as not executed (75); `Reflecting` takes the finished answer over. One
+  consequence: a call approved and not yet run when the server stops is
+  answered as not executed after the restart, so the model decides again
+  - the approval is not replayed. Test: an agent whose model called a
+  tool and then never answers again is stored in `Planning`, with the
+  tool's result in its turn (with the old order it was stored in
+  `ExecutingTools`).

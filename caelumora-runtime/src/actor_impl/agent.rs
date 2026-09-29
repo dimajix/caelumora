@@ -297,10 +297,11 @@ impl AgentActor {
 
     /// Makes a loaded state fit to run from (issue 75). A state stored
     /// between two steps of a turn is a turn to resume - the server
-    /// stopped or crashed in the middle of it - and most states resume as
-    /// they are: `Planning` repeats the model call, `Reflecting` the
-    /// reflection, `WaitingForApproval` keeps waiting, `Cancelling` ends the
-    /// turn. A deliberate end never leaves a turn in the
+    /// stopped or crashed in the middle of it - stored with the step that
+    /// was to come next (issue 85), and most states resume as they are:
+    /// `Planning` asks the model with the turn so far, `Reflecting` takes
+    /// the finished turn over, `WaitingForApproval` keeps waiting,
+    /// `Cancelling` ends the turn. A deliberate end never leaves a turn in the
     /// store (`stop`, `cancel`, the stop tool).
     ///
     /// `ExecutingTools` is the exception: a tool may have run without its
@@ -1126,18 +1127,22 @@ impl Actor for AgentActor {
                 break;
             }
 
+            // The state goes on first, then it is stored: what a crash leaves
+            // in the store is the step that comes next, not the one that is
+            // done - resuming it neither repeats a model call whose answer is
+            // already in the turn nor asks the model before a tool result is
+            // in (issue 85).
+            if let Some(next) = next_state {
+                // If state has been switched to "Cancelling", but "current_state" was not
+                // "Cancelling", then ignore "next_state"
+                if current_state == ActorState::Cancelling || self.processing_state.load() != ActorState::Cancelling {
+                    self.processing_state.store(next)
+                }
+            }
             self.store_channel_state(&mut turn).await;
-
-            match next_state {
-                Some(next) => {
-                    // If state has been switched to "Cancelling", but "current_state" was not
-                    // "Cancelling", then ignore "next_state"
-                    if current_state == ActorState::Cancelling || self.processing_state.load() != ActorState::Cancelling {
-                        self.processing_state.store(next)
-                    }
-                },
-                // Channel is closed, actor wants to quit
-                None => break,
+            // Channel is closed, actor wants to quit
+            if next_state.is_none() {
+                break;
             }
         }
 
