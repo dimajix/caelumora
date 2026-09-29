@@ -1,7 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
-use crate::meta::Scope;
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -9,7 +8,7 @@ use async_trait::async_trait;
 use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use crate::security::{ActionType, DummySecurityManager, Secured, SecurityManager};
+use crate::security::{DummySecurityManager, Secured, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES};
 use std::fmt::Display;
 use std::hash::Hash;
@@ -157,14 +156,6 @@ impl EntityStore for MemoryStore {
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         self.list_in(ctx, &self.personalities, &PERSONALITIES).await
     }
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        self.access(ctx).allow(ActionType::FindPersonality).await?;
-        require_entity(
-            self.list_personalities(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            PERSONALITIES.entity,
-            name.to_string(),
-        )
-    }
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
@@ -182,14 +173,6 @@ impl EntityStore for MemoryStore {
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
     }
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
-        require_entity(
-            self.list_session_templates(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            SESSION_TEMPLATES.entity,
-            name.to_string(),
-        )
-    }
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -206,16 +189,6 @@ impl EntityStore for MemoryStore {
     }
     async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
         self.list_in(ctx, &self.agents, &AGENTS).await
-    }
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
-        let access = self.access(ctx);
-        access.allow(ActionType::FindAgent).await?;
-        let all = self.read_lock(&self.agents, |v| v.values().cloned().collect())?;
-        require_entity(
-            access.filter(all, AGENTS.get).await.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            AGENTS.entity,
-            name.to_string(),
-        )
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another
@@ -352,9 +325,9 @@ impl StateStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::meta::Scope;
     use crate::meta::Metadata;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
-    use crate::user::UserId;
     use uuid::Uuid;
 
     fn make_personality(name: &str, scope: Scope) -> Personality {
@@ -390,75 +363,6 @@ mod tests {
                 participants: vec![],
             }],
         }
-    }
-
-    #[tokio::test]
-    async fn personality_lookup_honors_scope() {
-        let store = MemoryStore::new();
-        let ctx = SecurityContext::default();
-        let user_id = UserId(Uuid::new_v4());
-        let user_scope = Scope::UserScope { user_id };
-
-        store
-            .create_personality(&ctx, &make_personality("assistant", Scope::GlobalScope))
-            .await
-            .unwrap();
-        store
-            .create_personality(
-                &ctx,
-                &make_personality(
-                    "assistant",
-                    user_scope.clone(),
-                ),
-            )
-            .await
-            .unwrap();
-
-        // Search with GlobalScope should find an entity (either GlobalScope or UserScope)
-        let found = store
-            .find_personality_by_name(&ctx, "assistant", &Scope::GlobalScope)
-            .await
-            .unwrap();
-        assert!(Scope::GlobalScope.contains(&found.metadata.scope));
-
-        // Search with UserScope should find the UserScope entity (it's contained in UserScope, while GlobalScope is not)
-        let found = store
-            .find_personality_by_name(&ctx, "assistant", &user_scope)
-            .await
-            .unwrap();
-        assert_eq!(found.metadata.scope, user_scope);
-    }
-
-    #[tokio::test]
-    async fn session_template_lookup_honors_scope() {
-        let store = MemoryStore::new();
-        let ctx = SecurityContext::default();
-        let user_scope = Scope::UserScope {
-            user_id: UserId(Uuid::new_v4()),
-        };
-
-        store
-            .create_session_template(&ctx, &make_session_template("pairing", Scope::GlobalScope))
-            .await
-            .unwrap();
-        store
-            .create_session_template(&ctx, &make_session_template("pairing", user_scope.clone()))
-            .await
-            .unwrap();
-
-        // UserScope search should find UserScope entity (GlobalScope is not contained in UserScope)
-        let loaded = store
-            .find_session_template_by_name(&ctx, "pairing", &user_scope)
-            .await
-            .unwrap();
-        assert_eq!(loaded.metadata.scope, user_scope);
-
-        // GlobalScope search should find an entity (GlobalScope or UserScope)
-        let loaded = store
-            .find_session_template_by_name(&ctx, "pairing", &Scope::GlobalScope)
-            .await
-            .unwrap();
-        assert!(Scope::GlobalScope.contains(&loaded.metadata.scope));
     }
 
     #[tokio::test]

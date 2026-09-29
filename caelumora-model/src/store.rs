@@ -4,7 +4,6 @@ use std::fmt::Debug;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
-use crate::meta::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -33,6 +32,9 @@ pub type StoreResult<T> = Result<T, StoreError>;
 /// every one of them is checked the same way (`store_impl::access`).
 /// `create` refuses an entity that exists (`Conflict`), `update` one that
 /// does not (`NotFound`); `delete` says whether there was one to delete.
+/// Only users are also found by name: a username is an identity. Whoever
+/// looks for another kind by name filters `list_x`, with `Scope::contains`
+/// where the scope matters.
 #[async_trait]
 pub trait EntityStore : Debug + Sync + Send {
     // Personalities
@@ -41,7 +43,6 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality>;
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
@@ -49,7 +50,6 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
@@ -57,7 +57,6 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
     async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent>;
 
     // Sessions
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
@@ -110,6 +109,7 @@ pub trait StateStore : Debug + Sync + Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::meta::Scope;
     use crate::meta::Metadata;
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::session::Participant;

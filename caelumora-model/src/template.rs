@@ -229,19 +229,22 @@ impl ParticipantTemplate {
                 let sc = scope.instantiate(&context);
                 let agent = match agent_id {
                     Some(aid) => context.entity_store.get_agent(&context.security, aid).await?,
-                    None => match context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
-                        Ok(agent) => agent,
+                    None => {
                         // Only "there is none" means "make one": a lookup that
-                        // failed or was refused must not end in a second agent
-                        // of that name (issue 77).
-                        Err(StoreError::NotFound { .. }) => {
-                            let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await?;
-                            let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.initiator_id);
-                            context.entity_store.create_agent(&context.security, &agent).await?;
-                            agent
+                        // failed or was refused is an error, not a reason for
+                        // a second agent of that name (issue 77).
+                        let known = context.entity_store.list_agents(&context.security).await?.into_iter()
+                            .find(|a| a.metadata.name == *name && sc.contains(&a.metadata.scope));
+                        match known {
+                            Some(agent) => agent,
+                            None => {
+                                let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await?;
+                                let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.initiator_id);
+                                context.entity_store.create_agent(&context.security, &agent).await?;
+                                agent
+                            }
                         }
-                        Err(e) => return Err(e.into()),
-                    },
+                    }
                 };
                 Participant::Agent(agent)
             },
@@ -326,14 +329,14 @@ mod tests {
         assert!(loaded.commands.component_nodes.is_empty());
     }
 
-    /// Allows everything but looking agents up by name.
+    /// Allows everything but listing agents.
     #[derive(Debug)]
     struct NoAgentLookup;
 
     #[async_trait::async_trait]
     impl crate::security::SecurityManager for NoAgentLookup {
         async fn check(&self, _context: &SecurityContext, action: crate::security::ActionType<'_>) -> bool {
-            !matches!(action, crate::security::ActionType::FindAgent)
+            !matches!(action, crate::security::ActionType::ListAgents)
         }
     }
 

@@ -23,6 +23,11 @@ use caelumora_runtime::component_impl::calculator_tool::CALCULATOR_TOOL_PROVIDER
 use caelumora_runtime::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::component_impl::stop_tool::STOP_TOOL_PROVIDER_KIND;
 
+/// The first of `entities` named `name` in the global scope.
+fn named<T>(entities: Vec<T>, name: &str, metadata: impl Fn(&T) -> &Metadata) -> Option<T> {
+    entities.into_iter().find(|e| metadata(e).name == name && Scope::GlobalScope.contains(&metadata(e).scope))
+}
+
 pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) -> anyhow::Result<()> {
     // The initial data belongs to the system: every user may use it, nobody
     // but the system may change it (issue 11).
@@ -40,7 +45,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     }
 
     // 2. Ensure personalities exist
-    let jonathan = if let Ok(p) = store.find_personality_by_name(&ctx, "jonathan-assistant", &Scope::GlobalScope).await {
+    let jonathan = if let Ok(p) = named(store.list_personalities(&ctx).await?, "jonathan-assistant", |p| &p.metadata).ok_or(()) {
         p
     } else {
         let p = create_personality(
@@ -53,7 +58,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
         p
     };
 
-    let sassy = if let Ok(p) = store.find_personality_by_name(&ctx, "sassy-assistant", &Scope::GlobalScope).await {
+    let sassy = if let Ok(p) = named(store.list_personalities(&ctx).await?, "sassy-assistant", |p| &p.metadata).ok_or(()) {
         p
     } else {
         let p = create_personality(
@@ -67,7 +72,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     };
 
     // 3. Ensure session templates exist
-    if store.find_session_template_by_name(&ctx, "simple-session", &Scope::GlobalScope).await.is_err() {
+    if named(store.list_session_templates(&ctx).await?, "simple-session", |t| &t.metadata).is_none() {
         let template_a = SessionTemplate {
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {
@@ -99,7 +104,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
         store.create_session_template(&ctx, &template_a).await?;
     }
 
-    if store.find_session_template_by_name(&ctx, "sassy-session", &Scope::GlobalScope).await.is_err() {
+    if named(store.list_session_templates(&ctx).await?, "sassy-session", |t| &t.metadata).is_none() {
         let template_b = SessionTemplate {
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {
@@ -140,7 +145,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
     }
 
     // Agents answer only when a user @-mentions them (issue 44).
-    if store.find_session_template_by_name(&ctx, "mentions-session", &Scope::GlobalScope).await.is_err() {
+    if named(store.list_session_templates(&ctx).await?, "mentions-session", |t| &t.metadata).is_none() {
         let template_c = SessionTemplate {
             id: SessionTemplateId(Uuid::new_v4()),
             metadata: Metadata {

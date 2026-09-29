@@ -107,7 +107,6 @@ mod tests {
         controller.update_name(&ctx, "new_name".to_string()).await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        let stored = store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).await.unwrap();
-        assert_eq!(stored.id, agent.id);
+        assert_eq!(store.get_agent(&ctx, agent.id).await.unwrap().metadata.name, "new_name");
     }
 }

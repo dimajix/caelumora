@@ -79,3 +79,13 @@ seven small inconsistencies.
   methods, now with `delete_user` and `list_users` (issue 94). JSON stores
   written before this keep templates under their names; being dev data,
   they are to be deleted rather than migrated.
+- **2026-09-29** — Step 3: only users are found by name
+  (`find_user_by_name` - a username is an identity, and the login needs
+  it). `find_agent_by_name`, `find_personality_by_name` and
+  `find_session_template_by_name` are gone, and with them
+  `ActionType::{FindAgent, FindPersonality, FindSessionTemplate}`. The
+  template instantiation looks the agent up in `list_agents` with
+  `Scope::contains` - a refused or failed list is still an error, not a
+  reason to create a second agent (77) - and the seeding in REST looks
+  personalities and templates up in their lists. The three store tests of
+  the name lookups went with them; `Scope::contains` has its own tests.

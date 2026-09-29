@@ -1,7 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
-use crate::meta::Scope;
 use crate::security::{Secured, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES};
 use crate::session::{Session, SessionId};
@@ -242,7 +241,7 @@ fn sanitize_file_component(value: &str) -> String {
         .collect()
 }
 
-use crate::security::{ActionType, SecurityContext};
+use crate::security::SecurityContext;
 
 /// The five operations of every entity kind (issue 93), each document a
 /// file at `path` and checked with its kind's `Actions`.
@@ -303,14 +302,6 @@ impl EntityStore for JsonFileStore {
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         self.list_dir(ctx, &PERSONALITIES, self.personality_dir()).await
     }
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        self.access(ctx).allow(ActionType::FindPersonality).await?;
-        require_entity(
-            self.list_personalities(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            PERSONALITIES.entity,
-            name.to_string(),
-        )
-    }
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
@@ -328,14 +319,6 @@ impl EntityStore for JsonFileStore {
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
     }
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
-        require_entity(
-            self.list_session_templates(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            SESSION_TEMPLATES.entity,
-            name.to_string(),
-        )
-    }
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -352,16 +335,6 @@ impl EntityStore for JsonFileStore {
     }
     async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
         self.list_dir(ctx, &AGENTS, self.agents_dir()).await
-    }
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
-        let access = self.access(ctx);
-        access.allow(ActionType::FindAgent).await?;
-        let all = read_all_from_dir::<Agent>(&self.agents_dir()).await?;
-        require_entity(
-            access.filter(all, AGENTS.get).await.into_iter().find(|a| a.metadata.name == name && scope.contains(&a.metadata.scope)),
-            AGENTS.entity,
-            name.to_string(),
-        )
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another
@@ -594,43 +567,11 @@ mod tests {
 
         let session_template = make_session_template();
         store.create_session_template(&ctx, &session_template).await.unwrap();
-        let found_session = store
-            .find_session_template_by_name(
-                &ctx,
-                &session_template.metadata.name,
-                &session_template.metadata.scope,
-            )
-            .await
-            .unwrap();
+        let found_session = store.get_session_template(&ctx, session_template.id).await.unwrap();
         assert_eq!(
             found_session.metadata.name,
             session_template.metadata.name
         );
-    }
-
-    #[tokio::test]
-    async fn find_honors_containment() {
-        let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
-        let ctx = SecurityContext::default();
-
-        let mut personality = make_personality();
-        let user_id = UserId(Uuid::new_v4());
-        let user_scope = Scope::UserScope { user_id };
-        personality.metadata.scope = user_scope.clone();
-        
-        store.create_personality(&ctx, &personality).await.unwrap();
-
-        // Search with UserScope should find it
-        store.find_personality_by_name(&ctx, &personality.metadata.name, &user_scope).await.unwrap();
-
-        // Search with GlobalScope should ALSO find it
-        store.find_personality_by_name(&ctx, &personality.metadata.name, &Scope::GlobalScope).await.unwrap();
-
-        // Search with different UserScope should NOT find it
-        let other_user = Scope::UserScope { user_id: UserId(Uuid::new_v4()) };
-        store.find_personality_by_name(&ctx, &personality.metadata.name, &other_user).await.unwrap_err();
     }
 
     #[tokio::test]

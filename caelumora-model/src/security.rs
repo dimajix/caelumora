@@ -19,13 +19,11 @@ use std::fmt::Debug;
 #[derive(Debug, Clone, Copy)]
 pub enum ActionType<'a> {
     GetPersonality(&'a SecurityAttributes),
-    FindPersonality,
     ListPersonalities,
     CreatePersonality(&'a SecurityAttributes),
     UpdatePersonality(&'a SecurityAttributes),
     DeletePersonality(&'a SecurityAttributes),
     GetSessionTemplate(&'a SecurityAttributes),
-    FindSessionTemplate,
     ListSessionTemplates,
     CreateSessionTemplate(&'a SecurityAttributes),
     UpdateSessionTemplate(&'a SecurityAttributes),
@@ -36,7 +34,6 @@ pub enum ActionType<'a> {
     /// system prompt, internal messages and tool results included (issue
     /// 06). Carries the agent's attributes.
     ReadAgentContext(&'a SecurityAttributes),
-    FindAgent,
     ListAgents,
     UpdateAgent(&'a SecurityAttributes),
     DeleteAgent(&'a SecurityAttributes),
@@ -318,11 +315,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteChannel(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a) => a.owner_id == me && me != ActorId::None,
-            ActionType::FindPersonality
-            | ActionType::ListPersonalities
-            | ActionType::FindSessionTemplate
+            ActionType::ListPersonalities
             | ActionType::ListSessionTemplates
-            | ActionType::FindAgent
             | ActionType::ListAgents
             | ActionType::ListSessions
             | ActionType::ListChannels
