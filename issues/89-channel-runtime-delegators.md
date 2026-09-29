@@ -1,6 +1,6 @@
 # 89 — `ChannelRuntime` is a layer of delegators without a life of its own
 
-**Status:** open
+**Status:** rejected
 **Area:** Code structure
 
 ## The problem
@@ -34,3 +34,16 @@ A reader follows `ChannelRuntime::security_manager()` to find that it is
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.8).
+- **2026-09-29** — Rejected with the maintainer. Part of the problem is gone
+  already: `with_session` and the builder no longer exist,
+  `ChannelRuntime::new(manager, commands)` is the whole construction, so no
+  `detached` is needed. What remains are the six one-line delegators
+  (`runtime.rs:83-94`) with six callers, all in `channel.rs`. Replacing them
+  by `manager()` would turn every call into `runtime.manager().x()` - longer
+  at each call site for six lines saved in `runtime.rs`; the gain in
+  readability is too small to justify it. `Deref<Target = RuntimeManager>`
+  hides the same delegation and was not considered further; letting
+  `SessionLoop` build moderator, recorder and controller for
+  `ChannelLoop::new` moves knowledge about what a channel needs to the
+  session. `ChannelRuntime::event_bus()` has no caller; that belongs to
+  [107](107-public-interface.md).
