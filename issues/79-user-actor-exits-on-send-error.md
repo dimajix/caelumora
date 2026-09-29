@@ -1,6 +1,6 @@
 # 79 — `UserActor` exits on a send error, and the three actor run loops differ only there
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -38,3 +38,23 @@ loop drift - this is the drift.
 
 - **2026-09-28** — Found in the structure review
   (`work/2026-09-28-code-review.md`, section 1, error 5 and 3.2.2).
+- **2026-09-29** — Done, but not as described: the finding was wrong. The
+  in-memory transport's `send` waits while the queue is full and fails
+  only when the receiver is gone - the inbox of `ChannelLoop::run`, i.e.
+  when the channel no longer runs. There is no transient error that would
+  remove a participant; ending the actor then is right (its task would be
+  aborted with the channel's `JoinSet` anyway). What was wrong was the
+  difference: the `UserActor` reported that end as an error
+  (`tracing::error!` via `?`), the `ApproverActor` logged a `warn!` and
+  kept running for nothing. Both now end quietly with an `info!` when
+  their output is closed, and log anything else as a warning and carry
+  on. `InMemoryEventSender::send` reports a closed queue as
+  `TransportError::Closed` like `try_send` does (it said `Backend`), and
+  `transport::is_closed` finds it through any context. Test: a
+  `UserActor` whose channel is gone ends with `Ok`.
+  The shared run loop was not built: the two loops differ exactly in the
+  parts that are not the frame - the user's second input queue and the
+  approver's timeout timer. Once [90](90-message-path-wake-and-queue.md)
+  removes the user's queue, it is worth looking at again; noted there.
+  Should a remote transport ([21](21-scaling.md)) bring transient send
+  errors, whether an actor survives them is decided with that transport.

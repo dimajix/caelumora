@@ -1,8 +1,8 @@
 use crate::actor::Actor;
 use crate::command::{CommandContext, CommandReply};
 use crate::runtime::{ActorRuntime, OwnTopic};
-use crate::transport::{EventReceiver, EventSender};
-use anyhow::{anyhow, Context, Result};
+use crate::transport::{EventReceiver, EventSender, TransportError};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::approval::ApprovalResponse;
@@ -178,20 +178,21 @@ impl UserActor {
         }
     }
 
-    async fn handle_user_event(
-        &self,
-        maybe_envelope: Option<Envelope>,
-        tx: &dyn EventSender,
-    ) -> Result<bool> {
-        match maybe_envelope {
-            Some(envelope) => {
-                debug!(span_id = %envelope.context.span_id, "UserActor {} sends {}", self.id(), envelope.event.kind());
-                tx.send(envelope)
-                    .await
-                    .context(format!("UserActor {} failed to forward user message", self.id))?;
-                Ok(false)
+    /// Forwards what the user sent into the channel. `false` once the
+    /// channel's inbox is gone - the only way the in-memory transport fails
+    /// - and with it the channel: the actor then ends (issue 79).
+    async fn forward(&self, envelope: Envelope, tx: &dyn EventSender) -> bool {
+        debug!(span_id = %envelope.context.span_id, "UserActor {} sends {}", self.id(), envelope.event.kind());
+        match tx.send(envelope).await {
+            Ok(()) => true,
+            Err(TransportError::Closed) => {
+                info!("UserActor {} ends: its channel is gone", self.id());
+                false
             }
-            None => Ok(true),
+            Err(e) => {
+                warn!("UserActor {} could not forward a message: {}", self.id(), e);
+                true
+            }
         }
     }
 
@@ -251,7 +252,10 @@ impl Actor for UserActor {
                     rx_closed = self.handle_actor_envelope(maybe_event);
                 }
                 maybe_message = user_rx.recv(), if !user_rx_closed => {
-                    user_rx_closed = self.handle_user_event(maybe_message, &*tx).await?;
+                    match maybe_message {
+                        Some(envelope) => if !self.forward(envelope, &*tx).await { break },
+                        None => user_rx_closed = true,
+                    }
                 }
                 maybe_global = global_rx.recv(), if !global_rx_closed => {
                     global_rx_closed = self.handle_global_event(maybe_global).await;
@@ -314,6 +318,22 @@ mod tests {
             assert_eq!(envelope.context.channel_id, actor.channel_id);
         }
         assert_ne!(complete.context.event_id, full.context.event_id, "two events, two event ids");
+    }
+
+    #[tokio::test]
+    async fn a_user_actor_whose_channel_is_gone_ends_without_an_error() {
+        use crate::transport_impl::{InMemoryEventReceiver, InMemoryEventSender};
+        let actor = user_actor().await;
+        let (_inbox, rx) = mpsc::channel(1);
+        let (output, channel_inbox) = mpsc::channel(1);
+        drop(channel_inbox);
+
+        actor.send_message("hello".to_string()).await.unwrap();
+        let ended = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))),
+        ).await.expect("the actor ends");
+        assert!(ended.is_ok(), "a channel that is gone is an end, not an error: {ended:?}");
     }
 
     #[tokio::test]

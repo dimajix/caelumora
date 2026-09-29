@@ -111,7 +111,7 @@ impl EventSender for InMemoryEventSender {
         self.tx
             .send(event)
             .await
-            .map_err(|e| TransportError::Backend(format!("channel closed: {}", e)))
+            .map_err(|_| TransportError::Closed)
     }
 
     fn try_send(&self, event: Envelope) -> TransportResult<()> {

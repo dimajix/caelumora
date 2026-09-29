@@ -24,6 +24,12 @@ impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for TransportError {
     }
 }
 
+/// Whether `error` says the receiving end is gone - for an actor's output,
+/// that its channel no longer runs. Found through any context added to it.
+pub fn is_closed(error: &anyhow::Error) -> bool {
+    matches!(error.downcast_ref::<TransportError>(), Some(TransportError::Closed))
+}
+
 /// Transport-agnostic outbound sender.
 /// Used by actors to emit events and by channels to route events to actors.
 #[async_trait]

@@ -53,3 +53,7 @@ perceived message scales with the number of agents in the channel (3).
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, path 3.4 A). Point 3 is a cost of
   commit `ed9abe8`, noticed by the review.
+- **2026-09-29** — From [79](79-user-actor-exits-on-send-error.md): once
+  the `UserActor` queue is gone, its run loop is only its inbox and the
+  global events - then check whether it and the `ApproverActor` (inbox,
+  global events, a timeout timer) should share one run loop.

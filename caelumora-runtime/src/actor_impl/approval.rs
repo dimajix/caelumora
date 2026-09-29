@@ -333,6 +333,11 @@ impl Actor for ApproverActor {
                     match maybe_env {
                         Some(env) => {
                             if let Err(e) = self.handle_envelope(env, &*tx).await {
+                                // Its channel is gone: nothing left to decide for (issue 79).
+                                if crate::transport::is_closed(&e) {
+                                    info!("ApproverActor {:?} ends: its channel is gone", self.id);
+                                    break;
+                                }
                                 warn!("ApproverActor error handling envelope: {:?}", e);
                             }
                         }
@@ -346,6 +351,10 @@ impl Actor for ApproverActor {
                 }
                 _ = timeout_fut => {
                     if let Err(e) = self.handle_timeouts(&*tx).await {
+                        if crate::transport::is_closed(&e) {
+                            info!("ApproverActor {:?} ends: its channel is gone", self.id);
+                            break;
+                        }
                         warn!("ApproverActor error handling timeouts: {:?}", e);
                     }
                 }
