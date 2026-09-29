@@ -63,11 +63,9 @@ pub(crate) async fn describe_session(state: &AppState, session: Session, viewer:
     match state.session_manager.get_session(session.id) {
         Some(running) => {
             let mut channels = Vec::new();
-            for channel in running.channels() {
-                // Only the channels the viewer may read (issue 70).
-                if crate::routes::may_read_channel(state, &channel, viewer).await {
-                    channels.push(crate::routes::channels::channel_response(state, &channel, viewer).await);
-                }
+            // Only the channels the viewer may read (issue 70).
+            for channel in running.readable_channels(viewer).await {
+                channels.push(crate::routes::channels::channel_response(state, &channel, viewer).await);
             }
             session_snapshot(state, (**running.get_session()).clone(), channels).await
         }

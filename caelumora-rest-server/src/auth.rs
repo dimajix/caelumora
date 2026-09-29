@@ -191,9 +191,14 @@ pub struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
+    /// The actor this user is.
+    pub fn actor_id(&self) -> ActorId {
+        ActorId::User(self.id)
+    }
+
     /// The security context for actions taken on behalf of this user.
     pub fn security_context(&self) -> SecurityContext {
-        SecurityContext::new(ActorId::User(self.id), Default::default(), Default::default())
+        SecurityContext::new(self.actor_id(), Default::default(), Default::default())
     }
 
     /// How much of the session token is left, from now. Zero once it has

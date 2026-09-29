@@ -6,7 +6,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, DEFAULT_MODERATOR};
 use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -146,6 +146,33 @@ impl SessionLoop {
         self.channels.get(&channel_id).map(|entry| entry.channel.clone())
     }
 
+    /// The channel `channel_id`, if `context` may read it (`GetChannel`,
+    /// issues 70, 102) - the counterpart of `SessionManager::open_session`.
+    ///
+    /// # Errors
+    /// `SessionError::ChannelNotFound` if there is no such channel, and
+    /// equally if `context` may not read it, so that channels cannot be
+    /// probed.
+    pub async fn channel_for(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
+        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
+        let channel = self.channel_by_id(channel_id).ok_or_else(not_found)?;
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::GetChannel(&channel.security_attributes()), not_found).await?;
+        Ok(channel)
+    }
+
+    /// The running channels `context` may read, in the order of the session.
+    pub async fn readable_channels(&self, context: &SecurityContext) -> Vec<Arc<ChannelLoop>> {
+        let security = self.runtime_manager.security_manager();
+        let mut readable = Vec::new();
+        for channel in self.channels() {
+            if security.may_read_channel(context, &channel.security_attributes()).await {
+                readable.push(channel);
+            }
+        }
+        readable
+    }
+
     pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
         self.channels.iter().find(|entry| entry.channel.name() == name).map(|entry| entry.channel.clone())
     }
@@ -261,15 +288,6 @@ impl SessionLoop {
     async fn discard_channel(&self, channel_id: ChannelId) {
         if let Err(e) = self.runtime_manager.entity_store().delete_channel(&SecurityContext::system(), channel_id).await {
             warn!("Channel {} of session {} could not be deleted again: {}", channel_id, self.id, e);
-        }
-    }
-
-    pub async fn cancel_channel(&self, channel_id: ChannelId, context: &SecurityContext) -> Result<()> {
-        if let Some(c) = self.channel_by_id(channel_id) {
-            c.cancel(context).await?;
-            Ok(())
-        } else {
-            Err(anyhow!("Channel not found"))
         }
     }
 
@@ -1060,6 +1078,36 @@ mod tests {
         assert!(session.channel_by_id(main).is_some(), "a refused deletion leaves the channel");
 
         session.create_channel(&alice_ctx, spec("hers", vec![])).await.expect("the owner may");
+        manager.stop_session(session.id()).await;
+    }
+
+    #[tokio::test]
+    async fn a_channel_its_viewer_may_not_read_is_not_there_for_them() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let manager = SessionManager::new(runtime);
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let (alice, bob) = (user("alice"), user("bob"));
+        let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice.id), contributors: vec![ActorId::User(bob.id)] };
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        let session = create(&manager, &as_user(alice.id), session).await.unwrap();
+        // Alice's alone: bob takes part in the session, not in this channel.
+        let hers = session.create_channel(&as_user(alice.id), spec("hers", vec![])).await.unwrap();
+
+        let hidden = session.channel_for(&as_user(bob.id), hers.id()).await.expect_err("not bob's to read");
+        assert!(matches!(hidden.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "absent, not refused: {hidden}");
+        assert!(session.channel_for(&as_user(alice.id), hers.id()).await.is_ok(), "the owner reads it");
+        let names = |channels: Vec<Arc<ChannelLoop>>| channels.iter().map(|c| c.name()).collect::<Vec<_>>();
+        assert!(!names(session.readable_channels(&as_user(bob.id)).await).contains(&"hers".to_string()), "nor is it listed for bob");
+        assert!(names(session.readable_channels(&as_user(alice.id)).await).contains(&"hers".to_string()));
         manager.stop_session(session.id()).await;
     }
 

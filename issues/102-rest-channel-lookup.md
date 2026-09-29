@@ -1,6 +1,6 @@
 # 102 — The REST server looks a channel up twelve times the same way, and answers access questions itself
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -52,3 +52,18 @@ session × channel for the same question.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 5.2.1, 5.2.5, 5.5 "Cancel").
+- **2026-09-29** — Done, as agreed with the maintainer. The runtime decides
+  what a viewer sees: `SessionLoop::channel_for(ctx, id)` returns a channel
+  only if `ctx` may read it (`GetChannel` through `Enforcement::require`,
+  answered as `SessionError::ChannelNotFound` like a missing one), and
+  `readable_channels(ctx)` filters the channel list and the session
+  snapshot. REST reaches a channel through one call, `open_channel(state,
+  user, session, channel)`; `channel_of` and `routes::may_read_channel` are
+  gone, and no handler asks an access question itself. Cancelling is, in
+  the maintainer's words, a meta-operation like renaming or deleting: the
+  handler calls `channel.cancel(ctx)`, whose own `CancelChannel` check
+  decides, and no longer requires participation through `user_actor_of`;
+  `SessionLoop::cancel_channel` is gone. Taking part - writing, approving,
+  commands, following live - stays with the user's actor (issues 90, 104).
+  `AuthenticatedUser::actor_id()` names the viewer. A test checks that a
+  channel its viewer may not read is neither found nor listed.

@@ -4,7 +4,6 @@ use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
 use crate::error::{ApiError, Subject};
-use crate::routes::channel_of;
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
 use caelumora_model::actor::ActorId;
@@ -33,11 +32,9 @@ pub async fn list_channels(
 
     let context = user.security_context();
     let mut channels = Vec::new();
-    for channel in session.channels() {
-        // Only the channels the user may read (issue 70).
-        if crate::routes::may_read_channel(&state, &channel, &context).await {
-            channels.push(channel_response(&state, &channel, &context).await);
-        }
+    // Only the channels the user may read (issue 70).
+    for channel in session.readable_channels(&context).await {
+        channels.push(channel_response(&state, &channel, &context).await);
     }
     Ok(Json(channels))
 }
@@ -80,11 +77,7 @@ pub async fn get_channel(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session_id = SessionId(id);
-    let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-    
-    let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
 
     Ok(Json(channel_response(&state, &channel, &user.security_context()).await))
 }
@@ -116,13 +109,10 @@ pub async fn get_channel_messages(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<Message>>, ApiError> {
-    let session_id = SessionId(id);
-    let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-    let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
 
     // As much of it as the user may see (issue 46).
-    let messages = channel.visible_history(user.security_context().initiator_id).await.messages;
+    let messages = channel.visible_history(user.actor_id()).await.messages;
 
     Ok(Json(messages))
 }
@@ -134,9 +124,7 @@ pub async fn get_notes(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
-    let session_id = SessionId(id);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-    let channel = channel_of(&state, &session, ChannelId(cid), &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let notes = channel.published_notes().await
         .map_err(|e| ApiError::internal("notes_failed", &format!("reading the notes of channel {}", cid), &e))?;
     Ok(Json(notes.into_iter().map(Into::into).collect()))
@@ -175,9 +163,8 @@ pub async fn join_channel(
     Query(options): Query<StreamOptions>,
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let session_loop = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let viewer = user.security_context();
-    let channel = channel_of(&state, &session_loop, ChannelId(cid), &viewer).await?;
     // Watched *before* the state is read: nothing that happens while the
     // snapshot is assembled is lost. The price is that an event can arrive
     // twice - once in the snapshot, once as an event - which clients drop by
@@ -200,10 +187,8 @@ pub async fn add_participant(
     user: AuthenticatedUser,
     Json(payload): Json<AddParticipantRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let session_id = SessionId(id);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let context = user.security_context();
-    let channel = channel_of(&state, &session, ChannelId(cid), &context).await?;
     channel.add_participant(&context, payload.participant, payload.history).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Participant, &format!("adding a participant to channel {cid}")))?;
     Ok(Json(channel_response(&state, &channel, &context).await))
@@ -216,10 +201,8 @@ pub async fn remove_participant(
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let context = user.security_context();
-    let channel = channel_of(&state, &session, ChannelId(cid), &context).await?;
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
     channel.remove_participant(&context, participant).await
@@ -234,11 +217,7 @@ pub async fn send_message(
     user: AuthenticatedUser,
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
-    let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-    
-    let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let span_id = user_actor.send_message(payload.content).await
         .map_err(|e| ApiError::internal("message_not_sent", "sending the message", &e))?;
@@ -262,20 +241,16 @@ fn user_actor_of(channel: &ChannelLoop, user: &AuthenticatedUser) -> Result<Arc<
     })
 }
 
+/// Ends the turn of every agent in the channel - an operation on the
+/// channel, like renaming it, not an act of taking part: whoever the policy
+/// lets cancel it may (`CancelChannel`, checked by the channel).
 pub async fn cancel_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
-    let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-
-    // Cancelling ends the turn of every agent in the channel, so it is an
-    // action in the channel like writing into it - participants only.
-    let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
-    user_actor_of(&channel, &user)?;
-    session.cancel_channel(channel_id, &user.security_context()).await
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    channel.cancel(&user.security_context()).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, "cancelling the channel"))?;
     Ok(StatusCode::OK)
 }
@@ -288,8 +263,7 @@ pub async fn list_commands(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<Command>>, ApiError> {
-    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
-    let channel = channel_of(&state, &session, ChannelId(cid), &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     Ok(Json(user_actor.visible_commands().await))
 }
@@ -303,8 +277,7 @@ pub async fn execute_command(
     user: AuthenticatedUser,
     Json(payload): Json<ExecuteCommandRequest>,
 ) -> Result<Json<CommandReplyResponse>, ApiError> {
-    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
-    let channel = channel_of(&state, &session, ChannelId(cid), &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let reply = user_actor.execute_command(&payload.name, &payload.args).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Command, &format!("running /{}", payload.name)))?;
@@ -323,8 +296,7 @@ pub async fn message_context(
     Path((id, cid, aid, mid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<MessageContextResponse>, ApiError> {
-    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
-    let channel = channel_of(&state, &session, ChannelId(cid), &user.security_context()).await?;
+    let (session, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let actor = actor_in(&channel, aid)
         .and_then(|actor| channel.actor_by_id(actor))
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
@@ -369,11 +341,7 @@ pub async fn send_approval(
     user: AuthenticatedUser,
     Json(payload): Json<SendApprovalRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let session_id = SessionId(id);
-    let channel_id = ChannelId(cid);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-
-    let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let response = ApprovalResponse {
         id: ApprovalId(payload.approval_id),

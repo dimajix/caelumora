@@ -1,7 +1,6 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::{ApiError, Subject};
 use crate::state::AppState;
-use caelumora_model::security::AccessQuestions;
 use axum::{
     routing::{get, post},
     Router,
@@ -30,18 +29,15 @@ pub async fn ensure_session(
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("opening session {session_id}")))
 }
 
-/// The channel `channel_id` of `session`, if `viewer` may read it (issue 70):
-/// one they may not read is reported as absent, like one that does not
-/// exist, so that channels cannot be probed.
-pub async fn channel_of(state: &AppState, session: &SessionLoop, channel_id: ChannelId, viewer: &caelumora_model::security::SecurityContext) -> Result<Arc<ChannelLoop>, ApiError> {
-    let not_found = || ApiError::not_found("channel_not_found", format!("Channel {} does not exist in this session", channel_id));
-    let channel = session.channel_by_id(channel_id).ok_or_else(not_found)?;
-    if may_read_channel(state, &channel, viewer).await { Ok(channel) } else { Err(not_found()) }
-}
-
-/// Whether `viewer` may read the running `channel` (issue 70).
-pub async fn may_read_channel(state: &AppState, channel: &ChannelLoop, viewer: &caelumora_model::security::SecurityContext) -> bool {
-    state.runtime_manager.security_manager().may_read_channel(viewer, &channel.security_attributes()).await
+/// Session `session_id` and its channel `channel_id`, as `user` may read
+/// them - the one way a handler reaches a channel (issue 102). A channel the
+/// user may not read is answered as absent, like one that does not exist;
+/// the runtime decides that (`SessionLoop::channel_for`).
+pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<(Arc<SessionLoop>, Arc<ChannelLoop>), ApiError> {
+    let session = ensure_session(state, user, session_id).await?;
+    let channel = session.channel_for(&user.security_context(), channel_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("opening channel {channel_id}")))?;
+    Ok((session, channel))
 }
 
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a
