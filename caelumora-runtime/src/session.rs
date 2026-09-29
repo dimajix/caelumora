@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use crate::controller::SessionController;
 use dashmap::DashMap;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinHandle, JoinSet};
 
@@ -73,23 +73,21 @@ pub struct SessionLoop {
     start_tx: mpsc::UnboundedSender<ChannelId>,
     /// Taken by `run`, which is how it knows it is not already running.
     start_rx: Mutex<mpsc::UnboundedReceiver<ChannelId>>,
-    /// Shared with the runtime of every channel, so that a channel reaches
-    /// the others of its session (issue 17). Set by `attach`.
-    handle: Arc<OnceLock<Weak<SessionLoop>>>,
 }
 
 impl SessionLoop {
     /// The loop of `session`, with its `channels` - documents of their own
-    /// (issue 70), in the order the session lists them.
-    pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
+    /// (issue 70), in the order the session lists them - each attached to
+    /// it, so that a channel reaches the others of its session (issues 17,
+    /// 123).
+    pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
-        let handle = Arc::new(OnceLock::new());
         let channel_docs = channels;
         let channels = DashMap::new();
         for channel in channel_docs {
-            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone()).with_session(handle.clone());
+            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone());
             let cl = ChannelLoop::new(channel, runtime).await?;
             let id = cl.id();
             channels.insert(id, ChannelEntry { channel: cl, task: None });
@@ -98,7 +96,7 @@ impl SessionLoop {
 
         let session_controller = runtime_manager.controller_manager().new_session_controller(session);
 
-        Ok(Self {
+        let session_loop = Arc::new(Self {
             id,
             session_controller,
             runtime_manager,
@@ -106,14 +104,11 @@ impl SessionLoop {
             channels,
             start_tx,
             start_rx: Mutex::new(start_rx),
-            handle,
-        })
-    }
-
-    /// Makes the session reachable from the runtimes of its channels. Called
-    /// once, as soon as it is in an `Arc`.
-    pub(crate) fn attach(self: &Arc<Self>) {
-        let _ = self.handle.set(Arc::downgrade(self));
+        });
+        for entry in session_loop.channels.iter() {
+            entry.channel.attach(&session_loop);
+        }
+        Ok(session_loop)
     }
 
     pub fn id(&self) -> SessionId {
@@ -163,7 +158,7 @@ impl SessionLoop {
     ///   participant who is not one of the session's.
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session; nothing is changed then.
-    pub async fn create_channel(&self, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
+    pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
         let session = self.get_session();
         let name = spec.name.trim().to_string();
         if name.is_empty() {
@@ -205,7 +200,7 @@ impl SessionLoop {
             return Err(error.into());
         }
 
-        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone()).with_session(self.handle.clone());
+        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone());
         let channel_loop = match ChannelLoop::new(channel.clone(), runtime).await {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
@@ -218,6 +213,7 @@ impl SessionLoop {
                 return Err(error);
             }
         };
+        channel_loop.attach(self);
         self.channels.insert(channel.id, ChannelEntry { channel: channel_loop.clone(), task: None });
         self.runtime_manager.event_bus().publish(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone());
         let _ = self.start_tx.send(channel.id);
@@ -364,11 +360,10 @@ impl SessionManager {
     async fn spawn_session(&self, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let attributes = session.security_attributes.clone();
-        let session_loop = Arc::new(SessionLoop::new(session, channels, self.runtime_manager.clone()).await?);
-        session_loop.attach();
-        self.sessions.insert(id, session_loop.clone());
+        let session_loop = SessionLoop::new(session, channels, self.runtime_manager.clone()).await?;
+        self.sessions.insert(id, Arc::clone(&session_loop));
 
-        let loop_for_task = session_loop.clone();
+        let loop_for_task = Arc::clone(&session_loop);
         let handle = tokio::spawn(async move {
             if let Err(e) = loop_for_task.run().await {
                 tracing::error!("Session loop for {} failed: {}", id, e);
@@ -946,8 +941,7 @@ mod tests {
         let session = make_session("waiting");
         let channel_id = session.channels[0];
         persist(&runtime, &ctx, &session).await;
-        let session_loop = Arc::new(SessionLoop::new(session.clone(), vec![main_channel(&session)], runtime.clone()).await.unwrap());
-        session_loop.attach();
+        let session_loop = SessionLoop::new(session.clone(), vec![main_channel(&session)], runtime.clone()).await.unwrap();
         let mut rx = runtime.event_bus().subscribe_all();
 
         // Queued to be started, but deleted before `run` gets to it.

@@ -1,5 +1,4 @@
 use crate::channel::ChannelLoop;
-use crate::session::SessionLoop;
 use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, ComponentRegistry, ComponentResult};
 use crate::controller::ControllerManager;
@@ -60,22 +59,12 @@ pub struct ChannelRuntime {
     // owns its actors and they hold this runtime: a strong reference would
     // keep a stopped channel alive forever.
     channel: Arc<OnceLock<Weak<ChannelLoop>>>,
-    // The session the channel belongs to, shared by all its channels and set
-    // once the session exists (`SessionLoop::attach`). Weak for the same
-    // reason as `channel`.
-    session: Arc<OnceLock<Weak<SessionLoop>>>,
 }
 
 impl ChannelRuntime {
     /// A runtime for a channel of a session whose user commands are `commands`.
     pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>) -> Self {
-        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()), session: Arc::new(OnceLock::new()) }
-    }
-
-    /// This runtime, for a channel of the session `session` will point to.
-    pub fn with_session(mut self, session: Arc<OnceLock<Weak<SessionLoop>>>) -> Self {
-        self.session = session;
-        self
+        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()) }
     }
 
     /// The runtime of `actor` in the channel `channel_id` of session
@@ -103,12 +92,6 @@ impl ChannelRuntime {
     pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> { self.runtime_manager.new_moderator(kind) }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
-
-    /// The session the channel belongs to, or `None` outside of one (e.g. in
-    /// tests) or once it is gone.
-    pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
-        self.session.get().and_then(Weak::upgrade)
-    }
 }
 
 /// What an actor runs with (issue 69): the services every actor needs, and
@@ -232,12 +215,6 @@ impl ActorRuntime {
     /// being built or once it is gone.
     pub(crate) fn channel(&self) -> Option<Arc<ChannelLoop>> {
         self.runtime.channel.get().and_then(Weak::upgrade)
-    }
-
-    /// The session the actor's channel belongs to, or `None` outside of one
-    /// (e.g. in tests) or once it is gone.
-    pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
-        self.runtime.session.get().and_then(Weak::upgrade)
     }
 
     fn agent_id(&self) -> Result<AgentId> {

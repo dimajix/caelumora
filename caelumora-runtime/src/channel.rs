@@ -24,7 +24,8 @@ use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
+use crate::session::SessionLoop;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
@@ -152,7 +153,11 @@ pub struct ChannelLoop {
     quiet: AtomicBool,
     event_tx: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
-    run_lock: Mutex<()>
+    run_lock: Mutex<()>,
+    /// The session the channel belongs to (issue 123), set by `attach` once
+    /// the session exists; unset outside of one, e.g. in tests. Weak, since
+    /// the session owns its channels.
+    session: OnceLock<Weak<SessionLoop>>,
 }
 
 impl ChannelLoop {
@@ -197,7 +202,8 @@ impl ChannelLoop {
             quiet: AtomicBool::new(false),
             event_tx,
             max_route_decisions: 100,
-            run_lock: Mutex::new(())
+            run_lock: Mutex::new(()),
+            session: OnceLock::new(),
         });
         channel_loop.runtime.attach(&channel_loop);
         // The participants the channel has; `run` starts their tasks.
@@ -213,6 +219,18 @@ impl ChannelLoop {
             channel_loop.adopt(Arc::from(actor)).await;
         }
         Ok(channel_loop)
+    }
+
+    /// Makes `session` the session of this channel. Called once by the
+    /// session, as soon as it exists and before the channel starts.
+    pub(crate) fn attach(&self, session: &Arc<SessionLoop>) {
+        let _ = self.session.set(Arc::downgrade(session));
+    }
+
+    /// The session the channel belongs to, or `None` outside of one (e.g. in
+    /// tests) or once it is gone.
+    pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
+        self.session.get().and_then(Weak::upgrade)
     }
 
     /// Takes `actor` into the channel: the moderator routes to it, it is
@@ -308,7 +326,7 @@ impl ChannelLoop {
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
-        let found = self.runtime.session()
+        let found = self.session()
             .and_then(|s| s.get_session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
         let member = Member::of(&found, &self.runtime).await?

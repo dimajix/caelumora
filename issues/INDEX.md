@@ -197,6 +197,7 @@ against it, and what came out of the last attempt.
 | [99](99-component-factory-and-tags.md) | open | The component factory is synchronous while building is async, and component tags have no reader. |
 | [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
+| [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |
 
 ## Open architecture questions
 

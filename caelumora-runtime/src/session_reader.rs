@@ -158,7 +158,7 @@ impl ChannelSessionReader {
         let source = if own.name() == name {
             own.clone()
         } else {
-            let session = self.runtime.session().ok_or_else(not_readable)?;
+            let session = own.session().ok_or_else(not_readable)?;
             session.channel_by_name(name).ok_or_else(not_readable)?
         };
         if self.may_read(&own, &source).await { Ok(source) } else { Err(not_readable()) }
@@ -185,7 +185,7 @@ impl SessionReader for ChannelSessionReader {
 
     async fn readable_channels(&self) -> Result<Vec<ChannelInfo>> {
         let Some(own) = self.runtime.channel() else { return Ok(Vec::new()) };
-        let channels = match self.runtime.session() {
+        let channels = match own.session() {
             Some(session) => session.channels(),
             None => vec![own.clone()],
         };
@@ -212,7 +212,8 @@ impl SessionReader for ChannelSessionReader {
     }
 
     async fn private_notes(&self, agent: AgentId) -> Result<Vec<ChannelNotes>> {
-        let (Some(own), Some(session)) = (self.runtime.channel(), self.runtime.session()) else { return Ok(Vec::new()) };
+        let Some(own) = self.runtime.channel() else { return Ok(Vec::new()) };
+        let Some(session) = own.session() else { return Ok(Vec::new()) };
         let mut found = Vec::new();
         for channel in session.channels() {
             if channel.id() == own.id() || !self.may_read(&own, &channel).await {
