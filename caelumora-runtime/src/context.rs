@@ -47,8 +47,7 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     fn position(&self) -> PromptPosition {
         PromptPosition::Start
     }
-    /// The part for the turn `context` is about to start; empty text for
-    /// none.
+    /// The part for `turn`, which is about to start; empty text for none.
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt>;
 }
 

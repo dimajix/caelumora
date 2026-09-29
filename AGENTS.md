@@ -84,7 +84,7 @@ an obvious approach was already rejected.
     *   `info!` for lifecycle transitions (a channel or actor starting or stopping, a session created).
     *   `debug!` for per-event detail. Anything that happens once per message or per store operation is `debug!` at most; once per streamed chunk is `trace!`.
 *   **Content**: message text, prompts and tool arguments only at `trace!`. At `debug!` and above, log ids, event kinds (`ActorEvent::kind`, `Envelope::describe`) and sizes. Credentials, tokens and cookies are never logged at any level.
-*   **Correlation**: ids belong on spans, not repeated in messages. Work on an envelope runs in `logging::envelope_span`; its fields are named after the `EventContext` fields (`span_id`, `event_id`, `correlation_id`, `depth`), so one `span_id` finds everything a message caused.
+*   **Correlation**: ids belong on spans, not repeated in messages. Work on an envelope runs in `logging::envelope_span`; its fields are named after the `EventContext` fields (`span_id`, `event_id`, `correlation_id`, `span_depth`), so one `span_id` finds everything a message caused.
 
 ## Testing Strategy
 

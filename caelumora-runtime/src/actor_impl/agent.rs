@@ -235,9 +235,9 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Starts a new turn, transitioning to Planning. Dispatch already guarantees
-    /// we're Idle, so the only thing worth checking is a cancel() that raced in
-    /// while we were still parked in Idle waiting for this event.
+    /// Starts a new turn in answer to a `ResponseRequested`: begins it,
+    /// announces `ResponseStarted` and builds the context. The run loop then
+    /// goes on in `Planning`.
     async fn request_response<'a>(
         &self,
         turn: &mut Turn<'a>,
@@ -701,7 +701,7 @@ impl AgentActor {
                     span_id = %ctx.span_id,
                     event_id = %ctx.event_id,
                     correlation_id = %ctx.correlation_id,
-                    depth = ctx.span_depth,
+                    span_depth = ctx.span_depth,
                 )
             }
         }

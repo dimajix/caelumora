@@ -177,7 +177,7 @@ against it, and what came out of the last attempt.
 | [115](115-filtering-event-sender.md) | done | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |
 | [105](105-seed-data-twice.md) | open | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
 | [109](109-code-hygiene.md) | open | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
-| [110](110-docs-contradicting-code.md) | open | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
+| [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 
 ## Code structure
 

@@ -1,6 +1,6 @@
 # 110 — Documentation that contradicts the code
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -45,3 +45,17 @@ Fix in one pass; the ones next to code that a structural issue rewrites
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, section 6).
+- **2026-09-29** — Done. ARCHITECTURE.md names `ComponentDescriptor`, and
+  its approval flow is rewritten from the code: the approver in the middle,
+  `ApprovalRequested/Granted/Denied/TimedOut`, the strategies, and calls
+  answered before approval (118). The doc comments point at
+  `ChannelSessionReader::may_read`/`AccessQuestions::may_channel_read` and
+  `session_reader::SessionReader`; `record_knowledge` has its own comment
+  back; `request_response`, `RouteDecision::broadcast`,
+  `PromptProvider::get_prompt`, `LLMClient::chat_completion` (now also
+  saying that dropping the stream abandons the request) and the plan
+  tool's prompt wiring (pointing at 98) describe what the code does. The
+  log field is now `span_depth`, like the `EventContext` field, in the
+  envelope span and the agent's turn span, and AGENTS.md says so. The
+  `Stopping` doc went with 84. A grep for each stale name finds nothing
+  outside the issues and the review.

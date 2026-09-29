@@ -7,7 +7,7 @@
 //! so a reader sees notes of finished turns only, as principle 3 in issue 19
 //! requires. Another channel's notes
 //! and history are read only if the reading channel may read that channel
-//! (`ChannelLoop::may_read`, `ActionType::ReadChannel`): decided by the two
+//! (`ChannelSessionReader::may_read`, `AccessQuestions::may_channel_read`): decided by the two
 //! channels' confidentiality levels, not by who takes part in them, since an
 //! agent passes on what it reads to its channel (principle 11 in issue 19,
 //! as changed by issue 61).

@@ -1,7 +1,7 @@
 //! The `channel_history` component (issue 17): an agent reads the history of
 //! another channel of its session - the latest messages, or those that
 //! contain a text. Only channels the agent's channel may read by their
-//! confidentiality levels can be read (`notes::SessionReader`, issue 61);
+//! confidentiality levels can be read (`session_reader::SessionReader`, issue 61);
 //! every read is recorded as a
 //! `KnowledgeRef` with the turn's messages.
 

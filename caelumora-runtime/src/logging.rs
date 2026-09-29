@@ -74,7 +74,7 @@ pub fn envelope_span(context: &EventContext, event: &'static str) -> tracing::Sp
         span_id = %context.span_id,
         event_id = %context.event_id,
         correlation_id = %context.correlation_id,
-        depth = context.span_depth,
+        span_depth = context.span_depth,
     )
 }
 

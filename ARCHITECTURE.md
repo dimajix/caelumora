@@ -18,7 +18,7 @@ The project is organized into several key modules:
 Caelumora uses a pluggable component-based architecture for defining agent behavior.
 
 *   **`ComponentConfig`**: A declarative definition of components and their dependencies.
-*   **`ComponentNodeConfig`**: Configuration for an individual component, including its kind, parameters, and dependencies.
+*   **`ComponentDescriptor`**: Configuration for an individual component, including its kind, parameters, and dependencies.
 *   **`ComponentRegistry`**: A central registry where component factories are registered by their kind.
 *   **`ComponentContainer`**: Responsible for instantiating and managing the lifecycle of components based on the `ComponentConfig`.
 *   **Facets**: A component offers one or more facets - traits it implements to take part in the agent loop: `ToolProvider` (tools), `CommandProvider` (user commands), `PromptProvider` (prompt parts), `ContextProvider` (what the model is given), and `PerceiveInProcessor` / `EmitOutProcessor` (the message stages). Each facet trait lives next to the code that uses it - `crate::tool`, `crate::command`, `crate::context`, `crate::message` - not among the implementations (issue 53).
@@ -269,14 +269,14 @@ A JWT cannot be revoked, so its validity is bounded instead: tokens are short-li
 Caelumora supports a mechanism for manual user approval of sensitive or impactful tool executions. The process is asynchronous and non-blocking, allowing the agent to suspend its execution while waiting for human input.
 
 *   **Asynchronous Approval Process**: 
-    1.  **Interruption**: When the `AgentActor` determines that a tool call requires approval, it suspends its cognitive cycle, persists its current state (including pending tool calls), and transitions to the `WaitingForApproval` state.
-    2.  **Request**: The agent emits a `ToolExecutionRequested` event. The `Moderator` routes this event to all human participants (`UserActor`s) in the channel.
-    3.  **User Response**: A user's "Approve" or "Deny" response is received via the REST API, which triggers an `ApprovalResponded` global event.
-    4.  **Routing**: The `ChannelLoop` captures the global event and routes a corresponding `ToolExecutionGranted` or `ToolExecutionDenied` event back to the specific `AgentActor`.
-    5.  **Resumption**: The `AgentActor` receives the response, restores its state, executes the tool calls (if granted), and resumes its cognitive cycle. 
+    1.  **Interruption**: When the model's answer contains tool calls that require approval, the `AgentActor` registers them as pending, runs whatever needs no approval, and transitions to `WaitingForApproval`. Its state, pending calls included, is stored after every step.
+    2.  **Request**: The agent emits `ApprovalRequested`, carrying the call's `ApprovalId`. The moderator routes it to the channel's `ApproverActor` only; the approver passes it on unchanged to the users (`UserActor`s), and that copy is broadcast.
+    3.  **User Response**: A user approves or denies over REST (`POST …/approvals`) or in the TUI; `UserActor::send_approval` sends `ApprovalGranted` or `ApprovalDenied` with the same id, which the moderator again routes to the approver only.
+    4.  **Decision**: The approver collects the answers and decides by its `ApprovalStrategy` (any, majority, all, deny on first), deciding again when users join or leave; a request nobody decides times out after ten minutes. It sends `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut` to the agent - the only way a decision reaches an agent (issue 81).
+    5.  **Resumption**: The `AgentActor` receives the decision, executes the tool calls (if granted), and resumes its cognitive cycle. 
     6.  **Message Queueing**: Any messages received while the agent is in the `WaitingForApproval` state are queued and processed sequentially after the agent resumes, ensuring context integrity.
 
-*   **Policy before approval**: a call the `SecurityManager` does not permit (`ActionType::CallTool`, via `ToolExecutor::is_permitted`) is refused before any approval is requested, so users are not asked about calls that would be refused anyway. `execute` checks again.
+*   **Policy before approval**: a call the `SecurityManager` does not permit (`ActionType::CallTool`, via `ToolExecutor::is_permitted`) is refused before any approval is requested, so users are not asked about calls that would be refused anyway. `execute` checks again. Likewise a call that cannot run - arguments its tool's `describe` rejects, a tool that does not exist - is answered right away instead of being put up for approval (issue 118).
 *   **Every call ends with a result the model can act on** (issue 15). A successful call's result is the tool's output. Every other outcome is given to the model as a JSON object `{"status": ..., "message": ...}` whose message says what happened and what to do next — `denied` (by a user), `forbidden` (by policy, without the reason, which stays in the log), `timed_out` (no approval in time), `invalid_arguments`, `failed` (with the tool's error) and `unknown_tool` (with the tools that do exist). The same status is stored as `ToolCallResult::status`, so the UI and an audit trail can tell refusals and failures from results. The wording lives in `crate::tool` (`ToolError::to_result`, `denied_result`, `timed_out_result`, `forbidden_result`).
 
 ## Storage and Persistence

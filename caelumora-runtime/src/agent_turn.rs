@@ -287,8 +287,6 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.history.extend(messages);
     }
 
-    /// Records that the turn read `reference` (issue 17): it is recorded
-    /// with every message the turn produces from now on.
     /// Whether the turn was given or read private knowledge of the agent -
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
@@ -298,6 +296,8 @@ impl<'a> Turn<'a> {
                 caelumora_model::message::KnowledgeSource::PrivateNotes { .. } | caelumora_model::message::KnowledgeSource::Memory { .. }))
     }
 
+    /// Records that the turn read `reference` (issue 17): it is recorded
+    /// with every message the turn produces from now on.
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
         let before = self.agent_channel_state.turn_messages.len();
         let knowledge = &mut self.agent_channel_state.turn_knowledge;

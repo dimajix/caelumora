@@ -460,7 +460,7 @@ impl ChannelLoop {
 
     /// The private notes `agent` wrote in this channel (issue 51), read from
     /// its state; `None` if it takes no part in the channel. Only for the
-    /// agent itself - see `notes::SessionReader::private_notes`.
+    /// agent itself - see `session_reader::SessionReader::private_notes`.
     pub async fn private_notes(&self, agent: caelumora_model::agent::AgentId) -> Result<Option<(Vec<caelumora_model::note::Note>, Option<caelumora_model::digest::Digest>)>> {
         if !self.actors.load().contains_key(&ActorId::Agent(agent)) {
             return Ok(None);

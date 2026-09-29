@@ -15,9 +15,9 @@ pub trait Moderator : Send + Sync + Debug {
 pub struct RouteDecision {
     pub forwards: Vec<(ActorId, Envelope)>,
     /// Whether this event should also be broadcast to external subscribers (e.g. the UI).
-    /// Only approval events set this explicitly, since they're the only ones relayed through
-    /// multiple internal hops (Agent -> Approver -> User) where the intermediate hop must stay
-    /// internal; everything else defaults to `true`.
+    /// `false` only for the internal hops of an approval (agent -> approver, approver ->
+    /// agent), which must not show; everything else - messages, the approver's request to
+    /// the users, `TurnFailed`, `CommandExecuted` - is broadcast.
     pub broadcast: bool,
 }
 

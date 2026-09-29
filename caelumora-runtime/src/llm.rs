@@ -58,6 +58,8 @@ pub type LLMResult<T> = Result<T, LLMError>;
 
 #[async_trait]
 pub trait LLMClient: Send + Sync + Debug {
-    /// It takes the conversation context and returns a stream of string chunks.
+    /// Sends `context` and the `tools` the model may call, and streams its
+    /// answer as `MessageEvent`s: partial messages as they arrive, then the
+    /// complete ones. The stream owns the request; dropping it abandons it.
     async fn chat_completion(&self, context: &[Message], tools: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>>;
 }

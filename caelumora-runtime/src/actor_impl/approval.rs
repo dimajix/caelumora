@@ -453,7 +453,7 @@ mod tests {
             assert_eq!(req.id, approval_id, "one id from the agent's request to the decision");
             req.id
         } else {
-            panic!("Expected ToolExecutionRequested");
+            panic!("Expected ApprovalRequested");
         };
 
         // Send approval from user 1
@@ -472,7 +472,7 @@ mod tests {
             assert_eq!(res.id, approval_id);
             assert_eq!(res.agent_id, agent_id);
         } else {
-            panic!("Expected ToolExecutionGranted, got {:?}", decision_env.event);
+            panic!("Expected ApprovalGranted, got {:?}", decision_env.event);
         }
     }
 
@@ -568,7 +568,7 @@ mod tests {
         let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event {
             req.id
         } else {
-            panic!("Expected ToolExecutionRequested");
+            panic!("Expected ApprovalRequested");
         };
 
         // 3. User1 approves
@@ -582,7 +582,7 @@ mod tests {
         if let ActorEvent::ApprovalGranted(res) = decision_env.event {
             assert_eq!(res.id, approval_id);
         } else {
-            panic!("Expected ToolExecutionGranted");
+            panic!("Expected ApprovalGranted");
         }
     }
 
@@ -668,7 +668,7 @@ mod tests {
         if let ActorEvent::ApprovalGranted(res) = decision_env.event {
             assert_eq!(res.id, approval_id);
         } else {
-            panic!("Expected ToolExecutionGranted, got {:?}", decision_env.event);
+            panic!("Expected ApprovalGranted, got {:?}", decision_env.event);
         }
     }
 

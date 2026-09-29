@@ -38,10 +38,9 @@ steps, skip `create_plan` entirely and just answer directly.";
 /// the submission is inherently "approved" - it parses the plan and either
 /// stores it on `Turn` as a fresh plan, or, if one is already in
 /// progress, appends the new steps to it (see `execute` below). Also
-/// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT` -
-/// see the `context` node's `deps` in whatever `ComponentConfig` wires this
-/// component in (e.g. `caelumora-tui/src/main.rs`), which must list this
-/// component's id so `StateContextProvider` picks up the prompt.
+/// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT`; the
+/// prompt reaches the model only if the personality's context provider
+/// lists this component among its `deps` (issue 98).
 #[derive(Debug)]
 pub struct CreatePlanToolProvider;
 
