@@ -112,7 +112,10 @@ async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningSer
     Ok(service)
 }
 
-async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<String>) -> McpResult<Vec<Tool>> {
+/// The tools of the MCP server `config` names, namespaced by `descriptor_id`
+/// and requiring approval as `config` says (issue 78).
+async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header: Option<String>) -> McpResult<Vec<Tool>> {
+    let url = config.url.as_str();
     let service = connect(url, auth_header).await?;
     let remote_tools = service
         .list_all_tools()
@@ -130,7 +133,7 @@ async fn discover_tools(descriptor_id: &str, url: &str, auth_header: Option<Stri
                 name: format!("{}__{}", descriptor_id, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
-                requires_approval: false,
+                requires_approval: config.requires_approval,
                 confidentiality: ToolConfidentiality::PUBLIC,
             }
         })
@@ -268,7 +271,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                     let discover = async {
                         let auth_header =
                             resolve_auth_header(&discovery_config.auth, &secret_manager, &security_context).await?;
-                        discover_tools(&descriptor_id, &discovery_config.url, auth_header).await
+                        discover_tools(&descriptor_id, &discovery_config, auth_header).await
                     };
                     match tokio::time::timeout(Duration::from_secs(discovery_config.timeout_secs), discover).await {
                         Ok(result) => result,

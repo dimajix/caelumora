@@ -105,7 +105,7 @@ against it, and what came out of the last attempt.
 | [49](49-plan-step-system-messages.md) | open | Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache. |
 | [52](52-split-tool-providers.md) | done | All built-in tool providers live in one file, and tools added later went to other places, so there is no rule for where a tool goes. |
 | [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
-| [78](78-mcp-requires-approval-ignored.md) | open | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |
+| [78](78-mcp-requires-approval-ignored.md) | done | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |
 | [81](81-approver-double-id.md) | open | The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting. |
 | [82](82-tool-parameter-parsing.md) | open | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
 | [100](100-tool-executor-table-and-result.md) | open | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |

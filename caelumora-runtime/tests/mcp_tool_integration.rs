@@ -68,7 +68,8 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     (addr, handle)
 }
 
-async fn build_container(url: &str) -> ComponentContainer {
+/// A container with one MCP tool component configured with `params`.
+async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
     let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap();
@@ -80,7 +81,7 @@ async fn build_container(url: &str) -> ComponentContainer {
             security_attributes: Default::default(),
             id: "test-echo".to_string(),
             kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
-            params: json!({ "url": url }),
+            params,
             deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
@@ -95,7 +96,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(&url).await;
+    let container = build_container(json!({ "url": url })).await;
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     let provider = providers[0].facet.clone();
@@ -103,6 +104,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let tools = provider.tools();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "test-echo__echo");
+    assert!(!tools[0].requires_approval, "no approval unless configured");
 
     let mut agent_channel_state = caelumora_model::agent::AgentChannelState::default();
     let mut turn = caelumora_runtime::agent_turn::Turn::new(
@@ -115,6 +117,19 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
         .await
         .unwrap();
     assert_eq!(result, json!("hello mcp"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_configured_approval_reaches_every_discovered_tool() {
+    let (addr, _server) = start_test_server().await;
+    let url = format!("http://{}/mcp", addr);
+
+    let container = build_container(json!({ "url": url, "requires_approval": true })).await;
+    let provider = container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet.clone();
+
+    let tools = provider.tools();
+    assert!(!tools.is_empty(), "the server's tools are discovered");
+    assert!(tools.iter().all(|t| t.requires_approval), "every tool of this server needs approval: {tools:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -183,7 +198,7 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     // Port 1 is reserved and nothing will ever listen there, guaranteeing a
     // connection failure without depending on OS-specific "closed port"
     // behavior.
-    let container = build_container("http://127.0.0.1:1/mcp").await;
+    let container = build_container(json!({ "url": "http://127.0.0.1:1/mcp" })).await;
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].facet.tools().len(), 0);

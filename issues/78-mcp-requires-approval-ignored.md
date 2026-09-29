@@ -1,6 +1,6 @@
 # 78 — `McpToolConfig.requires_approval` has no effect
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -30,3 +30,11 @@ that require approval.
 
 - **2026-09-28** — Found in the structure review
   (`work/2026-09-28-code-review.md`, section 1, error 4).
+- **2026-09-29** — Done. `discover_tools` takes the component's
+  `McpToolConfig` and sets `requires_approval` on every discovered tool
+  from it. A correction to the description: the unit test at `:331` was
+  right - it checks that the flag *defaults* to `false` when parsing; what
+  was missing was a test that the flag reaches the tools. The integration
+  test `a_configured_approval_reaches_every_discovered_tool` now covers
+  that against a real MCP server, and the existing one checks that no
+  approval is required unless configured.
