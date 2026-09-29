@@ -107,7 +107,7 @@ against it, and what came out of the last attempt.
 | [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
 | [78](78-mcp-requires-approval-ignored.md) | done | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |
 | [81](81-approver-double-id.md) | done | The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting. |
-| [82](82-tool-parameter-parsing.md) | open | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
+| [82](82-tool-parameter-parsing.md) | done | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
 | [100](100-tool-executor-table-and-result.md) | open | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |
 | [111](111-tool-parameter-reading.md) | open | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
 
@@ -124,7 +124,7 @@ against it, and what came out of the last attempt.
 | [44](44-mentions-only-moderator.md) | done | Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned. |
 | [45](45-agent-mentions.md) | open | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
 | [56](56-response-language.md) | open | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
-| [80](80-stored-channel-response.md) | open | A channel that is not running is reported as not changeable and its agents' context as not readable, and the response builders are spread over three modules. |
+| [80](80-stored-channel-response.md) | open | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | open | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
 | [103](103-rest-error-mappers.md) | open | Six REST functions map runtime errors to problem details with the same pattern. |
 | [104](104-sse-stream-and-subscribe.md) | open | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |

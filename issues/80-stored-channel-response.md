@@ -23,29 +23,105 @@ only `pub` route module and `sessions.rs:100` imports its response shape
 from the events module. `models.rs` already has the pattern (`From<PublishedNotes>`,
 `From<SeenItem>`).
 
+Underneath both: the REST server decides for itself which access question
+goes with which field and asks the `SecurityManager` directly
+(`routes/mod.rs:58` `may_read_channel`, used by `channel_of`,
+`list_channels` and `describe_session`; `channels.rs:127`
+`may_change_channel`), while for a stopped session the same "may read" is
+decided by the `EntityStore` (`entity_store.get_channel(viewer, id)`,
+`events.rs:88`). The same right is checked in two layers depending on
+whether the channel runs, and every other client would have to repeat the
+REST server's choice of questions.
+
 ## Why it matters
 
 The web UI hides the "change" and "context" controls for a channel that the
 viewer may in fact change. And a builder per module means a new field is
-added in two places.
+added in two places. As long as the frontend picks the questions, a
+second frontend (or a runtime component that lists channels) builds its own
+version of them, and the next field is forgotten in one of them the way
+`can_change` was here.
 
 ## Considerations
 
-- One `ChannelResponse::describe(&Channel, &dyn SecurityManager, viewer)`
-  in `models.rs`, used for stored and running channels alike (the running
-  one through `ChannelLoop::channel()`). Caveat: actor names follow the
-  controller, participant copies do not - irrelevant until agents can be
-  renamed.
-- Move all `*_response`/`describe_*` into `models.rs` with a
-  `(&dyn SecurityManager, viewer, …)` signature instead of `&AppState`;
-  `routes::channels` becomes private again.
+### Where the view of a channel is built
+
+- **In REST, as first proposed.** One
+  `ChannelResponse::describe(&Channel, &dyn SecurityManager, viewer)` in
+  `models.rs`, used for stored and running channels alike (the running one
+  through `ChannelLoop::channel()`); all `*_response`/`describe_*` move into
+  `models.rs`. Least work, but REST keeps asking the `SecurityManager`, and
+  the split between REST (running) and store (stopped) for "may read"
+  remains.
+- **In the runtime, as a view (chosen, see History).** The model gets a
+  `ChannelView`: the `Channel` document as a given viewer sees it, with
+  `can_change` and, per member, `can_read_context`. The runtime builds it
+  - on the `SessionManager`/`SessionLoop`, not on `ChannelLoop`, so that the
+  entity does not grow the policy catalogue issue
+  [71](71-access-helpers-on-entities.md) removed - for running and stored
+  channels alike, and only for channels the viewer may read:
+  e.g. `channels_for(viewer, session_id)` for lists and snapshots,
+  `readable_channel(viewer, session_id, channel_id)` as the counterpart of
+  REST's `channel_of`. REST only maps views to responses
+  (`From<ChannelView> for ChannelResponse` in `models.rs`) and no longer
+  knows the `SecurityManager`. A runtime component that lists or offers
+  channels uses the same views.
+  - Caveat: actor names follow the controller, participant copies do not -
+    irrelevant until agents can be renamed.
+  - A view is a snapshot. It serves listing and offering; an operation still
+    checks its own permission when it acts (no time-of-check/time-of-use
+    decisions on a view).
+
+### What becomes of `AccessQuestions`
+
+Views are answers, not questions: someone still asks. Today's callers of
+the trait:
+
+| Caller | Question | With views |
+|---|---|---|
+| REST `routes/mod.rs:59` | `may_read_channel` | asked by the view builder |
+| REST `channels.rs:127` | `may_change_channel` | asked by the view builder (`can_change`) |
+| `AgentActor::may_read_context` (`agent.rs:1254`) | `may_read_agent_context` | asked by the view builder (`can_read_context`) |
+| `ChannelSessionReader::may_read` (`session_reader.rs:147`) | `may_channel_read` | stays - not a view |
+
+The first three are then asked in one place, the view builder, which calls
+`check(ctx, ActionType::…)` itself; the trait no longer earns its keep for
+them. `may_channel_read` is not a viewer looking at a channel but one
+channel reading another, in its owner's name, with the rule "a channel
+reads itself" - a rule of information flow, asked at the moment the tool
+reads. It moves to the runtime next to its only user (the session reader /
+session module). With that, `AccessQuestions` is dissolved. The guarantee
+of its blanket implementation - no policy answers a question differently
+from its `ActionType` - holds, because everything still goes through
+`check`.
+
+Whether `Actor::may_read_context` stays on the trait (whether an actor has a
+context at all is the actor's business, issue 71) or the view builder
+decides it from the participant kind is to be settled when implementing.
 
 ## Done when
 
 - A stored channel reports `can_change`/`can_read_context` from the policy.
-- One function describes a channel; all response builders live in `models.rs`.
+- The runtime builds one `ChannelView` per channel and viewer, for running
+  and stored channels alike, and decides which channels a viewer may read
+  in both cases.
+- The REST server no longer uses the `SecurityManager`; all response
+  builders live in `models.rs` and map views; `routes::channels` is private.
+- `AccessQuestions` is gone: the viewer questions are asked by the view
+  builder, `may_channel_read` lives in the runtime.
+- AGENTS.md (*Architecture decisions*) and ARCHITECTURE.md say that what a
+  client may see or be offered comes from a view, and that an operation
+  checks its own permission.
 
 ## History
 
 - **2026-09-28** — Found in the structure review
   (`work/2026-09-28-code-review.md`, section 1, error 6; 5.1.2 and 5.1.3).
+- **2026-09-29** — Discussed with the maintainer: the access questions should
+  not be asked by the REST server but in the runtime. Decided to build
+  per-viewer views (`ChannelView`) in the runtime, used by REST and by
+  runtime components alike, and to dissolve `AccessQuestions` in their
+  favour; this revises the decision of issue 71 on where pure questions
+  live. Kept in this issue rather than opening a new one. Problem,
+  considerations and "done when" extended accordingly; nothing implemented
+  yet.

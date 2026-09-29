@@ -1,6 +1,6 @@
 # 82 — `create_plan` reports parse errors with the wrong status
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -32,3 +32,12 @@ A malformed `create_plan` call is answered with `InvalidArguments`.
 - **2026-09-28** — Found in the structure review
   (`work/2026-09-28-code-review.md`, section 1, error 8). The unification of
   parameter reading was split off into 111 at the maintainer's request.
+- **2026-09-29** — Done. `parse_plan` returns `ToolResult<Plan>` and maps
+  a serde error to `ToolError::InvalidParameter("not a plan: …")`, so
+  `execute` and `describe` use it with `?`. The tests assert the variant
+  and that serde names the missing field. Noticed on the way: a malformed
+  call is still put up for approval first - `request_approvals` turns the
+  failed `describe` into "No description" (`agent.rs:846`), and only the
+  approved call then fails with `InvalidArguments`. The user approves
+  something that cannot run; the call should be answered right away
+  instead. Not part of this issue.

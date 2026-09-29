@@ -5,7 +5,7 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry};
 use crate::context::{Prompt, PromptProvider};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
@@ -63,9 +63,12 @@ struct CreatePlanStepArg {
     description: String,
 }
 
-pub fn parse_plan(args: &Value) -> Result<Plan> {
+/// The plan `args` describe. Arguments that do not describe one are the
+/// model's to correct - `InvalidParameter`, not a failure of the tool
+/// (issue 82) - and serde's message says what is wrong with them.
+pub fn parse_plan(args: &Value) -> ToolResult<Plan> {
     let args: CreatePlanArgs = serde_json::from_value(args.clone())
-        .context("Failed to parse create_plan arguments")?;
+        .map_err(|e| ToolError::InvalidParameter(format!("not a plan: {e}")))?;
 
     Ok(Plan {
         id: PlanId::new(),
@@ -113,7 +116,7 @@ impl ToolProvider for CreatePlanToolProvider {
     }
 
     async fn execute(&self, _name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
-        let incoming = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let incoming = parse_plan(params)?;
         match turn.take_plan() {
             Some(mut state) => {
                 let start = state.plan.steps.len();
@@ -139,7 +142,7 @@ impl ToolProvider for CreatePlanToolProvider {
     }
 
     fn describe(&self, _name: &str, params: &Value) -> ToolResult<String> {
-        let plan = parse_plan(params).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let plan = parse_plan(params)?;
         let steps = plan
             .steps
             .iter()
@@ -262,7 +265,7 @@ mod tests {
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), &mut turn).await;
-        assert!(result.is_err());
+        assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "the model is asked to correct the call: {result:?}");
         assert!(turn.plan().is_none());
     }
 
@@ -313,6 +316,6 @@ mod tests {
     fn parse_plan_rejects_malformed_arguments() {
         let args = json!({ "summary": "missing steps field" });
 
-        assert!(parse_plan(&args).is_err());
+        assert!(matches!(parse_plan(&args), Err(ToolError::InvalidParameter(ref m)) if m.contains("steps")), "serde names what is missing");
     }
 }

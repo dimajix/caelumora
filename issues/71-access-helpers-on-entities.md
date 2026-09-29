@@ -173,3 +173,9 @@ To be decided with the maintainer before anything is changed.
   channel module. That the digest recorded by `read_history` still names
   the whole history is [72](72-history-digest-ignores-limit.md). Status set
   to done.
+- **2026-09-29** — The place of the pure questions is revisited in
+  [80](80-stored-channel-response.md): the runtime is to build per-viewer
+  views of channels, used by REST and runtime components alike, and
+  `AccessQuestions` is to be dissolved in their favour
+  (`may_channel_read` moving to the runtime). The decision above holds until
+  80 is implemented.
