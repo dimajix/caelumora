@@ -19,7 +19,7 @@ use tracing::warn;
 pub const MCP_TOOL_KIND: &str = "mcp_tool";
 
 #[derive(Debug, thiserror::Error)]
-pub enum McpError {
+enum McpError {
     #[error("failed to connect to MCP server at '{0}': {1}")]
     Connect(String, String),
     #[error("failed to list tools from MCP server at '{0}': {1}")]
@@ -32,7 +32,7 @@ pub enum McpError {
     Secret(#[from] SecretError),
 }
 
-pub type McpResult<T> = Result<T, McpError>;
+type McpResult<T> = Result<T, McpError>;
 
 fn default_timeout_secs() -> u64 {
     10
@@ -40,12 +40,12 @@ fn default_timeout_secs() -> u64 {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum McpAuthConfig {
+enum McpAuthConfig {
     Bearer { secret: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct McpToolConfig {
+struct McpToolConfig {
     pub url: String,
     #[serde(default)]
     pub auth: Option<McpAuthConfig>,

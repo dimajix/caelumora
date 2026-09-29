@@ -1,6 +1,6 @@
 # 107 — The public surface of the three crates is wider than their callers
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -126,3 +126,18 @@ comment saying why it is public.
   and the REST server's constants and `TokenService::lifetime_secs` (a
   binary crate, where `pub` means the crate anyway). The `ActorRuntime`
   methods belong to the `pub(crate)` pass.
+- **2026-09-29** — Should be `pub(crate)`, conservatively. Changed: the
+  MCP types (`McpError`, `McpResult`, `McpAuthConfig`, `McpToolConfig`),
+  `parse_plan` and `PLANNING_SYSTEM_PROMPT` are private to their files;
+  `unsuccessful_result` is private, the results the runtime produces itself
+  (`denied_result`, `timed_out_result`, `not_executed_result`,
+  `forbidden_result`) are `pub(crate)`. Kept: `successful_result`, which a
+  `ToolExecutor` component needs ([127](127-tool-executor-not-replaceable.md));
+  the rest of `Turn`, the component API (65), although `context`,
+  `send_event`, `messages` and `transcript` have only actors as callers and
+  `session_id` none. The `ActorRuntime` methods only actors use are left
+  to [128](128-actor-runtime-in-components.md): components reach them
+  through `ComponentContext::actor_runtime`, which is a question of what a
+  component may do.
+- **2026-09-29** — Done: every item of the four lists is changed, kept
+  with its reason above, or handed to [128](128-actor-runtime-in-components.md).

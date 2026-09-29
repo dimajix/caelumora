@@ -199,7 +199,7 @@ against it, and what came out of the last attempt.
 | [89](89-channel-runtime-delegators.md) | rejected | `ChannelRuntime` is six methods that forward to `RuntimeManager`. |
 | [91](91-double-actor-table.md) | done | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
 | [99](99-component-factory-and-tags.md) | done | The component factory is synchronous while building is async, and component tags have no reader. |
-| [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
+| [107](107-public-interface.md) | done | Many `pub` items of the three crates have no caller, or one, outside their file. |
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 | [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |
 
@@ -210,3 +210,4 @@ against it, and what came out of the last attempt.
 | [20](20-transactional-effects.md) | open | A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart. |
 | [21](21-scaling.md) | open | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |
 | [69](69-scoped-actor-runtime.md) | done | Every actor's `ActorRuntime` hands out the process-wide services unrestricted, so it cannot be given to components without letting them read around the confidentiality rules. |
+| [128](128-actor-runtime-in-components.md) | open | Components are given their actor's whole `ActorRuntime` and could store its state or act as it past the turn. |

@@ -24,7 +24,7 @@ pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 /// (including once a plan is being executed), which is harmless: the far
 /// more specific `plan_step_message`/`plan_finalize_message` instructions
 /// dominate by then.
-pub const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
+const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
 research or multiple steps to complete. If it does, gather any information you need using \
 the available tools, then call `create_plan` once with a short summary and an ordered list \
 of the steps you will take to fulfill the request. The plan will be shown to the user for \
@@ -64,7 +64,7 @@ struct CreatePlanStepArg {
 /// The plan `args` describe. Arguments that do not describe one are the
 /// model's to correct - `InvalidParameter`, not a failure of the tool
 /// (issue 82) - and serde's message says what is wrong with them.
-pub fn parse_plan(args: &Value) -> ToolResult<Plan> {
+fn parse_plan(args: &Value) -> ToolResult<Plan> {
     let args: CreatePlanArgs = arguments(args)?;
 
     Ok(Plan {

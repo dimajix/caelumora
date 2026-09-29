@@ -63,7 +63,7 @@ pub fn text_argument(params: &Value) -> ToolResult<String> {
 /// says what happened and what to do next, e.g.
 /// `{"status":"denied","message":"The user declined ..."}`. Successful
 /// results are passed on unchanged.
-pub fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
+fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
     serde_json::json!({ "status": status, "message": message }).to_string()
 }
 
@@ -83,7 +83,7 @@ pub fn successful_result(value: Value, confidentiality: ToolConfidentiality, pub
 }
 
 /// The result for a call a user declined.
-pub fn denied_result() -> String {
+pub(crate) fn denied_result() -> String {
     unsuccessful_result(
         ToolResultStatus::Denied,
         "The user declined this tool call. Do not repeat it; continue without it or ask the user how to proceed.",
@@ -91,7 +91,7 @@ pub fn denied_result() -> String {
 }
 
 /// The result for a call nobody approved in time.
-pub fn timed_out_result() -> String {
+pub(crate) fn timed_out_result() -> String {
     unsuccessful_result(
         ToolResultStatus::TimedOut,
         "No one approved this tool call in time; it was not executed. You may ask the user whether to try again.",
@@ -102,7 +102,7 @@ pub fn timed_out_result() -> String {
 /// agent is loaded again (issue 75): the server stopped before the call
 /// ran, or before its result was stored. The runtime cannot tell which, so
 /// it never runs the call again - the model decides.
-pub fn not_executed_result() -> String {
+pub(crate) fn not_executed_result() -> String {
     unsuccessful_result(
         ToolResultStatus::Failed,
         "This tool call was not executed: the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
@@ -112,7 +112,7 @@ pub fn not_executed_result() -> String {
 /// The result for a call the policy does not permit. Deliberately without the
 /// reason: telling the model why describes the policy to something that may
 /// try to route around it. The reason is in the log.
-pub fn forbidden_result() -> String {
+pub(crate) fn forbidden_result() -> String {
     unsuccessful_result(
         ToolResultStatus::Forbidden,
         "This tool call is not permitted. Do not retry it; continue without it or tell the user that you cannot do this.",
