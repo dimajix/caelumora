@@ -86,8 +86,11 @@ impl UserActor {
             timestamp: Utc::now(),
             ..Message::default()
         };
-        // Both envelopes stem from one user action: one span, two events.
+        // All stem from one user action: one span. First the request to wake
+        // the channel's agents for it - the channel does not wake by itself
+        // (issue 90).
         let span_id = Uuid::new_v4();
+        self.user_tx.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.user_tx.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
         self.user_tx.send(self.envelope(ActorEvent::FullResponseGenerated(vec![msg]), span_id)).await?;
         Ok(span_id)
@@ -196,6 +199,18 @@ impl UserActor {
     }
 }
 
+/// The actor's queue as its task holds it: closed when the task ends - also
+/// when it is aborted with its channel - so that what the user sends to a
+/// stopped channel fails at once instead of filling a queue nobody reads
+/// (issue 90).
+struct ClosedOnDrop<'a>(tokio::sync::MutexGuard<'a, Receiver<Envelope>>);
+
+impl Drop for ClosedOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 #[async_trait]
 impl Actor for UserActor {
     fn id(&self) -> ActorId {
@@ -223,8 +238,8 @@ impl Actor for UserActor {
         mut rx: Box<dyn EventReceiver>,
         tx: Box<dyn EventSender>,
     ) -> anyhow::Result<()> {
-        let mut user_rx = self.user_rx.try_lock()
-            .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
+        let mut user_rx = ClosedOnDrop(self.user_rx.try_lock()
+            .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?);
 
         let mut rx_closed = false;
         let mut user_rx_closed = false;
@@ -235,7 +250,7 @@ impl Actor for UserActor {
                 maybe_event = rx.recv(), if !rx_closed => {
                     rx_closed = self.handle_actor_envelope(maybe_event);
                 }
-                maybe_message = user_rx.recv(), if !user_rx_closed => {
+                maybe_message = user_rx.0.recv(), if !user_rx_closed => {
                     match maybe_message {
                         Some(envelope) => if !self.forward(envelope, &*tx).await { break },
                         None => user_rx_closed = true,
@@ -283,17 +298,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_message_returns_the_span_id_of_both_envelopes() {
+    async fn send_message_asks_for_a_wakeup_and_returns_the_span_of_all_its_envelopes() {
         let actor = user_actor().await;
 
         let span_id = actor.send_message("hello".to_string()).await.unwrap();
 
         let mut rx = actor.user_rx.lock().await;
+        let wakeup = rx.recv().await.expect("WakeupRequested");
         let complete = rx.recv().await.expect("CompleteMessageGenerated");
         let full = rx.recv().await.expect("FullResponseGenerated");
+        assert!(matches!(wakeup.event, ActorEvent::WakeupRequested), "the wakeup first, so that the agents are awake when the message comes");
         assert!(matches!(complete.event, ActorEvent::CompleteMessageGenerated(_)));
         assert!(matches!(full.event, ActorEvent::FullResponseGenerated(_)));
-        for envelope in [&complete, &full] {
+        for envelope in [&wakeup, &complete, &full] {
             assert_eq!(envelope.context.span_id, span_id, "one user action, one span");
             assert_eq!(envelope.context.sender_id, actor.id());
             assert_eq!(envelope.context.channel_id, actor.channel_id);

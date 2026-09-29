@@ -1,6 +1,6 @@
 # 90 — Sending a message: the frontends wake the channel, the `UserActor` queues for nothing, and `perceive` begins a turn
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -59,3 +59,31 @@ perceived message scales with the number of agents in the channel (3).
   global events, a timeout timer) should share one run loop.
 - **2026-09-29** — Point 3 is done with [85](85-turn-state-in-agent-channel-state.md):
   `perceive` begins no turn and asks the policy nothing.
+- **2026-09-29** — Point 1 done, point 2 rejected, and the fourth
+  consideration had been done before (`Actor::wakeup`/`cancel` are plain
+  `fn` since issue 76). Status `done`: nothing of the issue is left open.
+  (1) Neither REST nor the TUI wakes the channel any more, and
+  `wake_for_delivery` is private (REST had no `channel_wakeup_failed` path
+  left to remove). Not as the considerations proposed - the channel waking
+  on a user's `FullResponseGenerated`, which a first version did - but, on
+  the maintainer's decision, by the user's actor: `send_message` sends a
+  `WakeupRequested` ahead of the message, in its span, and the channel
+  wakes when it routes that, as it already did for `WakeupRequested`. The
+  channel does not decide by itself when it is woken. A cancelled channel
+  stays quiet until the next such request - as before, when the frontends
+  woke on every message. The event has no recipient and is broadcast; the
+  web UI ignores it. Approvals still wake nothing, as before: an agent
+  that waits for one is not asleep.
+  (2) Rejected by the maintainer after a first implementation, in which
+  the `UserActor` put its envelopes into the channel's inbox directly
+  (`ChannelLoop::submit`). The user is a participant so that a frontend
+  talks to it and not to the channel, and an actor sends only through the
+  transport `run` gives it - no actor takes a shortcut. The queue is not a
+  hop without a purpose: it is how calls from outside reach the actor's
+  task, the only place that has the transport. What stayed of it: the
+  queue closes when the actor's task ends - through a guard, so also when
+  it is aborted with its channel - and sending to a stopped channel is an
+  error instead of filling a queue nobody reads; a test checks it, and
+  fails without the close. The note from issue 79 - a shared run loop
+  with the `ApproverActor` - is not pursued: the `UserActor`'s loop is its
+  inbox and its queue, the approver's has global events and timeouts.

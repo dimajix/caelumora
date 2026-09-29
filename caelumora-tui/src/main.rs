@@ -138,7 +138,6 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                 }
                             }
                             UserInput::Message(text) => {
-                                channel.wake_for_delivery();
                                 let span_id = user_actor.send_message(text).await?;
                                 tracing::debug!(span_id = %span_id, "Message sent");
                             }

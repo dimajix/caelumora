@@ -327,7 +327,6 @@ pub async fn send_message(
     
     let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    channel.wake_for_delivery();
     let span_id = user_actor.send_message(payload.content).await
         .map_err(|e| ApiError::internal("message_not_sent", "sending the message", &e))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));

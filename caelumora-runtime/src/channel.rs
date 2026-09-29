@@ -474,10 +474,11 @@ impl ChannelLoop {
     }
 
     /// Wakes the channel's actors because something is on its way to them:
-    /// a message, a mention, a `WakeupRequested`. That is the consequence of
-    /// an action already permitted, so it carries no permission of its own -
-    /// otherwise a user allowed to write but not to wake could not write.
-    pub fn wake_for_delivery(&self) {
+    /// a `WakeupRequested` - which a user's actor sends with every message -
+    /// or a mention. That is the consequence of an action already permitted,
+    /// so it carries no permission of its own - otherwise a user allowed to
+    /// write but not to wake could not write.
+    fn wake_for_delivery(&self) {
         self.quiet.store(false, Ordering::SeqCst);
         for actor in self.actors.load().values() {
             actor.wakeup();
@@ -747,16 +748,12 @@ impl ChannelLoop {
     }
 
     async fn route_event(&self, running: &HashMap<ActorId,ActorHandle>, event: Envelope) {
+        // Asked for by an actor - a user's actor asks with every message it
+        // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
             self.wake_for_delivery();
         }
         self.wake_mentioned(&event).await;
-
-        //if let ActorEvent::FullResponseGenerated(messages) = &event.event {
-        //    if messages.iter().any(|m| m.role == MessageRole::User) {
-        //        let _ = self.wakeup().await;
-        //    }
-        //}
 
         let broadcast = self.route_event_impl(running, &event).await;
 
@@ -1259,7 +1256,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cancelled_channel_delivers_what_is_said_but_asks_nobody_until_it_is_woken() {
+    async fn a_cancelled_channel_delivers_what_is_said_but_asks_nobody_until_it_is_asked_to_wake() {
         use caelumora_model::actor::EventContext;
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
@@ -1269,11 +1266,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
         let actors = HashMap::from([(bob, ActorHandle { id: bob, abort_handle, sender: Box::new(InMemoryEventSender::new(tx)) })]);
-        let said = Envelope::new(
+        let from_alice = |event| Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
-            ActorEvent::FullResponseGenerated(vec![Message::default()]),
+            event,
         );
+        let said = || from_alice(ActorEvent::FullResponseGenerated(vec![Message::default()]));
         let delivered = |rx: &mut mpsc::Receiver<Envelope>| {
             let mut kinds = Vec::new();
             while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
@@ -1281,12 +1279,35 @@ mod tests {
         };
 
         channel.cancel(&context).await.expect("permitted");
-        channel.route_event(&actors, said.clone()).await;
+        channel.route_event(&actors, said()).await;
         assert_eq!(delivered(&mut rx), ["FullResponseGenerated"], "what was said still arrives, but nobody is asked");
 
-        channel.wake_for_delivery();
-        channel.route_event(&actors, said).await;
+        // A message alone does not wake it: its sender asks for that, as a
+        // user's actor does with every message (issue 90).
+        channel.route_event(&actors, from_alice(ActorEvent::WakeupRequested)).await;
+        delivered(&mut rx); // this test's moderator forwards the request, too
+        channel.route_event(&actors, said()).await;
         assert_eq!(delivered(&mut rx), ["FullResponseGenerated", "ResponseRequested"], "woken, the channel asks again");
+    }
+
+    #[tokio::test]
+    async fn a_stopped_channel_refuses_what_a_user_sends() {
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let mut said = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        actor.send_message("hello".to_string()).await.expect("a running channel takes it");
+        // Taken out of the inbox: `run` holds it now.
+        tokio::time::timeout(Duration::from_secs(5), said.recv()).await.expect("the message went through").unwrap();
+
+        // Aborted, as a stopped session aborts its channels: the inbox closes
+        // with it, so a sender learns so instead of waiting for ever.
+        running.abort();
+        let _ = running.await;
+        let refused = tokio::time::timeout(Duration::from_secs(5), actor.send_message("anyone?".to_string())).await
+            .expect("an answer, not a wait");
+        assert!(refused.is_err(), "a stopped channel takes nothing");
     }
 
     /// A model whose answer never comes: what a cancel has to interrupt.
