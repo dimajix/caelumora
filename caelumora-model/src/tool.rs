@@ -168,6 +168,14 @@ pub struct ToolCallResult {
     /// where it was published without its content.
     #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
     pub confidentiality: ToolConfidentiality,
+    /// When the tool started and finished running - only for a call that
+    /// ran, not for one a decision or a check answered. Stored with the
+    /// history; published with the call, even where its content is
+    /// withheld: when it ran is the call's, not the content's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl ToolCallResult {
@@ -181,6 +189,8 @@ impl ToolCallResult {
             content,
             status,
             confidentiality: call.confidentiality,
+            started_at: None,
+            finished_at: None,
         }
     }
 }

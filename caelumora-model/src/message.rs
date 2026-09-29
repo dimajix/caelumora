@@ -533,7 +533,11 @@ mod tests {
     }
 
     fn result(id: &str, confidentiality: ToolConfidentiality) -> ToolCallResult {
-        ToolCallResult { id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), confidentiality }
+        let started_at = chrono::Utc::now();
+        ToolCallResult {
+            id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), confidentiality,
+            started_at: Some(started_at), finished_at: Some(started_at + chrono::Duration::milliseconds(250)),
+        }
     }
 
     /// What a channel of level `level` admits.
@@ -564,6 +568,8 @@ mod tests {
         let published = results.published(&up_to(Confidentiality::Channel)).expect("public and call-only results are left");
         let contents: Vec<_> = published.tool_results.iter().map(|r| r.content.as_str()).collect();
         assert_eq!(contents, ["secret", ""], "the hidden result is gone, the call-only one empty");
+        let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
+        assert_eq!(ran(&published.tool_results[1]), ran(&results.tool_results[1]), "when it ran is the call's, not the content's");
     }
 
     #[test]

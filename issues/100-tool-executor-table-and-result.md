@@ -72,3 +72,15 @@ should start from one result type.
   now records what `execute` returns. Removed: `ToolExecution`,
   `ExecutionStatus` and `ToolExecutor::providers`. `is_permitted` before
   approval and the check in `execute` both stay.
+- **2026-09-29** — Added on the maintainer's request: a result records
+  when its tool ran, `ToolCallResult::started_at` and `finished_at` - two
+  optional fields rather than a type of their own, as the maintainer
+  preferred; clients compute the duration. The executor sets them around
+  the provider's `execute`, not the checks before it, so a call that never
+  ran has none; it also logs the duration at `debug!`. They are stored with
+  the history and published with the call even where its content is
+  withheld. The web UI shows the duration next to a call's status, the
+  start in its tooltip. Checked in the browser: a calculator call shows
+  "3 ms", and the history over REST carries both timestamps. (The
+  `ToolExecution` removed above had never recorded anything: its times
+  were set on a local variable nobody read.)

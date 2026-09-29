@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Publication;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
+use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
@@ -208,33 +209,46 @@ impl DefaultToolExecutor {
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
     }
 
-    /// What the tool of `call` gives, or why it gives nothing.
-    async fn run(&self, call: &ToolCall, turn: &mut Turn<'_>) -> ToolResult<String> {
+    /// The provider that may run `call` now: the caller is an agent, the
+    /// policy permits the call, and there is such a tool.
+    async fn runner(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<&Arc<dyn ToolProvider>> {
         let security = turn.security_context();
-        // Session, channel and agent are on the turn's span.
-        debug!(tool = %call.function_name, initiator = %security.initiator_id, "Executing tool");
         if security.caller_id.as_agent_id().is_none() {
             return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
         }
         self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await?;
-        let provider = self.provider_of(&call.function_name)?;
-        let value = provider.execute(&call.function_name, &call.arguments, turn).await?;
-        Ok(successful_result(value, call.confidentiality, turn.publication()))
+        self.provider_of(&call.function_name)
     }
 }
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
     async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult {
-        match self.run(call, turn).await {
-            Ok(content) => ToolCallResult::of(call, ToolResultStatus::Ok, content),
+        // Only the tool's own run is timed, not the checks before it: a call
+        // that never ran has no timing.
+        let (outcome, ran) = match self.runner(call, turn).await {
+            Err(e) => (Err(e), None),
+            Ok(provider) => {
+                let started_at = Utc::now();
+                let outcome = provider.execute(&call.function_name, &call.arguments, turn).await;
+                let finished_at = Utc::now();
+                // Session, channel and agent are on the turn's span.
+                debug!(tool = %call.function_name, duration_ms = (finished_at - started_at).num_milliseconds(), ok = outcome.is_ok(), "Tool ran");
+                (outcome, Some((started_at, finished_at)))
+            }
+        };
+        let mut result = match outcome {
+            Ok(value) => ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(value, call.confidentiality, turn.publication())),
             Err(e) => {
                 warn!("Tool call '{}' failed: {}", call.function_name, e);
                 let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
                 let (status, content) = e.to_result(&available);
                 ToolCallResult::of(call, status, content)
             }
-        }
+        };
+        result.started_at = ran.map(|(started_at, _)| started_at);
+        result.finished_at = ran.map(|(_, finished_at)| finished_at);
+        result
     }
 
     async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool {
@@ -367,6 +381,7 @@ mod tests {
         let result = executor.execute(&call("test_tool"), &mut context).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden);
         assert_eq!(result.content, forbidden_result());
+        assert!(result.started_at.is_none() && result.finished_at.is_none(), "a refused call never ran");
     }
 
     #[tokio::test]
@@ -429,6 +444,9 @@ mod tests {
         let result = executor.execute(&call, &mut context).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.content, "{\"result\":\"ok\"}");
+        let (started_at, finished_at) = (result.started_at.expect("a call that ran has its start"), result.finished_at.expect("and its end"));
+        assert!(finished_at >= started_at);
+        assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
     }
 
     #[test]

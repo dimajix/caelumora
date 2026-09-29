@@ -453,7 +453,7 @@ mod tests {
     fn others_hear_what_was_said_as_a_user_without_the_tool_traffic() {
         use caelumora_model::tool::{ToolCallResult, ToolConfidentiality};
         let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC };
-        let result = ToolCallResult { id: Some("1".to_string()), tool_name: "noop".to_string(), content: "done".to_string(), status: Default::default(), confidentiality: ToolConfidentiality::PUBLIC };
+        let result = ToolCallResult::of(&call, Default::default(), "done".to_string());
         let said = vec![
             Message { role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::default() },
             Message { role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::default() },

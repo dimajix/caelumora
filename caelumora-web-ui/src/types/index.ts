@@ -82,6 +82,9 @@ export interface ToolResult {
   status?: ToolResultStatus;
   /** Empty `content` where the call was published without its content. */
   confidentiality?: ToolConfidentiality;
+  /** When the tool started and finished running; absent for a call that did not run. */
+  started_at?: string;
+  finished_at?: string;
 }
 
 /** The state of a channel when an event stream connects (issue 34). */

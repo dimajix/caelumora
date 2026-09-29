@@ -35,6 +35,16 @@ function confidentialityLabel(labels: ToolConfidentiality | undefined): string |
 }
 
 /** The text to show for a tool result: the message of an unsuccessful one, else the content. */
+/** How long a tool ran, e.g. `240 ms`, `3.1 s` or `2 min 5 s`; `null` if it did not run. */
+function toolDuration(result: ToolResult): string | null {
+  if (!result.started_at || !result.finished_at) return null;
+  const ms = Date.parse(result.finished_at) - Date.parse(result.started_at);
+  if (Number.isNaN(ms) || ms < 0) return null;
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
+}
+
 function toolResultText(result: ToolResult): string {
   if (!result.status || result.status === 'ok') return result.content;
   try {
@@ -189,6 +199,15 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                     </span>
                   )}
                 </div>
+                <div className="flex items-center gap-2">
+                {result && toolDuration(result) && (
+                  <span
+                    className="text-[10px] font-mono opacity-60"
+                    title={result.started_at ? `Ran from ${new Date(result.started_at).toLocaleString()}` : undefined}
+                  >
+                    {toolDuration(result)}
+                  </span>
+                )}
                 {result && result.status && result.status !== 'ok' ? (
                   <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
                     <XCircle size={12} />
@@ -202,6 +221,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                     <span className="text-[10px] text-blue-500 uppercase">Executing</span>
                   </div>
                 )}
+                </div>
               </div>
               <div className="p-2">
                 <div className="flex items-start gap-2 mb-1">
