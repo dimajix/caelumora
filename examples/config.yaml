@@ -1,10 +1,24 @@
+# Every section may be left out and then takes its default; a key that is
+# not known is an error, so a misspelt section doesn't silently fall back.
+
+# Where entities (sessions, agents, templates, ...) and runtime state are
+# kept: `type: json` with a `path`, or `type: memory` - the default, gone
+# when the process ends.
 persistence:
   state_store:
-    json:
-      path: "local/state_store"
+    type: json
+    path: "local/state_store"
   entity_store:
-    json:
-      path: "local/entity_store"
+    type: json
+    path: "local/entity_store"
+
+# Where secrets come from, tried in order. Default: local/secrets.json, then
+# the environment.
+#secrets:
+#  providers:
+#    - type: file
+#      path: "local/secrets.json"
+#    - type: env
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY

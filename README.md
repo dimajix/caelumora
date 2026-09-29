@@ -60,8 +60,8 @@ cargo run -p caelumora-rest-server -- --config examples/config.yaml
 ```
 
 The server requires a login. Users come from the providers in the config's
-`users` section; without one, nobody can log in. For local development,
-uncomment the `accept_any` provider in `examples/config.yaml` — it accepts any
+`users` section; without one, nobody can log in. `examples/config.yaml`
+enables the `accept_any` provider for local development — it accepts any
 username and password and must never be enabled on a server reachable from a
 network. Session tokens are signed with the secret `CAELUMORA_JWT_SECRET`
 (at least 32 bytes, e.g. in `local/secrets.json`); without it, every restart

@@ -7,18 +7,10 @@ pub const STAGE_PERCEIVE: &str = "perceive";
 pub const STAGE_PLAN: &str = "plan";
 pub const STAGE_EMIT: &str = "emit";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComponentConfig {
     #[serde(default)]
     pub component_nodes: Vec<ComponentDescriptor>,
-}
-
-impl Default for ComponentConfig {
-    fn default() -> Self {
-        Self {
-            component_nodes: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

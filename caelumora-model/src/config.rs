@@ -26,46 +26,69 @@ pub enum ConfigError {
 
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct JsonConfig {
-    pub path: PathBuf,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(untagged)]
+/// Where a store keeps its data.
+#[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PersistenceBackend {
-    Json { json: JsonConfig },
-    Memory { _dummy: Option<String> },
+    /// In memory, gone when the process ends. The default.
     #[default]
-    Default,
+    Memory,
+    /// One JSON file per document below `path` (`JsonFileStore`).
+    Json { path: PathBuf },
 }
+
+impl PersistenceBackend {
+    /// Opens the store this backend describes. Both kinds of store serve
+    /// as entity and as state store; the caller picks the face it needs.
+    fn open(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn Store>> {
+        Ok(match self {
+            Self::Memory => Arc::new(MemoryStore::with_security_manager(security_manager)),
+            Self::Json { path } => Arc::new(JsonFileStore::new(path, security_manager)?),
+        })
+    }
+}
+
+/// What `PersistenceBackend::open` returns: a store with both faces, so
+/// that one match serves `create_entity_store` and `create_state_store`.
+trait Store: EntityStore + StateStore {}
+impl<T: EntityStore + StateStore> Store for T {}
 
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default, deny_unknown_fields)]
 pub struct PersistenceConfig {
-    pub entity_store: Option<PersistenceBackend>,
-    pub state_store: Option<PersistenceBackend>,
+    pub entity_store: PersistenceBackend,
+    pub state_store: PersistenceBackend,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct FileSecretProviderConfig {
-    pub path: PathBuf,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SecretProviderConfig {
-    File(FileSecretProviderConfig),
+    File { path: PathBuf },
     Env,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
 pub struct SecretsConfig {
     pub providers: Vec<SecretProviderConfig>,
 }
 
+/// Without a `secrets` section, secrets come from `local/secrets.json` and
+/// then from the environment.
+impl Default for SecretsConfig {
+    fn default() -> Self {
+        Self {
+            providers: vec![
+                SecretProviderConfig::File { path: PathBuf::from("local/secrets.json") },
+                SecretProviderConfig::Env,
+            ],
+        }
+    }
+}
+
 /// Which policy decides what may be done to what (issue 11).
 #[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SecurityConfig {
     /// Owners do everything with their entities, contributors read and use
     /// them, what belongs to the system everybody uses
@@ -79,14 +102,18 @@ pub enum SecurityConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UserProviderConfig {
     /// Development only: accepts any username and password (see
     /// `AcceptAnyUserProvider`). Never part of the default chain.
     AcceptAny,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+/// Without a `users` section the chain is empty and nobody can
+/// authenticate: there is no default provider, because the only one that
+/// needs no setup accepts everybody.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default, deny_unknown_fields)]
 pub struct UsersConfig {
     pub providers: Vec<UserProviderConfig>,
 }
@@ -94,7 +121,7 @@ pub struct UsersConfig {
 /// How the REST server keeps a browser logged in: a signed JWT in an
 /// `HttpOnly` cookie, renewed while in use (issue 10).
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AuthConfig {
     /// Name of the secret holding the JWT signing key, resolved through the
     /// secret chain. Also used as the token's `kid`, so rotating the key means
@@ -138,7 +165,7 @@ pub enum LogFormat {
 /// Where and how a binary writes its log (issue 01). Which records are
 /// written is controlled by `RUST_LOG`, not here.
 #[derive(Debug, Deserialize, Default, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
     pub format: LogFormat,
     /// Log file to append to. Without one, each binary uses its own default:
@@ -147,22 +174,23 @@ pub struct LoggingConfig {
     pub file: Option<PathBuf>,
 }
 
+/// The configuration of a binary. Every section may be left out and then
+/// takes its default; a key the configuration does not know is an error
+/// rather than ignored, so that a misspelt section doesn't silently fall
+/// back to its default.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
-    pub persistence: Option<PersistenceConfig>,
-    pub secrets: Option<SecretsConfig>,
-    pub users: Option<UsersConfig>,
-    #[serde(default)]
+    pub persistence: PersistenceConfig,
+    pub secrets: SecretsConfig,
+    pub users: UsersConfig,
     pub auth: AuthConfig,
-    #[serde(default)]
     pub logging: LoggingConfig,
     /// The user commands every session has (issue 28), as `CommandProvider`
     /// components; a session template can add its own. Defaults to `/help`
     /// and `/wakeup`; an empty `component_nodes` list switches them off.
-    #[serde(default = "default_commands")]
     pub commands: ComponentConfig,
     /// The access policy; `ownership` unless configured otherwise.
-    #[serde(default)]
     pub security: SecurityConfig,
 }
 
@@ -170,9 +198,9 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            persistence: None,
-            secrets: None,
-            users: None,
+            persistence: PersistenceConfig::default(),
+            secrets: SecretsConfig::default(),
+            users: UsersConfig::default(),
             auth: AuthConfig::default(),
             logging: LoggingConfig::default(),
             commands: default_commands(),
@@ -217,51 +245,27 @@ impl AppConfig {
         }
     }
 
+    /// The entity store, as configured under `persistence.entity_store`.
+    ///
+    /// # Errors
+    /// `ConfigError::Store` if the store cannot be opened.
     pub fn create_entity_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn EntityStore>> {
-        let store : Arc<dyn EntityStore> = match &self.persistence {
-            None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-            Some(persistence) => {
-                match &persistence.entity_store {
-                    Some(PersistenceBackend::Default) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-                    Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-                    Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),
-                    None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-                }
-            }
-        };
-        Ok(store)
+        Ok(self.persistence.entity_store.open(security_manager)?)
     }
 
+    /// The state store, as configured under `persistence.state_store`.
+    ///
+    /// # Errors
+    /// `ConfigError::Store` if the store cannot be opened.
     pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn StateStore>> {
-        let store : Arc<dyn StateStore> = match &self.persistence {
-            None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-            Some(persistence) => {
-                match &persistence.state_store {
-                    Some(PersistenceBackend::Default) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-                    Some(PersistenceBackend::Memory { _dummy}) => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-                    Some(PersistenceBackend::Json { json }) => Arc::new(JsonFileStore::new(&json.path, security_manager)?),
-                    None => Arc::new(MemoryStore::with_security_manager(security_manager.clone())),
-                }
-            }
-        };
-        Ok(store)
+        Ok(self.persistence.state_store.open(security_manager)?)
     }
 
+    /// The chain of secret providers from the `secrets` section.
     pub fn create_secret_manager(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<SecretManager>> {
-        let provider_configs: Vec<SecretProviderConfig> = match &self.secrets {
-            Some(secrets) => secrets.providers.clone(),
-            None => vec![
-                SecretProviderConfig::File(FileSecretProviderConfig { path: PathBuf::from("local/secrets.json") }),
-                SecretProviderConfig::Env,
-            ],
-        };
-
-        let providers = provider_configs
-            .into_iter()
+        let providers = self.secrets.providers.iter()
             .map(|config| match config {
-                SecretProviderConfig::File(file) => {
-                    Arc::new(FileSecretProvider::new(file.path)) as Arc<dyn crate::secret::SecretProvider>
-                }
+                SecretProviderConfig::File { path } => Arc::new(FileSecretProvider::new(path.clone())) as Arc<dyn crate::secret::SecretProvider>,
                 SecretProviderConfig::Env => Arc::new(EnvSecretProvider::new()) as Arc<dyn crate::secret::SecretProvider>,
             })
             .collect();
@@ -269,17 +273,9 @@ impl AppConfig {
         Ok(Arc::new(SecretManager::new(providers, security_manager)))
     }
 
-    /// Builds the chain of user providers from the `users` section. Without
-    /// one the chain is empty and nobody can authenticate: there is no
-    /// default provider, because the only one that needs no setup accepts
-    /// everybody.
+    /// The chain of user providers from the `users` section.
     pub fn create_user_manager(&self, entity_store: Arc<dyn EntityStore>) -> ConfigResult<Arc<UserManager>> {
-        let provider_configs = self.users.as_ref()
-            .map(|users| users.providers.clone())
-            .unwrap_or_default();
-
-        let providers = provider_configs
-            .into_iter()
+        let providers = self.users.providers.iter()
             .map(|config| match config {
                 UserProviderConfig::AcceptAny => {
                     tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
@@ -298,51 +294,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_load_config() {
+    fn a_store_backend_is_named_by_its_type() {
         let yaml = r#"
 persistence:
+  entity_store:
+    type: json
+    path: "local/entity_store"
   state_store:
-    json:
-      path: "local/state_store"
-  template_store:
-    json:
-      path: "local/template_store"
+    type: memory
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert!(config.persistence.is_some());
-        let p = config.persistence.unwrap();
-        match p.state_store {
-            Some(PersistenceBackend::Json { json }) => assert_eq!(json.path, PathBuf::from("local/state_store")),
-            _ => panic!("Expected Json backend"),
+        assert_eq!(config.persistence.entity_store, PersistenceBackend::Json { path: PathBuf::from("local/entity_store") });
+        assert_eq!(config.persistence.state_store, PersistenceBackend::Memory);
+    }
+
+    #[test]
+    fn a_missing_section_takes_its_default() {
+        for config in [AppConfig::default(), AppConfig::from_yaml("{}").unwrap(), AppConfig::from_yaml("persistence: {}").unwrap()] {
+            assert_eq!(config.persistence.entity_store, PersistenceBackend::Memory);
+            assert_eq!(config.persistence.state_store, PersistenceBackend::Memory);
+            assert_eq!(config.secrets.providers, SecretsConfig::default().providers);
+            assert!(config.users.providers.is_empty(), "no user provider unless configured");
         }
     }
 
     #[test]
-    fn test_load_config_memory() {
-        let yaml = r#"
-persistence:
-  state_store:
-    memory:
-"#;
-        let config = AppConfig::from_yaml(yaml).unwrap();
-        assert!(config.persistence.is_some());
-        let p = config.persistence.unwrap();
-        println!("Deserialized state_store: {:?}", p.state_store);
-        match p.state_store {
-            Some(PersistenceBackend::Memory { _dummy }) => (),
-            _ => panic!("Expected Memory backend, got {:?}", p.state_store),
+    fn an_unknown_key_is_an_error_naming_it() {
+        for yaml in [
+            "persistence:\n  entity_stor:\n    type: memory\n",
+            "persistence:\n  entity_store:\n    type: json\n    pth: local\n",
+            "secret:\n  providers: []\n",
+            "auth:\n  token_lifetime: 60\n",
+        ] {
+            let message = AppConfig::from_yaml(yaml).expect_err(yaml).to_string();
+            assert!(message.contains("unknown field"), "{yaml:?} gave: {message}");
         }
+        let message = AppConfig::from_yaml("persistence:\n  state_store:\n    type: file\n").expect_err("unknown backend").to_string();
+        assert!(message.contains("unknown variant"), "gave: {message}");
     }
 
     #[test]
-    fn test_load_config_none() {
-        let yaml = r#"
-persistence: {}
-"#;
-        let config = AppConfig::from_yaml(yaml).unwrap();
-        assert!(config.persistence.is_some());
-        let p = config.persistence.unwrap();
-        assert!(p.state_store.is_none());
+    fn the_example_config_loads() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml");
+        let config = AppConfig::load(path).expect("examples/config.yaml is a valid configuration");
+        assert!(matches!(config.persistence.entity_store, PersistenceBackend::Json { .. }));
     }
 
     #[test]
@@ -355,13 +350,10 @@ secrets:
     - type: env
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        let secrets = config.secrets.expect("secrets config present");
-        assert_eq!(secrets.providers.len(), 2);
-        match &secrets.providers[0] {
-            SecretProviderConfig::File(file) => assert_eq!(file.path, PathBuf::from("local/secrets.json")),
-            _ => panic!("Expected File provider first"),
-        }
-        assert!(matches!(secrets.providers[1], SecretProviderConfig::Env));
+        assert_eq!(config.secrets.providers, [
+            SecretProviderConfig::File { path: PathBuf::from("local/secrets.json") },
+            SecretProviderConfig::Env,
+        ]);
     }
 
     #[test]
@@ -372,9 +364,8 @@ users:
     - type: accept_any
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        let users = config.users.expect("users config present");
-        assert_eq!(users.providers.len(), 1);
-        assert!(matches!(users.providers[0], UserProviderConfig::AcceptAny));
+        assert_eq!(config.users.providers.len(), 1);
+        assert!(matches!(config.users.providers[0], UserProviderConfig::AcceptAny));
     }
 
     #[test]
@@ -455,7 +446,9 @@ users:
 
     #[test]
     fn a_malformed_config_names_the_location_but_not_the_content() {
-        let yaml = "auth:\n  secret_value_xyz: [unclosed\n";
+        // The marker is a value: keys are named in errors about unknown
+        // fields, but what a key holds may be a credential.
+        let yaml = "auth:\n  jwt_secret: [secret_value_xyz, unclosed\n";
         let err = AppConfig::from_yaml(yaml).expect_err("unclosed flow sequence must not parse");
         let message = err.to_string();
         assert!(message.contains("line"), "error should name the line: {message}");
