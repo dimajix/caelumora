@@ -1,3 +1,4 @@
+use caelumora_model::store::StoreError;
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse, SessionSnapshot};
@@ -17,11 +18,13 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     let ctx = user.security_context();
     let template_id = SessionTemplateId(payload.template_id);
-    let template = state.entity_store.list_session_templates(&ctx).await
-        .map_err(|e| ApiError::internal("templates_unavailable", "listing the session templates", &e.into()))?
-        .into_iter()
-        .find(|t| t.id == template_id)
-        .ok_or_else(|| ApiError::not_found("template_not_found", format!("Session template {} does not exist", template_id)))?;
+    let template = match state.entity_store.get_session_template(&ctx, template_id).await {
+        Ok(template) => template,
+        Err(StoreError::NotFound { .. }) => {
+            return Err(ApiError::not_found("template_not_found", format!("Session template {} does not exist", template_id)));
+        }
+        Err(e) => return Err(ApiError::internal("templates_unavailable", "reading the session template", &e.into())),
+    };
 
     let session_id = SessionId(Uuid::new_v4());
     // The logged-in user owns the session and fills its "user" participant.

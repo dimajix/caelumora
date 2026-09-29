@@ -28,28 +28,38 @@ pub enum StoreError {
 pub type StoreResult<T> = Result<T, StoreError>;
 
 
+/// The durable entities (issue 93): every kind has the same five
+/// operations - `create`, `get`, `update`, `delete`, `list` - by id, and
+/// every one of them is checked the same way (`store_impl::access`).
+/// `create` refuses an entity that exists (`Conflict`), `update` one that
+/// does not (`NotFound`); `delete` says whether there was one to delete.
 #[async_trait]
 pub trait EntityStore : Debug + Sync + Send {
-    // Personalities (formerly in TemplateStore)
+    // Personalities
+    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality>;
-    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
-    async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
+    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
+    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality>;
 
-    // Session templates (formerly in TemplateStore)
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
-    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
-    async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
+    // Session templates
+    async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
+    async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
+    async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
+    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate>;
 
-    // Agents (durable definition)
+    // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent>;
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
+    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
+    async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent>;
 
-    // Sessions (durable definition)
+    // Sessions
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
@@ -62,18 +72,22 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
+    async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>>;
 
-    // Users
+    // Users - not checked yet (issue 94).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
-    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
+    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
+    async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>>;
+    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
 
     // Preconfigured components (referenceable elsewhere via `kind: "ref"`)
+    async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;
     async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor>;
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>>;
-    async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;
+    async fn update_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool>;
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>>;
 }
 
 #[async_trait]
@@ -127,7 +141,7 @@ pub mod tests {
 
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
-        store.put_personality(&ctx, &personality).await.unwrap();
+        store.create_personality(&ctx, &personality).await.unwrap();
         store.create_agent(&ctx, &existing).await.unwrap();
 
         let context = crate::session::SessionContext {
@@ -157,7 +171,7 @@ pub mod tests {
         let personality = personality_template();
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
-        store.put_personality(&ctx, &personality).await.unwrap();
+        store.create_personality(&ctx, &personality).await.unwrap();
 
         let context = crate::session::SessionContext {
             id: SessionId(Uuid::new_v4()),

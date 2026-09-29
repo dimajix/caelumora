@@ -376,7 +376,7 @@ mod tests {
 
         let store = Arc::new(MemoryStore::new());
         store
-            .put_component(&SecurityContext::default(), &descriptor("shared-marker", "counter", json!({})))
+            .create_component(&SecurityContext::default(), &descriptor("shared-marker", "counter", json!({})))
             .await
             .unwrap();
 
@@ -418,7 +418,7 @@ mod tests {
     async fn ref_kind_rejects_a_preconfigured_descriptor_that_is_itself_a_ref() {
         let store = Arc::new(MemoryStore::new());
         store
-            .put_component(
+            .create_component(
                 &SecurityContext::default(),
                 &descriptor("a", PRECONFIGURED_REF_KIND, json!({ "id": "b" })),
             )

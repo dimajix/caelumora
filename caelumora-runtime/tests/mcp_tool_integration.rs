@@ -143,7 +143,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     // Preconfigured components now live in the EntityStore rather than in application-level
     // config, so seed it directly.
     store
-        .put_component(
+        .create_component(
             &SecurityContext::default(),
             &ComponentDescriptor {
                 security_attributes: Default::default(),

@@ -37,7 +37,9 @@ pub enum ActionType<'a> {
     /// 06). Carries the agent's attributes.
     ReadAgentContext(&'a SecurityAttributes),
     FindAgent,
+    ListAgents,
     UpdateAgent(&'a SecurityAttributes),
+    DeleteAgent(&'a SecurityAttributes),
     CreateSession(&'a SecurityAttributes),
     GetSession(&'a SecurityAttributes),
     UpdateSession(&'a SecurityAttributes),
@@ -45,6 +47,7 @@ pub enum ActionType<'a> {
     ListSessions,
     /// Reading a channel, carrying its attributes (issue 70).
     GetChannel(&'a SecurityAttributes),
+    ListChannels,
     /// Creating a channel, with the attributes of the new channel.
     CreateChannel(&'a SecurityAttributes),
     /// Changing a channel - its name, its participants - with its attributes
@@ -307,6 +310,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::UpdateSessionTemplate(a)
             | ActionType::DeleteSessionTemplate(a)
             | ActionType::UpdateAgent(a)
+            | ActionType::DeleteAgent(a)
             | ActionType::ReadAgentContext(a)
             | ActionType::UpdateSession(a)
             | ActionType::DeleteSession(a)
@@ -319,7 +323,9 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::FindSessionTemplate
             | ActionType::ListSessionTemplates
             | ActionType::FindAgent
+            | ActionType::ListAgents
             | ActionType::ListSessions
+            | ActionType::ListChannels
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)

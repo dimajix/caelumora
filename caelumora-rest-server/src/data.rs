@@ -49,7 +49,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             "Your name is Jonathan Heart. You are a self-made millionaire. You always wanted to be a quiz-master.",
             PrivateKnowledge::Memory,
         );
-        store.put_personality(&ctx, &p).await?;
+        store.create_personality(&ctx, &p).await?;
         p
     };
 
@@ -62,7 +62,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant who loves to play quiz games.",
             PrivateKnowledge::PrivateNotes,
         );
-        store.put_personality(&ctx, &p).await?;
+        store.create_personality(&ctx, &p).await?;
         p
     };
 
@@ -96,7 +96,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             commands: Default::default(),
             security_attributes: Default::default(),
         };
-        store.put_session_template(&ctx, &template_a).await?;
+        store.create_session_template(&ctx, &template_a).await?;
     }
 
     if store.find_session_template_by_name(&ctx, "sassy-session", &Scope::GlobalScope).await.is_err() {
@@ -136,7 +136,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             commands: Default::default(),
             security_attributes: Default::default(),
         };
-        store.put_session_template(&ctx, &template_b).await?;
+        store.create_session_template(&ctx, &template_b).await?;
     }
 
     // Agents answer only when a user @-mentions them (issue 44).
@@ -177,7 +177,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             commands: Default::default(),
             security_attributes: Default::default(),
         };
-        store.put_session_template(&ctx, &template_c).await?;
+        store.create_session_template(&ctx, &template_c).await?;
     }
 
     Ok(())

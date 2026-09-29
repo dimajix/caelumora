@@ -76,14 +76,6 @@ impl<'a> Access<'a> {
         self.allow(change(stored.security_attributes())).await
     }
 
-    /// Whether the caller may store `value`, creating or replacing `stored`.
-    pub(crate) async fn put<T: Secured>(&self, stored: Option<&T>, value: &T, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, create: impl Fn(&SecurityAttributes) -> ActionType<'_>, update: impl Fn(&SecurityAttributes) -> ActionType<'_>, entity: &'static str, id: String) -> StoreResult<()> {
-        match stored {
-            Some(_) => self.change(stored, read, update, entity, id).await,
-            None => self.create(value, create).await,
-        }
-    }
-
     /// Whether to delete `stored`: `false` if there is nothing the caller
     /// could see to delete, an error if they may see but not delete it.
     pub(crate) async fn delete<T: Secured>(&self, stored: Option<&T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, delete: impl Fn(&SecurityAttributes) -> ActionType<'_>) -> StoreResult<bool> {
@@ -94,6 +86,72 @@ impl<'a> Access<'a> {
         self.allow(delete(stored.security_attributes())).await.map(|_| true)
     }
 }
+
+/// The actions that guard one kind of entity, and its name in errors: every
+/// kind is read, listed, created, changed and deleted the same way (issue
+/// 93), and a store implements the five operations once for all kinds.
+pub(crate) struct Actions {
+    pub(crate) entity: &'static str,
+    pub(crate) get: for<'a> fn(&'a SecurityAttributes) -> ActionType<'a>,
+    pub(crate) list: ActionType<'static>,
+    pub(crate) create: for<'a> fn(&'a SecurityAttributes) -> ActionType<'a>,
+    pub(crate) update: for<'a> fn(&'a SecurityAttributes) -> ActionType<'a>,
+    pub(crate) delete: for<'a> fn(&'a SecurityAttributes) -> ActionType<'a>,
+}
+
+pub(crate) const PERSONALITIES: Actions = Actions {
+    entity: "personality",
+    get: |a| ActionType::GetPersonality(a),
+    list: ActionType::ListPersonalities,
+    create: |a| ActionType::CreatePersonality(a),
+    update: |a| ActionType::UpdatePersonality(a),
+    delete: |a| ActionType::DeletePersonality(a),
+};
+
+pub(crate) const SESSION_TEMPLATES: Actions = Actions {
+    entity: "session_template",
+    get: |a| ActionType::GetSessionTemplate(a),
+    list: ActionType::ListSessionTemplates,
+    create: |a| ActionType::CreateSessionTemplate(a),
+    update: |a| ActionType::UpdateSessionTemplate(a),
+    delete: |a| ActionType::DeleteSessionTemplate(a),
+};
+
+pub(crate) const AGENTS: Actions = Actions {
+    entity: "agent",
+    get: |a| ActionType::GetAgent(a),
+    list: ActionType::ListAgents,
+    create: |a| ActionType::CreateAgent(a),
+    update: |a| ActionType::UpdateAgent(a),
+    delete: |a| ActionType::DeleteAgent(a),
+};
+
+pub(crate) const SESSIONS: Actions = Actions {
+    entity: "session",
+    get: |a| ActionType::GetSession(a),
+    list: ActionType::ListSessions,
+    create: |a| ActionType::CreateSession(a),
+    update: |a| ActionType::UpdateSession(a),
+    delete: |a| ActionType::DeleteSession(a),
+};
+
+pub(crate) const CHANNELS: Actions = Actions {
+    entity: "channel",
+    get: |a| ActionType::GetChannel(a),
+    list: ActionType::ListChannels,
+    create: |a| ActionType::CreateChannel(a),
+    update: |a| ActionType::UpdateChannel(a),
+    delete: |a| ActionType::DeleteChannel(a),
+};
+
+pub(crate) const COMPONENTS: Actions = Actions {
+    entity: "component",
+    get: |a| ActionType::GetComponent(a),
+    list: ActionType::ListComponents,
+    create: |a| ActionType::CreateComponent(a),
+    update: |a| ActionType::UpdateComponent(a),
+    delete: |a| ActionType::DeleteComponent(a),
+};
 
 #[cfg(test)]
 mod tests {

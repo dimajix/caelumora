@@ -63,3 +63,19 @@ seven small inconsistencies.
   `read_json_opt`/`write_json_atomic` are the read and write helpers the
   considerations asked for. Files written with the wrapper still load:
   the fields were flattened in, and unknown fields are ignored.
+- **2026-09-29** — Step 2: one dialect. `EntityStore` has `create`, `get`,
+  `update`, `delete` and `list` for personalities, session templates,
+  agents, sessions, channels, users and components; `put_*` is gone, and
+  the seeding creates what is missing. The five operations are written
+  once per store (`create_in`/`get_in`/... in the memory store,
+  `create_file`/`get_file`/... in the JSON store) over a table of the
+  actions that guard each kind (`store_impl::access::Actions`, with
+  `ActionType::{ListAgents, DeleteAgent, ListChannels}` added). Session
+  templates are kept by id in both stores - the JSON store names their
+  files by id - and REST reads the one a session is made from with
+  `get_session_template` instead of listing all. `create` checks for an
+  existing file asynchronously now. A missing personality is reported as
+  `personality`, no longer `agent_template`. Users keep their unchecked
+  methods, now with `delete_user` and `list_users` (issue 94). JSON stores
+  written before this keep templates under their names; being dev data,
+  they are to be deleted rather than migrated.

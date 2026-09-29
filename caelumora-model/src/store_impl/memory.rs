@@ -9,14 +9,16 @@ use async_trait::async_trait;
 use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use crate::security::{ActionType, DummySecurityManager, SecurityManager};
-use crate::store_impl::access::Access;
+use crate::security::{ActionType, DummySecurityManager, Secured, SecurityManager};
+use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES};
+use std::fmt::Display;
+use std::hash::Hash;
 
 #[derive(Debug)]
 pub struct MemoryStore {
     security_manager: Arc<dyn SecurityManager>,
     personalities: RwLock<HashMap<PersonalityId, Personality>>,
-    session_templates: RwLock<HashMap<String, SessionTemplate>>,
+    session_templates: RwLock<HashMap<SessionTemplateId, SessionTemplate>>,
     agents: RwLock<HashMap<AgentId, Agent>>,
     sessions: RwLock<HashMap<SessionId, Session>>,
     channels: RwLock<HashMap<ChannelId, Channel>>,
@@ -82,6 +84,54 @@ impl MemoryStore {
     }
 }
 
+/// The five operations of every entity kind (issue 93), on the map that
+/// holds that kind and checked with its `Actions`.
+impl MemoryStore {
+    async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+        self.access(ctx).create(value, kind.create).await?;
+        self.write_lock(map, |v| {
+            if v.contains_key(&key) {
+                return Err(StoreError::Conflict(format!("{} {} already exists", kind.entity, key)));
+            }
+            v.insert(key, value.clone());
+            Ok(())
+        })?
+    }
+
+    async fn get_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<T>
+    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+        let found = self.read_lock(map, |v| v.get(key).cloned())?;
+        self.access(ctx).read(found, kind.get, kind.entity, key.to_string()).await
+    }
+
+    async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+        let stored = self.read_lock(map, |v| v.get(&key).cloned())?;
+        self.access(ctx).change(stored.as_ref(), kind.get, kind.update, kind.entity, key.to_string()).await?;
+        self.write_lock(map, |v| {
+            v.insert(key, value.clone());
+        })
+    }
+
+    async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
+    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+        let stored = self.read_lock(map, |v| v.get(key).cloned())?;
+        if !self.access(ctx).delete(stored.as_ref(), kind.get, kind.delete).await? {
+            return Ok(false);
+        }
+        self.write_lock(map, |v| v.remove(key).is_some())
+    }
+
+    async fn list_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
+    where K: Eq + Hash + Send + Sync, T: Secured + Clone + Send + Sync {
+        let access = self.access(ctx);
+        access.allow(kind.list).await?;
+        let all = self.read_lock(map, |v| v.values().cloned().collect())?;
+        Ok(access.filter(all, kind.get).await)
+    }
+}
+
 fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> StoreResult<T> {
     value.ok_or(StoreError::NotFound { entity, id })
 }
@@ -91,205 +141,120 @@ use crate::user::{User, UserId};
 
 #[async_trait]
 impl EntityStore for MemoryStore {
-    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        let found = self.read_lock(&self.personalities, |v| v.get(&id).cloned())?;
-        self.access(ctx).read(found, |a| ActionType::GetPersonality(a), "agent_template", id.to_string()).await
+    // Personalities
+    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
+        self.create_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
     }
-
+    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        self.get_in(ctx, &self.personalities, &PERSONALITIES, &id).await
+    }
+    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
+        self.update_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
+    }
+    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.personalities, &PERSONALITIES, &id).await
+    }
+    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+        self.list_in(ctx, &self.personalities, &PERSONALITIES).await
+    }
     async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
         self.access(ctx).allow(ActionType::FindPersonality).await?;
         require_entity(
-            self.list_personalities(ctx).await?
-                .into_iter()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            "agent_template",
+            self.list_personalities(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
+            PERSONALITIES.entity,
             name.to_string(),
         )
     }
 
-    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListPersonalities).await?;
-        let all = self.read_lock(&self.personalities, |v| v.values().cloned().collect())?;
-        Ok(access.filter(all, |a| ActionType::GetPersonality(a)).await)
+    // Session templates
+    async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
+        self.create_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
     }
-
-    async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        let stored = self.read_lock(&self.personalities, |v| v.get(&value.id).cloned())?;
-        self.access(ctx).put(
-            stored.as_ref(), value,
-            |a| ActionType::GetPersonality(a), |a| ActionType::CreatePersonality(a), |a| ActionType::UpdatePersonality(a),
-            "agent_template", value.id.to_string(),
-        ).await?;
-        self.write_lock(&self.personalities, |v| {
-            v.insert(value.id, value.clone());
-        })
+    async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
+        self.get_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
     }
-
-    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        let stored = self.read_lock(&self.personalities, |v| v.get(&id).cloned())?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetPersonality(a), |a| ActionType::DeletePersonality(a)).await? {
-            return Ok(false);
-        }
-        self.write_lock(&self.personalities, |v| v.remove(&id).is_some())
+    async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
+        self.update_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
     }
-
+    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
+    }
+    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+        self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
+    }
     async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
         self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
         require_entity(
-            self.list_session_templates(ctx).await?
-                .into_iter()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            "session_template",
+            self.list_session_templates(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
+            SESSION_TEMPLATES.entity,
             name.to_string(),
         )
     }
 
-    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListSessionTemplates).await?;
-        let all = self.read_lock(&self.session_templates, |v| v.values().cloned().collect())?;
-        Ok(access.filter(all, |a| ActionType::GetSessionTemplate(a)).await)
-    }
-
-    async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        let stored = self.read_lock(&self.session_templates, |v| v.get(&value.metadata.name).cloned())?;
-        self.access(ctx).put(
-            stored.as_ref(), value,
-            |a| ActionType::GetSessionTemplate(a), |a| ActionType::CreateSessionTemplate(a), |a| ActionType::UpdateSessionTemplate(a),
-            "session_template", value.id.to_string(),
-        ).await?;
-        self.write_lock(&self.session_templates, |v| {
-            v.insert(value.metadata.name.clone(), value.clone());
-        })
-    }
-
-    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        let stored = self.read_lock(&self.session_templates, |v| v.values().find(|t| t.id == id).cloned())?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetSessionTemplate(a), |a| ActionType::DeleteSessionTemplate(a)).await? {
-            return Ok(false);
-        }
-        let Some(template) = stored else { return Ok(false) };
-        self.write_lock(&self.session_templates, |v| v.remove(&template.metadata.name).is_some())
-    }
-
-    // Agents (durable definitions)
+    // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.access(ctx).create(value, |a| ActionType::CreateAgent(a)).await?;
-        self.write_lock(&self.agents, |v| {
-            if v.contains_key(&value.id) {
-                return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
-            }
-            v.insert(value.id, value.clone());
-            Ok(())
-        })?
+        self.create_in(ctx, &self.agents, &AGENTS, value.id, value).await
     }
-
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        let found = self.read_lock(&self.agents, |v| v.get(&id).cloned())?;
-        self.access(ctx).read(found, |a| ActionType::GetAgent(a), "agent", id.to_string()).await
+        self.get_in(ctx, &self.agents, &AGENTS, &id).await
     }
-
+    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        self.update_in(ctx, &self.agents, &AGENTS, value.id, value).await
+    }
+    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.agents, &AGENTS, &id).await
+    }
+    async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
+        self.list_in(ctx, &self.agents, &AGENTS).await
+    }
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
         let access = self.access(ctx);
         access.allow(ActionType::FindAgent).await?;
         let all = self.read_lock(&self.agents, |v| v.values().cloned().collect())?;
         require_entity(
-            access.filter(all, |a| ActionType::GetAgent(a)).await
-                .into_iter()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            "agent",
+            access.filter(all, AGENTS.get).await.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
+            AGENTS.entity,
             name.to_string(),
         )
     }
 
-    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        let stored = self.read_lock(&self.agents, |v| v.get(&value.id).cloned())?;
-        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetAgent(a), |a| ActionType::UpdateAgent(a), "agent", value.id.to_string()).await?;
-        self.write_lock(&self.agents, |v| {
-            v.insert(value.id, value.clone());
-        })
-    }
-
-    // Sessions (durable definitions)
+    // Sessions - their state is the `StateStore`'s, which may be another
+    // store: whoever deletes a session deletes it there.
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.access(ctx).create(value, |a| ActionType::CreateSession(a)).await?;
-        self.write_lock(&self.sessions, |v| {
-            if v.contains_key(&value.id) {
-                return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
-            }
-            v.insert(value.id, value.clone());
-            Ok(())
-        })?
+        self.create_in(ctx, &self.sessions, &SESSIONS, value.id, value).await
     }
-
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        let found = self.read_lock(&self.sessions, |v| v.get(&id).cloned())?;
-        self.access(ctx).read(found, |a| ActionType::GetSession(a), "session", id.to_string()).await
+        self.get_in(ctx, &self.sessions, &SESSIONS, &id).await
     }
-
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        let stored = self.read_lock(&self.sessions, |v| v.get(&value.id).cloned())?;
-        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::UpdateSession(a), "session", value.id.to_string()).await?;
-        self.write_lock(&self.sessions, |v| {
-            v.insert(value.id, value.clone());
-        })
+        self.update_in(ctx, &self.sessions, &SESSIONS, value.id, value).await
     }
-
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        let stored = self.read_lock(&self.sessions, |v| v.get(&id).cloned())?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
-            return Ok(false);
-        }
-        // The state is the `StateStore`'s, which may be another store.
-        let removed = self.write_lock(&self.sessions, |v| v.remove(&id))?;
-        Ok(removed.is_some())
+        self.delete_in(ctx, &self.sessions, &SESSIONS, &id).await
     }
-
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListSessions).await?;
-        let all = self.read_lock(&self.sessions, |v| v.values().cloned().collect())?;
-        Ok(access.filter(all, |a| ActionType::GetSession(a)).await)
+        self.list_in(ctx, &self.sessions, &SESSIONS).await
     }
 
     // Channels (issue 70)
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.access(ctx).create(value, |a| ActionType::CreateChannel(a)).await?;
-        self.write_lock(&self.channels, |v| {
-            if v.contains_key(&value.id) {
-                return Err(StoreError::Conflict(format!("channel {} already exists", value.id)));
-            }
-            v.insert(value.id, value.clone());
-            Ok(())
-        })?
+        self.create_in(ctx, &self.channels, &CHANNELS, value.id, value).await
     }
-
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        let found = self.read_lock(&self.channels, |v| v.get(&id).cloned())?;
-        self.access(ctx).read(found, |a| ActionType::GetChannel(a), "channel", id.to_string()).await
+        self.get_in(ctx, &self.channels, &CHANNELS, &id).await
     }
-
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        let stored = self.read_lock(&self.channels, |v| v.get(&value.id).cloned())?;
-        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::UpdateChannel(a), "channel", value.id.to_string()).await?;
-        self.write_lock(&self.channels, |v| {
-            v.insert(value.id, value.clone());
-        })
+        self.update_in(ctx, &self.channels, &CHANNELS, value.id, value).await
     }
-
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        let stored = self.read_lock(&self.channels, |v| v.get(&id).cloned())?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::DeleteChannel(a)).await? {
-            return Ok(false);
-        }
-        let removed = self.write_lock(&self.channels, |v| v.remove(&id))?;
-        Ok(removed.is_some())
+        self.delete_in(ctx, &self.channels, &CHANNELS, &id).await
+    }
+    async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
+        self.list_in(ctx, &self.channels, &CHANNELS).await
     }
 
-    // Users
-    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+    // Users - not checked yet (issue 94).
+    async fn create_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
         self.write_lock(&self.users, |v| {
             if v.contains_key(&value.id) {
                 return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
@@ -298,28 +263,10 @@ impl EntityStore for MemoryStore {
             Ok(())
         })?
     }
-
-    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        let _ = ctx; // Placeholder for security check
-        let values = self.read_lock(&self.users, |v| v.clone())?;
-        require_entity(values.get(&id).cloned(), "user", id.to_string())
+    async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        require_entity(self.read_lock(&self.users, |v| v.get(&id).cloned())?, "user", id.to_string())
     }
-
-    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let _ = _ctx;
-        let values = self.read_lock(&self.users, |v| v.clone())?;
-        require_entity(
-            values
-                .values()
-                .find(|t| t.username == name)
-                .cloned(),
-            "user",
-            name.to_string(),
-        )
-    }
-
-    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        let _ = ctx; // Placeholder for security check
+    async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
         self.write_lock(&self.users, |v| {
             if !v.contains_key(&value.id) {
                 return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
@@ -328,37 +275,31 @@ impl EntityStore for MemoryStore {
             Ok(())
         })?
     }
+    async fn delete_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.write_lock(&self.users, |v| v.remove(&id).is_some())
+    }
+    async fn list_users(&self, _ctx: &SecurityContext) -> StoreResult<Vec<User>> {
+        self.read_lock(&self.users, |v| v.values().cloned().collect())
+    }
+    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
+        require_entity(self.read_lock(&self.users, |v| v.values().find(|u| u.username == name).cloned())?, "user", name.to_string())
+    }
 
+    // Components
+    async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
+        self.create_in(ctx, &self.components, &COMPONENTS, value.id.clone(), value).await
+    }
     async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
-        let found = self.read_lock(&self.components, |v| v.get(id).cloned())?;
-        self.access(ctx).read(found, |a| ActionType::GetComponent(a), "component", id.to_string()).await
+        self.get_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
-
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListComponents).await?;
-        let all = self.read_lock(&self.components, |v| v.values().cloned().collect())?;
-        Ok(access.filter(all, |a| ActionType::GetComponent(a)).await)
+    async fn update_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
+        self.update_in(ctx, &self.components, &COMPONENTS, value.id.clone(), value).await
     }
-
-    async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        let stored = self.read_lock(&self.components, |v| v.get(&value.id).cloned())?;
-        self.access(ctx).put(
-            stored.as_ref(), value,
-            |a| ActionType::GetComponent(a), |a| ActionType::CreateComponent(a), |a| ActionType::UpdateComponent(a),
-            "component", value.id.clone(),
-        ).await?;
-        self.write_lock(&self.components, |v| {
-            v.insert(value.id.clone(), value.clone());
-        })
-    }
-
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        let stored = self.read_lock(&self.components, |v| v.get(id).cloned())?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetComponent(a), |a| ActionType::DeleteComponent(a)).await? {
-            return Ok(false);
-        }
-        self.write_lock(&self.components, |v| v.remove(id).is_some())
+        self.delete_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
+    }
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
+        self.list_in(ctx, &self.components, &COMPONENTS).await
     }
 }
 
@@ -459,11 +400,11 @@ mod tests {
         let user_scope = Scope::UserScope { user_id };
 
         store
-            .put_personality(&ctx, &make_personality("assistant", Scope::GlobalScope))
+            .create_personality(&ctx, &make_personality("assistant", Scope::GlobalScope))
             .await
             .unwrap();
         store
-            .put_personality(
+            .create_personality(
                 &ctx,
                 &make_personality(
                     "assistant",
@@ -497,11 +438,11 @@ mod tests {
         };
 
         store
-            .put_session_template(&ctx, &make_session_template("pairing", Scope::GlobalScope))
+            .create_session_template(&ctx, &make_session_template("pairing", Scope::GlobalScope))
             .await
             .unwrap();
         store
-            .put_session_template(&ctx, &make_session_template("pairing", user_scope.clone()))
+            .create_session_template(&ctx, &make_session_template("pairing", user_scope.clone()))
             .await
             .unwrap();
 

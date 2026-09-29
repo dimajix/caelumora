@@ -2,8 +2,8 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
-use crate::security::SecurityManager;
-use crate::store_impl::access::Access;
+use crate::security::{Secured, SecurityManager};
+use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES};
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -104,9 +104,8 @@ impl JsonFileStore {
         self.personality_dir().join(format!("{id}.json"))
     }
 
-    fn session_template_path(&self, name: &str) -> PathBuf {
-        self.session_templates_dir()
-            .join(format!("{}.json", sanitize_file_component(name)))
+    fn session_template_path(&self, id: SessionTemplateId) -> PathBuf {
+        self.session_templates_dir().join(format!("{id}.json"))
     }
 
     fn agent_path(&self, id: AgentId) -> PathBuf {
@@ -245,330 +244,207 @@ fn sanitize_file_component(value: &str) -> String {
 
 use crate::security::{ActionType, SecurityContext};
 
-#[async_trait]
-impl EntityStore for JsonFileStore {
-    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        let path = self.personality_path(id);
-        debug!("Reading personality template from {}", path.display());
-        let loaded = read_json_opt::<Personality>(&path).await?;
-        self.access(ctx).read(loaded, |a| ActionType::GetPersonality(a), "agent_template", id.to_string()).await
-    }
-
-    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
-        self.access(ctx).allow(ActionType::FindPersonality).await?;
-        let templates = self.list_personalities(ctx).await?;
-        require_entity(
-            templates
-                .into_iter()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            "agent_template",
-            name.to_string(),
-        )
-    }
-
-    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListPersonalities).await?;
-        let all = read_all_from_dir::<Personality>(&self.personality_dir()).await?
-            .into_iter()
-            .collect();
-        Ok(access.filter(all, |a| ActionType::GetPersonality(a)).await)
-    }
-
-    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
-        self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
-        let templates = self.list_session_templates(ctx).await?;
-        require_entity(
-            templates
-                .into_iter()
-                .find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
-            "session_template",
-            name.to_string(),
-        )
-    }
-
-    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListSessionTemplates).await?;
-        let all = read_all_from_dir::<SessionTemplate>(&self.session_templates_dir()).await?
-            .into_iter()
-            .collect();
-        Ok(access.filter(all, |a| ActionType::GetSessionTemplate(a)).await)
-    }
-
-    async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
-        let path = self.personality_path(value.id);
-        let stored = read_json_opt::<Personality>(&path).await?;
-        self.access(ctx).put(
-            stored.as_ref(), value,
-            |a| ActionType::GetPersonality(a), |a| ActionType::CreatePersonality(a), |a| ActionType::UpdatePersonality(a),
-            "agent_template", value.id.to_string(),
-        ).await?;
-        debug!("Writing personality template to {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        let path = self.personality_path(id);
-        let stored = read_json_opt::<Personality>(&path).await?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetPersonality(a), |a| ActionType::DeletePersonality(a)).await? {
-            return Ok(false);
+/// The five operations of every entity kind (issue 93), each document a
+/// file at `path` and checked with its kind's `Actions`.
+impl JsonFileStore {
+    async fn create_file<T: Secured + Serialize + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        self.access(ctx).create(value, kind.create).await?;
+        if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
+            return Err(StoreError::Conflict(format!("{} {} already exists", kind.entity, id)));
         }
-        delete_if_exists(&path).await
-    }
-
-    async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
-        let path = self.session_template_path(&value.metadata.name);
-        let stored = read_json_opt::<SessionTemplate>(&path).await?;
-        self.access(ctx).put(
-            stored.as_ref(), value,
-            |a| ActionType::GetSessionTemplate(a), |a| ActionType::CreateSessionTemplate(a), |a| ActionType::UpdateSessionTemplate(a),
-            "session_template", value.id.to_string(),
-        ).await?;
-        debug!("Writing session template to {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        let template = read_all_from_dir::<SessionTemplate>(&self.session_templates_dir()).await?
-            .into_iter()
-            .find(|t| t.id == id);
-        if !self.access(ctx).delete(template.as_ref(), |a| ActionType::GetSessionTemplate(a), |a| ActionType::DeleteSessionTemplate(a)).await? {
-            return Ok(false);
-        }
-        match template {
-            Some(t) => delete_if_exists(&self.session_template_path(&t.metadata.name)).await,
-            None => Ok(false),
-        }
-    }
-
-    // Agents (durable definitions)
-    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        self.access(ctx).create(value, |a| ActionType::CreateAgent(a)).await?;
-        let path = self.agent_path(value.id);
-        if path.exists() {
-            return Err(StoreError::Conflict(format!("agent {} already exists", value.id)));
-        }
-        debug!("Creating agent at {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
-        let path = self.agent_path(id);
-        debug!("Reading agent from {}", path.display());
-        let loaded = read_json_opt::<Agent>(&path).await?;
-        self.access(ctx).read(loaded, |a| ActionType::GetAgent(a), "agent", id.to_string()).await
-    }
-
-    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
-        let access = self.access(ctx);
-        access.allow(ActionType::FindAgent).await?;
-        let agents = read_all_from_dir::<Agent>(&self.agents_dir()).await?
-            .into_iter()
-            .collect();
-        require_entity(
-            access.filter(agents, |a| ActionType::GetAgent(a)).await
-                .into_iter()
-                .find(|a| a.metadata.name == name && scope.contains(&a.metadata.scope)),
-            "agent",
-            name.to_string(),
-        )
-    }
-
-    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
-        let path = self.agent_path(value.id);
-        let stored = read_json_opt::<Agent>(&path).await?;
-        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetAgent(a), |a| ActionType::UpdateAgent(a), "agent", value.id.to_string()).await?;
-        debug!("Updating agent at {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    // Sessions (durable definitions)
-    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        self.access(ctx).create(value, |a| ActionType::CreateSession(a)).await?;
-        let path = self.session_path(value.id);
-        if path.exists() {
-            return Err(StoreError::Conflict(format!("session {} already exists", value.id)));
-        }
-        debug!("Creating session at {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
-        let path = self.session_path(id);
-        debug!("Reading session from {}", path.display());
-        let loaded = read_json_opt::<Session>(&path).await?;
-        self.access(ctx).read(loaded, |a| ActionType::GetSession(a), "session", id.to_string()).await
-    }
-
-    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
-        let path = self.session_path(value.id);
-        let stored = read_json_opt::<Session>(&path).await?;
-        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::UpdateSession(a), "session", value.id.to_string()).await?;
-        debug!("Updating session at {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        // The state of the session and its channels is the `StateStore`'s,
-        // which may be another store: the caller deletes it there.
-        let session = read_json_opt::<Session>(&self.session_path(id)).await?;
-        if !self.access(ctx).delete(session.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
-            return Ok(false);
-        }
-
-        let removed = delete_if_exists(&self.session_path(id)).await?;
-        info!("Deleted session {}", id);
-        Ok(removed)
-    }
-
-    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListSessions).await?;
-        let sessions = read_all_from_dir::<Session>(&self.sessions_dir()).await?
-            .into_iter()
-            .collect();
-        Ok(access.filter(sessions, |a| ActionType::GetSession(a)).await)
-    }
-
-    // Channels (durable definitions, issue 70)
-    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        self.access(ctx).create(value, |a| ActionType::CreateChannel(a)).await?;
-        let path = self.channel_path(value.id);
-        if path.exists() {
-            return Err(StoreError::Conflict(format!("channel {} already exists", value.id)));
-        }
-        debug!("Creating channel at {}", path.display());
+        debug!("Writing {} {} to {}", kind.entity, id, path.display());
         write_json_atomic(&path, value).await
     }
 
-    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        let loaded = read_json_opt::<Channel>(&self.channel_path(id)).await?;
-        self.access(ctx).read(loaded, |a| ActionType::GetChannel(a), "channel", id.to_string()).await
+    async fn get_file<T: Secured + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<T> {
+        let found = read_json_opt::<T>(&path).await?;
+        self.access(ctx).read(found, kind.get, kind.entity, id).await
     }
 
-    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
-        let path = self.channel_path(value.id);
-        let stored = read_json_opt::<Channel>(&path).await?;
-        self.access(ctx).change(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::UpdateChannel(a), "channel", value.id.to_string()).await?;
-        debug!("Updating channel at {}", path.display());
+    async fn update_file<T: Secured + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        let stored = read_json_opt::<T>(&path).await?;
+        self.access(ctx).change(stored.as_ref(), kind.get, kind.update, kind.entity, id.clone()).await?;
+        debug!("Writing {} {} to {}", kind.entity, id, path.display());
         write_json_atomic(&path, value).await
     }
 
-    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        // Its state is the `StateStore`'s: the caller deletes it there.
-        let channel = read_json_opt::<Channel>(&self.channel_path(id)).await?;
-        if !self.access(ctx).delete(channel.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::DeleteChannel(a)).await? {
+    async fn delete_file<T: Secured + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
+        let stored = read_json_opt::<T>(&path).await?;
+        if !self.access(ctx).delete(stored.as_ref(), kind.get, kind.delete).await? {
             return Ok(false);
         }
-        let removed = delete_if_exists(&self.channel_path(id)).await?;
-        info!("Deleted channel {}", id);
-        Ok(removed)
-    }
-
-    // Users (durable definitions)
-    async fn create_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        let path = self.user_path(value.id);
-        if path.exists() {
-            return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
-        }
-        debug!("Creating user at {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        let path = self.user_path(id);
-        debug!("Reading user from {}", path.display());
-        let loaded = read_json_opt::<User>(&path).await?;
-        require_entity(loaded, "user", id.to_string())
-    }
-
-    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let dir = self.users_dir();
-        let users: Vec<User> = read_all_from_dir(&dir).await?;
-        require_entity(
-            users
-                .into_iter()
-                .find(|t| t.username == name),
-            "user",
-            name.to_string(),
-        )
-    }
-
-    async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        let path = self.user_path(value.id);
-        if !path.exists() {
-            return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
-        }
-        debug!("Updating user at {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
-        let path = self.component_path(id);
-        debug!("Reading component from {}", path.display());
-        let loaded = read_json_opt::<ComponentDescriptor>(&path).await?;
-        self.access(ctx).read(loaded, |a| ActionType::GetComponent(a), "component", id.to_string()).await
-    }
-
-    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
-        let access = self.access(ctx);
-        access.allow(ActionType::ListComponents).await?;
-        let all = read_all_from_dir::<ComponentDescriptor>(&self.components_dir()).await?
-            .into_iter()
-            .collect();
-        Ok(access.filter(all, |a| ActionType::GetComponent(a)).await)
-    }
-
-    async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
-        let path = self.component_path(&value.id);
-        let stored = read_json_opt::<ComponentDescriptor>(&path).await?;
-        self.access(ctx).put(
-            stored.as_ref(), value,
-            |a| ActionType::GetComponent(a), |a| ActionType::CreateComponent(a), |a| ActionType::UpdateComponent(a),
-            "component", value.id.clone(),
-        ).await?;
-        debug!("Writing component to {}", path.display());
-        write_json_atomic(
-            &path,
-            value,
-        ).await
-    }
-
-    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        let path = self.component_path(id);
-        let stored = read_json_opt::<ComponentDescriptor>(&path).await?;
-        if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetComponent(a), |a| ActionType::DeleteComponent(a)).await? {
-            return Ok(false);
-        }
+        debug!("Deleting {} at {}", kind.entity, path.display());
         delete_if_exists(&path).await
+    }
+
+    async fn list_dir<T: Secured + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
+        let access = self.access(ctx);
+        access.allow(kind.list).await?;
+        let all = read_all_from_dir::<T>(&dir).await?;
+        Ok(access.filter(all, kind.get).await)
     }
 }
 
+#[async_trait]
+impl EntityStore for JsonFileStore {
+    // Personalities
+    async fn create_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
+        self.create_file(ctx, &PERSONALITIES, self.personality_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        self.get_file(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
+    }
+    async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
+        self.update_file(ctx, &PERSONALITIES, self.personality_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
+        self.delete_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id)).await
+    }
+    async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+        self.list_dir(ctx, &PERSONALITIES, self.personality_dir()).await
+    }
+    async fn find_personality_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Personality> {
+        self.access(ctx).allow(ActionType::FindPersonality).await?;
+        require_entity(
+            self.list_personalities(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
+            PERSONALITIES.entity,
+            name.to_string(),
+        )
+    }
+
+    // Session templates
+    async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
+        self.create_file(ctx, &SESSION_TEMPLATES, self.session_template_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
+        self.get_file(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
+    }
+    async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
+        self.update_file(ctx, &SESSION_TEMPLATES, self.session_template_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+        self.delete_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id)).await
+    }
+    async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+        self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
+    }
+    async fn find_session_template_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<SessionTemplate> {
+        self.access(ctx).allow(ActionType::FindSessionTemplate).await?;
+        require_entity(
+            self.list_session_templates(ctx).await?.into_iter().find(|t| t.metadata.name == name && scope.contains(&t.metadata.scope)),
+            SESSION_TEMPLATES.entity,
+            name.to_string(),
+        )
+    }
+
+    // Agents
+    async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        self.create_file(ctx, &AGENTS, self.agent_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
+        self.get_file(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
+    }
+    async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
+        self.update_file(ctx, &AGENTS, self.agent_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
+        self.delete_file::<Agent>(ctx, &AGENTS, self.agent_path(id)).await
+    }
+    async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
+        self.list_dir(ctx, &AGENTS, self.agents_dir()).await
+    }
+    async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
+        let access = self.access(ctx);
+        access.allow(ActionType::FindAgent).await?;
+        let all = read_all_from_dir::<Agent>(&self.agents_dir()).await?;
+        require_entity(
+            access.filter(all, AGENTS.get).await.into_iter().find(|a| a.metadata.name == name && scope.contains(&a.metadata.scope)),
+            AGENTS.entity,
+            name.to_string(),
+        )
+    }
+
+    // Sessions - their state is the `StateStore`'s, which may be another
+    // store: whoever deletes a session deletes it there.
+    async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+        self.create_file(ctx, &SESSIONS, self.session_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+        self.get_file(ctx, &SESSIONS, self.session_path(id), id.to_string()).await
+    }
+    async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
+        self.update_file(ctx, &SESSIONS, self.session_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
+        self.delete_file::<Session>(ctx, &SESSIONS, self.session_path(id)).await
+    }
+    async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
+        self.list_dir(ctx, &SESSIONS, self.sessions_dir()).await
+    }
+
+    // Channels (issue 70) - their state likewise.
+    async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
+        self.create_file(ctx, &CHANNELS, self.channel_path(value.id), value.id.to_string(), value).await
+    }
+    async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
+        self.get_file(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
+    }
+    async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
+        self.update_file(ctx, &CHANNELS, self.channel_path(value.id), value.id.to_string(), value).await
+    }
+    async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
+        self.delete_file::<Channel>(ctx, &CHANNELS, self.channel_path(id)).await
+    }
+    async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
+        self.list_dir(ctx, &CHANNELS, self.channels_dir()).await
+    }
+
+    // Users - not checked yet (issue 94).
+    async fn create_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        let path = self.user_path(value.id);
+        if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
+            return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
+        }
+        write_json_atomic(&path, value).await
+    }
+    async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        require_entity(read_json_opt::<User>(&self.user_path(id)).await?, "user", id.to_string())
+    }
+    async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        let path = self.user_path(value.id);
+        if !tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
+            return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
+        }
+        write_json_atomic(&path, value).await
+    }
+    async fn delete_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        delete_if_exists(&self.user_path(id)).await
+    }
+    async fn list_users(&self, _ctx: &SecurityContext) -> StoreResult<Vec<User>> {
+        read_all_from_dir(&self.users_dir()).await
+    }
+    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
+        let users: Vec<User> = read_all_from_dir(&self.users_dir()).await?;
+        require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
+    }
+
+    // Components
+    async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
+        self.create_file(ctx, &COMPONENTS, self.component_path(&value.id), value.id.clone(), value).await
+    }
+    async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
+        self.get_file(ctx, &COMPONENTS, self.component_path(id), id.to_string()).await
+    }
+    async fn update_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
+        self.update_file(ctx, &COMPONENTS, self.component_path(&value.id), value.id.clone(), value).await
+    }
+    async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
+        self.delete_file::<ComponentDescriptor>(ctx, &COMPONENTS, self.component_path(id)).await
+    }
+    async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
+        self.list_dir(ctx, &COMPONENTS, self.components_dir()).await
+    }
+}
 
 #[async_trait]
 impl StateStore for JsonFileStore {
@@ -711,13 +587,13 @@ mod tests {
         let ctx = SecurityContext::default();
 
         let personality = make_personality();
-        store.put_personality(&ctx, &personality).await.unwrap();
+        store.create_personality(&ctx, &personality).await.unwrap();
 
         let found = store.get_personality(&ctx, personality.id).await.unwrap();
         assert_eq!(found.metadata.name, personality.metadata.name);
 
         let session_template = make_session_template();
-        store.put_session_template(&ctx, &session_template).await.unwrap();
+        store.create_session_template(&ctx, &session_template).await.unwrap();
         let found_session = store
             .find_session_template_by_name(
                 &ctx,
@@ -744,7 +620,7 @@ mod tests {
         let user_scope = Scope::UserScope { user_id };
         personality.metadata.scope = user_scope.clone();
         
-        store.put_personality(&ctx, &personality).await.unwrap();
+        store.create_personality(&ctx, &personality).await.unwrap();
 
         // Search with UserScope should find it
         store.find_personality_by_name(&ctx, &personality.metadata.name, &user_scope).await.unwrap();
@@ -769,8 +645,8 @@ mod tests {
         let mut t2 = make_personality();
         t2.metadata.name = "assistant-b".to_string();
 
-        store.put_personality(&ctx, &t1).await.unwrap();
-        store.put_personality(&ctx, &t2).await.unwrap();
+        store.create_personality(&ctx, &t1).await.unwrap();
+        store.create_personality(&ctx, &t2).await.unwrap();
 
         let templates = store.list_personalities(&ctx).await.unwrap();
         assert_eq!(templates.len(), 2);
@@ -778,7 +654,7 @@ mod tests {
         assert!(store.delete_personality(&ctx, t1.id).await.unwrap());
         assert!(!store.delete_personality(&ctx, t1.id).await.unwrap());
         let err = store.get_personality(&ctx, t1.id).await.unwrap_err();
-        assert!(matches!(err, StoreError::NotFound { entity: "agent_template", .. }));
+        assert!(matches!(err, StoreError::NotFound { entity: "personality", .. }));
     }
 
     #[tokio::test]

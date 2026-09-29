@@ -130,7 +130,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
         "Your name is Jonathan Heart. You are a helpful assistant.",
         false,
     );
-    store.put_personality(&ctx, &personality_a).await?;
+    store.create_personality(&ctx, &personality_a).await?;
 
     // Sarah has extended planning enabled so the plan/approval flow can be
     // exercised end to end from the TUI (/approve, /deny).
@@ -140,7 +140,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
         "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant.",
         true,
     );
-    store.put_personality(&ctx, &personality_b).await?;
+    store.create_personality(&ctx, &personality_b).await?;
 
     let template = SessionTemplate {
         id: SessionTemplateId(Uuid::new_v4()),
@@ -179,7 +179,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
         commands: Default::default(),
         security_attributes: Default::default(),
     };
-    store.put_session_template(&ctx, &template).await?;
+    store.create_session_template(&ctx, &template).await?;
 
     Ok(template)
 }

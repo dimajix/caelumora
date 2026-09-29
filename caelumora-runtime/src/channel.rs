@@ -1133,7 +1133,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
         };
-        store.put_personality(&SecurityContext::system(), &personality).await.unwrap();
+        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
 
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |u: &User| SecurityContext::new(ActorId::User(u.id), Default::default(), Default::default());
@@ -1250,7 +1250,7 @@ mod tests {
             components,
             security_attributes: Default::default(),
         };
-        store.put_personality(&SecurityContext::system(), &personality).await.unwrap();
+        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.initiator_id);

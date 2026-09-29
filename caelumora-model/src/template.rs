@@ -362,7 +362,7 @@ mod tests {
 
         // None there yet: one is made, and found the next time.
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
-        store.put_personality(&SecurityContext::system(), &personality(*personality_id)).await.unwrap();
+        store.create_personality(&SecurityContext::system(), &personality(*personality_id)).await.unwrap();
         let context = context_with(store);
         let Participant::Agent(first) = agent.instantiate(&context, &HashMap::new()).await.expect("created") else { panic!("an agent") };
         let Participant::Agent(again) = agent.instantiate(&context, &HashMap::new()).await.expect("found") else { panic!("an agent") };
@@ -370,7 +370,7 @@ mod tests {
 
         // A lookup that fails is an error, not a reason to make another.
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::with_security_manager(Arc::new(NoAgentLookup)));
-        store.put_personality(&SecurityContext::system(), &personality(*personality_id)).await.unwrap();
+        store.create_personality(&SecurityContext::system(), &personality(*personality_id)).await.unwrap();
         let refused = agent.instantiate(&context_with(store), &HashMap::new()).await.expect_err("the lookup is refused");
         assert!(matches!(refused, TemplateError::Store(StoreError::PermissionDenied)), "{refused}");
     }
