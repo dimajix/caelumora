@@ -277,7 +277,6 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
-    use uuid::Uuid;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
         let context = EventContext::new(Default::default(), Default::default(), sender_id, "test".to_string());
@@ -478,7 +477,7 @@ mod tests {
     #[test]
     fn approval_requested_from_approver_is_broadcast() {
         let actors = ModeratorActors::new();
-        let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::ApprovalRequested(approval_request()));
+        let event = envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), ActorEvent::ApprovalRequested(approval_request()));
         let decision = actors.route_approval_events(&event);
         assert!(decision.broadcast);
     }
@@ -496,7 +495,7 @@ mod tests {
     fn approval_granted_from_approver_is_internal_only() {
         let actors = ModeratorActors::new();
         let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
-        let event = envelope(ActorId::Approver(Uuid::new_v4()), ActorEvent::ApprovalGranted(response));
+        let event = envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), ActorEvent::ApprovalGranted(response));
         let decision = actors.route_approval_events(&event);
         assert!(!decision.broadcast);
     }

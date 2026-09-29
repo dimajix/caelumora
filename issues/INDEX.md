@@ -171,7 +171,7 @@ against it, and what came out of the last attempt.
 | [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
 | [96](96-config-unification.md) | open | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
 | [97](97-small-model-unifications.md) | open | Six helper functions in five modules define the default confidentiality level. |
-| [112](112-id-types.md) | open | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
+| [112](112-id-types.md) | done | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
 | [113](113-error-shapes.md) | open | "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it. |
 | [114](114-moderator-details.md) | open | `ModeratorActors` uses a concurrent map behind `&mut self`, downcasts for a kind the id already tells, and clones every message twice. |
 | [115](115-filtering-event-sender.md) | open | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |

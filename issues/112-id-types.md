@@ -1,6 +1,6 @@
 # 112 — Two id types are hand-written, and the approver has none
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -32,3 +32,9 @@ types.
 
 - **2026-09-28** — Split off from [97](97-small-model-unifications.md)
   (structure review, 3.2.10).
+- **2026-09-29** — Done. `SessionTemplateId` comes from `define_id!`;
+  `ToolId`, which nothing used, is gone. `ActorId::Approver` holds an
+  `ApproverId`, so `approver.id.0` is `approver.id` at the five places
+  that built one. The macro implements `From<$name> for Uuid` instead of
+  `Into`. The JSON form is unchanged - the id types are
+  `#[serde(transparent)]` - so stored data and the web UI read as before.

@@ -20,9 +20,9 @@ macro_rules! define_id {
             }
         }
 
-        impl Into<uuid::Uuid> for $name {
-            fn into(self) -> uuid::Uuid {
-                self.0
+        impl From<$name> for uuid::Uuid {
+            fn from(id: $name) -> Self {
+                id.0
             }
         }
     };

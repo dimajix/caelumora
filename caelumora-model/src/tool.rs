@@ -1,15 +1,9 @@
 use crate::approval::{ApprovalId, ApprovalStatus};
 use crate::confidentiality::Confidentiality;
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use uuid::Uuid;
-
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ToolId(pub Uuid);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]

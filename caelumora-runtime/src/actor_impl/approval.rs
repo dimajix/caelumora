@@ -43,7 +43,7 @@ pub struct ApproverActor {
 impl ApproverActor {
     pub fn new(channel: Arc<ChannelController>, approver: Approver, actor_runtime: ActorRuntime) -> Self {
         Self {
-            id: ActorId::Approver(approver.id.0),
+            id: ActorId::Approver(approver.id),
             approver,
             actor_runtime,
             channel,
@@ -414,7 +414,7 @@ mod tests {
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
+            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -506,7 +506,7 @@ mod tests {
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
+            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -624,7 +624,7 @@ mod tests {
 
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
+            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);
@@ -694,7 +694,7 @@ mod tests {
         };
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
-            .new_actor_runtime(ActorId::Approver(approver.id.0), session_id, channel_id);
+            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));
         let (tx, rx) = mpsc::channel(100);
         let (output_tx, mut output_rx) = mpsc::channel(100);

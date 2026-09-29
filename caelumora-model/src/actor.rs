@@ -1,5 +1,5 @@
 use crate::agent::AgentId;
-use crate::approval::{ApprovalRequest, ApprovalResponse};
+use crate::approval::{ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
 use crate::message::{Message, MessageEvent};
 use crate::security::SecurityContext;
@@ -18,7 +18,7 @@ pub enum ActorId {
     None,
     User(UserId),
     Agent(AgentId),
-    Approver(Uuid),
+    Approver(ApproverId),
     /// The runtime itself, acting on no one's behalf: setting up initial
     /// data, keeping its own records in step with events. Only ever set
     /// deliberately, through `SecurityContext::system()` - never the default,
@@ -31,7 +31,7 @@ impl ActorId {
             ActorId::None => {Uuid::nil()}
             ActorId::User(id) => {id.0}
             ActorId::Agent(id) => {id.0}
-            ActorId::Approver(id) => {*id}
+            ActorId::Approver(id) => {id.0}
             ActorId::System => {Uuid::nil()}
         }
     }

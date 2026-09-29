@@ -7,7 +7,6 @@ use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
 use crate::session::{Session, SessionContext};
 use chrono::Utc;
-use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -116,9 +115,7 @@ impl ChannelTemplate {
 }
 
 
-#[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SessionTemplateId(pub Uuid);
+define_id!(SessionTemplateId);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTemplate {

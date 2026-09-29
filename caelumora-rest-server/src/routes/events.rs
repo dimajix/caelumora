@@ -118,7 +118,7 @@ fn describe_participant(participant: &Participant) -> (caelumora_model::actor::A
     match participant {
         Participant::User(u) => (caelumora_model::actor::ActorId::User(u.id), u.username.clone(), "user"),
         Participant::Agent(a) => (caelumora_model::actor::ActorId::Agent(a.id), a.metadata.name.clone(), "agent"),
-        Participant::Approver(a) => (caelumora_model::actor::ActorId::Approver(a.id.0), "Approver".to_string(), "approver"),
+        Participant::Approver(a) => (caelumora_model::actor::ActorId::Approver(a.id), "Approver".to_string(), "approver"),
     }
 }
 

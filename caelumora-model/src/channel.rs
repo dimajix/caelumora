@@ -305,7 +305,7 @@ impl Participant {
         match self {
             Participant::User(user) => ActorId::User(user.id),
             Participant::Agent(agent) => ActorId::Agent(agent.id),
-            Participant::Approver(approver) => ActorId::Approver(approver.id.0),
+            Participant::Approver(approver) => ActorId::Approver(approver.id),
         }
     }
 }
