@@ -108,7 +108,7 @@ pub trait StateStore : Debug + Sync + Send {
 
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
     use crate::meta::Scope;
     use crate::meta::Metadata;

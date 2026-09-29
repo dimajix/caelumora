@@ -113,15 +113,15 @@ impl PromptProvider for PrivateNotesComponent {
 
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
         let own = AgentNotes::current(turn, NoteKind::Private);
-        let mut elsewhere = self.reader.private_notes(turn.agent_id).await.unwrap_or_else(|e| {
+        let mut elsewhere = self.reader.private_notes(turn.agent_id()).await.unwrap_or_else(|e| {
             // The agent can still answer without them.
-            warn!("Reading the private notes of agent {} failed: {}", turn.agent_id, e);
+            warn!("Reading the private notes of agent {} failed: {}", turn.agent_id(), e);
             Vec::new()
         });
         elsewhere.retain(|c| !c.notes.is_empty());
         elsewhere.sort_by(|l, r| l.channel.name.cmp(&r.channel.name));
 
-        let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: turn.agent_id, digest } };
+        let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest } };
         let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel.id, c.digest)).collect();
         if !own.is_empty() {
             knowledge.push(private(turn.channel_id(), AgentNotes::digest(turn, NoteKind::Private)));

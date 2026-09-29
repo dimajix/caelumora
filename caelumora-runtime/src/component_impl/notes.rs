@@ -160,7 +160,7 @@ impl PromptProvider for NotesComponent {
     }
 
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        let own = ActorId::Agent(turn.agent_id);
+        let own = ActorId::Agent(turn.agent_id());
         let mut others = match self.reader.channel_notes().await {
             Ok(published) => published,
             Err(e) => {
@@ -178,7 +178,7 @@ impl PromptProvider for NotesComponent {
         let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel_id(), p)).collect();
         if !own_notes.is_empty() {
             let own_digest = AgentNotes::digest(turn, NoteKind::Public);
-            knowledge.push(KnowledgeRef { channel: turn.channel_id(), source: KnowledgeSource::Notes { agent: turn.agent_id, digest: own_digest } });
+            knowledge.push(KnowledgeRef { channel: turn.channel_id(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest } });
         }
         Ok(Prompt { text, knowledge })
     }

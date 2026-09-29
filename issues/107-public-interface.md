@@ -82,3 +82,13 @@ comment saying why it is public.
   [83](83-turn-logic-on-agent-actor.md); `Turn::take_requested_state`,
   `set_tool_calls`, `take_tool_calls` and `last_message` are gone
   ([85](85-turn-state-in-agent-channel-state.md), 83).
+- **2026-09-29** — Signature shape. Already gone with earlier issues:
+  `RuntimeManager::new` can fail now (`verify`, `set_defaults`), so its
+  `Result` stays; `Actor::wakeup`/`cancel`, `SessionLoop::channel_by_name`
+  and `SessionController::new` are synchronous; `new_agent_controller` and
+  `SessionManager::get_session` no longer exist. Changed now:
+  `SessionLoop::get_session` is `session()`, and `ChannelLoop::channel()`
+  returns the `arc_swap::Guard` like it instead of a copy - callers that
+  need an owned `Channel` or keep it across an `await` clone it themselves;
+  `Turn::agent_id`/`agent_name` are private fields behind getters; the tests
+  in `caelumora-model/src/store.rs` are a private `mod tests`.

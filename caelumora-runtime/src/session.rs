@@ -121,7 +121,8 @@ impl SessionLoop {
         self.session_controller.id()
     }
 
-    pub fn get_session(&self) -> arc_swap::Guard<Arc<Session>> {
+    /// The session as it is now.
+    pub fn session(&self) -> arc_swap::Guard<Arc<Session>> {
         self.session_controller.load()
     }
 
@@ -141,7 +142,7 @@ impl SessionLoop {
     /// The running channels, in the order of the session: those from its
     /// template first, then those created later, oldest first.
     pub fn channels(&self) -> Vec<Arc<ChannelLoop>> {
-        self.get_session().channels.iter().filter_map(|c| self.channel_by_id(*c)).collect()
+        self.session().channels.iter().filter_map(|c| self.channel_by_id(*c)).collect()
     }
 
     pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
@@ -180,7 +181,7 @@ impl SessionLoop {
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session; nothing is changed then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
-        let session = self.get_session();
+        let session = self.session();
         let name = spec.name.trim().to_string();
         if name.is_empty() {
             return Err(SessionError::EmptyChannelName.into());
@@ -255,7 +256,8 @@ impl SessionLoop {
             return Err(SessionError::ChannelNotFound { session: self.id, channel: channel_id }.into());
         };
         self.session_controller.remove_channel(context, channel_id).await?;
-        let channel = running.channel();
+        // Not the guard itself: it would be held across the awaits below.
+        let channel = Arc::clone(&running.channel());
         if let Err(e) = self.runtime_manager.entity_store().delete_channel(context, channel_id).await {
             warn!("Channel {} was taken out of session {} but not deleted: {}", channel_id, self.id, e);
         }
@@ -267,7 +269,7 @@ impl SessionLoop {
             task.abort();
             event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
         }
-        event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes);
+        event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
         self.runtime_manager.state_store().delete_channel_state(channel_id).await?;
         info!("Channel {}/{} deleted from session {}", channel.name, channel_id, self.id);
         Ok(())
@@ -365,7 +367,7 @@ impl Found {
     /// The session as it is now.
     fn session(&self) -> Session {
         match self {
-            Found::Running(session_loop) => (**session_loop.get_session()).clone(),
+            Found::Running(session_loop) => (**session_loop.session()).clone(),
             Found::Stored(session) => session.clone(),
         }
     }
@@ -419,7 +421,7 @@ impl SessionManager {
         let running = self.sessions.get(&id).map(|entry| entry.clone());
         match running {
             Some(session_loop) => {
-                let attributes = session_loop.get_session().security_attributes.clone();
+                let attributes = session_loop.session().security_attributes.clone();
                 self.runtime_manager.security_manager()
                     .require(context, ActionType::GetSession(&attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
                 Ok(Found::Running(session_loop))
@@ -546,7 +548,7 @@ impl SessionManager {
         }
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
-            let attributes = session_loop.get_session().security_attributes.clone();
+            let attributes = session_loop.session().security_attributes.clone();
             self.runtime_manager.event_bus().publish(GlobalEvent::SessionStopped(id), attributes);
         }
         removed
@@ -645,7 +647,7 @@ impl SessionManager {
     pub async fn channel_view(&self, context: &SecurityContext, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelView> {
         let not_found = || SessionError::ChannelNotFound { session: session_id, channel: channel_id };
         let channel = match self.find(context, session_id).await? {
-            Found::Running(session_loop) => session_loop.channel_by_id(channel_id).map(|channel| channel.channel()),
+            Found::Running(session_loop) => session_loop.channel_by_id(channel_id).map(|channel| (**channel.channel()).clone()),
             Found::Stored(session) if session.channels.contains(&channel_id) => {
                 Some(self.runtime_manager.entity_store().get_channel(&SecurityContext::system(), channel_id).await?)
             }
@@ -663,7 +665,7 @@ impl SessionManager {
     async fn describe_session(&self, context: &SecurityContext, found: &Found) -> SessionView {
         let session = found.session();
         let channels = match found {
-            Found::Running(session_loop) => session_loop.channels().iter().map(|channel| channel.channel()).collect(),
+            Found::Running(session_loop) => session_loop.channels().iter().map(|channel| (**channel.channel()).clone()).collect(),
             Found::Stored(session) => {
                 let store = self.runtime_manager.entity_store();
                 let system = SecurityContext::system();
@@ -1047,7 +1049,7 @@ mod tests {
 
         let session = manager.create_from_template(&hers, template.id, None).await.expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
-        assert_eq!(session.get_session().security_attributes.owner_id, ActorId::User(owner));
+        assert_eq!(session.session().security_attributes.owner_id, ActorId::User(owner));
         let main = session.channel_by_name("main").expect("the template's channel runs");
         assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
         let stored = store.get_channel(&hers, main.id()).await.unwrap();

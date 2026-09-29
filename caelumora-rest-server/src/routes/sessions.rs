@@ -19,7 +19,7 @@ pub async fn create_session(
     let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a session from template {template_id}")))?;
 
-    Ok(Json(SessionResponse::from(&**session_loop.get_session())))
+    Ok(Json(SessionResponse::from(&**session_loop.session())))
 }
 
 pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
@@ -64,5 +64,5 @@ pub async fn rename_session(
     session_loop.update_name(&user.security_context(), payload.name).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("renaming session {session_id}")))?;
 
-    Ok(Json(SessionResponse::from(&**session_loop.get_session())))
+    Ok(Json(SessionResponse::from(&**session_loop.session())))
 }

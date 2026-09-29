@@ -53,12 +53,12 @@ impl ToolProvider for StopToolProvider {
     async fn execute(&self, name: &str, _params: &Value, turn: &mut Turn) -> ToolResult<Value> {
         match name {
             STOP_TOOL_NAME | BYE_TOOL_NAME => {
-                info!("Stopping agent {} {}", turn.agent_id, turn.agent_name);
+                info!("Stopping agent {} {}", turn.agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Sleeping);
                 Ok(serde_json::json!({ "status": "stopped" }))
             },
             SILENCE_TOOL_NAME => {
-                info!("Silencing agent {} {}", turn.agent_id, turn.agent_name);
+                info!("Silencing agent {} {}", turn.agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Idle);
                 Ok(serde_json::json!({ "status": "silent" }))
             },

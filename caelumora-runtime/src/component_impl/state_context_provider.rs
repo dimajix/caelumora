@@ -65,7 +65,7 @@ impl ContextProvider for StateContextProvider {
         if !before_input.is_empty() {
             // The newest message is the turn's input - unless the agent wrote
             // it itself, in a turn that has none (e.g. after `/wakeup`).
-            let own = ActorId::Agent(state.agent_id);
+            let own = ActorId::Agent(state.agent_id());
             let at = match conversation.last() {
                 Some(ContextItem::Conversation { message, .. }) if message.sender_id != own => conversation.len() - 1,
                 _ => conversation.len(),

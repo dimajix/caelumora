@@ -278,8 +278,8 @@ impl ChannelLoop {
     }
 
     /// The channel as it is now.
-    pub fn channel(&self) -> Channel {
-        (**self.channel.load()).clone()
+    pub fn channel(&self) -> arc_swap::Guard<Arc<Channel>> {
+        self.channel.load()
     }
 
     /// Renames the channel on behalf of `context`: stored first, which is
@@ -327,7 +327,7 @@ impl ChannelLoop {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
         let found = self.session()
-            .and_then(|s| s.get_session().participants.iter().find(|p| p.actor_id() == participant).cloned())
+            .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
         let member = Member::of(&found, &self.runtime).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;

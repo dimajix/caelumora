@@ -221,7 +221,7 @@ impl AgentActor {
         self.loop_count.store(0, Ordering::SeqCst);
         self.begin_turn(turn, event_context, event_security).await?;
 
-        debug!("Starting generating messages for agent {} {}", self.id, turn.agent_name);
+        debug!("Starting generating messages for agent {} {}", self.id, turn.agent_name());
         turn.send_event(ActorEvent::ResponseStarted, output).await?;
 
         // Initialize next turn

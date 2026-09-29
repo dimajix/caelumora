@@ -85,8 +85,8 @@ pub struct CommittedTurn {
 
 #[derive(Debug)]
 pub struct Turn<'a> {
-    pub agent_id: AgentId,
-    pub agent_name: String,
+    agent_id: AgentId,
+    agent_name: String,
     agent_channel_state: &'a mut AgentChannelState,
     /// The agent's own state, shared by all its actors (issue 62). The turn
     /// reads it and stages changes, never holds it.
@@ -94,13 +94,23 @@ pub struct Turn<'a> {
 }
 
 impl<'a> Turn<'a> {
-    pub fn new(agent_id: AgentId, agent_name:String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
+    pub fn new(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
         Self {
             agent_id,
             agent_name,
             agent_channel_state,
             agent_state,
         }
+    }
+
+    /// The agent whose turn this is.
+    pub fn agent_id(&self) -> AgentId {
+        self.agent_id
+    }
+
+    /// The agent's name, as the channel knows it.
+    pub fn agent_name(&self) -> &str {
+        &self.agent_name
     }
 
     /// The working state of the turn under way; an empty one between turns.

@@ -110,7 +110,7 @@ impl PromptProvider for AgentMemoryComponent {
         }
         let knowledge = vec![KnowledgeRef {
             channel: turn.channel_id(),
-            source: KnowledgeSource::Memory { agent: turn.agent_id, digest: AgentMemory::digest(turn) },
+            source: KnowledgeSource::Memory { agent: turn.agent_id(), digest: AgentMemory::digest(turn) },
         }];
         Ok(Prompt { text: render(&recalled), knowledge })
     }
