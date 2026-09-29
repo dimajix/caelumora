@@ -10,6 +10,7 @@ pub mod agent_memory;
 pub mod calculator_tool;
 pub mod channel_history;
 pub mod create_plan_tool;
+pub mod default_tool_executor;
 pub mod echo_tool;
 pub mod help_command;
 pub mod mcp_tool;
@@ -26,11 +27,13 @@ pub mod wakeup_command;
 /// of which an agent has exactly one, with their default kinds (issue 99).
 pub fn register_all(registry: &mut ComponentRegistry) {
     registry.single::<dyn crate::context::ContextProvider>(state_context_provider::STATE_CONTEXT_PROVIDER_KIND);
+    registry.single::<dyn crate::tool::ToolExecutor>(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND);
 
     agent_memory::register(registry);
     calculator_tool::register(registry);
     channel_history::register(registry);
     create_plan_tool::register(registry);
+    default_tool_executor::register(registry);
     echo_tool::register(registry);
     help_command::register(registry);
     mcp_tool::register(registry);

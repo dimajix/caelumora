@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, CommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentImpl, ComponentRegistry, ComponentResult};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::llm::LLMClient;
@@ -11,7 +11,6 @@ use crate::moderator_impl::random::RandomPolicy;
 use crate::moderator_impl::round_robin::RoundRobinPolicy;
 use crate::moderator_impl::PolicyModerator;
 use crate::recorder::Recorder;
-use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId};
@@ -126,15 +125,6 @@ impl ActorRuntime {
 
     pub fn component_registry(&self) -> Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
-    }
-
-    /// An executor for the tools `providers` contribute.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if two of them provide a tool of the
-    /// same name.
-    pub fn new_tool_executor(&self, providers: Vec<ComponentImpl<dyn ToolProvider>>) -> ComponentResult<Box<dyn ToolExecutor>> {
-        Ok(Box::new(DefaultToolExecutor::new(self.security_manager(), providers)?))
     }
 
     /// The user commands of the actor's session. Only a `UserActor` runs

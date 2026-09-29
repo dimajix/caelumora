@@ -1,6 +1,6 @@
 # 127 — The tool executor is fixed in the runtime and cannot be replaced by a component
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -48,3 +48,20 @@ part of the agent loop that is not a component.
 - **2026-09-29** — Opened from the discussion of issues 98 and 99 with the
   maintainer: executor as a component, permission check kept in the
   runtime.
+- **2026-09-29** — Done. `ToolExecutor` is a facet of which an agent has
+  exactly one (`ComponentRegistry::single`, default kind
+  `default_tool_executor`); it has lost `is_permitted` and checks nothing.
+  `DefaultToolExecutor` moved to `component_impl/default_tool_executor.rs`
+  and has every `ToolProvider` injected (`context.all`), keeping the check
+  for two tools of the same name, the lookup, the timing and the mapping of
+  errors to results. The agent takes its executor with
+  `components.one::<dyn ToolExecutor>()` and holds it behind the new
+  `GuardedToolExecutor` in `crate::tool`, which checks that the caller is an
+  agent and `CallTool` - in `is_permitted` before approval and again before
+  it delegates `execute` - so a configured executor only ever sees permitted
+  calls. `ActorRuntime::new_tool_executor` is gone. The `CommandExecutor`
+  stays as it is, a runtime type that checks permissions itself: how a
+  command runs is the command's own business, and there is nothing about
+  running commands to try out; the difference is documented on it and in
+  AGENTS.md.
+

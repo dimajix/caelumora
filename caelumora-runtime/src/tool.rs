@@ -1,16 +1,14 @@
 use crate::agent_turn::Turn;
-use crate::component::{ComponentError, ComponentImpl, ComponentResult};
+use crate::component::ComponentImpl;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Publication;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
-use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -150,15 +148,19 @@ pub trait ToolProvider: Send + Sync + Debug {
 }
 
 
+/// How an agent's tool calls are run - a component facet of which an agent
+/// has exactly one (issue 127): the component of its personality that
+/// provides it, or the default `default_tool_executor`, unless the
+/// configuration names another (`AppConfig::component_defaults`). It decides
+/// how a tool is run, never whether: the runtime checks the permission
+/// before it delegates ([`GuardedToolExecutor`]), so that no configured
+/// component can run a call the policy refuses.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
     /// Runs `call` and answers it - always with a result for the model: what
     /// the tool gave, or what went wrong and what to do next (issue 15).
+    /// Called only for calls the policy permits.
     async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult;
-    /// Whether the policy permits `call` in `context`. Checked before asking
-    /// anyone for approval, so that users are not asked about calls that
-    /// would be refused anyway; `execute` checks again.
-    async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
     /// The tools there are now, for the model and for labelling its calls.
     /// Asked of the providers each time: a provider's tools may change while
@@ -167,106 +169,62 @@ pub trait ToolExecutor: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 }
 
-/// Runs the tools of an agent's components. It keeps the providers, not
-/// their tools: those are asked for each time, since a provider's tools may
-/// change while the agent runs (issue 100).
+/// An agent's [`ToolExecutor`] with the checks the runtime keeps (issue
+/// 127): only an agent calls tools, and only what the policy permits
+/// (`CallTool`) - asked before a call is put up for approval
+/// (`is_permitted`) and again when it is run. Whatever executor a
+/// personality configures, it only ever sees permitted calls.
 #[derive(Debug)]
-pub struct DefaultToolExecutor {
+pub struct GuardedToolExecutor {
     security_manager: Arc<dyn SecurityManager>,
-    providers: Vec<Arc<dyn ToolProvider>>,
+    executor: ComponentImpl<dyn ToolExecutor>,
 }
 
-impl DefaultToolExecutor {
-    /// An executor for the tools `providers` contribute.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if two of them provide a tool of the
-    /// same name: that is a mistake in the configuration, and resolving it
-    /// by order would make one of them silently unreachable (issue 37) - the
-    /// same rule as for user commands.
-    pub fn new(
-        security_manager: Arc<dyn SecurityManager>,
-        providers: Vec<ComponentImpl<dyn ToolProvider>>,
-    ) -> ComponentResult<Self> {
-        let mut seen: Vec<(String, String)> = Vec::new();
-        for provider in &providers {
-            for tool in provider.facet.tools() {
-                if let Some((_, component)) = seen.iter().find(|(name, _)| *name == tool.name) {
-                    return Err(ComponentError::InvalidConfig(format!(
-                        "tool '{}' is provided by both component '{}' and component '{}'",
-                        tool.name, component, provider.id
-                    )));
-                }
-                seen.push((tool.name, provider.id.clone()));
-            }
+impl GuardedToolExecutor {
+    pub fn new(security_manager: Arc<dyn SecurityManager>, executor: ComponentImpl<dyn ToolExecutor>) -> Self {
+        Self { security_manager, executor }
+    }
+
+    /// Runs `call` if it may be run now, and answers it either way.
+    pub async fn execute(&self, call: &ToolCall, turn: &mut Turn<'_>) -> ToolCallResult {
+        if let Err(e) = self.check(call, turn).await {
+            let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
+            let (status, content) = e.to_result(&available);
+            return ToolCallResult::of(call, status, content);
         }
-        Ok(Self { security_manager, providers: providers.into_iter().map(|p| p.facet).collect() })
+        self.executor.facet.execute(call, turn).await
     }
 
-    /// The provider of the tool `name`, as the providers' tools are now.
-    fn provider_of(&self, name: &str) -> ToolResult<&Arc<dyn ToolProvider>> {
-        self.providers.iter().find(|p| p.tools().iter().any(|t| t.name == name))
-            .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
+    /// Whether the policy permits `call` in the turn. Checked before asking
+    /// anyone for approval, so that users are not asked about calls that
+    /// would be refused anyway; `execute` checks again.
+    pub async fn is_permitted(&self, call: &ToolCall, turn: &Turn<'_>) -> bool {
+        self.security_manager.may_call_tool(turn.security_context(), call).await
     }
 
-    /// The provider that may run `call` now: the caller is an agent, the
-    /// policy permits the call, and there is such a tool.
-    async fn runner(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<&Arc<dyn ToolProvider>> {
+    pub fn describe(&self, call: &ToolCall) -> ToolResult<String> {
+        self.executor.facet.describe(call)
+    }
+
+    pub fn tools(&self) -> Vec<Tool> {
+        self.executor.facet.tools()
+    }
+
+    /// Nothing if `call` may be run now: the caller is an agent and the
+    /// policy permits the call.
+    async fn check(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<()> {
         let security = turn.security_context();
         if security.caller_id.as_agent_id().is_none() {
             return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
         }
-        self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await?;
-        self.provider_of(&call.function_name)
-    }
-}
-
-#[async_trait]
-impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult {
-        // Only the tool's own run is timed, not the checks before it: a call
-        // that never ran has no timing.
-        let (outcome, ran) = match self.runner(call, turn).await {
-            Err(e) => (Err(e), None),
-            Ok(provider) => {
-                let started_at = Utc::now();
-                let outcome = provider.execute(&call.function_name, &call.arguments, turn).await;
-                let finished_at = Utc::now();
-                // Session, channel and agent are on the turn's span.
-                debug!(tool = %call.function_name, duration_ms = (finished_at - started_at).num_milliseconds(), ok = outcome.is_ok(), "Tool ran");
-                (outcome, Some((started_at, finished_at)))
-            }
-        };
-        let mut result = match outcome {
-            Ok(value) => ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(value, call.confidentiality, turn.publication())),
-            Err(e) => {
-                warn!("Tool call '{}' failed: {}", call.function_name, e);
-                let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
-                let (status, content) = e.to_result(&available);
-                ToolCallResult::of(call, status, content)
-            }
-        };
-        result.started_at = ran.map(|(started_at, _)| started_at);
-        result.finished_at = ran.map(|(_, finished_at)| finished_at);
-        result
-    }
-
-    async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool {
-        self.security_manager.may_call_tool(turn.security_context(), call).await
-    }
-
-    fn describe(&self, call: &ToolCall) -> ToolResult<String> {
-        self.provider_of(&call.function_name)?.describe(&call.function_name, &call.arguments)
-    }
-
-    fn tools(&self) -> Vec<Tool> {
-        self.providers.iter().flat_map(|p| p.tools()).collect()
+        self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_impl::default_tool_executor::DefaultToolExecutor;
     use crate::agent_turn::Turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -367,10 +325,15 @@ mod tests {
         assert!(timed_out_result().contains("ask the user whether to try again"));
     }
 
+    fn executor(security: Arc<dyn SecurityManager>) -> GuardedToolExecutor {
+        let provider: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: true });
+        let tools = DefaultToolExecutor::new(vec![ComponentImpl { id: "tools".to_string(), fail_policy: Default::default(), facet: provider }]).unwrap();
+        GuardedToolExecutor::new(security, ComponentImpl { id: "executor".to_string(), fail_policy: Default::default(), facet: Arc::new(tools) })
+    }
+
     #[tokio::test]
     async fn the_policy_is_checked_before_approval_and_again_on_execution() {
-        let provider = Arc::new(MockToolProvider { requires_approval: true });
-        let executor = DefaultToolExecutor::new(Arc::new(DenyAllSecurityManager), vec![component("tools", provider)]).unwrap();
+        let executor = executor(Arc::new(DenyAllSecurityManager));
 
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
@@ -385,32 +348,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unknown_tool_is_reported_as_such() {
-        let executor = DefaultToolExecutor::new(Arc::new(DummySecurityManager::new()), vec![component("tools", Arc::new(MockToolProvider { requires_approval: false }))]).unwrap();
+    async fn only_an_agent_calls_tools() {
+        let executor = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() });
+        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let result = executor.execute(&call("does_not_exist"), &mut context).await;
-        assert_eq!(result.status, ToolResultStatus::UnknownTool);
-        assert!(result.content.contains("Available tools: test_tool"), "{}", result.content);
-        assert_eq!((result.id.as_deref(), result.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
-    }
-
-    fn component(id: &str, facet: Arc<dyn ToolProvider>) -> ComponentImpl<dyn ToolProvider> {
-        ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }
-    }
-
-    #[test]
-    fn two_components_with_a_tool_of_the_same_name_are_a_configuration_error() {
-        let security = Arc::new(DummySecurityManager::new());
-        let same = || Arc::new(MockToolProvider { requires_approval: false });
-        let error = DefaultToolExecutor::new(security.clone(), vec![component("local", same()), component("remote", same())])
-            .expect_err("the second test_tool would be unreachable");
-        let message = error.to_string();
-        assert!(message.contains("'test_tool'") && message.contains("'local'") && message.contains("'remote'"), "{message}");
-
-        DefaultToolExecutor::new(security, vec![component("local", same())]).expect("one provider is fine");
+        let result = executor.execute(&call("test_tool"), &mut context).await;
+        assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
     #[test]
@@ -421,32 +366,6 @@ mod tests {
 
         let denied = ToolCallResult { status: ToolResultStatus::Denied, ..result };
         assert!(serde_json::to_string(&denied).unwrap().contains("\"status\":\"denied\""));
-    }
-
-    #[tokio::test]
-    async fn test_tool_executor() {
-        let security_manager = Arc::new(DummySecurityManager::new());
-        let provider = Arc::new(MockToolProvider { requires_approval: false });
-        let executor = DefaultToolExecutor::new(security_manager, vec![component("tools", provider)]).unwrap();
-
-        let call = ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: "test_tool".to_string(),
-            arguments: json!("{}".to_string()),
-            confidentiality: Default::default(),
-        };
-
-        let mut agent_channel_state = AgentChannelState::default();
-        let agent_id = AgentId::new();
-        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() });
-        let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
-
-        let result = executor.execute(&call, &mut context).await;
-        assert_eq!(result.status, ToolResultStatus::Ok);
-        assert_eq!(result.content, "{\"result\":\"ok\"}");
-        let (started_at, finished_at) = (result.started_at.expect("a call that ran has its start"), result.finished_at.expect("and its end"));
-        assert!(finished_at >= started_at);
-        assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
     }
 
     #[test]

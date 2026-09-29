@@ -4,7 +4,7 @@ use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
-use crate::tool::{ToolError, ToolExecutor, ToolProvider};
+use crate::tool::{GuardedToolExecutor, ToolError, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -42,7 +42,9 @@ pub struct AgentActor {
     context_provider: ComponentImpl<dyn ContextProvider>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
-    tool_executor: Box<dyn ToolExecutor>,
+    /// Runs the agent's tool calls: its `ToolExecutor` component, behind
+    /// the runtime's permission checks (issue 127).
+    tool_executor: GuardedToolExecutor,
     /// The least confidential label its reasoning gets (issue 61), from the
     /// personality.
     reasoning_confidentiality: Confidentiality,
@@ -108,8 +110,7 @@ impl AgentActor {
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
-        let tool_providers = components.get_all::<dyn ToolProvider>(None);
-        let tool_executor = actor_runtime.new_tool_executor(tool_providers)?;
+        let tool_executor = GuardedToolExecutor::new(actor_runtime.security_manager(), components.one::<dyn ToolExecutor>().await?);
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
         let not_executed = Self::prepare_resume(&mut agent_channel_state);

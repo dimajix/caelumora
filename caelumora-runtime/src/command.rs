@@ -82,7 +82,9 @@ struct CommandEntry {
 
 /// Finds and runs the commands of one session - the global ones and the
 /// session's own - with the permission checks for seeing and running them,
-/// as `ToolExecutor` does for an agent's tools.
+/// as `GuardedToolExecutor` does for an agent's tools. Unlike the tool
+/// executor it is not a component: how a command runs is the command's own
+/// business, and there is nothing about running them to try out.
 #[derive(Debug)]
 pub struct CommandExecutor {
     security_manager: Arc<dyn SecurityManager>,
