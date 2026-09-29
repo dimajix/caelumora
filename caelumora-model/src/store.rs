@@ -197,53 +197,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn agent_controller_persists_changes() {
-        let personality = personality_template();
-        let agent = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, SecurityContext::default());
-        let store = Arc::new(MemoryStore::new());
-        let ctx = SecurityContext::default();
-        store.create_agent(&ctx, &agent).await.unwrap();
-
-        let controller = crate::agent::AgentController::new(
-            SessionId(Uuid::new_v4()),
-            agent.clone(),
-            Arc::new(()),
-            store.clone()
-        );
-
-        controller.update_name(&ctx, "new_name".to_string()).await.unwrap();
-
-        let persisted = store.find_agent_by_name(&ctx, "new_name", &Scope::GlobalScope).await.unwrap();
-        assert_eq!(persisted.id, agent.id);
-        assert_eq!(persisted.metadata.name, "new_name");
-    }
-
-    #[tokio::test]
-    async fn session_controller_persists_new_session() {
-        let session = Session {
-            commands: Default::default(),
-            id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "session".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            security_attributes: SecurityAttributes::default(),
-        };
-        let store = Arc::new(MemoryStore::new());
-
-        store.create_session(&SecurityContext::default(), &session).await.unwrap();
-        let _controller = crate::session::SessionController::new(session.clone(), Arc::new(()), store.clone()).await.unwrap();
-
-        let persisted = store.get_session(&SecurityContext::default(), session.id).await.unwrap();
-        assert_eq!(persisted.id, session.id);
-    }
-
-    #[tokio::test]
     async fn list_sessions_works() {
         let session1 = Session {
             commands: Default::default(),

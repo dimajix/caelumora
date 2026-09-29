@@ -9,7 +9,8 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
-use caelumora_model::session::{ChannelId, Session, SessionController, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionId};
+use crate::controller::SessionController;
 use dashmap::DashMap;
 use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::{mpsc, Mutex};
@@ -95,7 +96,7 @@ impl SessionLoop {
             let _ = start_tx.send(id);
         }
 
-        let session_controller = runtime_manager.controller_manager().new_session_controller(session).await?;
+        let session_controller = runtime_manager.controller_manager().new_session_controller(session);
 
         Ok(Self {
             id,
@@ -311,7 +312,7 @@ impl SessionLoop {
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
-            self.session_controller.process_global_event(&global_event).await;
+            self.session_controller.process_global_event(&global_event);
         }
     }
 

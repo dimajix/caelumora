@@ -186,7 +186,7 @@ against it, and what came out of the last attempt.
 | [83](83-turn-logic-on-agent-actor.md) | open | The logic of a turn lives in `AgentActor`, which drives `Turn` through eight to ten setters per step. |
 | [84](84-agent-state-machine.md) | done | The agent's state machine has a state that only forwards and two handlers that differ in one branch. |
 | [85](85-turn-state-in-agent-channel-state.md) | open | The working state of a turn is eleven loose fields of `AgentChannelState`, reset by three overlapping lists. |
-| [86](86-controllers-in-the-model.md) | open | The five controllers write to the store and publish events from inside the model, each built differently. |
+| [86](86-controllers-in-the-model.md) | done | The five controllers write to the store and publish events from inside the model, each built differently. |
 | [88](88-template-instantiation-in-the-model.md) | open | Instantiating a template does store I/O in the model, and both frontends drive the sequence by hand. |
 | [89](89-channel-runtime-delegators.md) | open | `ChannelRuntime` is six methods that forward to `RuntimeManager`. |
 | [91](91-double-actor-table.md) | open | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |

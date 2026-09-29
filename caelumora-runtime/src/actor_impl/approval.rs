@@ -6,7 +6,8 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
-use caelumora_model::channel::{ChannelController, Participant};
+use caelumora_model::channel::Participant;
+use crate::controller::ChannelController;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use chrono::{DateTime, Duration, Utc};
@@ -412,7 +413,8 @@ mod tests {
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
 
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
+        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
@@ -504,7 +506,8 @@ mod tests {
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
 
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
+        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
@@ -622,7 +625,8 @@ mod tests {
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
 
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
+        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
@@ -692,7 +696,8 @@ mod tests {
             participants: vec![Participant::Approver(approver.clone()), Participant::User(user)],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
         };
-        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), None));
+        store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));

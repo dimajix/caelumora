@@ -173,10 +173,11 @@ A mention changes who is asked to respond, not who receives the message: every p
 
 ## Controllers and State Management
 
-Caelumora uses `Controller` types (e.g., `SessionController`, `AgentController`) for managing the live state of entities. 
+The live state of the entities of a running session is held by controllers in `caelumora_runtime::controller` - `SessionController`, `ChannelController`, `AgentController`, `UserController`, made by the `ControllerManager`. The model only defines the documents; keeping them live, writing them and announcing changes is the runtime's (issue 86).
 *   **Live State**: Controllers use `ArcSwap` to provide atomic, lock-free access to the current state of an entity.
-*   **Persistence**: Controllers are linked to the `EntityStore`. Any state modifications made through a controller (e.g., updating a name) are automatically propagated to the persistent store, ensuring data consistency across restarts.
-*   **Eventing**: Controllers are responsible for publishing update events via the `EventBus` when state changes occur.
+*   **One writer**: a controller is the one writer of its document. It holds a write lock while it changes it, stores the change first - which is where the permission is checked - and only then takes it over live and announces it.
+*   **Eventing**: Controllers publish their changes on the `EventBus`, and take over changes announced from elsewhere through `process_global_event`.
+*   **One shape**: every controller is built from the document, the event publisher and the store. The `UserController` is the exception: users are not changed through it, so it has no store and announces nothing.
 
 ## Eventing and Observation
 

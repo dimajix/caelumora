@@ -15,11 +15,10 @@ anyhow = "1.0"
 sha2 = "0.11"
 thiserror = "2.0.21"
 derive_more = { version = "2.1.1", features = ["display"] }
-arc-swap = "1.9.2"
 async-trait = "0.1"
 tracing = "0.1.44"
-# The lock that serialises changes to a session (`SessionController`).
-tokio = { version = "1.53.1", features = ["fs", "sync"] }
+# The JSON store reads and writes files asynchronously.
+tokio = { version = "1.53.1", features = ["fs"] }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }

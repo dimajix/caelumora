@@ -1,6 +1,6 @@
 # 86 — The five controllers are orchestration in the model, built five ways
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -54,3 +54,23 @@ different construction.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.4).
+- **2026-09-29** — Done. The controllers live in
+  `caelumora_runtime::controller`, one file each, with the
+  `ControllerManager` in `mod.rs`; the model keeps the documents, the
+  `*UpdateEvent` enums and `participant_attributes`, and no longer depends
+  on `arc-swap` or tokio's `sync` (the runtime now declares `sync` itself
+  instead of getting it through feature unification). One shape: built
+  from the document, the event publisher and the store, all
+  synchronously; a write lock everywhere (`AgentController` got one);
+  `process_global_event` synchronous everywhere. `ChannelController`'s
+  store is no longer optional - the approver tests store their channel
+  first. Removed: the six `// TODO` branches of
+  `SessionController::process_global_event` (a channel is registered
+  through `add_channel`/`remove_channel`), `UserController::update_username`
+  and with it the user controller's event publisher (it announced nothing
+  else), and `ApproverController`. The `SessionLoop` still subscribes to
+  its session topic, for renames announced elsewhere. The two store tests
+  that exercised controllers moved along and now check a rename. The next
+  step named above - moving `config.rs`, the secret and user providers
+  and `store_impl/` out of the model too - is a separate decision and was
+  not taken.

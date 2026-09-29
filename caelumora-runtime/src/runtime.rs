@@ -15,14 +15,15 @@ use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentController, AgentId, Personality, PersonalityId};
+use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
+use crate::controller::{AgentController, UserController};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
-use caelumora_model::user::{User, UserController};
+use caelumora_model::user::User;
 use crate::agent_state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::session_reader::{ChannelSessionReader, SessionReader};
@@ -173,9 +174,9 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// If `agent` is not the agent this runtime is for.
-    pub async fn new_agent_controller(&self, agent: Agent) -> Result<Arc<AgentController>> {
+    pub fn new_agent_controller(&self, agent: Agent) -> Result<Arc<AgentController>> {
         self.ensure_self(ActorId::Agent(agent.id))?;
-        Ok(self.runtime.runtime_manager.controller_manager().new_agent_controller(self.session_id, agent).await)
+        Ok(self.runtime.runtime_manager.controller_manager().new_agent_controller(self.session_id, agent))
     }
 
     /// The controller of `user`, which must be this actor.
@@ -423,8 +424,8 @@ mod tests {
 
         let agent = Agent { id: AgentId::new(), metadata: Default::default(), personality_id: Default::default(), security_attributes: Default::default(), security_context: Default::default() };
         let its = runtime.new_actor_runtime(ActorId::Agent(agent.id), SessionId::new(), ChannelId::new());
-        assert!(hers.new_agent_controller(agent.clone()).await.is_err(), "not another actor's agent");
-        assert!(its.new_agent_controller(agent).await.is_ok());
+        assert!(hers.new_agent_controller(agent.clone()).is_err(), "not another actor's agent");
+        assert!(its.new_agent_controller(agent).is_ok());
         its.store_channel_state(&AgentChannelState::default()).await.expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
     }

@@ -10,7 +10,8 @@ use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemor
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
+use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
+use crate::controller::ChannelController;
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;

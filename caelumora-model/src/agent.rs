@@ -1,16 +1,12 @@
 use crate::actor::{ActorId, ActorState, EventContext, ProcessingStateHolder};
 use crate::component::ComponentConfig;
-use crate::event::{EventPublisher, GlobalEvent};
 use crate::digest::Digest;
 use crate::message::{ContextRef, Message, Transcript, MessageHistory, MessageId, PromptRef};
 use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::session::SessionId;
-use crate::store::{EntityStore, StoreResult};
 use crate::tool::ToolCallState;
-use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -21,82 +17,6 @@ pub enum AgentUpdateEvent {
     NameChanged(String),
 }
 
-#[derive(Debug)]
-pub struct AgentController {
-    id: AgentId,
-    session_id: SessionId,
-    agent: ArcSwap<Agent>,
-    event_publisher: Arc<dyn EventPublisher>,
-    entity_store: Arc<dyn EntityStore>,
-}
-
-impl AgentController {
-    pub fn new(
-        session_id: SessionId,
-        agent: Agent,
-        event_publisher: Arc<dyn EventPublisher>,
-        entity_store: Arc<dyn EntityStore>
-    ) -> Self {
-        Self {
-            id: agent.id,
-            session_id,
-            agent: ArcSwap::from_pointee(agent),
-            event_publisher,
-            entity_store,
-        }
-    }
-
-    pub fn load(&self) -> arc_swap::Guard<Arc<Agent>> {
-        self.agent.load()
-    }
-
-    pub fn id(&self) -> AgentId {
-        self.id
-    }
-
-    pub fn name(&self) -> String {
-        self.agent.load().metadata.name.clone()
-    }
-
-    /// Renames the agent on behalf of `ctx`: stored first - which is where
-    /// the permission is checked (issue 11) - and only then changed live and
-    /// announced.
-    ///
-    /// # Errors
-    /// Whatever the store reports; the agent is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
-        let event = AgentUpdateEvent::NameChanged(new_name);
-        let agent = self.apply(&event);
-        self.entity_store.update_agent(ctx, &agent).await?;
-        let attributes = agent.security_attributes.clone();
-        self.agent.store(Arc::new(agent));
-        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.id, event), attributes);
-        Ok(())
-    }
-
-    /// The agent with `event` applied, not yet stored anywhere.
-    fn apply(&self, event: &AgentUpdateEvent) -> Agent {
-        let mut agent = (**self.agent.load()).clone();
-        match event {
-            AgentUpdateEvent::NameChanged(name) => agent.metadata.name = name.clone(),
-        }
-        agent
-    }
-
-    /// Takes over an update made elsewhere - already stored there.
-    fn process_update(&self, event: &AgentUpdateEvent) {
-        self.agent.store(Arc::new(self.apply(event)));
-    }
-
-    pub async fn process_global_event(&self, event: &GlobalEvent) {
-        match event {
-            GlobalEvent::AgentUpdated(_, aid, update) if *aid == self.id => {
-                self.process_update(update);
-            }
-            _ => {}
-        }
-    }
-}
 
 define_id!(PersonalityId);
 

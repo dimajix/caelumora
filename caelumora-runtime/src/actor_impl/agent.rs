@@ -11,9 +11,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::agent::{
-    Agent, AgentChannelState, AgentController, AgentId, SeenContext,
-};
+use caelumora_model::agent::{Agent, AgentChannelState, AgentId, SeenContext};
+use crate::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
@@ -95,7 +94,7 @@ impl AgentActor {
         let security_context = agent.security_context.clone();
         let personality = actor_runtime.personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let agent_controller = actor_runtime.new_agent_controller(agent).await?;
+        let agent_controller = actor_runtime.new_agent_controller(agent)?;
 
         let components = ComponentContainer::from_config(
             &personality.components,
@@ -597,9 +596,7 @@ impl AgentActor {
 
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
-            self.agent_controller
-                .process_global_event(&global_event)
-                .await;
+            self.agent_controller.process_global_event(&global_event);
         }
     }
 
