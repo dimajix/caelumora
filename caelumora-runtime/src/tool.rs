@@ -315,7 +315,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
 
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use serde_json::json;
 
     #[test]
@@ -417,7 +417,7 @@ mod tests {
 
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
-        agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
+        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         assert!(!executor.is_permitted(&call("test_tool"), &context).await);
@@ -429,7 +429,7 @@ mod tests {
     async fn an_unknown_tool_is_reported_as_such() {
         let executor = DefaultToolExecutor::new(Arc::new(DummySecurityManager::new()), vec![component("tools", Arc::new(MockToolProvider { requires_approval: false }))]).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.turn_security_context.caller_id = ActorId::Agent(AgentId::new());
+        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let error = executor.execute(&call("does_not_exist"), &mut context).await.unwrap_err();
@@ -477,7 +477,7 @@ mod tests {
 
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
-        agent_channel_state.turn_security_context.caller_id = ActorId::Agent(agent_id);
+        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let result = executor.execute(&call, &mut context).await.unwrap();

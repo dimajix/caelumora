@@ -285,6 +285,7 @@ mod tests {
         let tools = NotesComponent::new(crate::session_reader::detached());
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            turn.begin();
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
             assert_eq!(noted["id"], 1);
             assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty(), "not before the turn completes");
@@ -295,6 +296,7 @@ mod tests {
         }
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            turn.begin();
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), &mut turn).await.unwrap();
             turn.commit_turn().await;
@@ -305,6 +307,7 @@ mod tests {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            turn.begin();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
             turn.next_turn(Default::default(), Default::default(), Default::default(), Default::default());
             assert!(!turn.commit_turn().await.channel_state_changed);

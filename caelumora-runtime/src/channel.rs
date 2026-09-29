@@ -1254,7 +1254,11 @@ mod tests {
             SessionId::new(),
             "main".to_string(),
             "broadcast".to_string(),
-            vec![Participant::User(alice.clone()), Participant::Agent(agent)],
+            vec![
+                Participant::User(alice.clone()),
+                Participant::Agent(agent),
+                Participant::Approver(caelumora_model::approval::Approver { id: caelumora_model::approval::ApproverId::new(), strategy: caelumora_model::approval::ApprovalStrategy::Any }),
+            ],
             SecurityAttributes::default(),
         );
         // Stored, so that leaving it can be stored too.
@@ -1285,6 +1289,52 @@ mod tests {
                 None => Box::pin(futures::stream::pending()),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
+        use caelumora_model::approval::ApprovalResponse;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolConfidentiality};
+
+        // One answer only: a second call of the model would never return.
+        let bye = Message {
+            role: MessageRole::Assistant,
+            content: Some("Good bye.".to_string()),
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC }],
+            ..Message::default()
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "stop".to_string(),
+            kind: crate::component_impl::stop_tool::STOP_TOOL_PROVIDER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: vec![],
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+
+        // `stop` needs approval; alice gives it.
+        let request = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
+                    break request;
+                }
+            }
+        }).await.expect("the call is put up for approval");
+        let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+
+        // The turn ends with the call - the model is not asked again - and
+        // the agent sleeps, as the tool asked; no turn is left behind.
+        settled(&helper, ActorState::Sleeping).await;
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(stored.turn.is_none(), "the turn was taken over");
+        assert!(stored.history.messages().iter().any(|m| m.content.as_deref() == Some("Good bye.")), "and its answer recorded");
+        running.abort();
     }
 
     #[tokio::test]
@@ -1372,11 +1422,11 @@ mod tests {
         let stored = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-                if state.processing_state.load() == ActorState::Idle { break state }
+                if state.processing_state == ActorState::Idle { break state }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("the idle state is stored");
-        assert!(stored.turn_messages.is_empty() && stored.turn_context.is_empty() && stored.tool_calls.is_empty(), "the turn was abandoned");
+        assert!(stored.turn.is_none(), "the turn was abandoned, not stored");
         assert!(stored.transcript.messages().is_empty(), "nothing of it was recorded");
         while let Ok(envelope) = events.try_recv() {
             assert!(!matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) || envelope.context.sender_id != ActorId::Agent(agent), "a stopped agent announces no answer");

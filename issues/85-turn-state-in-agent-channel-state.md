@@ -1,6 +1,6 @@
 # 85 — The turn's working state is eleven loose fields of `AgentChannelState`
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -58,3 +58,39 @@ also holds a synchronisation primitive:
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.3 and 3.1.6). Asked for explicitly
   by the maintainer.
+- **2026-09-29** — Done, after three points were settled with the
+  maintainer that the considerations above had not foreseen:
+  - (A) `perceive` begins no turn: the perceive processors only append to
+    the transcript and the history. Otherwise every perceived message
+    would have left a `Some` in the store of an idle agent. This also does
+    point 3 of [90](90-message-path-wake-and-queue.md).
+  - (B) The last event of a turn is sent by the ended turn:
+    `commit_turn` and `abandon_turn` return an `EndedTurn` (in
+    `CommittedTurn::ended` for the former) that sends with the contexts
+    and publication the turn had; `reflect` and `fail_turn` use it. On
+    the maintainer's review, `commit_turn` takes the `TurnState` apart and
+    uses every part once, and `EndedTurn` keeps only those three values -
+    not a turn whose staged changes and knowledge had been taken out,
+    which would have looked complete to a later reader.
+  - (C) Between turns, reading the working state gives the values of an
+    empty `TurnState`; changing it trips a `debug_assert!` in tests (and
+    starts an empty one in a release build). Tests that work in a turn
+    begin one (`Turn::begin`, test-only).
+  `AgentChannelState` now holds `processing_state: ActorState` - plain;
+  the actor writes its live value in when it stores - and
+  `turn: Option<TurnState>` with the twelve former fields;
+  `processing_state_serde` and `default_processing_state` are gone.
+  `AgentActor::new` no longer presets turn fields on load; the agent's
+  name for the `Turn` comes from its controller. `prepare_resume` reads
+  the tool calls from the turn and starts a turn state without a turn as
+  `Idle`. `Turn::take_requested_state` is gone.
+  The assertion found a bug in this very change: `handle_reflecting` read
+  the requested state after `commit_turn` had ended the turn, so `stop`
+  and `bye` would have left the agent idle instead of asleep, with an
+  empty turn stored. It reads it before; the test
+  `an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps`
+  (the test channel now has an approver) covers it.
+  Noticed, not changed: the run loop stores the state the finished step
+  *was* in, not the one it goes to. After a `Planning` step that produced
+  tool calls, a crash resumes `Planning` and asks the model again with its
+  own tool-call message already in the context.

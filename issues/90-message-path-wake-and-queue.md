@@ -57,3 +57,5 @@ perceived message scales with the number of agents in the channel (3).
   the `UserActor` queue is gone, its run loop is only its inbox and the
   global events - then check whether it and the `ApproverActor` (inbox,
   global events, a timeout timer) should share one run loop.
+- **2026-09-29** — Point 3 is done with [85](85-turn-state-in-agent-channel-state.md):
+  `perceive` begins no turn and asks the policy nothing.

@@ -1,4 +1,4 @@
-use crate::actor::{ActorId, ActorState, EventContext, ProcessingStateHolder};
+use crate::actor::{ActorId, ActorState, EventContext};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::message::{ContextRef, Message, Transcript, MessageHistory, MessageId, PromptRef};
@@ -9,7 +9,6 @@ use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::tool::ToolCallState;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,12 +93,11 @@ impl Agent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentChannelState {
-    #[serde(
-        default = "crate::actor::default_processing_state",
-        serialize_with = "crate::actor::processing_state_serde::serialize",
-        deserialize_with = "crate::actor::processing_state_serde::deserialize"
-    )]
-    pub processing_state: Arc<ProcessingStateHolder>,
+    /// Where the agent's actor stood when the state was stored - a turn
+    /// state if it was cut off in the middle of one (issue 75). The actor
+    /// owns the live value and writes it in when it stores.
+    #[serde(default)]
+    pub processing_state: ActorState,
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
@@ -111,59 +109,59 @@ pub struct AgentChannelState {
     /// only where the channel's confidentiality allows (issue 51).
     #[serde(default)]
     pub private_notes: NoteChain,
-    /// Knowledge read in the current turn, each with the number of messages
-    /// the turn had produced by then: it counts for the messages after it
-    /// (issue 17).
-    #[serde(default)]
-    pub turn_knowledge: Vec<TurnKnowledge>,
-    /// Which labels the agent may publish to the channel in the current turn
-    /// (issue 61), decided when the turn began. Stored with the turn, so
-    /// that a turn resumed after a restart publishes what it was allowed.
-    #[serde(default)]
-    pub turn_publication: crate::confidentiality::Publication,
-    /// The agent's channel as the confidentiality rules see it, as it was
-    /// when the current turn began (issue 61): the turn is consistent in
-    /// itself should the channel's level change. Before the first turn, the
-    /// channel as the actor found it.
-    #[serde(default)]
-    pub turn_classification: crate::confidentiality::ChannelClassification,
-    /// Changes to the agent's `AgentState` made in the current turn, applied
-    /// to the current state when the turn completes (issue 62).
-    #[serde(default)]
-    pub turn_agent_changes: Vec<AgentStateChange>,
-    /// Changes to this state made in the current turn - to its notes and
-    /// private notes - applied when the turn completes and discarded if it
-    /// does not (issue 65).
-    #[serde(default)]
-    pub turn_channel_changes: Vec<AgentChannelChange>,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
     #[serde(default)]
     pub prompts: BTreeMap<Digest, String>,
-    /// Pending tool calls
+    /// The turn under way, `None` between turns (issue 85). Stored with the
+    /// rest, so that a turn cut off by a crash is resumed (issue 75).
     #[serde(default)]
+    pub turn: Option<TurnState>,
+}
+
+/// The working state of one turn (issue 85): what the turn is - fixed when
+/// it begins - and what it has produced and staged so far, none of it taken
+/// over yet. Taking the turn over (`commit_turn`) or discarding it
+/// (`abandon_turn`) ends it as a whole; a branch switch (issue 08) will
+/// discard it the same way.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TurnState {
+    /// The envelope the turn answers: carries the ids (`span_id`,
+    /// `correlation_id`) that tie the turn to what started it.
+    pub event_context: EventContext,
+    /// Whose authority the turn acts with.
+    pub security_context: SecurityContext,
+    /// The agent's channel as the confidentiality rules see it, as it was
+    /// when the turn began (issue 61): the turn is consistent in itself
+    /// should the channel's level change (issue 67).
+    pub classification: crate::confidentiality::ChannelClassification,
+    /// Which labels the agent may publish to the channel in this turn, as
+    /// the `SecurityManager` decided when it began (issue 61).
+    pub publication: crate::confidentiality::Publication,
+    /// The context as its `ContextProvider` gave it: what the model is sent
+    /// and where the prompt parts were placed are both derived from it
+    /// (issue 47).
+    pub context: Vec<crate::message::ContextItem>,
+    /// The messages the turn produced so far.
+    pub messages: Vec<Message>,
+    /// Knowledge read in the turn, each with the number of messages the
+    /// turn had produced by then: it counts for the messages after it
+    /// (issue 17).
+    pub knowledge: Vec<TurnKnowledge>,
+    /// Changes to the agent's `AgentState`, applied to the current state
+    /// when the turn completes (issue 62).
+    pub agent_changes: Vec<AgentStateChange>,
+    /// Changes to the agent's state in this channel - to its notes and
+    /// private notes - applied when the turn completes (issue 65).
+    pub channel_changes: Vec<AgentChannelChange>,
+    /// The tool calls of the current step, with their approvals and results.
     pub tool_calls: Vec<ToolCallState>,
-    /// The plan currently in progress for this turn, if any.
-    #[serde(default)]
+    /// The plan in progress, if any.
     pub plan: Option<PlanState>,
-    /// Set by a tool (e.g. stop/bye/silence) or by the run loop itself (on a
-    /// detected cancellation) to override what state `Reflecting` lands on
-    /// instead of the default `Idle`. Consumed once, at the end of the turn.
-    #[serde(default)]
+    /// Set by a tool (the stop tool): the turn ends with this tool step, and
+    /// the agent lands in this state instead of `Idle`.
     pub requested_state: Option<ActorState>,
-    /// The context of the current turn as its `ContextProvider` gave it:
-    /// what the model is sent and where the prompt parts were placed are
-    /// both derived from it (issue 47). Stored, so that a turn waiting for
-    /// an approval can be recorded after a restart.
-    #[serde(default)]
-    pub turn_context: Vec<crate::message::ContextItem>,
-    #[serde(default)]
-    pub turn_messages: Vec<Message>,
-    #[serde(default)]
-    pub turn_security_context: SecurityContext,
-    #[serde(default)]
-    pub turn_event_context: EventContext
 }
 
 /// Knowledge read in a turn, and how many messages the turn had produced
@@ -291,15 +289,22 @@ mod tests {
     use crate::actor::ActorState;
 
     #[test]
-    fn test_agent_channel_state_serialization() {
-        let state = AgentChannelState::default();
-        state.processing_state.store(ActorState::WaitingForApproval.into());
-        
-        let json = serde_json::to_string(&state).unwrap();
-        assert!(json.contains("\"WaitingForApproval\""));
-        
+    fn a_turn_under_way_is_stored_with_the_state_and_none_between_turns() {
+        let idle = AgentChannelState::default();
+        let json = serde_json::to_string(&idle).unwrap();
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
-        assert_eq!(ActorState::from(decoded.processing_state.load()), ActorState::WaitingForApproval);
+        assert!(decoded.turn.is_none() && decoded.processing_state == ActorState::Idle);
+
+        let waiting = AgentChannelState {
+            processing_state: ActorState::WaitingForApproval,
+            turn: Some(TurnState { messages: vec![Message::default()], ..TurnState::default() }),
+            ..AgentChannelState::default()
+        };
+        let json = serde_json::to_string(&waiting).unwrap();
+        assert!(json.contains("\"WaitingForApproval\""));
+        let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.processing_state, ActorState::WaitingForApproval);
+        assert_eq!(decoded.turn.map(|t| t.messages.len()), Some(1), "the turn is resumed from what was stored");
     }
 
     #[test]

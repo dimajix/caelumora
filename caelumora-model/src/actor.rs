@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -425,33 +424,6 @@ impl ProcessingStateHolder {
     }}
 
 
-// We use this helper to bridge u8 <-> ProcessingState during Serde operations
-pub mod processing_state_serde {
-    use super::*;
-    use serde::{Deserializer, Serializer};
-
-    // Serialization: Arc<ProcessingStateHolder> -> ProcessingState (String/Enum)
-    pub fn serialize<S>(val: &Arc<ProcessingStateHolder>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let state = val.load();
-        state.serialize(serializer)
-    }
-
-    // Deserialization: ProcessingState (String/Enum) -> Arc<AtomicU8>
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<ProcessingStateHolder>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let state: ActorState = Deserialize::deserialize(deserializer)?;
-        Ok(Arc::new(ProcessingStateHolder::new(state)))
-    }
-}
-
-pub fn default_processing_state() -> Arc<ProcessingStateHolder> {
-    Arc::new(ProcessingStateHolder::new(ActorState::Idle))
-}
 
 
 #[cfg(test)]

@@ -181,6 +181,7 @@ mod tests {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
 
         let params = json!({
             "summary": "Investigate and fix the bug",
@@ -204,6 +205,7 @@ mod tests {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
 
         turn.set_plan(PlanState {
             progress: PlanProgress::Step(0),
@@ -234,6 +236,7 @@ mod tests {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
 
         turn.set_plan(PlanState {
             progress: PlanProgress::Finalizing,

@@ -203,6 +203,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let tools = PrivateNotesComponent::new(crate::session_reader::detached());
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
         AgentNotes::new(&mut turn, NoteKind::Public).note("public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted["id"], 1, "its own numbering");
@@ -211,6 +212,8 @@ mod tests {
         assert_eq!(AgentNotes::current(&turn, NoteKind::Private).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
         assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
 
+        // The next turn.
+        turn.begin();
         let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
