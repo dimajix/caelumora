@@ -17,9 +17,11 @@ pub enum GlobalEvent {
     ChannelDeleted(SessionId, ChannelId),
     ChannelStarted(SessionId, ChannelId),
     ChannelStopped(SessionId, ChannelId),
-    AgentCreated(SessionId, AgentId),
-    AgentUpdated(SessionId, AgentId, AgentUpdateEvent),
-    AgentDeleted(SessionId, AgentId),
+    /// About an agent itself, which belongs to no session: one of user or
+    /// global scope takes part in several (issue 121).
+    AgentCreated(AgentId),
+    AgentUpdated(AgentId, AgentUpdateEvent),
+    AgentDeleted(AgentId),
     AgentChannelJoined(SessionId, ChannelId, AgentId),
     AgentChannelLeft(SessionId, ChannelId, AgentId),
     /// The agent's own state changed - its memory (issue 62). Published with

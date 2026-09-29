@@ -264,7 +264,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())));
-        let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())), Default::default());
+        let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())));
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
         let user = caelumora_model::user::User {
             id: caelumora_model::user::UserId::new(),
@@ -273,7 +273,8 @@ mod tests {
             roles: Vec::new(),
         };
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
-        UserActor::new(&channel, runtime.controller_manager().new_user_controller(user), actor_runtime).await.unwrap()
+        runtime.entity_store().create_user(&SecurityContext::system(), &user).await.unwrap();
+        UserActor::new(&channel, runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap()
     }
 
     fn envelope_from(sender: ActorId) -> Envelope {

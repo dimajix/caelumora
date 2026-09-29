@@ -11,7 +11,8 @@ use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
-use crate::controller::ChannelController;
+use crate::controller::{AgentController, ChannelController, UserController};
+use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
@@ -71,13 +72,50 @@ pub enum ChannelError {
     AlreadyParticipant { participant: ActorId, channel: ChannelId },
     #[error("{participant} takes no part in channel {channel}")]
     NotAParticipant { participant: ActorId, channel: ChannelId },
-    /// A participant of the session whose user or agent was deleted: the
-    /// session left it out (issue 120).
+    /// A participant of the session whose user or agent was deleted
+    /// (issue 120).
     #[error("{participant} of the session of channel {channel} no longer exists")]
     ParticipantGone { participant: ActorId, channel: ChannelId },
     /// Every channel keeps its approver.
     #[error("the approver of channel {channel} cannot be removed")]
     ApproverStays { channel: ChannelId },
+}
+
+/// A participant with what its actor is built from: the instance's
+/// controller of its user or agent (issue 121), or the approver itself.
+enum Member {
+    User(Arc<UserController>),
+    Agent(Arc<AgentController>),
+    Approver(Approver),
+}
+
+impl Member {
+    /// `participant` with its controller, or `None` if its user or agent no
+    /// longer exists.
+    ///
+    /// # Errors
+    /// Whatever else the store reports when loading it.
+    async fn of(participant: &Participant, runtime: &ChannelRuntime) -> Result<Option<Self>> {
+        let controllers = runtime.controller_manager();
+        let found = match participant {
+            Participant::User(id) => controllers.user_controller(*id).await.map(Member::User),
+            Participant::Agent(id) => controllers.agent_controller(*id).await.map(Member::Agent),
+            Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
+        };
+        match found {
+            Ok(member) => Ok(Some(member)),
+            Err(StoreError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn actor_id(&self) -> ActorId {
+        match self {
+            Member::User(user) => ActorId::User(user.id()),
+            Member::Agent(agent) => ActorId::Agent(agent.id()),
+            Member::Approver(approver) => ActorId::Approver(approver.id),
+        }
+    }
 }
 
 /// How long a stopped actor gets to end its task by itself before it is
@@ -165,11 +203,14 @@ impl ChannelLoop {
         // The participants the channel has; `run` starts their tasks.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {
-            // A user or agent deleted since it joined: the session left it
-            // out and said so, and the channel runs without it (issue 120).
-            if let Some(actor) = Self::create_actor(channel_loop.channel.clone(), participant, &channel_loop.runtime).await? {
-                channel_loop.adopt(Arc::from(actor)).await;
-            }
+            // A user or agent deleted since it joined: the channel runs
+            // without it rather than not at all (issue 120).
+            let Some(member) = Member::of(participant, &channel_loop.runtime).await? else {
+                warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
+                continue;
+            };
+            let actor = Self::create_actor(channel_loop.channel.clone(), member, &channel_loop.runtime).await?;
+            channel_loop.adopt(Arc::from(actor)).await;
         }
         Ok(channel_loop)
     }
@@ -270,9 +311,8 @@ impl ChannelLoop {
         let found = self.runtime.session()
             .and_then(|s| s.get_session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        if !self.runtime.participants().has(&found) {
-            return Err(ChannelError::ParticipantGone { participant, channel: self.id }.into());
-        }
+        let member = Member::of(&found, &self.runtime).await?
+            .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         let classification = self.classification();
         self.check(context, ActionType::JoinChannel { participant, channel: &classification }, "adding a participant to").await?;
 
@@ -284,8 +324,7 @@ impl ChannelLoop {
             if let ActorId::Agent(agent) = participant {
                 self.seed_transcript(agent, visible_part(self.history_start_of(participant), messages)).await?;
             }
-            Self::create_actor(self.channel.clone(), &found, &self.runtime).await?
-                .ok_or_else(|| anyhow::Error::from(ChannelError::ParticipantGone { participant, channel: self.id }))
+            Self::create_actor(self.channel.clone(), member, &self.runtime).await
         }.await;
         let actor: Arc<dyn Actor> = match started {
             Ok(actor) => Arc::from(actor),
@@ -520,23 +559,14 @@ impl ChannelLoop {
         Arc::downcast::<UserActor>(any_actor).ok()
     }
 
-    /// The actor of `participant`, from the session's controller of its
-    /// user or agent (issue 120) - `None` if the session has none, because
-    /// the user or agent no longer exists.
-    async fn create_actor(channel: Arc<ChannelController>, participant: &Participant, runtime: &ChannelRuntime) -> Result<Option<Box<dyn Actor>>> {
+    /// The actor of `member`.
+    async fn create_actor(channel: Arc<ChannelController>, member: Member, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
         let (session_id, channel_id) = { let c = channel.load(); (c.session_id, c.id) };
-        let actor_runtime = runtime.new_actor_runtime(participant.actor_id(), session_id, channel_id);
-        let participants = runtime.participants();
-        Ok(match participant {
-            Participant::User(id) => match participants.user(*id) {
-                Some(user) => Some(Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?)),
-                None => None,
-            },
-            Participant::Agent(id) => match participants.agent(*id) {
-                Some(agent) => Some(Box::new(AgentActor::new(&channel.load(), agent, actor_runtime).await?)),
-                None => None,
-            },
-            Participant::Approver(approver) => Some(Box::new(ApproverActor::new(channel, approver.clone(), actor_runtime))),
+        let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
+        Ok(match member {
+            Member::User(user) => Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?),
+            Member::Agent(agent) => Box::new(AgentActor::new(&channel.load(), agent, actor_runtime).await?),
+            Member::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }
 
@@ -905,13 +935,6 @@ mod tests {
         }
     }
 
-    /// The runtime of `channel` outside of a session, with the controllers
-    /// of its participants as a session would load them.
-    async fn channel_runtime(runtime: Arc<RuntimeManager>, channel: &Channel, executor: CommandExecutor) -> ChannelRuntime {
-        let participants = runtime.controller_manager().participant_controllers(channel.session_id, &channel.participants).await.unwrap();
-        ChannelRuntime::new(runtime, Arc::new(executor), Arc::new(participants))
-    }
-
     /// A channel of `users`, who are recorded in the store its actors are
     /// read from.
     async fn channel_with(users: &[&User], security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
@@ -940,7 +963,7 @@ mod tests {
             runtime.security_manager(),
             vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
         ).unwrap();
-        ChannelLoop::new(channel.clone(), channel_runtime(runtime, &channel, executor).await).await.unwrap()
+        ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap()
     }
 
     #[tokio::test]
@@ -1197,7 +1220,7 @@ mod tests {
             SecurityAttributes::default(),
         );
         let executor = CommandExecutor::empty(runtime.security_manager());
-        let channel = ChannelLoop::new(channel.clone(), channel_runtime(runtime, &channel, executor).await).await.unwrap();
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
 
         let helper = channel.actor_by_id(agent_id).expect("the agent is a participant");
         assert!(helper.may_read_context(&as_user(&alice)).await, "alice created the agent");
@@ -1321,7 +1344,7 @@ mod tests {
         // Stored, so that leaving it can be stored too.
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         let executor = CommandExecutor::empty(runtime.security_manager());
-        let channel = ChannelLoop::new(channel.clone(), channel_runtime(runtime, &channel, executor).await).await.unwrap();
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
         let events = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 

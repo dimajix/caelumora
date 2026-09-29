@@ -97,3 +97,4 @@ and restarts.
   takes part in two sessions has a controller in each, i.e. two writers -
   a process-wide controller per entity (option C) would end that.
 - **2026-09-29** — The remaining two writers across sessions are issue [121](121-agent-controller-per-process.md).
+- **2026-09-29** — `ParticipantControllers` from step 2 was replaced by one controller per agent and user in the instance, kept by the `ControllerManager` (issue [121](121-agent-controller-per-process.md)).

@@ -1,6 +1,6 @@
 # 121 — An agent in several sessions has one writer per session
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -46,3 +46,26 @@ it takes part in.
 - **2026-09-29** — Opened while finishing issue 120, which brought the
   writers down from one per actor to one per session (option A there);
   option C there is this issue.
+- **2026-09-29** — Discussed with the maintainer. Agents and users do not
+  belong to a session, and one day the server runs in several instances
+  (issue [122](122-several-instances.md)): a session in exactly one, agents
+  and users - with their state - in several. So controllers stay, and must
+  go on taking in announced changes, since changes made in another
+  instance arrive only as events; and users are treated like agents - how
+  many controllers there are is not a question of whether one writes.
+- **2026-09-29** — Done. The `ControllerManager` keeps one `AgentController`
+  and one `UserController` per id and instance (`agent(id)`, `user(id)`),
+  loaded from the store as the system and held through weak references
+  while actors use them, like `AgentStates`. It also takes every announced
+  agent and user change into the live controllers, from one task started
+  with the first controller - once per instance, and the place where
+  another instance's changes will arrive. `ParticipantControllers` (issue
+  120, step 2) is gone again, and so is the sessions' subscription to
+  their participants' topics: the channel asks the `ControllerManager`
+  when it builds an actor (`Member::of`). Agent events lost their
+  `SessionId` - `AgentCreated/Updated/Deleted(AgentId, …)` - and
+  `AgentController` its `session_id`. Controllers are made only through
+  the manager now (`new` is `pub(crate)`). Concurrent writes from several
+  instances, and a late own announcement briefly restoring an older value,
+  need versions: issue 122.
+- **2026-09-29** — Renamed with the maintainer: `agent(id)`/`user(id)` are `agent_controller(id)`/`user_controller(id)`, and the `ControllerManager` documents why they differ from the `new_…_controller(document)` methods (shared per instance and loaded by id, versus made for a document a running session owns).

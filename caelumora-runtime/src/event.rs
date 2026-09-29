@@ -236,9 +236,7 @@ impl EventBus {
                 topics_to_notify.push(SubscriptionTopic::Session(*sid));
                 topics_to_notify.push(SubscriptionTopic::Channel(*cid));
             }
-            GlobalEvent::AgentCreated(sid, aid) | GlobalEvent::AgentUpdated(sid, aid, _) | GlobalEvent::AgentDeleted(sid, aid) => {
-                topics_to_notify.push(SubscriptionTopic::Session(*sid));
-                //topics_to_notify.push(SubscriptionTopic::Channel(*cid));
+            GlobalEvent::AgentCreated(aid) | GlobalEvent::AgentUpdated(aid, _) | GlobalEvent::AgentDeleted(aid) => {
                 topics_to_notify.push(SubscriptionTopic::Agent(*aid));
             }
             GlobalEvent::AgentStateChanged(aid) => {

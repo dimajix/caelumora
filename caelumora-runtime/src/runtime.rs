@@ -16,7 +16,6 @@ use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId};
-use crate::controller::ParticipantControllers;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::event::GlobalEvent;
@@ -49,15 +48,14 @@ pub struct RuntimeManager {
 }
 
 /// What a channel runs with: the process-wide services of the
-/// `RuntimeManager`, the user commands (issue 28) and the participants'
-/// controllers (issue 120) of its session, and a handle to the channel
-/// itself. It is the only source of `ActorRuntime`s, so every actor lives in
+/// `RuntimeManager` - among them the controllers of its users and agents
+/// (issue 121) - the user commands of its session (issue 28) and a handle
+/// to the channel itself. It is the only source of `ActorRuntime`s, so every actor lives in
 /// exactly one channel and shares its commands and handle.
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     runtime_manager: Arc<RuntimeManager>,
     command_executor: Arc<CommandExecutor>,
-    participants: Arc<ParticipantControllers>,
     // Set once the channel exists (see `attach`). Weak, because the channel
     // owns its actors and they hold this runtime: a strong reference would
     // keep a stopped channel alive forever.
@@ -69,10 +67,9 @@ pub struct ChannelRuntime {
 }
 
 impl ChannelRuntime {
-    /// A runtime for a channel of a session whose user commands are
-    /// `command_executor` and whose users and agents are `participants`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>, participants: Arc<ParticipantControllers>) -> Self {
-        Self { runtime_manager, command_executor, participants, channel: Arc::new(OnceLock::new()), session: Arc::new(OnceLock::new()) }
+    /// A runtime for a channel of a session whose user commands are `commands`.
+    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>) -> Self {
+        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()), session: Arc::new(OnceLock::new()) }
     }
 
     /// This runtime, for a channel of the session `session` will point to.
@@ -98,9 +95,6 @@ impl ChannelRuntime {
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime_manager.state_store() }
 
-    /// The controllers of the session's users and agents - what the
-    /// channel builds their actors from.
-    pub fn participants(&self) -> Arc<ParticipantControllers> { self.participants.clone() }
 
     pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
 
@@ -366,7 +360,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())));
         let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
-        ChannelRuntime::new(manager, commands, Default::default())
+        ChannelRuntime::new(manager, commands)
     }
 
     #[tokio::test]

@@ -2,15 +2,14 @@ use arc_swap::ArcSwap;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreResult};
 use std::sync::Arc;
 
-/// The one writer of an agent's document.
+/// The one writer of an agent's document in this instance, shared by all
+/// the agent's actors in all sessions (issue 121).
 #[derive(Debug)]
 pub struct AgentController {
     id: AgentId,
-    session_id: SessionId,
     agent: ArcSwap<Agent>,
     event_publisher: Arc<dyn EventPublisher>,
     entity_store: Arc<dyn EntityStore>,
@@ -20,12 +19,11 @@ pub struct AgentController {
 }
 
 impl AgentController {
-    /// The live `agent` of an actor in session `session_id`, which its
-    /// announcements name.
-    pub fn new(agent: Agent, session_id: SessionId, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
+    /// The live `agent`. Made by the `ControllerManager`, which keeps one
+    /// per agent.
+    pub(crate) fn new(agent: Agent, event_publisher: Arc<dyn EventPublisher>, entity_store: Arc<dyn EntityStore>) -> Self {
         Self {
             id: agent.id,
-            session_id,
             agent: ArcSwap::from_pointee(agent),
             event_publisher,
             entity_store,
@@ -58,7 +56,7 @@ impl AgentController {
         self.entity_store.update_agent(ctx, &agent).await?;
         let attributes = agent.security_attributes.clone();
         self.agent.store(Arc::new(agent));
-        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.session_id, self.id, event), attributes);
+        self.event_publisher.publish(GlobalEvent::AgentUpdated(self.id, event), attributes);
         Ok(())
     }
 
@@ -72,9 +70,10 @@ impl AgentController {
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
-    /// is announced.
+    /// is announced. An event carries the resulting value, so taking over
+    /// this controller's own change again changes nothing.
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        if let GlobalEvent::AgentUpdated(_, aid, update) = event {
+        if let GlobalEvent::AgentUpdated(aid, update) = event {
             if *aid == self.id {
                 self.agent.store(Arc::new(self.apply(update)));
             }
@@ -102,7 +101,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.create_agent(&ctx, &agent).await.unwrap();
-        let controller = AgentController::new(agent.clone(), SessionId::new(), Arc::new(()), store.clone());
+        let controller = AgentController::new(agent.clone(), Arc::new(()), store.clone());
 
         controller.update_name(&ctx, "new_name".to_string()).await.unwrap();
 

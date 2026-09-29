@@ -10,8 +10,7 @@ use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext}
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use crate::controller::{ParticipantControllers, SessionController};
-use crate::event::SubscriptionTopic;
+use crate::controller::SessionController;
 use dashmap::DashMap;
 use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::{mpsc, Mutex};
@@ -64,9 +63,6 @@ pub struct SessionLoop {
     runtime_manager: Arc<RuntimeManager>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor>,
-    /// The session's users and agents, one controller each for all its
-    /// channels (issue 120), kept current by `run`.
-    participants: Arc<ParticipantControllers>,
     /// The session's channels, and which of them run (issue 116). A channel
     /// deleted while it waits to be started has no entry any more, so `run`
     /// never starts it.
@@ -88,13 +84,12 @@ impl SessionLoop {
     pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
-        let participants = Arc::new(runtime_manager.controller_manager().participant_controllers(id, &session.participants).await?);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
         let handle = Arc::new(OnceLock::new());
         let channel_docs = channels;
         let channels = DashMap::new();
         for channel in channel_docs {
-            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone(), participants.clone()).with_session(handle.clone());
+            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone()).with_session(handle.clone());
             let cl = ChannelLoop::new(channel, runtime).await?;
             let id = cl.id();
             channels.insert(id, ChannelEntry { channel: cl, task: None });
@@ -108,7 +103,6 @@ impl SessionLoop {
             session_controller,
             runtime_manager,
             commands,
-            participants,
             channels,
             start_tx,
             start_rx: Mutex::new(start_rx),
@@ -211,7 +205,7 @@ impl SessionLoop {
             return Err(error.into());
         }
 
-        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone(), self.participants.clone()).with_session(self.handle.clone());
+        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone()).with_session(self.handle.clone());
         let channel_loop = match ChannelLoop::new(channel.clone(), runtime).await {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
@@ -286,11 +280,9 @@ impl SessionLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        // The session's own events, and those about its users and agents -
-        // a rename is announced about them, whichever session made it.
-        let mut topics = vec![SubscriptionTopic::Session(self.id())];
-        topics.extend(self.participants.topics());
-        let mut global_rx = self.runtime_manager.event_bus().subscribe(topics);
+        // The session's own events; those about its users and agents are the
+        // `ControllerManager`'s to take in (issue 121).
+        let mut global_rx = self.runtime_manager.event_bus().subscribe_session(self.id());
 
         loop {
             tokio::select! {
@@ -323,7 +315,6 @@ impl SessionLoop {
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             self.session_controller.process_global_event(&global_event);
-            self.participants.process_global_event(&global_event);
         }
     }
 

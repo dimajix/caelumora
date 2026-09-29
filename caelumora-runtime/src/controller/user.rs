@@ -3,8 +3,9 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::user::{User, UserId, UserUpdateEvent};
 use std::sync::Arc;
 
-/// The live user of a `UserActor`. It has no store: users are not changed
-/// through it, only kept current when a change is announced.
+/// The live user of this instance, shared by all the user's actors in all
+/// sessions (issue 121). It has no store: users are not changed through
+/// it, only kept current when a change is announced.
 #[derive(Debug)]
 pub struct UserController {
     id: UserId,
@@ -12,7 +13,8 @@ pub struct UserController {
 }
 
 impl UserController {
-    pub fn new(user: User) -> Self {
+    /// Made by the `ControllerManager`, which keeps one per user.
+    pub(crate) fn new(user: User) -> Self {
         let id = user.id;
         Self {
             id,
