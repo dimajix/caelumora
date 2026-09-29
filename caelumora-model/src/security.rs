@@ -94,6 +94,61 @@ pub enum ActionType<'a> {
     DeleteComponent(&'a SecurityAttributes),
 }
 
+impl ActionType<'_> {
+    /// The action for the log: its kind and what identifies what it is
+    /// about, never content - a tool call by its function, not its
+    /// arguments; a secret by its name, not its value.
+    pub fn describe(&self) -> String {
+        match self {
+            ActionType::GetPersonality(_) => "GetPersonality".into(),
+            ActionType::ListPersonalities => "ListPersonalities".into(),
+            ActionType::CreatePersonality(_) => "CreatePersonality".into(),
+            ActionType::UpdatePersonality(_) => "UpdatePersonality".into(),
+            ActionType::DeletePersonality(_) => "DeletePersonality".into(),
+            ActionType::GetSessionTemplate(_) => "GetSessionTemplate".into(),
+            ActionType::ListSessionTemplates => "ListSessionTemplates".into(),
+            ActionType::CreateSessionTemplate(_) => "CreateSessionTemplate".into(),
+            ActionType::UpdateSessionTemplate(_) => "UpdateSessionTemplate".into(),
+            ActionType::DeleteSessionTemplate(_) => "DeleteSessionTemplate".into(),
+            ActionType::CreateAgent(_) => "CreateAgent".into(),
+            ActionType::GetAgent(_) => "GetAgent".into(),
+            ActionType::ReadAgentContext(_) => "ReadAgentContext".into(),
+            ActionType::ListAgents => "ListAgents".into(),
+            ActionType::UpdateAgent(_) => "UpdateAgent".into(),
+            ActionType::DeleteAgent(_) => "DeleteAgent".into(),
+            ActionType::CreateSession(_) => "CreateSession".into(),
+            ActionType::GetSession(_) => "GetSession".into(),
+            ActionType::UpdateSession(_) => "UpdateSession".into(),
+            ActionType::DeleteSession(_) => "DeleteSession".into(),
+            ActionType::ListSessions => "ListSessions".into(),
+            ActionType::GetChannel(_) => "GetChannel".into(),
+            ActionType::ListChannels => "ListChannels".into(),
+            ActionType::CreateChannel(_) => "CreateChannel".into(),
+            ActionType::UpdateChannel(_) => "UpdateChannel".into(),
+            ActionType::DeleteChannel(_) => "DeleteChannel".into(),
+            ActionType::JoinChannel { participant, channel } => format!("JoinChannel({participant} to {})", channel.channel_id),
+            ActionType::GetUser(_) => "GetUser".into(),
+            ActionType::ListUsers => "ListUsers".into(),
+            ActionType::CreateUser(_) => "CreateUser".into(),
+            ActionType::UpdateUser(_) => "UpdateUser".into(),
+            ActionType::DeleteUser(_) => "DeleteUser".into(),
+            ActionType::CancelChannel(_) => "CancelChannel".into(),
+            ActionType::WakeChannel(_) => "WakeChannel".into(),
+            ActionType::ReadChannel { source, reader } => format!("ReadChannel({} from {})", source.channel_id, reader.channel_id),
+            ActionType::Publish { label, actor, channel } => format!("Publish({label:?} by {actor} to {})", channel.channel_id),
+            ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
+            ActionType::ExecuteCommand(name) => format!("ExecuteCommand(/{name})"),
+            ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
+            ActionType::ReadSecret(key) => format!("ReadSecret({key})"),
+            ActionType::GetComponent(_) => "GetComponent".into(),
+            ActionType::ListComponents => "ListComponents".into(),
+            ActionType::CreateComponent(_) => "CreateComponent".into(),
+            ActionType::UpdateComponent(_) => "UpdateComponent".into(),
+            ActionType::DeleteComponent(_) => "DeleteComponent".into(),
+        }
+    }
+}
+
 /// Who an entity belongs to - what a policy decides by (issue 11).
 ///
 /// The owner may do everything with it; contributors may read and use it -
@@ -195,6 +250,14 @@ pub trait AccessQuestions {
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
+
+    /// Whether `actor` may publish what is labelled `label` to `channel`,
+    /// asked in `context` (`Publish`, issue 61).
+    async fn may_publish(&self, context: &SecurityContext, label: Confidentiality, actor: ActorId, channel: &ChannelClassification) -> bool;
+
+    /// Whether `context` may make the tool call `call` (`CallTool`) - asked
+    /// before a call is put up for approval.
+    async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool;
 }
 
 #[async_trait]
@@ -217,6 +280,47 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ReadAgentContext(agent)).await
+    }
+
+    async fn may_publish(&self, context: &SecurityContext, label: Confidentiality, actor: ActorId, channel: &ChannelClassification) -> bool {
+        self.check(context, ActionType::Publish { label, actor, channel }).await
+    }
+
+    async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool {
+        self.check(context, ActionType::CallTool(call)).await
+    }
+}
+
+/// The one way an operation checks its own permission (issue 95): asked as
+/// part of what it does, a refusal ends it with the operation's own error,
+/// and every refusal is logged alike - which action, for whom, at `debug!`:
+/// a refusal is detail of one operation, and some are routine, such as a
+/// store answering "not found" for what its caller may not see. Pure
+/// questions, which only decide what to offer, show or filter, are
+/// `AccessQuestions`. By blanket implementation on every `SecurityManager`,
+/// like those.
+#[async_trait]
+pub trait Enforcement {
+    /// Nothing if `context` may do `action`; `refusal()` - the caller's
+    /// error, which may deliberately say less, such as "not found" - if not.
+    async fn require<E, F>(&self, context: &SecurityContext, action: ActionType<'_>, refusal: F) -> Result<(), E>
+    where
+        E: Send,
+        F: FnOnce() -> E + Send;
+}
+
+#[async_trait]
+impl<T: SecurityManager + ?Sized> Enforcement for T {
+    async fn require<E, F>(&self, context: &SecurityContext, action: ActionType<'_>, refusal: F) -> Result<(), E>
+    where
+        E: Send,
+        F: FnOnce() -> E + Send,
+    {
+        if self.check(context, action).await {
+            return Ok(());
+        }
+        tracing::debug!("Refused {} for {}", action.describe(), context.initiator_id);
+        Err(refusal())
     }
 }
 
@@ -438,5 +542,32 @@ mod tests {
         assert!(!allows(bob, ActionType::CreateSession(&SecurityAttributes::owned_by(alice))).await);
         assert!(!allows(ActorId::None, ActionType::CreateSession(&SecurityAttributes::default())).await, "an empty context has no rights");
         assert!(!allows(ActorId::None, ActionType::UpdateSession(&SecurityAttributes::default())).await);
+    }
+
+    #[test]
+    fn an_action_is_described_without_its_content() {
+        let call = ToolCall {
+            id: None,
+            function_name: "web_search".to_string(),
+            arguments: serde_json::json!({ "query": "secret plans" }),
+            confidentiality: Default::default(),
+        };
+        let described = ActionType::CallTool(&call).describe();
+        assert_eq!(described, "CallTool(web_search)");
+        assert!(!described.contains("secret plans"), "no arguments in the log");
+        assert_eq!(ActionType::GetSession(&SecurityAttributes::default()).describe(), "GetSession");
+    }
+
+    #[tokio::test]
+    async fn require_answers_a_refusal_with_the_callers_error() {
+        #[derive(Debug, PartialEq)]
+        struct Refused;
+        let (owner, stranger) = (user(), user());
+        let context = |actor| SecurityContext::new(actor, Default::default(), Default::default());
+        let hers = SecurityAttributes::owned_by(owner);
+        let policy = OwnershipSecurityManager::new();
+
+        assert_eq!(policy.require(&context(owner), ActionType::DeleteSession(&hers), || Refused).await, Ok(()));
+        assert_eq!(policy.require(&context(stranger), ActionType::DeleteSession(&hers), || Refused).await, Err(Refused));
     }
 }

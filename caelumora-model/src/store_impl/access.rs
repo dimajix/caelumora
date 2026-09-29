@@ -14,8 +14,12 @@
 //!   writing oneself in as owner would pass the check. An entity the caller
 //!   may not even read is not found; one they may read but not change is
 //!   refused.
+//!
+//! Every check goes through `Enforcement::require` (issue 95), with the
+//! answer the store gives - "not found" for what the caller may not see -
+//! except filtering a list, which is a question.
 
-use crate::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
+use crate::security::{ActionType, Enforcement, Secured, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::store::{StoreError, StoreResult};
 
 
@@ -32,28 +36,29 @@ impl<'a> Access<'a> {
         Self { manager, ctx }
     }
 
-    async fn permits(&self, action: ActionType<'_>) -> bool {
-        self.manager.check(self.ctx, action).await
+    /// `action`, or `refusal()` if the caller may not.
+    async fn require<E: Send>(&self, action: ActionType<'_>, refusal: impl FnOnce() -> E + Send) -> Result<(), E> {
+        self.manager.require(self.ctx, action, refusal).await
     }
 
     /// An action that concerns no single entity, such as listing.
     pub(crate) async fn allow(&self, action: ActionType<'_>) -> StoreResult<()> {
-        if self.permits(action).await { Ok(()) } else { Err(StoreError::PermissionDenied) }
+        self.manager.require(self.ctx, action, || StoreError::PermissionDenied).await
     }
 
     /// `found`, if it exists and the caller may read it; not found otherwise.
     pub(crate) async fn read<T: Secured>(&self, found: Option<T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, entity: &'static str, id: String) -> StoreResult<T> {
-        match found {
-            Some(value) if self.permits(read(value.security_attributes())).await => Ok(value),
-            _ => Err(StoreError::NotFound { entity, id }),
-        }
+        let not_found = || StoreError::NotFound { entity, id };
+        let Some(value) = found else { return Err(not_found()) };
+        self.require(read(value.security_attributes()), not_found).await?;
+        Ok(value)
     }
 
     /// The entities of `values` the caller may read.
     pub(crate) async fn filter<T: Secured>(&self, values: Vec<T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>) -> Vec<T> {
         let mut readable = Vec::with_capacity(values.len());
         for value in values {
-            if self.permits(read(value.security_attributes())).await {
+            if self.manager.check(self.ctx, read(value.security_attributes())).await {
                 readable.push(value);
             }
         }
@@ -67,12 +72,9 @@ impl<'a> Access<'a> {
 
     /// Whether the caller may change `stored`, the entity as it is now.
     pub(crate) async fn change<T: Secured>(&self, stored: Option<&T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, change: impl Fn(&SecurityAttributes) -> ActionType<'_>, entity: &'static str, id: String) -> StoreResult<()> {
-        let Some(stored) = stored else {
-            return Err(StoreError::NotFound { entity, id });
-        };
-        if !self.permits(read(stored.security_attributes())).await {
-            return Err(StoreError::NotFound { entity, id });
-        }
+        let not_found = || StoreError::NotFound { entity, id };
+        let Some(stored) = stored else { return Err(not_found()) };
+        self.require(read(stored.security_attributes()), not_found).await?;
         self.allow(change(stored.security_attributes())).await
     }
 
@@ -80,7 +82,7 @@ impl<'a> Access<'a> {
     /// could see to delete, an error if they may see but not delete it.
     pub(crate) async fn delete<T: Secured>(&self, stored: Option<&T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, delete: impl Fn(&SecurityAttributes) -> ActionType<'_>) -> StoreResult<bool> {
         let Some(stored) = stored else { return Ok(false) };
-        if !self.permits(read(stored.security_attributes())).await {
+        if self.require(read(stored.security_attributes()), || ()).await.is_err() {
             return Ok(false);
         }
         self.allow(delete(stored.security_attributes())).await.map(|_| true)

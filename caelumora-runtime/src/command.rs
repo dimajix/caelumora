@@ -10,10 +10,9 @@ use crate::channel::ChannelLoop;
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::{ActionType, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::info;
 
 /// Why a command did not run. The messages are meant for the user who
 /// issued it (see `crate::error::user_message`).
@@ -148,13 +147,9 @@ impl CommandExecutor {
         let Some(entry) = entry else {
             return Err(CommandError::Unknown(name.to_string()));
         };
-        if !self.security_manager.check(context.issuer, ActionType::ShowCommand(name)).await {
-            return Err(CommandError::Unknown(name.to_string()));
-        }
-        if !self.security_manager.check(context.issuer, ActionType::ExecuteCommand(name)).await {
-            info!("Refused command /{} for {}", name, context.issuer.initiator_id);
-            return Err(CommandError::Forbidden(name.to_string()));
-        }
+        // One the issuer may not see is unknown to them, not refused.
+        self.security_manager.require(context.issuer, ActionType::ShowCommand(name), || CommandError::Unknown(name.to_string())).await?;
+        self.security_manager.require(context.issuer, ActionType::ExecuteCommand(name), || CommandError::Forbidden(name.to_string())).await?;
         entry.provider.execute(name, args, context).await
     }
 }

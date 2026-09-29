@@ -18,7 +18,7 @@ use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, Publication};
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
 use caelumora_model::tool::{Tool, ToolCall, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -366,7 +366,7 @@ impl AgentActor {
         let security = self.actor_runtime.security_manager();
         let allows = |label| {
             let (security, context) = (security.clone(), context.clone());
-            async move { security.check(&context, ActionType::Publish { label, actor: self.id, channel: classification }).await }
+            async move { security.may_publish(&context, label, self.id, classification).await }
         };
         Publication::new(allows(Confidentiality::Session).await, allows(Confidentiality::Channel).await)
     }
@@ -1007,10 +1007,9 @@ impl Actor for AgentActor {
     async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
         // Read from the store, where the state is written after every step:
         // the running loop holds the in-memory state for as long as it runs.
-        if !self.may_read_context(caller).await {
-            info!("Refused reading the context of agent {} for {}", self.id, caller.initiator_id);
-            return Err(MessageContextError::Forbidden { actor: self.id });
-        }
+        let attributes = self.agent_controller.load().security_attributes.clone();
+        self.actor_runtime.security_manager()
+            .require(caller, ActionType::ReadAgentContext(&attributes), || MessageContextError::Forbidden { actor: self.id }).await?;
         let state = self.actor_runtime.load_channel_state().await
             .map_err(|e| {
                 warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);

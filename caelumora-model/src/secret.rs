@@ -1,4 +1,4 @@
-use crate::security::{ActionType, SecurityContext, SecurityManager};
+use crate::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -41,9 +41,7 @@ impl SecretManager {
     }
 
     pub async fn resolve(&self, context: &SecurityContext, key: &str) -> SecretResult<String> {
-        if !self.security_manager.check(context, ActionType::ReadSecret(key)).await {
-            return Err(SecretError::PermissionDenied(key.to_string()));
-        }
+        self.security_manager.require(context, ActionType::ReadSecret(key), || SecretError::PermissionDenied(key.to_string())).await?;
 
         for provider in &self.providers {
             match provider.get_secret(key).await {

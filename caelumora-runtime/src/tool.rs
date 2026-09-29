@@ -3,7 +3,7 @@ use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::agent::AgentId;
 use caelumora_model::confidentiality::Publication;
-use caelumora_model::security::{ActionType, SecurityManager};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
 use chrono::{DateTime, Utc};
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -240,10 +240,7 @@ impl ToolExecutor for DefaultToolExecutor {
             finished_at: None,
         };
 
-        if !self.security_manager.check(security, ActionType::CallTool(call)).await {
-            info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent_id);
-            return Err(ToolError::PermissionDenied(call.function_name.clone()));
-        }
+        self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await?;
 
         let tool_name = &call.function_name;
         for provider in &self.tool_providers {
@@ -275,7 +272,7 @@ impl ToolExecutor for DefaultToolExecutor {
     }
 
     async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool {
-        self.security_manager.check(turn.security_context(), ActionType::CallTool(call)).await
+        self.security_manager.may_call_tool(turn.security_context(), call).await
     }
 
     fn describe(&self, call: &ToolCall) -> ToolResult<String> {

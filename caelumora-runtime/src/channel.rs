@@ -16,7 +16,7 @@ use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
-use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use caelumora_model::user::UserId;
@@ -314,7 +314,7 @@ impl ChannelLoop {
         let member = Member::of(&found, &self.runtime).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         let classification = self.classification();
-        self.check(context, ActionType::JoinChannel { participant, channel: &classification }, "adding a participant to").await?;
+        self.require(context, ActionType::JoinChannel { participant, channel: &classification }, "adding a participant to").await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -412,7 +412,7 @@ impl ChannelLoop {
     /// cancelled (issue 30).
     pub async fn cancel(&self, context: &SecurityContext) -> Result<()> {
         let channel = self.channel.load();
-        self.check(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
+        self.require(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
         self.quiet.store(true, Ordering::SeqCst);
         for actor in self.actors.load().values() {
             actor.cancel();
@@ -429,7 +429,7 @@ impl ChannelLoop {
     /// `WakeChannel`.
     pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
         let channel = self.channel.load();
-        self.check(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
+        self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let asleep = self.actors.load().values()
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name())
@@ -446,7 +446,7 @@ impl ChannelLoop {
     /// `WakeChannel`; an error if `actor` is not in this channel.
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         let channel = self.channel.load();
-        self.check(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
+        self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let actor = self.actors.load().get(&actor).cloned()
             .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
         let was_asleep = actor.state() == ActorState::Sleeping;
@@ -466,14 +466,11 @@ impl ChannelLoop {
         }
     }
 
-    /// Asks the `SecurityManager` about `action`, turning a refusal into a
-    /// `ChannelError::Forbidden` that names what was refused, not why.
-    async fn check(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
-        if self.runtime.security_manager().check(context, action).await {
-            return Ok(());
-        }
-        info!("Refused {} channel {} for {}", what, self.id, context.initiator_id);
-        Err(ChannelError::Forbidden { action: what, channel: self.id }.into())
+    /// `action`, refused as a `ChannelError::Forbidden` that names what was
+    /// refused, not why.
+    async fn require(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
+        let channel = self.id;
+        Ok(self.runtime.security_manager().require(context, action, || ChannelError::Forbidden { action: what, channel }).await?)
     }
 
     pub fn actor_names(&self) -> Vec<String> {

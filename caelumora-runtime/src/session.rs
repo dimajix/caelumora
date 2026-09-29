@@ -6,7 +6,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, DEFAULT_MODERATOR};
 use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -447,7 +447,9 @@ impl SessionManager {
     /// in memory is no way around the policy (issue 11).
     async fn running(&self, context: &SecurityContext, id: SessionId) -> Result<Option<Arc<SessionLoop>>> {
         let Some(session_loop) = self.get_session(id) else { return Ok(None) };
-        self.may(context, ActionType::GetSession(&session_loop.get_session().security_attributes), id, StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
+        let attributes = session_loop.get_session().security_attributes.clone();
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::GetSession(&attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
         Ok(Some(session_loop))
     }
 
@@ -468,16 +470,6 @@ impl SessionManager {
             Some(session_loop) => Ok(session_loop),
             None => self.load_session(id, context).await,
         }
-    }
-
-    /// Asks the `SecurityManager` about `action` on session `id`, answering a
-    /// refusal with `refusal`.
-    async fn may(&self, context: &SecurityContext, action: ActionType<'_>, id: SessionId, refusal: StoreError) -> Result<()> {
-        if self.runtime_manager.security_manager().check(context, action).await {
-            return Ok(());
-        }
-        info!("Refused access to session {} for {}", id, context.initiator_id);
-        Err(refusal.into())
     }
 
     /// Stop a running session's loop without deleting its durable definition.
@@ -523,8 +515,9 @@ impl SessionManager {
             None => self.runtime_manager.entity_store().get_session(ctx, id).await?,
         };
         let not_found = || StoreError::NotFound { entity: "session", id: id.to_string() };
-        self.may(ctx, ActionType::GetSession(&session.security_attributes), id, not_found()).await?;
-        self.may(ctx, ActionType::DeleteSession(&session.security_attributes), id, StoreError::PermissionDenied).await?;
+        let security = self.runtime_manager.security_manager();
+        security.require(ctx, ActionType::GetSession(&session.security_attributes), not_found).await?;
+        security.require(ctx, ActionType::DeleteSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
