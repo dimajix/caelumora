@@ -1,6 +1,6 @@
 # 91 — `ChannelLoop` keeps its actors in two tables synchronised by a queue
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -38,3 +38,21 @@ twice is one already waiting.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.9).
+- **2026-09-29** — Done in part, as agreed with the maintainer; the rest
+  deliberately not.
+  - Done: `ChannelLoop::adopt(actor)` is the one way an actor enters the
+    channel - moderator, table, mentions. `new` builds the loop first,
+    with no actors, and adopts each participant's; `add_participant`
+    adopts the newcomer's. The `Arc` around `ChannelLoop::state` is gone.
+    `run`'s map is called `running`, and `ActorHandle` says what it is.
+  - Not done: one table instead of two. They have different roles:
+    `actors` says who takes part and is read from anywhere; `run`'s map
+    holds the tasks and inboxes, whose tasks `run`'s `JoinSet` owns so
+    that they end when the channel's task is aborted (a session stopped,
+    a channel deleted), and the queue tells that owner what to start and
+    stop. One table would need the tasks spawned outside `run`, a drop
+    guard in `run` to abort them, and a lock with a "running" state so
+    that a join during the start is neither started twice nor missed -
+    more, and subtler, machinery than the queue it replaces. The same
+    reasoning kept `SessionLoop`'s start queue in
+    [116](116-session-loop-channel-tables.md).

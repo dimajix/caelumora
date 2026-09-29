@@ -190,7 +190,7 @@ against it, and what came out of the last attempt.
 | [86](86-controllers-in-the-model.md) | done | The five controllers write to the store and publish events from inside the model, each built differently. |
 | [88](88-template-instantiation-in-the-model.md) | open | Instantiating a template does store I/O in the model, and both frontends drive the sequence by hand. |
 | [89](89-channel-runtime-delegators.md) | open | `ChannelRuntime` is six methods that forward to `RuntimeManager`. |
-| [91](91-double-actor-table.md) | open | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
+| [91](91-double-actor-table.md) | done | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
 | [99](99-component-factory-and-tags.md) | open | The component factory is synchronous while building is async, and component tags have no reader. |
 | [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |

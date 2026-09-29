@@ -43,6 +43,11 @@ pub struct ChannelMember {
     pub kind: String,
 }
 
+/// The task of a running actor and its inbox. Owned by `run`, which keeps
+/// them apart from `ChannelLoop::actors`: that table says who takes part and
+/// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the tasks
+/// - so that they end with the channel's own task - and which starts and
+/// stops them as `ActorChange`s tell it (issue 91).
 struct ActorHandle {
     id: ActorId,
     abort_handle: AbortHandle,
@@ -97,7 +102,7 @@ pub struct ChannelLoop {
     changes_tx: mpsc::UnboundedSender<ActorChange>,
     changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
     recorder: Mutex<Box<dyn Recorder>>,
-    state: Arc<Mutex<ChannelState>>,
+    state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
     /// Set by `cancel`, cleared when the channel is woken: while set, what is
     /// said is still delivered, but nobody is asked to respond to it
@@ -115,7 +120,7 @@ impl ChannelLoop {
         let id = channel.id;
         let session_id = channel.session_id;
         let state_store = runtime.state_store();
-        let mut moderator = runtime.new_moderator(&channel.moderator)?;
+        let moderator = runtime.new_moderator(&channel.moderator)?;
         
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
@@ -126,24 +131,12 @@ impl ChannelLoop {
             }
             Err(e) => return Err(e.into()),
         };
-        let state = Arc::new(Mutex::new(state));
+        let state = Mutex::new(state);
 
         let recorder = runtime.new_recorder()?;
         let (event_tx, _) = broadcast::channel(100);
 
         let channel_controller = runtime.controller_manager().new_channel_controller(channel);
-
-        let mut actors = HashMap::new();
-        for participant in &channel_controller.load().participants {
-            let actor = Self::create_actor(channel_controller.clone(), participant, &runtime).await?;
-            let actor: Arc<dyn Actor> = Arc::from(actor);
-            moderator.add_actor(actor.clone());
-            actors.insert(actor.id(), actor);
-        }
-        let mentions = Self::mention_directory(&actors);
-        for handle in mentions.ambiguous() {
-            warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", id, handle);
-        }
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
@@ -151,9 +144,9 @@ impl ChannelLoop {
             session_id,
             channel: channel_controller,
             runtime,
-            actors: ArcSwap::from_pointee(actors),
+            actors: ArcSwap::from_pointee(HashMap::new()),
             moderator: Mutex::new(moderator),
-            mentions: ArcSwap::from_pointee(mentions),
+            mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
             changes_rx: Mutex::new(changes_rx),
             recorder: Mutex::new(recorder),
@@ -165,7 +158,28 @@ impl ChannelLoop {
             run_lock: Mutex::new(())
         });
         channel_loop.runtime.attach(&channel_loop);
+        // The participants the channel has; `run` starts their tasks.
+        let participants = channel_loop.channel.load().participants.clone();
+        for participant in &participants {
+            let actor = Self::create_actor(channel_loop.channel.clone(), participant, &channel_loop.runtime).await?;
+            channel_loop.adopt(Arc::from(actor)).await;
+        }
         Ok(channel_loop)
+    }
+
+    /// Takes `actor` into the channel: the moderator routes to it, it is
+    /// among the participants' actors, and it can be mentioned. The one way
+    /// an actor enters the channel - when the channel is built and when a
+    /// participant joins (issue 91). Its task is `run`'s to start.
+    async fn adopt(&self, actor: Arc<dyn Actor>) {
+        self.moderator.lock().await.add_actor(actor.clone());
+        let id = actor.id();
+        self.actors.rcu(|actors| {
+            let mut actors = HashMap::clone(actors);
+            actors.insert(id, actor.clone());
+            actors
+        });
+        self.rebuild_mentions();
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
@@ -273,13 +287,7 @@ impl ChannelLoop {
                 return Err(error);
             }
         };
-        self.moderator.lock().await.add_actor(actor.clone());
-        self.actors.rcu(|actors| {
-            let mut actors = HashMap::clone(actors);
-            actors.insert(participant, actor.clone());
-            actors
-        });
-        self.rebuild_mentions();
+        self.adopt(actor.clone()).await;
         let _ = self.changes_tx.send(ActorChange::Start(actor));
         info!("{} joined channel {}", participant, self.id);
         Ok(())
@@ -527,17 +535,17 @@ impl ChannelLoop {
         let mut changes_rx = self.changes_rx.lock().await;
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
-        let mut actors = self.spawn_actors(event_tx.clone(), &mut join_set)?;
+        let mut running = self.spawn_actors(event_tx.clone(), &mut join_set)?;
 
         loop {
             tokio::select! {
                 maybe_event = event_rx.recv() => {
-                    if self.handle_actor_event(maybe_event, &actors).await {
+                    if self.handle_actor_event(maybe_event, &running).await {
                         break;
                     }
                 }
                 Some(change) = changes_rx.recv() => {
-                    self.apply_change(change, &mut actors, &event_tx, &mut join_set);
+                    self.apply_change(change, &mut running, &event_tx, &mut join_set);
                 }
                 // Finished tasks are dropped as they end; once the last one
                 // is gone, the channel stops - the sender kept for actors
@@ -555,13 +563,13 @@ impl ChannelLoop {
     }
 
     /// Starts or stops an actor as a participant joined or left (issue 46).
-    fn apply_change(&self, change: ActorChange, actors: &mut HashMap<ActorId, ActorHandle>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
+    fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, ActorHandle>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
             ActorChange::Start(actor) => {
                 // Joined before `run` started: already running.
-                if !actors.contains_key(&actor.id()) {
+                if !running.contains_key(&actor.id()) {
                     let handle = self.spawn_actor(actor, event_tx.clone(), join_set);
-                    actors.insert(handle.id, handle);
+                    running.insert(handle.id, handle);
                 }
             }
             ActorChange::Stop(id) => {
@@ -569,7 +577,7 @@ impl ChannelLoop {
                 // (`Actor::stop`), it ends its task itself once its state is
                 // stored consistent. Only if it does not - a tool that hangs -
                 // is it aborted.
-                if let Some(handle) = actors.remove(&id) {
+                if let Some(handle) = running.remove(&id) {
                     let abort_handle = handle.abort_handle.clone();
                     let (channel, actor) = (self.id, id);
                     tokio::spawn(async move {
@@ -585,17 +593,17 @@ impl ChannelLoop {
         }
     }
 
-    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, actors: &HashMap<ActorId,ActorHandle>) -> bool {
+    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId,ActorHandle>) -> bool {
         if let Some(event) = maybe_event {
             let span = crate::logging::envelope_span(&event.context, event.event.kind());
-            self.process_envelope(event, actors).instrument(span).await;
+            self.process_envelope(event, running).instrument(span).await;
             false
         } else {
             true
         }
     }
 
-    async fn process_envelope(&self, event: Envelope, actors: &HashMap<ActorId,ActorHandle>) {
+    async fn process_envelope(&self, event: Envelope, running: &HashMap<ActorId,ActorHandle>) {
         match event.event {
             // One per streamed chunk: far finer than per message.
             ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) => {
@@ -608,17 +616,18 @@ impl ChannelLoop {
         let event = self.resolve_mentions(event);
         self.record_receive_event(&event).await;
         self.append_history(&event).await;
-        self.route_event(actors, event).await;
+        self.route_event(running, event).await;
     }
 
+    /// Starts the tasks of the channel's actors as `run` begins.
     fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> Result<HashMap<ActorId,ActorHandle>> {
-        let mut actors = HashMap::new();
+        let mut running = HashMap::new();
         for (id, actor) in self.actors.load().iter() {
             let handle = self.spawn_actor(actor.clone(), actor_output.clone(), join_set);
-            actors.insert(*id, handle);
+            running.insert(*id, handle);
         };
 
-        Ok(actors)
+        Ok(running)
     }
 
     fn spawn_actor(&self, actor: Arc<dyn Actor>, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
@@ -683,7 +692,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event(&self, actors: &HashMap<ActorId,ActorHandle>, event: Envelope) {
+    async fn route_event(&self, running: &HashMap<ActorId,ActorHandle>, event: Envelope) {
         if matches!(event.event, ActorEvent::WakeupRequested) {
             self.wake_for_delivery();
         }
@@ -695,14 +704,14 @@ impl ChannelLoop {
         //    }
         //}
 
-        let broadcast = self.route_event_impl(actors, event.clone()).await;
+        let broadcast = self.route_event_impl(running, event.clone()).await;
 
         if broadcast {
             let _ = self.event_tx.send(event);
         }
     }
 
-    async fn route_event_impl(&self, actors: &HashMap<ActorId,ActorHandle>, event: Envelope) -> bool {
+    async fn route_event_impl(&self, running: &HashMap<ActorId,ActorHandle>, event: Envelope) -> bool {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
             return true
@@ -738,7 +747,7 @@ impl ChannelLoop {
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = span_id;
             target_event.context.span_depth = span_depth;
-            if let Some(actor) = actors.get(&target_id) {
+            if let Some(actor) = running.get(&target_id) {
                 debug!(to = %target_id, "Forwarding {}", event_desc);
                 self.record_send_event(&target_event).await;
                 if let Err(e) = actor.sender.try_send(target_event) {
