@@ -5,7 +5,7 @@ use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::{ActorRuntime, OwnTopic};
-use crate::tool::{ToolExecutor, ToolProvider};
+use crate::tool::{ToolError, ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -787,23 +787,44 @@ impl AgentActor {
         for tc in tool_calls {
             let tool = tools.iter().find(|t| t.name == tc.function_name);
             let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
-            let description = self.tool_executor.describe(tc).unwrap_or("No description".to_string());
             let mut state = ToolCallState {
                 id: ApprovalId::new(),
                 status: if approval { ApprovalStatus::Pending } else { ApprovalStatus::Approved },
                 tool_call: tc.clone(),
-                description,
+                description: String::new(),
                 result: None,
                 result_status: ToolResultStatus::Ok,
             };
-            // A call the policy forbids is refused right away rather than
-            // put to a user who could only approve it in vain. The status
-            // then no longer matters: a call with a result is not executed.
-            if !self.tool_executor.is_permitted(tc, turn).await {
+            // A call that cannot succeed is answered right away rather than
+            // put to a user who could only approve it in vain - in the order
+            // `execute` would find out: first the policy, then the call
+            // itself (issue 118). The status then no longer matters: a call
+            // with a result is not executed.
+            let answer = if !self.tool_executor.is_permitted(tc, turn).await {
                 info!("Tool call '{}' by agent {} forbidden by the security manager", tc.function_name, self.id);
+                Some((ToolResultStatus::Forbidden, crate::tool::forbidden_result()))
+            } else {
+                match self.tool_executor.describe(tc) {
+                    Ok(description) => {
+                        state.description = description;
+                        None
+                    }
+                    Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
+                        info!("Tool call '{}' by agent {} cannot run: {}", tc.function_name, self.id, e);
+                        let available: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+                        Some(e.to_result(&available))
+                    }
+                    Err(e) => {
+                        warn!("Cannot describe tool call '{}' for approval: {}", tc.function_name, e);
+                        state.description = "No description".to_string();
+                        None
+                    }
+                }
+            };
+            if let Some((status, result)) = answer {
                 state.status = ApprovalStatus::Approved;
-                state.result = Some(crate::tool::forbidden_result());
-                state.result_status = ToolResultStatus::Forbidden;
+                state.result = Some(result);
+                state.result_status = status;
             }
             states.push(state);
         }

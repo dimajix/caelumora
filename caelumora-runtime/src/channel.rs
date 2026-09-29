@@ -1199,6 +1199,14 @@ mod tests {
     }
 
     async fn stuck_in_a_model_call() -> Stuck {
+        let stuck = with_an_agent(Arc::new(NeverAnswers), Default::default()).await;
+        settled(&stuck.helper, ActorState::Planning).await;
+        stuck
+    }
+
+    /// A running channel with alice and an agent that talks to `model` and
+    /// has `components`, after alice said "hello".
+    async fn with_an_agent(model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> Stuck {
         use caelumora_model::agent::{Agent, Personality, PersonalityId};
         use caelumora_model::meta::{Metadata, Scope};
         use caelumora_model::store::EntityStore;
@@ -1209,7 +1217,7 @@ mod tests {
             reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
-            components: Default::default(),
+            components,
             security_attributes: Default::default(),
         };
         store.put_personality(&SecurityContext::system(), &personality).await.unwrap();
@@ -1219,7 +1227,7 @@ mod tests {
         let agent_id = agent.id;
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(NeverAnswers)).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), model).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -1234,12 +1242,70 @@ mod tests {
         let events = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
-        // The message makes the agent start a turn, which waits for a model
-        // that never answers.
+        // The message makes the agent start a turn.
         channel.user_actor(alice.id).unwrap().send_message("hello".to_string()).await.unwrap();
         let helper = channel.actor_by_id(ActorId::Agent(agent_id)).unwrap();
-        settled(&helper, ActorState::Planning).await;
         Stuck { channel, context, agent: agent_id, helper, events, running }
+    }
+
+    /// A model that gives the answers it was given, one per call, and then
+    /// none.
+    #[derive(Debug)]
+    struct Scripted(std::sync::Mutex<std::collections::VecDeque<Message>>);
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for Scripted {
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
+            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+        {
+            match self.0.lock().unwrap().pop_front() {
+                Some(answer) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
+                None => Box::pin(futures::stream::pending()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolConfidentiality, ToolResultStatus};
+
+        // `create_plan` needs approval; this call's arguments are no plan.
+        let not_a_plan = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC }],
+            ..Message::default()
+        };
+        let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::default() };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "plan".to_string(),
+            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND.to_string(),
+            params: serde_json::Value::Null,
+            deps: vec![],
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { agent, helper, mut events, running, .. } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;
+
+        // The turn ends without anyone approving anything: the call was
+        // answered as invalid, and the model tried again.
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) {
+                    if let ActorEvent::FullResponseGenerated(messages) = envelope.event { break messages }
+                }
+            }
+        }).await.expect("the turn ends without an approval");
+        let results: Vec<_> = ended.iter().flat_map(|m| m.tool_results.iter()).collect();
+        assert_eq!(results.len(), 1, "{ended:?}");
+        assert_eq!(results[0].status, ToolResultStatus::InvalidArguments, "the model is asked to correct the call");
+        assert_eq!(ended.last().and_then(|m| m.content.as_deref()), Some("Let me answer directly."));
+        settled(&helper, ActorState::Idle).await;
+        running.abort();
     }
 
     /// Waits for `actor` to reach `wanted`.

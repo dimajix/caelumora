@@ -1,6 +1,6 @@
 # 118 — A tool call with invalid arguments is put up for approval before it fails
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -57,3 +57,16 @@ the same. Only after a user approved it does `execute` fail with the same
 - **2026-09-29** — Noticed while fixing [82](82-tool-parameter-parsing.md);
   created at the maintainer's request. Part of the review epic
   [74](74-refactoring-epic.md).
+- **2026-09-29** — Done with the first option. `request_approvals` answers
+  a call right away when it cannot succeed, in the order `execute` would
+  find out: a call the policy forbids as before, then a call whose
+  `describe` fails with `InvalidParameter` or `UnknownTool`, with the
+  result `ToolError::to_result` gives - so the model sees the same text
+  it would have seen after an approval. Any other `describe` failure is
+  logged and keeps "No description". Only `create_plan` validates in
+  `describe` today; a call of an unknown tool never needed approval
+  anyway. Test: an agent whose model sends a `create_plan` call without a
+  plan ends its turn without an approval (there is no approver in the
+  test channel - the old code waited forever), the tool result is
+  `InvalidArguments`, and the model's next answer closes the turn. The
+  test helper runs an agent against a scripted model.
