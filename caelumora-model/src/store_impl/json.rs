@@ -2,7 +2,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::security::{Secured, SecurityManager};
-use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES};
+use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS};
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -372,32 +372,25 @@ impl EntityStore for JsonFileStore {
         self.list_dir(ctx, &CHANNELS, self.channels_dir()).await
     }
 
-    // Users - not checked yet (issue 94).
-    async fn create_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        let path = self.user_path(value.id);
-        if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
-            return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
-        }
-        write_json_atomic(&path, value).await
+    // Users - found by name as well, since a username is an identity
+    // (issue 93).
+    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        self.create_file(ctx, &USERS, self.user_path(value.id), value.id.to_string(), value).await
     }
-    async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        require_entity(read_json_opt::<User>(&self.user_path(id)).await?, "user", id.to_string())
+    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        self.get_file(ctx, &USERS, self.user_path(id), id.to_string()).await
     }
-    async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        let path = self.user_path(value.id);
-        if !tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
-            return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
-        }
-        write_json_atomic(&path, value).await
+    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        self.update_file(ctx, &USERS, self.user_path(value.id), value.id.to_string(), value).await
     }
-    async fn delete_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        delete_if_exists(&self.user_path(id)).await
+    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.delete_file::<User>(ctx, &USERS, self.user_path(id)).await
     }
-    async fn list_users(&self, _ctx: &SecurityContext) -> StoreResult<Vec<User>> {
-        read_all_from_dir(&self.users_dir()).await
+    async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
+        self.list_dir(ctx, &USERS, self.users_dir()).await
     }
-    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        let users: Vec<User> = read_all_from_dir(&self.users_dir()).await?;
+    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
+        let users: Vec<User> = self.list_dir(ctx, &USERS, self.users_dir()).await?;
         require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
     }
 

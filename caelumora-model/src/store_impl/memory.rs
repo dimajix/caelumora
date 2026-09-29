@@ -9,7 +9,7 @@ use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use crate::security::{DummySecurityManager, Secured, SecurityManager};
-use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES};
+use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -226,36 +226,26 @@ impl EntityStore for MemoryStore {
         self.list_in(ctx, &self.channels, &CHANNELS).await
     }
 
-    // Users - not checked yet (issue 94).
-    async fn create_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.write_lock(&self.users, |v| {
-            if v.contains_key(&value.id) {
-                return Err(StoreError::Conflict(format!("user {} already exists", value.id)));
-            }
-            v.insert(value.id, value.clone());
-            Ok(())
-        })?
+    // Users - found by name as well, since a username is an identity
+    // (issue 93).
+    async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        self.create_in(ctx, &self.users, &USERS, value.id, value).await
     }
-    async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
-        require_entity(self.read_lock(&self.users, |v| v.get(&id).cloned())?, "user", id.to_string())
+    async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        self.get_in(ctx, &self.users, &USERS, &id).await
     }
-    async fn update_user(&self, _ctx: &SecurityContext, value: &User) -> StoreResult<()> {
-        self.write_lock(&self.users, |v| {
-            if !v.contains_key(&value.id) {
-                return Err(StoreError::NotFound { entity: "user", id: value.id.to_string() });
-            }
-            v.insert(value.id, value.clone());
-            Ok(())
-        })?
+    async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()> {
+        self.update_in(ctx, &self.users, &USERS, value.id, value).await
     }
-    async fn delete_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.write_lock(&self.users, |v| v.remove(&id).is_some())
+    async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.users, &USERS, &id).await
     }
-    async fn list_users(&self, _ctx: &SecurityContext) -> StoreResult<Vec<User>> {
-        self.read_lock(&self.users, |v| v.values().cloned().collect())
+    async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
+        self.list_in(ctx, &self.users, &USERS).await
     }
-    async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
-        require_entity(self.read_lock(&self.users, |v| v.values().find(|u| u.username == name).cloned())?, "user", name.to_string())
+    async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
+        let users = self.list_in(ctx, &self.users, &USERS).await?;
+        require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
     }
 
     // Components

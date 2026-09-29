@@ -144,6 +144,15 @@ pub(crate) const CHANNELS: Actions = Actions {
     delete: |a| ActionType::DeleteChannel(a),
 };
 
+pub(crate) const USERS: Actions = Actions {
+    entity: "user",
+    get: |a| ActionType::GetUser(a),
+    list: ActionType::ListUsers,
+    create: |a| ActionType::CreateUser(a),
+    update: |a| ActionType::UpdateUser(a),
+    delete: |a| ActionType::DeleteUser(a),
+};
+
 pub(crate) const COMPONENTS: Actions = Actions {
     entity: "component",
     get: |a| ActionType::GetComponent(a),
@@ -241,5 +250,36 @@ mod tests {
         let (alice, _) = user();
         let (_, bob_ctx) = user();
         assert!(matches!(store.create_session(&bob_ctx, &session(alice, Vec::new())).await, Err(StoreError::PermissionDenied)));
+    }
+
+    #[tokio::test]
+    async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
+        use crate::security::OwnershipSecurityManager;
+        use crate::user::User;
+
+        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let system = SecurityContext::system();
+        let alice_id = UserId::new();
+        let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
+        let (_, bob_ctx) = user();
+        let record = User { id: alice_id, username: "alice".to_string(), email: String::new(), roles: vec!["user".to_string()] };
+
+        let own = store.create_user(&alice_ctx, &record).await;
+        assert!(matches!(own, Err(StoreError::PermissionDenied)), "nobody records themselves, got {own:?}");
+        store.create_user(&system, &record).await.expect("the system records users");
+
+        assert_eq!(store.get_user(&bob_ctx, alice_id).await.expect("another user reads her").username, "alice");
+        assert_eq!(store.find_user_by_name(&bob_ctx, "alice").await.expect("and finds her by name").id, alice_id);
+        assert_eq!(store.list_users(&bob_ctx).await.expect("and lists her").len(), 1);
+
+        let promoted = User { roles: vec!["admin".to_string()], ..record.clone() };
+        for ctx in [&alice_ctx, &bob_ctx] {
+            let update = store.update_user(ctx, &promoted).await;
+            assert!(matches!(update, Err(StoreError::PermissionDenied)), "not even she changes her roles, got {update:?}");
+            let delete = store.delete_user(ctx, alice_id).await;
+            assert!(matches!(delete, Err(StoreError::PermissionDenied)), "nor deletes her, got {delete:?}");
+        }
+        store.update_user(&system, &promoted).await.expect("the system changes users");
+        assert!(store.delete_user(&system, alice_id).await.expect("the system deletes users"));
     }
 }

@@ -74,6 +74,7 @@ against it, and what came out of the last attempt.
 | [76](76-channel-cancel-flag.md) | done | The channel's own cancel flag suppresses the final response of a cancelled turn, so the other agents' transcripts diverge from the history. |
 | [79](79-user-actor-exits-on-send-error.md) | done | A `UserActor` ends itself when one forward fails, and the three actor run loops differ only in how they handle errors. |
 | [90](90-message-path-wake-and-queue.md) | open | Frontends must wake the channel before sending, the `UserActor` queues every message once more than needed, and perceiving a message begins a turn. |
+| [120](120-participant-copies.md) | open | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
 
 ## Identity and access management
 
@@ -91,7 +92,7 @@ against it, and what came out of the last attempt.
 | [33](33-sse-outlives-its-token.md) | done | An open server-sent event stream is authenticated once, when it connects, and keeps delivering after its token has expired or its user was removed. |
 | [64](64-confidentiality-compartments.md) | open | Confidentiality has ordered levels only; information that may be shared between the channels of one topic or group but not others cannot be expressed. |
 | [87](87-security-context-in-entities.md) | done | Stored agents and users carry a `SecurityContext` that the actors overwrite at start. |
-| [94](94-users-unchecked-in-store.md) | open | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
+| [94](94-users-unchecked-in-store.md) | done | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
 | [95](95-require-for-security-manager.md) | open | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
 
 ## Tools and approvals

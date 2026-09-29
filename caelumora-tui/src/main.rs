@@ -396,8 +396,10 @@ async fn main() -> anyhow::Result<()> {
     let owner = UserId::default();
     // The session is this terminal user's own.
     let security = SecurityContext::new(ActorId::User(owner), session_id, Default::default());
-    if entity_store.get_user(&security, owner).await.is_err() {
-        entity_store.create_user(&security, &User {
+    // Users belong to the system (issue 94), so the system records this one.
+    let system = SecurityContext::system();
+    if entity_store.get_user(&system, owner).await.is_err() {
+        entity_store.create_user(&system, &User {
             id: owner,
             username: "user".to_string(),
             email: "user@example.com".to_string(),

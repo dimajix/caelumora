@@ -73,7 +73,8 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
     async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>>;
 
-    // Users - not checked yet (issue 94).
+    // Users - they belong to the system: everybody reads them, only the
+    // system changes them (issue 94).
     async fn create_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
     async fn get_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;

@@ -56,9 +56,13 @@ pub enum ActionType<'a> {
     /// which decides who may add participants. Where a policy compares what
     /// a participant is cleared for with the channel's level (issue 64).
     JoinChannel { participant: ActorId, channel: &'a ChannelClassification },
-    /// Reading a user, e.g. receiving the events about them; carries
-    /// attributes owned by the user themselves.
+    /// Reading a user, e.g. receiving the events about them. A stored user
+    /// belongs to the system (issue 94): see `User`'s `Secured`.
     GetUser(&'a SecurityAttributes),
+    ListUsers,
+    CreateUser(&'a SecurityAttributes),
+    UpdateUser(&'a SecurityAttributes),
+    DeleteUser(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -301,6 +305,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateAgent(a)
             | ActionType::CreateSession(a)
             | ActionType::CreateChannel(a)
+            | ActionType::CreateUser(a)
             | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -313,6 +318,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteSession(a)
             | ActionType::UpdateChannel(a)
             | ActionType::DeleteChannel(a)
+            | ActionType::UpdateUser(a)
+            | ActionType::DeleteUser(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::ListPersonalities
@@ -320,6 +327,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListAgents
             | ActionType::ListSessions
             | ActionType::ListChannels
+            | ActionType::ListUsers
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)
