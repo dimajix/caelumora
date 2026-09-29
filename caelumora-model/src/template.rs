@@ -67,6 +67,8 @@ impl ScopeTemplate {
     }
 }
 
+/// A channel of a template. Templates are written by hand (seed files):
+/// the fields with a default may be left out (issue 108).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelTemplate {
     pub name: String,
@@ -112,6 +114,8 @@ impl ChannelTemplate {
 
 define_id!(SessionTemplateId);
 
+/// What sessions are made from. Written by hand (seed files): the fields
+/// with a default may be left out (issue 108).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTemplate {
     pub id: SessionTemplateId,
@@ -329,10 +333,5 @@ mod tests {
         let approver: ParticipantTemplate = serde_json::from_value(serde_json::json!({"Approver": {"name": "approval"}})).unwrap();
         assert!(matches!(approver, ParticipantTemplate::Approver { strategy: ApprovalStrategy::Any, .. }), "the default strategy");
 
-        // Sessions stored before sessions had commands still load.
-        let mut stored = serde_json::to_value(&session).unwrap();
-        stored.as_object_mut().unwrap().remove("commands");
-        let loaded: Session = serde_json::from_value(stored).expect("a session without commands loads");
-        assert!(loaded.commands.component_nodes.is_empty());
     }
 }

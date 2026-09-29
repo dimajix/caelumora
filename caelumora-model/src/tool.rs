@@ -109,7 +109,6 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
-    #[serde(default)]
     pub requires_approval: bool,
     /// How far its calls may travel. Approvers see the arguments of a call
     /// that needs approval regardless: they cannot decide otherwise.
@@ -162,7 +161,7 @@ pub struct ToolCallResult {
     pub id: Option<String>,
     pub tool_name: String,
     pub content: String,
-    /// Omitted when `Ok`, so results stored before it existed read as such.
+    /// Omitted when `Ok`.
     #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
     pub status: ToolResultStatus,
     /// The labels of the call this is the result of; `content` is empty
@@ -179,7 +178,6 @@ pub struct ToolCallState {
     pub description: String,
     pub result: Option<String>,
     /// How the call ended, once `result` is set.
-    #[serde(default)]
     pub result_status: ToolResultStatus,
 }
 

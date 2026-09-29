@@ -23,7 +23,6 @@ pub struct Session {
     pub channels: Vec<ChannelId>,
     /// The session's own user commands, copied from its template when it was
     /// created, so that a running session keeps its set (issue 28).
-    #[serde(default)]
     pub commands: ComponentConfig,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

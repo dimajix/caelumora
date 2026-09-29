@@ -48,7 +48,6 @@ pub struct Message {
     /// own future-turn LLM input, which needs the full detail) but excluded
     /// from `MessageHistory` and end-of-turn `FullResponseGenerated`
     /// broadcasts (the user-facing/audit trail).
-    #[serde(default)]
     pub internal: bool,
     /// Participants addressed by `@`-mentions in `content`, resolved once
     /// when the message entered the channel (see `crate::mention`). Stored
@@ -335,7 +334,6 @@ pub enum KnowledgeSource {
 pub struct ContextRef {
     /// The digest of the agent's transcript before the message.
     pub transcript: Option<Digest>,
-    #[serde(default)]
     pub prompts: Vec<PromptRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub knowledge: Vec<KnowledgeRef>,

@@ -153,12 +153,14 @@ impl ActionType<'_> {
 ///
 /// The owner may do everything with it; contributors may read and use it -
 /// the participants of a session, say - but not change or delete it. An
-/// entity without an owner (`ActorId::None`, as in anything stored before
-/// owners were recorded) belongs to the system. Richer access lists are
+/// entity without an owner (`ActorId::None`, as in the demo data of a seed
+/// file) belongs to the system. Richer access lists are
 /// issue 23.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SecurityAttributes {
     pub owner_id: ActorId,
+    /// May be left out where the attributes are written by hand - a seed
+    /// file (issue 108).
     #[serde(default)]
     pub contributors: Vec<ActorId>,
 }

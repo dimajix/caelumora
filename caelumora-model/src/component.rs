@@ -7,12 +7,17 @@ pub const STAGE_PERCEIVE: &str = "perceive";
 pub const STAGE_PLAN: &str = "plan";
 pub const STAGE_EMIT: &str = "emit";
 
+/// The components of a personality, a template or the configuration -
+/// written by hand (configuration, seed files), so the fields with a
+/// default may be left out there (issue 108).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComponentConfig {
     #[serde(default)]
     pub component_nodes: Vec<ComponentDescriptor>,
 }
 
+/// One component, written by hand like its `ComponentConfig`: the fields
+/// with a default may be left out (issue 108).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentDescriptor {
     pub id: String,

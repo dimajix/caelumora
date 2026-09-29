@@ -1,6 +1,6 @@
 # 108 — `#[serde(default)]` where it only supports stored data that no longer exists
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -47,3 +47,21 @@ document or paired with `skip_serializing_if`, and says which.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, section 6).
+- **2026-09-29** — Done. Removed where only stored data of an older shape
+  needed it: `AgentChannelState::{processing_state, notes, private_notes,
+  prompts, turn}` (the other ten were already gone), `AgentState::memory`,
+  `Message::internal`, `ContextRef::prompts`, `ToolCallState::result_status`,
+  `Session::commands` with its legacy test, and `Channel::confidentiality` -
+  which the considerations counted as hand-written, but a channel document
+  is only ever built by code (a request is a `ChannelSpec`). Also
+  `Tool::requires_approval`: a tool definition is built by its provider and
+  never read from data. Kept, with a comment, on the documents written by
+  hand - since issue 105 a seed file holds personalities and templates:
+  `Personality`, `ComponentConfig`/`ComponentDescriptor`,
+  `SessionTemplate`/`ChannelTemplate` (and the approver's `strategy`),
+  `SecurityAttributes::contributors`, and `AppConfig`. Kept where
+  `skip_serializing_if` is paired - the attribute itself says why; the
+  `ToolCallResult::status` doc and its test no longer speak of old data.
+  The `SecurityAttributes` doc no longer explains `ActorId::None` by data
+  "stored before owners were recorded". The "formerly in TemplateStore"
+  comments were already gone.

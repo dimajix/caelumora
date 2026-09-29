@@ -29,7 +29,6 @@ pub struct Channel {
     pub security_attributes: SecurityAttributes,
     /// How far the channel's contents may travel (issue 61); never
     /// `Private`. Set by its owner when creating it.
-    #[serde(default = "default_confidentiality")]
     pub confidentiality: Confidentiality,
     /// Where the view of the history begins for participants who joined
     /// later and may not see all of it (issue 46); everybody else sees all.
@@ -66,10 +65,6 @@ pub enum HistoryStart {
 pub struct HistoryLimit {
     pub participant: ActorId,
     pub start: HistoryStart,
-}
-
-fn default_confidentiality() -> Confidentiality {
-    Confidentiality::CHANNEL_DEFAULT
 }
 
 impl Secured for Channel {

@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_results_without_a_status_read_as_ok() {
+    fn a_result_is_written_without_its_status_when_ok_and_read_back() {
         let result: ToolCallResult = serde_json::from_value(json!({"id": "1", "tool_name": "echo", "content": "hi"})).unwrap();
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert!(!serde_json::to_string(&result).unwrap().contains("status"), "Ok is not written");

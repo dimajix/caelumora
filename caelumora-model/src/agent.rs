@@ -19,6 +19,9 @@ pub enum AgentUpdateEvent {
 
 define_id!(PersonalityId);
 
+/// An agent's traits: its components and how confidential its reasoning is.
+/// Written by hand, too (a seed file, issue 105): the fields with a default
+/// may be left out there (issue 108).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Personality {
     pub id: PersonalityId,
@@ -96,27 +99,22 @@ pub struct AgentChannelState {
     /// Where the agent's actor stood when the state was stored - a turn
     /// state if it was cut off in the middle of one (issue 75). The actor
     /// owns the live value and writes it in when it stores.
-    #[serde(default)]
     pub processing_state: ActorState,
     /// Full message history
     pub history: MessageHistory,
     /// Possibly preprocessed history used as context
     pub transcript: Transcript,
     /// The notes the agent published in this channel (issue 17).
-    #[serde(default)]
     pub notes: NoteChain,
     /// The agent's private notes in this channel, which only it reads - and
     /// only where the channel's confidentiality allows (issue 51).
-    #[serde(default)]
     pub private_notes: NoteChain,
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
-    #[serde(default)]
     pub prompts: BTreeMap<Digest, String>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
-    #[serde(default)]
     pub turn: Option<TurnState>,
 }
 
@@ -256,7 +254,6 @@ impl AgentChannelState {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     /// What the agent remembers across its channels and sessions.
-    #[serde(default)]
     pub memory: crate::memory::MemoryChain,
 }
 
