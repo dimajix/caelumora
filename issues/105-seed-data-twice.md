@@ -1,6 +1,6 @@
 # 105 — The seed data exists twice, in the REST server and in the TUI
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -37,3 +37,23 @@ There is one definition of the demo data, outside both binaries.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 5.1.1).
+- **2026-09-29** — Done, as agreed with the maintainer (option B, the data
+  in `examples/`). `examples/seed.yaml` holds the two personalities and
+  three session templates of the REST server, written as the store keeps
+  them and with fixed ids; `AppConfig::seed` names seed files (none by
+  default), and `examples/config.yaml` names this one.
+  `caelumora_runtime::seed::load` puts into the store, as the system, what
+  it does not have yet by id - idempotent without looking anything up by
+  name, and a document changed in the store stays. Both binaries call it;
+  `caelumora-rest-server/src/data.rs` and the TUI's own personalities and
+  template are gone, and with the TUI's copy a bug: it created its
+  personalities and template on every start, piling up copies in a JSON
+  store. The TUI picks its template by name (`--template`, default
+  `sassy-session`) and, without a configuration that seeds it, says to
+  start with `--config examples/config.yaml` (the README does). One data
+  set, the REST server's; on the way its personalities' `context` got the
+  dependency on `create-plan-tool` it lacked, so its planning nudge now
+  reaches the prompt. `--user` is gone: it created a user nobody used and
+  was documented as the owner of data that belongs to the system. The
+  YAML parsing of the configuration is shared (`config::parse_yaml`), so a
+  seed quotes nothing of its input in errors and refuses unknown keys.

@@ -1,31 +1,18 @@
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::AgentId;
-use caelumora_model::agent::Personality;
-use caelumora_model::agent::PersonalityId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{parse_input, UserInput};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::mention::mention_spans;
-use caelumora_model::approval::ApprovalStrategy;
 use caelumora_model::message::Message;
-use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::EntityStore;
-use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component_impl::transcript_appender::TRANSCRIPT_APPENDER_KIND;
-use caelumora_runtime::component_impl::state_context_provider::STATE_CONTEXT_PROVIDER_KIND;
-use caelumora_runtime::component_impl::state_history_appender::STATE_HISTORY_APPENDER_KIND;
-use caelumora_runtime::component_impl::static_system_prompt_provider::STATIC_SYSTEM_PROMPT_PROVIDER_KIND;
-use caelumora_runtime::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::llm_impl::ollama::OllamaClient;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use caelumora_runtime::logging::{self, LogTarget};
-use tracing::info;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::collections::HashMap;
@@ -35,159 +22,6 @@ use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-fn create_component_config(system_prompt: &str, enable_extended_planning: bool) -> ComponentConfig {
-    // create_plan_tool contributes its own planning-nudge PromptProvider
-    // (see CreatePlanToolProvider in caelumora-runtime), so the "context" node
-    // needs to depend on it too - StateContextProvider only picks up
-    // PromptProviders declared among its own deps - whenever it's wired in.
-    let mut context_deps = vec!["system-prompt".to_string()];
-    if enable_extended_planning {
-        context_deps.push("create-plan-tool".to_string());
-    }
-
-    let mut component_nodes = vec![
-        ComponentDescriptor {
-            id: "system-prompt".to_string(),
-            kind: STATIC_SYSTEM_PROMPT_PROVIDER_KIND.to_string(),
-            params: serde_json::json!({
-                "prompt": system_prompt
-            }),
-            deps: Vec::new(),
-            tags: Vec::new(),
-            fail_policy: ComponentFailPolicy::FailOpen,
-            security_attributes: Default::default(),
-        },
-        ComponentDescriptor {
-            id: "history-appender".to_string(),
-            kind: STATE_HISTORY_APPENDER_KIND.to_string(),
-            params: serde_json::Value::Null,
-            deps: Vec::new(),
-            tags: vec![STAGE_PERCEIVE.to_string()],
-            fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
-        },
-        ComponentDescriptor {
-            id: "transcript-appender".to_string(),
-            kind: TRANSCRIPT_APPENDER_KIND.to_string(),
-            params: serde_json::Value::Null,
-            deps: Vec::new(),
-            tags: vec![STAGE_PERCEIVE.to_string()],
-            fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
-        },
-        ComponentDescriptor {
-            id: "context".to_string(),
-            kind: STATE_CONTEXT_PROVIDER_KIND.to_string(),
-            params: serde_json::Value::Null,
-            deps: context_deps,
-            tags: Vec::new(),
-            fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
-        },
-    ];
-
-    // Extended planning is opt-in per personality by wiring in the
-    // create_plan_tool component - its mere presence (not a separate model
-    // field) is what AgentActor uses to decide whether the create_plan tool
-    // (and its planning-nudge system prompt, via "context"'s dep above) is
-    // available at all.
-    if enable_extended_planning {
-        component_nodes.push(ComponentDescriptor {
-            id: "create-plan-tool".to_string(),
-            kind: CREATE_PLAN_TOOL_PROVIDER_KIND.to_string(),
-            params: serde_json::Value::Null,
-            deps: Vec::new(),
-            tags: Vec::new(),
-            fail_policy: ComponentFailPolicy::FailClosed,
-            security_attributes: Default::default(),
-        });
-    }
-
-    ComponentConfig { component_nodes }
-}
-
-fn create_personality(name: &str, description: &str, system_prompt: &str, enable_extended_planning: bool) -> Personality {
-    Personality {
-        reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
-        id: PersonalityId(Uuid::new_v4()),
-        metadata: Metadata {
-            name: name.to_string(),
-            scope: Scope::GlobalScope,
-            description: description.to_string(),
-            ..Metadata::default()
-        },
-        components: create_component_config(system_prompt, enable_extended_planning),
-        security_attributes: Default::default(),
-    }
-}
-
-async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<SessionTemplate> {
-    // Initial data belongs to the system (issue 11).
-    let ctx = SecurityContext::system();
-    let personality_a = create_personality(
-        "jonathan-assistant",
-        "A helpful and polite assistant",
-        "Your name is Jonathan Heart. You are a helpful assistant.",
-        false,
-    );
-    store.create_personality(&ctx, &personality_a).await?;
-
-    // Sarah has extended planning enabled so the plan/approval flow can be
-    // exercised end to end from the TUI (/approve, /deny).
-    let personality_b = create_personality(
-        "sassy-assistant",
-        "A sassy and witty assistant",
-        "Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant.",
-        true,
-    );
-    store.create_personality(&ctx, &personality_b).await?;
-
-    let template = SessionTemplate {
-        id: SessionTemplateId(Uuid::new_v4()),
-        metadata: Metadata {
-            name: "simple-session".to_string(),
-            scope: Scope::GlobalScope,
-            description: "Simple user+assistant session".to_string(),
-            ..Metadata::default()
-        },
-        scope: ScopeTemplate::GlobalScope,
-        participants: vec![
-            ParticipantTemplate::User { name: "user".to_string() },
-                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
-            ParticipantTemplate::Agent {
-                name: "Jonathan".to_string(),
-                scope: ScopeTemplate::GlobalScope,
-                personality_id: personality_a.id,
-            },
-            ParticipantTemplate::Agent {
-                name: "Sarah".to_string(),
-                scope: ScopeTemplate::GlobalScope,
-                personality_id: personality_b.id,
-            },
-        ],
-        channels: vec![
-            ChannelTemplate {
-                name: "main".to_string(),
-                moderator: "round_robin".to_string(),
-                confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
-                participants: vec![
-                    "user".to_string(),
-                    "approval".to_string(),
-                    "Jonathan".to_string(),
-                    "Sarah".to_string(),
-                ],
-            }
-        ],
-        commands: Default::default(),
-        security_attributes: Default::default(),
-    };
-    store.create_session_template(&ctx, &template).await?;
-
-    Ok(template)
-}
-
-/// Formats a message's content for the terminal, highlighting the
-/// `@`-mentions that were resolved to a participant of the channel.
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
     let mut rendered = String::with_capacity(content.len());
@@ -363,6 +197,11 @@ struct Args {
     /// Path to a specific config file
     #[arg(short, long)]
     config: Option<PathBuf>,
+
+    /// The session template to start a session from, by name - one the
+    /// configuration's `seed` provides, e.g. `examples/config.yaml`.
+    #[arg(short, long, default_value = "sassy-session")]
+    template: String,
 }
 
 #[tokio::main]
@@ -392,7 +231,7 @@ async fn main() -> anyhow::Result<()> {
         config.commands.clone(),
         Arc::new(OllamaClient::default()),
     ));
-    let template = setup_templates(&entity_store).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();
     // The session is this terminal user's own.
@@ -407,6 +246,11 @@ async fn main() -> anyhow::Result<()> {
             roles: vec!["user".to_string()],
         }).await?;
     }
+
+    // By name, among those this user may use.
+    let template = entity_store.list_session_templates(&security).await?.into_iter()
+        .find(|t| t.metadata.name == args.template)
+        .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
     let session_manager = SessionManager::new(runtime.clone());
     let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session".to_string())).await?;

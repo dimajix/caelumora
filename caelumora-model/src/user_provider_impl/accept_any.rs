@@ -131,6 +131,6 @@ mod tests {
         let provider = AcceptAnyUserProvider::new(store);
         let user = provider.authenticate("user", &Credential::Password("x")).await.unwrap().expect("accepted");
 
-        assert_eq!(user.id, existing.id, "the user bootstrapped by --user keeps its id");
+        assert_eq!(user.id, existing.id, "a user already in the store keeps its id");
     }
 }

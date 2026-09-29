@@ -48,10 +48,13 @@ cargo test
 ### Running the TUI
 
 ```bash
-cargo run -p caelumora-tui
+cargo run -p caelumora-tui -- --config examples/config.yaml
 ```
 
-The TUI writes its log to `local/tui.log`.
+The TUI starts a session from the template `sassy-session`; `--template <name>`
+picks another. The templates and personalities come from the demo data that
+`examples/config.yaml` seeds (`examples/seed.yaml`) - without a configuration
+there are none. The TUI writes its log to `local/tui.log`.
 
 ### Running the REST Server
 

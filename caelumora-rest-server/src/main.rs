@@ -10,7 +10,6 @@ use caelumora_runtime::logging::{self, LogTarget};
 use tower_http::trace::TraceLayer;
 
 mod auth;
-mod data;
 mod error;
 mod models;
 mod routes;
@@ -18,7 +17,6 @@ mod sse;
 mod state;
 
 use crate::auth::{Auth, TokenService};
-use crate::data::setup_initial_data;
 use crate::state::AppState;
 
 #[derive(Parser, Debug)]
@@ -27,11 +25,6 @@ struct Args {
     /// Path to a specific config file
     #[arg(short, long)]
     config: Option<std::path::PathBuf>,
-
-    /// Owner of the templates and personalities seeded at startup. Who uses
-    /// the server is decided by logging in, not by this flag.
-    #[arg(short, long, default_value = "user")]
-    user: String,
 }
 
 #[tokio::main]
@@ -72,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     ));
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
-    setup_initial_data(&entity_store, &args.user).await?;
+    caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
 
     let state = Arc::new(AppState {
         auth,

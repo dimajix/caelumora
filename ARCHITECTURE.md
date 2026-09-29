@@ -298,10 +298,12 @@ Caelumora uses a tiered storage approach to separate static definitions, dynamic
 ### `EntityStore`
 The `EntityStore` trait (in `caelumora-model`) manages the persistence of long-lived domain entities. It handles:
 *   **Personalities**: Static definitions of agent traits.
-*   **Templates**: `SessionTemplate` and `AgentTemplate` used for instantiation.
+*   **Templates**: `SessionTemplate`s, which sessions are made from.
 *   **Identities**: `Agent`, `Session`, `Channel` and `User` records. A channel is a document of its own, which its session lists by id (issue 70).
 
 Implementations include `MemoryStore` (for testing) and `JsonFileStore` (for simple file-based persistence).
+
+**Demo data** (issue 105) is not part of any binary: the files the configuration's `seed` names (`examples/seed.yaml`, seeded by `examples/config.yaml`) hold personalities and session templates as the store keeps them, with fixed ids. At startup both binaries put into the store what it does not have yet, by id (`caelumora_runtime::seed::load`), as the system - so restarting changes nothing, and a document changed in the store stays as it is. Without a `seed` nothing is seeded.
 
 ### `StateStore`
 The `StateStore` trait (in `caelumora-model`) is dedicated to managing the frequently changing runtime state of agents and sessions.

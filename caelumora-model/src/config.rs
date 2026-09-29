@@ -192,6 +192,10 @@ pub struct AppConfig {
     pub commands: ComponentConfig,
     /// The access policy; `ownership` unless configured otherwise.
     pub security: SecurityConfig,
+    /// Files of demo data - personalities and session templates - put into
+    /// the entity store at startup (issue 105, see `examples/seed.yaml`).
+    /// None unless configured.
+    pub seed: Vec<PathBuf>,
 }
 
 // Not derived: the commands default to the built-in ones, not to none.
@@ -205,8 +209,24 @@ impl Default for AppConfig {
             logging: LoggingConfig::default(),
             commands: default_commands(),
             security: SecurityConfig::default(),
+            seed: Vec::new(),
         }
     }
+}
+
+/// Parses a document the way the configuration is parsed, for files a
+/// configuration names (e.g. `seed`).
+///
+/// # Errors
+/// `ConfigError::Parse` if `yaml` is not a `T`; the error names the line and
+/// column, but quotes nothing of the input.
+pub fn parse_yaml<T: serde::de::DeserializeOwned>(yaml: &str) -> ConfigResult<T> {
+    // By default the parser quotes the offending lines of the input in its
+    // error, and a configuration may hold credentials. The location alone
+    // is enough to find the mistake.
+    let mut options = serde_saphyr::Options::default();
+    options.with_snippet = false;
+    Ok(serde_saphyr::from_str_with_options(yaml, options)?)
 }
 
 impl AppConfig {
@@ -226,12 +246,7 @@ impl AppConfig {
     /// `ConfigError::Parse` if `yaml` is not a valid configuration; the error
     /// names the line and column.
     pub fn from_yaml(yaml: &str) -> ConfigResult<Self> {
-        // By default the parser quotes the offending lines of the input in its
-        // error, and a configuration may hold credentials. The location alone
-        // is enough to find the mistake.
-        let mut options = serde_saphyr::Options::default();
-        options.with_snippet = false;
-        Ok(serde_saphyr::from_str_with_options(yaml, options)?)
+        parse_yaml(yaml)
     }
 
     /// The one `SecurityManager` of the process, as configured.
@@ -338,6 +353,7 @@ persistence:
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml");
         let config = AppConfig::load(path).expect("examples/config.yaml is a valid configuration");
         assert!(matches!(config.persistence.entity_store, PersistenceBackend::Json { .. }));
+        assert_eq!(config.seed, [PathBuf::from("examples/seed.yaml")], "the example seeds the demo data");
     }
 
     #[test]

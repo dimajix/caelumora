@@ -25,5 +25,6 @@ pub mod component_impl;
 pub mod context;
 pub mod transport;
 pub mod moderator_impl;
+pub mod seed;
 pub mod session_reader;
 mod template;

@@ -1,0 +1,189 @@
+# Demo data (issue 105): personalities and session templates that a binary
+# puts into its entity store at startup, when `seed` in its configuration
+# names this file (see config.yaml). Every document is stored under the id it
+# has here, and only if the store has no document with that id yet - so
+# loading it again changes nothing, and a document changed in the store stays
+# as it is. The documents are written as the store keeps them; fields left
+# out take their defaults. Everything here belongs to the system: every user
+# may use it, only the system may change it.
+#
+# Templates refer to personalities by id. Within a template, channels refer
+# to the template's participants by name; "user" is whoever creates the
+# session, and a channel without an approver gets one anyway.
+
+personalities:
+- id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  metadata:
+    name: jonathan-assistant
+    description: A helpful and polite assistant
+    scope: GlobalScope
+  components:
+    component_nodes:
+    - id: history-appender
+      kind: state_history_appender
+      tags:
+      - perceive
+      fail_policy: FailClosed
+    - id: context
+      kind: state_context_provider
+      deps:
+      - system-prompt
+      - notes
+      - memory
+      - create-plan-tool
+      fail_policy: FailClosed
+    - id: transcript-appender
+      kind: transcript_appender
+      tags:
+      - perceive
+      fail_policy: FailClosed
+    - id: system-prompt
+      kind: static_system_prompt_provider
+      params:
+        prompt: Your name is Jonathan Heart. You are a self-made millionaire. You always wanted to be
+          a quiz-master.
+      fail_policy: FailClosed
+    - id: create-plan-tool
+      kind: create_plan_tool
+      fail_policy: FailClosed
+    - id: calculator-tool
+      kind: calculator_tool
+      fail_policy: FailClosed
+    - id: notes
+      kind: notes
+      fail_policy: FailClosed
+    - id: memory
+      kind: agent_memory
+      fail_policy: FailClosed
+    - id: channel-history
+      kind: channel_history
+      fail_policy: FailClosed
+    - id: stop-tool
+      kind: stop_tool
+      fail_policy: FailClosed
+- id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+  metadata:
+    name: sassy-assistant
+    description: A sassy and witty assistant
+    scope: GlobalScope
+  components:
+    component_nodes:
+    - id: history-appender
+      kind: state_history_appender
+      tags:
+      - perceive
+      fail_policy: FailClosed
+    - id: context
+      kind: state_context_provider
+      deps:
+      - system-prompt
+      - notes
+      - private-notes
+      - create-plan-tool
+      fail_policy: FailClosed
+    - id: transcript-appender
+      kind: transcript_appender
+      tags:
+      - perceive
+      fail_policy: FailClosed
+    - id: system-prompt
+      kind: static_system_prompt_provider
+      params:
+        prompt: Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant who loves to
+          play quiz games.
+      fail_policy: FailClosed
+    - id: create-plan-tool
+      kind: create_plan_tool
+      fail_policy: FailClosed
+    - id: calculator-tool
+      kind: calculator_tool
+      fail_policy: FailClosed
+    - id: notes
+      kind: notes
+      fail_policy: FailClosed
+    - id: private-notes
+      kind: private_notes
+      fail_policy: FailClosed
+    - id: channel-history
+      kind: channel_history
+      fail_policy: FailClosed
+    - id: stop-tool
+      kind: stop_tool
+      fail_policy: FailClosed
+session_templates:
+- id: 94a2df67-0bde-4906-adb1-40e936b463e9
+  metadata:
+    name: simple-session
+    description: Simple user+assistant session
+    scope: GlobalScope
+  scope: SessionScope
+  participants:
+  - User:
+      name: user
+  - Approver:
+      name: approval
+  - Agent:
+      name: assistant
+      scope: SessionScope
+      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  channels:
+  - name: main
+    moderator: round_robin
+    participants:
+    - user
+    - approval
+    - assistant
+- id: e195e4bf-89e7-46d9-a666-0d56a3d10bbb
+  metadata:
+    name: sassy-session
+    description: Sassy user+assistant session
+    scope: GlobalScope
+  scope: SessionScope
+  participants:
+  - User:
+      name: user
+  - Approver:
+      name: approval
+  - Agent:
+      name: Jonathan
+      scope: UserScope
+      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  - Agent:
+      name: Sassy
+      scope: SessionScope
+      personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+  channels:
+  - name: main
+    moderator: round_robin
+    participants:
+    - user
+    - approval
+    - Jonathan
+    - Sassy
+- id: 772a28e1-bb1d-4671-ab6c-e8e0b62136f5
+  metadata:
+    name: mentions-session
+    description: Two assistants that answer only when @-mentioned
+    scope: GlobalScope
+  scope: SessionScope
+  participants:
+  - User:
+      name: user
+  - Approver:
+      name: approval
+  - Agent:
+      name: Jonathan
+      scope: UserScope
+      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  - Agent:
+      name: Sassy
+      scope: SessionScope
+      personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+  channels:
+  - name: main
+    moderator: mentions_only
+    participants:
+    - user
+    - approval
+    - Jonathan
+    - Sassy

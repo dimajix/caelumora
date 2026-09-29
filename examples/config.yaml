@@ -12,6 +12,12 @@ persistence:
     type: json
     path: "local/entity_store"
 
+# Demo data put into the entity store at startup: personalities and session
+# templates (issue 105). Only what the store does not have yet, by id, so
+# restarting changes nothing. Paths are relative to the working directory.
+seed:
+  - examples/seed.yaml
+
 # Where secrets come from, tried in order. Default: local/secrets.json, then
 # the environment.
 #secrets:

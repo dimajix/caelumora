@@ -179,7 +179,7 @@ against it, and what came out of the last attempt.
 | [113](113-error-shapes.md) | done | "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it. |
 | [114](114-moderator-details.md) | done | `ModeratorActors` uses a concurrent map behind `&mut self`, downcasts for a kind the id already tells, and clones every message twice. |
 | [115](115-filtering-event-sender.md) | done | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |
-| [105](105-seed-data-twice.md) | open | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
+| [105](105-seed-data-twice.md) | done | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
 | [109](109-code-hygiene.md) | done | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
 | [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 
