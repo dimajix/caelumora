@@ -196,3 +196,7 @@ and comes later.
   Step 1 of the plan above ("trees with a head") is done on the chain type of
   [48](48-shared-digest-chain.md), so history, context and notes become
   trees at once.
+- **2026-09-29** — `Message::prev_id` is to be removed
+  ([117](117-message-prev-id.md)); the parent pointer of a tree of chain
+  entries is to be the predecessor's digest (`prev_digest`) on the entry,
+  not a field of the message.
