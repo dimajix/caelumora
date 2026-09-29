@@ -68,3 +68,16 @@ of turn logic lands in a 1400-line file.
   calls is `pub(crate)`. The `advance_plan` tests moved along and need no
   event sender any more; a new test walks a step's tool calls through
   registering, a denial, a result and the tool message.
+- **2026-09-29** — Addendum at the maintainer's request: the tool-call
+  bookkeeping left `Turn` again, into a view of its own,
+  `crate::tool_calls::ToolCalls`, which `Turn::tool_calls()` hands out for
+  one use at a time (running a call needs the whole turn in between). It
+  borrows the turn's working state and the agent's id and name, and has
+  `register`, `decide`, `to_run`, `record`, `collect` and `is_empty`;
+  `Turn` lost the seven methods it had for this. The data stays in
+  `TurnState::tool_calls`, where it is stored. Considered and not done:
+  a wrapper over `&mut Turn` like `AgentNotes` (it would have needed
+  associated functions and a raw accessor for the `Vec`), and a model
+  type (the texts the model gets for a denied or timed-out call are the
+  runtime's, issue 57). The test moved to `tool_calls.rs` and works on a
+  bare `TurnState`.

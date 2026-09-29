@@ -9,6 +9,7 @@ pub mod recorder;
 pub mod error;
 pub mod event;
 pub mod tool;
+mod tool_calls;
 pub mod actor;
 pub mod agent_memory;
 pub mod agent_notes;

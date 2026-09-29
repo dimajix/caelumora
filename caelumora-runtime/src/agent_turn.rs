@@ -13,8 +13,8 @@
 //! `abandon_turn` when it fails; both end it and return it as an
 //! [`EndedTurn`], which sends the turn's last event.
 //!
-//! The logic of a turn's steps lives here too - plan progress, registering
-//! tool calls, answering and collecting their results (issue 83) - while the
+//! The logic of a turn's steps lives here too - plan progress here, the
+//! bookkeeping of a step's tool calls in `crate::tool_calls` (issue 83) - while the
 //! `AgentActor` keeps what is input and output: the model call, the tool
 //! executor, sending. What only the actor calls is `pub(crate)`; the rest is
 //! the API components work with.
@@ -25,13 +25,11 @@
 
 use anyhow::{Context, Result};
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange, TurnState};
-use std::mem;
 use std::sync::{Arc, LazyLock};
 use tracing::warn;
 
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelClassification, Publication};
 use crate::agent_state::AgentStateHandle;
@@ -40,7 +38,7 @@ use caelumora_model::message::{ContextItem, ContextRef, KnowledgeRef, Message, M
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
+use crate::tool_calls::ToolCalls;
 
 /// What a turn reads as when none runs.
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
@@ -261,105 +259,13 @@ impl<'a> Turn<'a> {
         self.current_mut().messages.push(message);
     }
 
-    /// Takes the tool calls of this step over, as the actor prepared them -
-    /// some answered already (issue 118) - and returns the approval requests
-    /// for those that wait for a decision (issue 83).
-    pub(crate) fn register_tool_calls(&mut self, calls: Vec<ToolCallState>) -> Vec<ApprovalRequest> {
-        let requests = calls.iter()
-            .filter(|c| c.status == ApprovalStatus::Pending)
-            .map(|c| ApprovalRequest {
-                id: c.id,
-                session_id: self.session_id(),
-                channel_id: self.channel_id(),
-                agent_id: self.agent_id,
-                tool_call: c.tool_call.clone(),
-                description: c.description.clone(),
-            })
-            .collect();
-        self.current_mut().tool_calls = calls;
-        requests
-    }
-
-    /// Answers every call of the step that a decision settles without
-    /// running it - denied, timed out - and returns the approved ones that
-    /// still wait for their result, for the actor to run. What the model is
-    /// given for each outcome is decided in `crate::tool` (issue 15).
-    pub(crate) fn calls_to_run(&mut self) -> Vec<(ApprovalId, ToolCall)> {
-        let mut to_run = Vec::new();
-        for call in self.current_mut().tool_calls.iter_mut().filter(|c| c.result.is_none()) {
-            let answer = match call.status {
-                ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
-                ApprovalStatus::Timeout => Some((ToolResultStatus::TimedOut, crate::tool::timed_out_result())),
-                ApprovalStatus::Approved => {
-                    to_run.push((call.id, call.tool_call.clone()));
-                    None
-                }
-                ApprovalStatus::Pending => None,
-            };
-            if let Some((status, result)) = answer {
-                call.result_status = status;
-                call.result = Some(result);
-            }
-        }
-        to_run
-    }
-
-    /// Records `result` as what the call `id` gave.
-    pub(crate) fn record_tool_result(&mut self, id: ApprovalId, status: ToolResultStatus, result: String) {
-        if let Some(call) = self.current_mut().tool_calls.iter_mut().find(|c| c.id == id) {
-            call.result_status = status;
-            call.result = Some(result);
-        }
-    }
-
-    /// Once every call of the step has its result: the tool message that
-    /// gives them to the model, kept in the turn - `internal` like the step
-    /// that made the calls. `None` while a call still waits for its approval.
-    pub(crate) fn collect_tool_results(&mut self, internal: bool) -> Option<Message> {
-        if self.current().tool_calls.iter().any(|c| c.result.is_none()) {
-            return None;
-        }
-        let prev_id = self.current().messages.last().map(|m| m.id).unwrap_or_default();
-        let tool_results = mem::take(&mut self.current_mut().tool_calls).into_iter()
-            .filter_map(|c| Some(ToolCallResult {
-                id: c.tool_call.id,
-                tool_name: c.tool_call.function_name,
-                content: c.result?,
-                status: c.result_status,
-                confidentiality: c.tool_call.confidentiality,
-            }))
-            .collect();
-        let message = Message {
-            id: MessageId::new(),
-            prev_id,
-            sender_id: ActorId::Agent(self.agent_id),
-            sender_name: self.agent_name.clone(),
-            role: MessageRole::Tool,
-            tool_results,
-            content: None,
-            timestamp: chrono::Utc::now(),
-            internal,
-            ..Message::default()
-        };
-        self.push_message(message.clone());
-        Some(message)
-    }
-
-    pub(crate) fn set_tool_approval_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
-        if let Some(tool_call) = self.current_mut().tool_calls.iter_mut().find(|tc| tc.id == id) {
-            tool_call.status = status;
-            true
-        }
-        else {
-            false
-        }
-    }
-    #[cfg(test)]
-    pub(crate) fn tool_calls(&self) -> &Vec<ToolCallState> {
-        &self.current().tool_calls
-    }
-    pub(crate) fn has_tool_calls(&self) -> bool {
-        !self.current().tool_calls.is_empty()
+    /// The tool calls of the current step (issue 83): a view that keeps
+    /// their bookkeeping off `Turn`. Short-lived on purpose - running a call
+    /// needs the whole turn in between.
+    pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
+        debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
+        let turn = self.agent_channel_state.turn.get_or_insert_with(TurnState::default);
+        ToolCalls::new(turn, self.agent_id, &self.agent_name)
     }
 
     pub fn set_plan(&mut self, plan: PlanState) {
@@ -678,43 +584,6 @@ mod tests {
 
         assert!(turn.advance_plan(0).is_none());
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
-    }
-
-    #[test]
-    fn tool_calls_are_answered_run_and_given_back_to_the_model_in_one_message() {
-        use caelumora_model::tool::ToolConfidentiality;
-        let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
-        turn.begin();
-        let call = |name: &str, status| ToolCallState {
-            id: ApprovalId::new(),
-            status,
-            tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC },
-            description: String::new(),
-            result: None,
-            result_status: ToolResultStatus::Ok,
-        };
-
-        // Registering asks for the approvals still to be given.
-        let requests = turn.register_tool_calls(vec![call("run", ApprovalStatus::Approved), call("ask", ApprovalStatus::Pending)]);
-        assert_eq!(requests.iter().map(|r| r.tool_call.function_name.as_str()).collect::<Vec<_>>(), ["ask"]);
-
-        // Waiting for one of them, there is no tool message yet.
-        let to_run = turn.calls_to_run();
-        assert_eq!(to_run.iter().map(|(_, c)| c.function_name.as_str()).collect::<Vec<_>>(), ["run"]);
-        turn.record_tool_result(to_run[0].0, ToolResultStatus::Ok, "ran".to_string());
-        assert!(turn.collect_tool_results(false).is_none(), "one call still waits");
-
-        // A denial answers the other without running it.
-        let asked = requests[0].id;
-        turn.set_tool_approval_status(asked, ApprovalStatus::Denied);
-        assert!(turn.calls_to_run().is_empty(), "nothing left to run");
-        let message = turn.collect_tool_results(false).expect("every call has its result");
-        let results: Vec<_> = message.tool_results.iter().map(|r| (r.tool_name.as_str(), r.status)).collect();
-        assert_eq!(results, [("run", ToolResultStatus::Ok), ("ask", ToolResultStatus::Denied)]);
-        assert_eq!(message.role, MessageRole::Tool);
-        assert!(turn.tool_calls().is_empty(), "the step's calls are done");
-        assert_eq!(turn.messages().last().map(|m| m.id), Some(message.id), "the turn keeps it for the model");
     }
 
     #[test]

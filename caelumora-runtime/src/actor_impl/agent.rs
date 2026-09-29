@@ -381,7 +381,7 @@ impl AgentActor {
         // as the assistant message that triggered it), not the state that
         // call itself just brought about.
         let had_plan_before = turn.has_plan();
-        for (id, call) in turn.calls_to_run() {
+        for (id, call) in turn.tool_calls().to_run() {
             let (status, result) = match self.tool_executor.execute(&call, turn).await {
                 Ok(r) => (ToolResultStatus::Ok, r.content),
                 Err(e) => {
@@ -390,13 +390,13 @@ impl AgentActor {
                     e.to_result(&available)
                 }
             };
-            turn.record_tool_result(id, status, result);
+            turn.tool_calls().record(id, status, result);
         }
         // A tool result is only ever "final" (shown as the real answer) when
         // it's not part of executing an in-progress plan - mirrors the same
         // internal/final rule applied to the assistant message that
         // triggered it.
-        turn.collect_tool_results(had_plan_before)
+        turn.tool_calls().collect(had_plan_before)
     }
 
     /// `context` (this agent's own future-turn LLM input) keeps every message
@@ -608,7 +608,7 @@ impl AgentActor {
                             _ => unreachable!("handle_approval_event called with non-approval event"),
                         };
 
-                        if !turn.set_tool_approval_status(req.id, status) {
+                        if !turn.tool_calls().decide(req.id, status) {
                             warn!("Received approval for unknown approval id {}", req.id);
                         }
 
@@ -687,7 +687,7 @@ impl AgentActor {
         if states.is_empty() {
             return Ok(());
         }
-        for request in turn.register_tool_calls(states) {
+        for request in turn.tool_calls().register(states) {
             turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
         }
         Ok(())
@@ -815,7 +815,7 @@ impl AgentActor {
                         }
                     }
 
-                    if turn.has_tool_calls() {
+                    if !turn.tool_calls().is_empty() {
                         return Ok(ActorState::ExecutingTools);
                     }
                 }
