@@ -23,8 +23,10 @@ export function mergeToolResults(messages: Message[]): Message[] {
   }, []);
 }
 
+// The month by name ("29. Sept. 2026, 15:24"): at the small size timestamps
+// are shown in, dots between digits are hard to make out.
 const DATE_TIME = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 const FULL_DATE_TIME = new Intl.DateTimeFormat(undefined, {dateStyle: 'full', timeStyle: 'medium'});
 

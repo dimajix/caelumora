@@ -22,7 +22,7 @@ export const ErrorBanner: React.FC<ErrorBannerProps> = ({ errors, onDismiss }) =
           <div className="flex-1 min-w-0">
             <div className="wrap-break-word">{error.message}</div>
             {error.requestId && (
-              <div className="mt-1 text-[10px] font-mono opacity-60">request_id {error.requestId}</div>
+              <div className="mt-1 text-[11px] font-mono opacity-60">request_id {error.requestId}</div>
             )}
           </div>
           <button

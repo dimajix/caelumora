@@ -193,7 +193,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                   <Wrench size={12} className="text-blue-500" />
                   <span>{call.function_name}</span>
                   {confidentialityLabel(call.confidentiality) && (
-                    <span className="flex items-center gap-1 font-sans text-[10px] opacity-60" title="How far this call may travel">
+                    <span className="flex items-center gap-1 font-sans text-[11px] opacity-60" title="How far this call may travel">
                       <EyeOff size={11} />
                       {confidentialityLabel(call.confidentiality)}
                     </span>
@@ -202,8 +202,8 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                 <div className="flex items-center gap-2">
                 {result && toolDuration(result) && (
                   <span
-                    className="text-[10px] font-mono opacity-60"
-                    title={result.started_at ? `Ran from ${new Date(result.started_at).toLocaleString()}` : undefined}
+                    className="text-[11px] font-mono opacity-60"
+                    title={result.started_at ? `Ran from ${formatTimestamp(result.started_at)?.full}` : undefined}
                   >
                     {toolDuration(result)}
                   </span>
@@ -211,14 +211,14 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                 {result && result.status && result.status !== 'ok' ? (
                   <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
                     <XCircle size={12} />
-                    <span className="text-[10px] uppercase">{TOOL_STATUS_LABELS[result.status]}</span>
+                    <span className="text-[11px] uppercase">{TOOL_STATUS_LABELS[result.status]}</span>
                   </div>
                 ) : result ? (
                   <CheckCircle2 size={12} className="text-green-500" />
                 ) : (
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                    <span className="text-[10px] text-blue-500 uppercase">Executing</span>
+                    <span className="text-[11px] text-blue-500 uppercase">Executing</span>
                   </div>
                 )}
                 </div>
@@ -238,7 +238,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                   </div>
                 ) : result && (
                   <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                    <div className="text-[10px] uppercase opacity-50 mb-1">Result</div>
+                    <div className="text-[11px] uppercase opacity-50 mb-1">Result</div>
                     <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-white dark:bg-gray-950 p-1.5 rounded-sm border border-gray-100 dark:border-gray-900">
                       {toolResultText(result)}
                     </pre>

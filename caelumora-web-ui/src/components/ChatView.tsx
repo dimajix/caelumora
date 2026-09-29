@@ -492,7 +492,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               </div>
               <div className="wrap-break-word">{msg.content}</div>
               {msg.span_id && (
-                <div className="mt-1 text-[10px] font-mono opacity-60">span_id {msg.span_id}</div>
+                <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
               )}
               <MessageFooter message={msg} />
             </div>
@@ -542,7 +542,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               <div key={approval.id} className="bg-white dark:bg-gray-800 rounded-lg border border-yellow-200 dark:border-yellow-900/50 shadow-xs p-4">
                 <div className="flex items-center justify-between mb-2">
                    <div className="text-xs font-mono font-bold text-gray-500">{approval.tool_call.function_name}</div>
-                   <div className="text-[10px] text-gray-400">ID: {approval.id}</div>
+                   <div className="text-[11px] text-gray-400">ID: {approval.id}</div>
                 </div>
                 <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
                   {formatArguments(approval.tool_call.arguments)}
