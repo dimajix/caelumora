@@ -1,5 +1,5 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
-use crate::error::ApiError;
+use crate::error::{ApiError, Subject};
 use crate::state::AppState;
 use caelumora_model::security::AccessQuestions;
 use axum::{
@@ -27,22 +27,7 @@ pub async fn ensure_session(
         .session_manager
         .open_session(&user.security_context(), session_id)
         .await
-        .map_err(|e| session_error(e, session_id, "open", "loading"))
-}
-
-/// The answer for a failure to `act` on session `session_id` (e.g.
-/// "rename"; `doing` is the same as "renaming", for the log). A session that is missing - or that the user may not read,
-/// which is reported the same way - is `404`; one they may read but not
-/// change is `403`; anything else, say a component that cannot be built, is
-/// a server error.
-pub fn session_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: &str) -> ApiError {
-    if caelumora_runtime::error::is_not_found(&error, "session") {
-        ApiError::not_found("session_not_found", format!("Session {} does not exist", session_id))
-    } else if caelumora_runtime::error::is_forbidden(&error) {
-        ApiError::forbidden("session_forbidden", format!("You are not permitted to {} session {}", act, session_id))
-    } else {
-        ApiError::internal("session_failed", &format!("{} session {}", doing, session_id), &error)
-    }
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("opening session {session_id}")))
 }
 
 /// The channel `channel_id` of `session`, if `viewer` may read it (issue 70):

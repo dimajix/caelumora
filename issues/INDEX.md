@@ -132,7 +132,7 @@ against it, and what came out of the last attempt.
 | [56](56-response-language.md) | open | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
 | [80](80-stored-channel-response.md) | open | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | open | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
-| [103](103-rest-error-mappers.md) | open | Six REST functions map runtime errors to problem details with the same pattern. |
+| [103](103-rest-error-mappers.md) | done | Six REST functions map runtime errors to problem details with the same pattern. |
 | [104](104-sse-stream-and-subscribe.md) | done | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
 | [106](106-rest-small-findings.md) | done | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
 

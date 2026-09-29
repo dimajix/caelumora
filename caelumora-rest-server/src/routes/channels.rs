@@ -3,7 +3,7 @@ use crate::models::{AddParticipantRequest, ChannelMemberResponse, ParticipantKin
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
-use crate::error::ApiError;
+use crate::error::{ApiError, Subject};
 use crate::routes::channel_of;
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
@@ -11,14 +11,12 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
+use caelumora_runtime::session::{ChannelSpec, SessionLoop};
 use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_runtime::command::CommandError;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::{AccessQuestions, SecurityContext};
-use caelumora_runtime::actor::MessageContextError;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
 use std::convert::Infallible;
@@ -58,7 +56,7 @@ pub async fn create_channel(
 
     let spec = ChannelSpec { name: payload.name, moderator: payload.moderator, participants: payload.participants, confidentiality: payload.confidentiality };
     let channel = session.create_channel(&context, spec).await
-        .map_err(|e| channel_error(e, session_id, "create a channel in", "creating a channel in"))?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a channel in session {session_id}")))?;
     Ok(Json(channel_response(&state, &channel, &context).await))
 }
 
@@ -72,25 +70,10 @@ pub async fn delete_channel(
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
 
     session.delete_channel(&user.security_context(), ChannelId(cid)).await
-        .map_err(|e| channel_error(e, session_id, "delete a channel of", "deleting a channel of"))?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("deleting a channel of session {session_id}")))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The answer for a failure to create or delete a channel: a request that
-/// cannot be met is the client's (`400`, `404`, `409`); refusals and
-/// everything else are answered as for the session.
-fn channel_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: &str) -> ApiError {
-    let detail = error.to_string();
-    match error.downcast_ref::<SessionError>() {
-        Some(SessionError::ChannelNotFound { .. }) => ApiError::not_found("channel_not_found", detail),
-        Some(SessionError::DuplicateChannelName { .. }) => ApiError::conflict("channel_exists", detail),
-        Some(SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. } | SessionError::InvalidConfidentiality(_)) => {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_channel", detail)
-        }
-        // Not about a channel at all.
-        Some(SessionError::OwnerNotAUser(_)) | None => crate::routes::session_error(error, session_id, act, doing),
-    }
-}
 
 pub async fn get_channel(
     State(state): State<Arc<AppState>>,
@@ -222,7 +205,7 @@ pub async fn add_participant(
     let context = user.security_context();
     let channel = channel_of(&state, &session, ChannelId(cid), &context).await?;
     channel.add_participant(&context, payload.participant, payload.history).await
-        .map_err(|e| participant_error(e, session_id, "add participants to", "adding a participant to"))?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Participant, &format!("adding a participant to channel {cid}")))?;
     Ok(Json(channel_response(&state, &channel, &context).await))
 }
 
@@ -240,26 +223,10 @@ pub async fn remove_participant(
     let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
     channel.remove_participant(&context, participant).await
-        .map_err(|e| participant_error(e, session_id, "remove participants from", "removing a participant from"))?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Participant, &format!("removing a participant from channel {cid}")))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The answer for a failure to add or remove a participant: a request that
-/// cannot be met is the client's; refusals and everything else are answered
-/// as for the session.
-fn participant_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: &str) -> ApiError {
-    use caelumora_runtime::channel::ChannelError;
-    let detail = error.to_string();
-    match error.downcast_ref::<ChannelError>() {
-        Some(ChannelError::AlreadyParticipant { .. }) => ApiError::conflict("already_participant", detail),
-        Some(ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. }) => ApiError::not_found("participant_not_found", detail),
-        Some(ChannelError::NotInSession { .. } | ChannelError::ApproverStays { .. }) => {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_participant", detail)
-        }
-        Some(ChannelError::Forbidden { .. }) => ApiError::forbidden("participant_forbidden", detail),
-        None => crate::routes::session_error(error, session_id, act, doing),
-    }
-}
 
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
@@ -309,20 +276,10 @@ pub async fn cancel_channel(
     let channel = channel_of(&state, &session, channel_id, &user.security_context()).await?;
     user_actor_of(&channel, &user)?;
     session.cancel_channel(channel_id, &user.security_context()).await
-        .map_err(cancel_error)?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Cancel, "cancelling the channel"))?;
     Ok(StatusCode::OK)
 }
 
-/// A refused cancel is an answer, not a failure: `403` with what `user_message`
-/// discloses, which for a `ChannelError` is the refusal itself.
-fn cancel_error(error: anyhow::Error) -> ApiError {
-    if caelumora_runtime::error::is_forbidden(&error) {
-        let detail = caelumora_runtime::error::user_message(&error)
-            .unwrap_or_else(|| "Cancelling this channel is not permitted".to_string());
-        return ApiError::forbidden("cancel_forbidden", detail);
-    }
-    ApiError::internal("cancel_failed", "cancelling the channel", &error)
-}
 
 /// The commands the authenticated user may see in the channel, for
 /// completion (issue 28).
@@ -350,29 +307,13 @@ pub async fn execute_command(
     let channel = channel_of(&state, &session, ChannelId(cid), &user.security_context()).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     let reply = user_actor.execute_command(&payload.name, &payload.args).await
-        .map_err(command_error)?;
+        .map_err(|e| ApiError::from_runtime(e, Subject::Command, &format!("running /{}", payload.name)))?;
     // An answer for the whole channel reaches this client on the channel's
     // stream, like everybody else; returning it here as well would show it twice.
     let output = (reply.visibility == CommandVisibility::Private).then_some(reply.output);
     Ok(Json(CommandReplyResponse { command: reply.command, output }))
 }
 
-/// A command that did not run is the user's answer, not a server failure -
-/// except when it failed, which is `500` as for anything else.
-fn command_error(error: anyhow::Error) -> ApiError {
-    let detail = error.to_string();
-    match error.downcast_ref::<CommandError>() {
-        Some(CommandError::Empty | CommandError::Unknown(_)) => ApiError::new(StatusCode::BAD_REQUEST, "unknown_command", detail),
-        Some(CommandError::InvalidArguments { .. }) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_command_arguments", detail),
-        Some(CommandError::Forbidden(_)) => ApiError::forbidden("command_forbidden", detail),
-        _ if caelumora_runtime::error::is_forbidden(&error) => {
-            let detail = caelumora_runtime::error::user_message(&error)
-                .unwrap_or_else(|| "Running this command is not permitted".to_string());
-            ApiError::forbidden("command_forbidden", detail)
-        }
-        _ => ApiError::internal("command_failed", "running the command", &error),
-    }
-}
 
 /// What the actor `aid` saw when it produced message `mid` (issues 06, 47):
 /// its context with the prompt parts where they were placed. The actor answers: only the agent that
@@ -388,7 +329,7 @@ pub async fn message_context(
         .and_then(|actor| channel.actor_by_id(actor))
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
     let seen = actor.message_context(&user.security_context(), MessageId(mid)).await
-        .map_err(message_context_error)?;
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
     let knowledge = seen.reference.knowledge.iter().map(|k| knowledge_response(&session, k)).collect();
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
@@ -421,15 +362,6 @@ fn knowledge_response(session: &SessionLoop, knowledge: &KnowledgeRef) -> Knowle
     }
 }
 
-fn message_context_error(error: MessageContextError) -> ApiError {
-    let detail = error.to_string();
-    match error {
-        MessageContextError::Forbidden { .. } => ApiError::forbidden("context_forbidden", detail),
-        MessageContextError::NotRecorded { .. } => ApiError::not_found("context_not_recorded", detail),
-        MessageContextError::Unavailable { .. } => ApiError::not_found("context_unavailable", detail),
-        MessageContextError::Failed { .. } => ApiError::internal("context_failed", "reading the context", &anyhow::Error::new(error)),
-    }
-}
 
 pub async fn send_approval(
     State(state): State<Arc<AppState>>,
@@ -457,6 +389,8 @@ pub async fn send_approval(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_runtime::actor::MessageContextError;
+    use caelumora_runtime::command::CommandError;
     use caelumora_model::message::MessageId;
 
     fn history(count: usize) -> Vec<Message> {
@@ -490,7 +424,7 @@ mod tests {
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {
-        let status = |error: CommandError| command_error(anyhow::Error::new(error)).status();
+        let status = |error: CommandError| ApiError::from_runtime(anyhow::Error::new(error), Subject::Command, "running /x").status();
         assert_eq!(status(CommandError::Unknown("x".to_string())), StatusCode::BAD_REQUEST);
         assert_eq!(status(CommandError::Empty), StatusCode::BAD_REQUEST);
         assert_eq!(status(CommandError::InvalidArguments { command: "x".to_string(), reason: "y".to_string() }), StatusCode::BAD_REQUEST);
@@ -498,14 +432,14 @@ mod tests {
         assert_eq!(status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }), StatusCode::INTERNAL_SERVER_ERROR);
 
         let refused = anyhow::Error::new(caelumora_runtime::channel::ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default() });
-        assert_eq!(command_error(refused).status(), StatusCode::FORBIDDEN);
+        assert_eq!(ApiError::from_runtime(refused, Subject::Command, "running /wakeup").status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
     fn a_context_that_cannot_be_shown_says_why() {
         let actor = caelumora_model::actor::ActorId::None;
         let message = MessageId::new();
-        let status = |error| message_context_error(error).status();
+        let status = |error: MessageContextError| ApiError::from_runtime(error.into(), Subject::Context, "reading the context").status();
         assert_eq!(status(MessageContextError::Forbidden { actor }), StatusCode::FORBIDDEN);
         assert_eq!(status(MessageContextError::NotRecorded { actor, message }), StatusCode::NOT_FOUND);
         assert_eq!(status(MessageContextError::Unavailable { actor, message }), StatusCode::NOT_FOUND);

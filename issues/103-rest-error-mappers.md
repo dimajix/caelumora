@@ -1,6 +1,6 @@
 # 103 — Six REST error mappers with one pattern
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -40,3 +40,22 @@ REST has one function that maps a runtime error to an `ApiError`.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 5.2.2).
+- **2026-09-29** — Done. `ApiError::from_runtime(error, subject, action)`
+  in `crate::error` is the one place a runtime error becomes a status and a
+  code: missing session, template, channel, participant or context → 404;
+  one that exists already → 409; any other `SessionError`, `ChannelError`,
+  `CommandError` or `TemplateError` → 400; a refusal (`is_forbidden`, a
+  refused context) → 403 `<subject>_forbidden`; everything else →
+  `ApiError::internal` as `<subject>_failed`. `Subject` (session,
+  participant, cancel, command, context) only names those two codes, so
+  the codes the web UI matches (`context_*`) and the others stay as they
+  were. `session_error`, `channel_error`, `participant_error`,
+  `cancel_error`, `command_error`, `message_context_error` and the two
+  inline mappers in `sessions.rs` are gone, and so is the `act`/`doing`
+  pair: one `action` phrase names what was done ("adding a participant to
+  channel …"). Codes that changed, none of them matched by a client: a
+  server error loading or creating a session is `session_failed` (was
+  `session_unavailable`/`session_start_failed`); refusing to change a
+  channel's participants is `participant_forbidden` whichever layer refused
+  it (the store's refusal was `session_forbidden`). A test checks the
+  table.

@@ -106,6 +106,119 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         self.status
     }
+
+    /// Its code - for tests, like `status`.
+    #[cfg(test)]
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+}
+
+/// What a request acted on: names the codes of its refusal and its failure
+/// (`session_forbidden`, `command_failed`, ...) in [`ApiError::from_runtime`].
+#[derive(Debug, Clone, Copy)]
+pub enum Subject {
+    Session,
+    Participant,
+    Cancel,
+    Command,
+    Context,
+}
+
+impl Subject {
+    fn forbidden(self) -> &'static str {
+        match self {
+            Subject::Session => "session_forbidden",
+            Subject::Participant => "participant_forbidden",
+            Subject::Cancel => "cancel_forbidden",
+            Subject::Command => "command_forbidden",
+            Subject::Context => "context_forbidden",
+        }
+    }
+
+    fn failed(self) -> &'static str {
+        match self {
+            Subject::Session => "session_failed",
+            Subject::Participant => "participant_failed",
+            Subject::Cancel => "cancel_failed",
+            Subject::Command => "command_failed",
+            Subject::Context => "context_failed",
+        }
+    }
+}
+
+impl ApiError {
+    /// The answer for `error`, reported by the runtime while `action` (e.g.
+    /// "renaming session …") on `subject` (issue 103) - the one place a
+    /// domain error becomes a status and a code, so that a new variant has
+    /// one place to go:
+    ///
+    /// - a request that cannot be met is the client's: `404` for a session,
+    ///   template, channel, participant or context that is not there (or may
+    ///   not be seen, which is answered the same), `409` for one that is
+    ///   there already, `400` for any other `SessionError`, `ChannelError`,
+    ///   `CommandError` or `TemplateError`;
+    /// - a refusal (`is_forbidden`, or a refused context) is `403`,
+    ///   `<subject>_forbidden`, saying what was refused and not why;
+    /// - anything else is a server error, `<subject>_failed`.
+    pub fn from_runtime(error: anyhow::Error, subject: Subject, action: &str) -> Self {
+        use caelumora_runtime::actor::MessageContextError;
+        use caelumora_runtime::channel::ChannelError;
+        use caelumora_runtime::command::CommandError;
+        use caelumora_runtime::error::{is_forbidden, is_not_found, user_message};
+        use caelumora_runtime::session::SessionError;
+        use caelumora_model::template::TemplateError;
+
+        let detail = error.to_string();
+        let bad_request = |code| Self::new(StatusCode::BAD_REQUEST, code, detail.clone());
+        if let Some(e) = error.downcast_ref::<MessageContextError>() {
+            match e {
+                MessageContextError::Forbidden { .. } => return Self::forbidden(Subject::Context.forbidden(), detail),
+                MessageContextError::NotRecorded { .. } => return Self::not_found("context_not_recorded", detail),
+                MessageContextError::Unavailable { .. } => return Self::not_found("context_unavailable", detail),
+                MessageContextError::Failed { .. } => {}
+            }
+        }
+        if let Some(e) = error.downcast_ref::<SessionError>() {
+            match e {
+                SessionError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
+                SessionError::DuplicateChannelName { .. } => return Self::conflict("channel_exists", detail),
+                SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. }
+                | SessionError::InvalidConfidentiality(_) => return bad_request("invalid_channel"),
+                // A caller that is no user: not the client's request.
+                SessionError::OwnerNotAUser(_) => {}
+            }
+        }
+        if let Some(e) = error.downcast_ref::<ChannelError>() {
+            match e {
+                ChannelError::AlreadyParticipant { .. } => return Self::conflict("already_participant", detail),
+                ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => return Self::not_found("participant_not_found", detail),
+                ChannelError::NotInSession { .. } | ChannelError::ApproverStays { .. } => return bad_request("invalid_participant"),
+                ChannelError::Forbidden { .. } => {}
+            }
+        }
+        if let Some(e) = error.downcast_ref::<CommandError>() {
+            match e {
+                CommandError::Empty | CommandError::Unknown(_) => return bad_request("unknown_command"),
+                CommandError::InvalidArguments { .. } => return bad_request("invalid_command_arguments"),
+                _ => {}
+            }
+        }
+        if error.downcast_ref::<TemplateError>().is_some() {
+            return bad_request("template_invalid");
+        }
+        if is_not_found(&error, "session") {
+            return Self::not_found("session_not_found", user_message(&error).unwrap_or(detail));
+        }
+        if is_not_found(&error, "session_template") {
+            return Self::not_found("template_not_found", user_message(&error).unwrap_or(detail));
+        }
+        if is_forbidden(&error) {
+            let detail = user_message(&error).unwrap_or_else(|| format!("{} is not permitted", capitalize(action)));
+            return Self::forbidden(subject.forbidden(), detail);
+        }
+        Self::internal(subject.failed(), action, &error)
+    }
 }
 
 fn capitalize(text: &str) -> String {
@@ -230,5 +343,40 @@ mod tests {
         let detail = json["detail"].as_str().unwrap();
         assert!(!detail.contains("/srv"), "internal paths must not be disclosed: {detail}");
         assert!(detail.contains("server log"));
+    }
+
+    #[test]
+    fn runtime_errors_map_to_status_and_code_in_one_place() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::session::{ChannelId, SessionId};
+        use caelumora_runtime::channel::ChannelError;
+        use caelumora_runtime::session::SessionError;
+        let (session, channel, someone) = (SessionId::new(), ChannelId::new(), ActorId::None);
+        let answer = |error: anyhow::Error, subject| {
+            let e = ApiError::from_runtime(error, subject, "doing it");
+            (e.status().as_u16(), e.code())
+        };
+        let not_found = |entity| anyhow::Error::new(StoreError::NotFound { entity, id: "1".to_string() });
+
+        assert_eq!(answer(not_found("session"), Subject::Session), (404, "session_not_found"));
+        assert_eq!(answer(not_found("session_template"), Subject::Session), (404, "template_not_found"));
+        assert_eq!(answer(anyhow::Error::new(SessionError::ChannelNotFound { session, channel }), Subject::Session), (404, "channel_not_found"));
+        assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: "x".into() }), Subject::Session), (409, "channel_exists"));
+        assert_eq!(answer(anyhow::Error::new(SessionError::EmptyChannelName), Subject::Session), (400, "invalid_channel"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::AlreadyParticipant { participant: someone, channel }), Subject::Participant), (409, "already_participant"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::ParticipantGone { participant: someone, channel }), Subject::Participant), (404, "participant_not_found"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::ApproverStays { channel }), Subject::Participant), (400, "invalid_participant"));
+        assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
+
+        // A refusal is named after what was refused, whichever layer refused it.
+        let refused = || anyhow::Error::new(ChannelError::Forbidden { action: "adding a participant to", channel });
+        assert_eq!(answer(refused(), Subject::Participant), (403, "participant_forbidden"));
+        assert_eq!(answer(anyhow::Error::new(StoreError::PermissionDenied), Subject::Participant), (403, "participant_forbidden"));
+        assert_eq!(answer(refused(), Subject::Cancel), (403, "cancel_forbidden"));
+        assert_eq!(answer(anyhow::Error::new(StoreError::PermissionDenied).context("renaming"), Subject::Session), (403, "session_forbidden"));
+
+        // Anything else is the server's, and named after the subject too.
+        assert_eq!(answer(anyhow::anyhow!("broken"), Subject::Session), (500, "session_failed"));
+        assert_eq!(answer(not_found("personality"), Subject::Session), (500, "session_failed"), "a missing personality is no missing session");
     }
 }
