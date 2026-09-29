@@ -1,5 +1,5 @@
 use crate::actor::Actor;
-use crate::runtime::{ActorRuntime, OwnTopic};
+use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -290,7 +290,7 @@ impl Actor for ApproverActor {
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
         info!("ApproverActor {:?} started", self.id);
-        let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Channel]);
+        let mut global_rx = self.actor_runtime.subscribe_channel();
 
         loop {
             let next_timeout = {
@@ -414,7 +414,7 @@ mod tests {
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())), Default::default())
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
@@ -507,7 +507,7 @@ mod tests {
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())), Default::default())
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
@@ -625,7 +625,7 @@ mod tests {
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())), Default::default())
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = ApproverActor::new(channel_controller.clone(), approver, actor_runtime);
         let (tx, rx) = mpsc::channel(100);
@@ -696,7 +696,7 @@ mod tests {
         };
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
-        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())), Default::default())
             .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
         let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));
         let (tx, rx) = mpsc::channel(100);

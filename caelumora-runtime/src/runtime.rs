@@ -15,15 +15,14 @@ use crate::recorder::Recorder;
 use crate::tool::{DefaultToolExecutor, ToolExecutor, ToolProvider};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
-use crate::controller::{AgentController, UserController};
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId};
+use crate::controller::ParticipantControllers;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
-use caelumora_model::user::User;
 use crate::agent_state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::session_reader::{ChannelSessionReader, SessionReader};
@@ -50,13 +49,15 @@ pub struct RuntimeManager {
 }
 
 /// What a channel runs with: the process-wide services of the
-/// `RuntimeManager`, the user commands of its session (issue 28) and a handle
-/// to the channel itself. It is the only source of `ActorRuntime`s, so every
-/// actor lives in exactly one channel and shares its commands and handle.
+/// `RuntimeManager`, the user commands (issue 28) and the participants'
+/// controllers (issue 120) of its session, and a handle to the channel
+/// itself. It is the only source of `ActorRuntime`s, so every actor lives in
+/// exactly one channel and shares its commands and handle.
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     runtime_manager: Arc<RuntimeManager>,
     command_executor: Arc<CommandExecutor>,
+    participants: Arc<ParticipantControllers>,
     // Set once the channel exists (see `attach`). Weak, because the channel
     // owns its actors and they hold this runtime: a strong reference would
     // keep a stopped channel alive forever.
@@ -68,9 +69,10 @@ pub struct ChannelRuntime {
 }
 
 impl ChannelRuntime {
-    /// A runtime for a channel of a session whose user commands are `commands`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>) -> Self {
-        Self { runtime_manager, command_executor, channel: Arc::new(OnceLock::new()), session: Arc::new(OnceLock::new()) }
+    /// A runtime for a channel of a session whose user commands are
+    /// `command_executor` and whose users and agents are `participants`.
+    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor>, participants: Arc<ParticipantControllers>) -> Self {
+        Self { runtime_manager, command_executor, participants, channel: Arc::new(OnceLock::new()), session: Arc::new(OnceLock::new()) }
     }
 
     /// This runtime, for a channel of the session `session` will point to.
@@ -96,7 +98,9 @@ impl ChannelRuntime {
 
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime_manager.state_store() }
 
-    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
+    /// The controllers of the session's users and agents - what the
+    /// channel builds their actors from.
+    pub fn participants(&self) -> Arc<ParticipantControllers> { self.participants.clone() }
 
     pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
 
@@ -111,16 +115,6 @@ impl ChannelRuntime {
     pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
         self.session.get().and_then(Weak::upgrade)
     }
-}
-
-/// What an actor may subscribe to on the event bus: only what concerns it
-/// (issue 69).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnTopic {
-    /// The actor itself - an agent's or a user's events.
-    Actor,
-    /// The actor's channel.
-    Channel,
 }
 
 /// What an actor runs with (issue 69): the services every actor needs, and
@@ -172,24 +166,6 @@ impl ActorRuntime {
         self.runtime.command_executor.clone()
     }
 
-    /// The controller of `agent`, which must be this actor.
-    ///
-    /// # Errors
-    /// If `agent` is not the agent this runtime is for.
-    pub fn new_agent_controller(&self, agent: Agent) -> Result<Arc<AgentController>> {
-        self.ensure_self(ActorId::Agent(agent.id))?;
-        Ok(self.runtime.runtime_manager.controller_manager().new_agent_controller(self.session_id, agent))
-    }
-
-    /// The controller of `user`, which must be this actor.
-    ///
-    /// # Errors
-    /// If `user` is not the user this runtime is for.
-    pub fn new_user_controller(&self, user: User) -> Result<Arc<UserController>> {
-        self.ensure_self(ActorId::User(user.id))?;
-        Ok(self.runtime.runtime_manager.controller_manager().new_user_controller(user))
-    }
-
     /// The personality `id`, as `security` may read it - the one the agent
     /// is built from.
     pub async fn personality(&self, security: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
@@ -224,20 +200,12 @@ impl ActorRuntime {
         Ok(self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?)
     }
 
-    /// The global events about `topics` - this actor itself, its channel -
-    /// in one subscription. Nothing about other actors or channels can be
-    /// subscribed to. An actor without a topic of its own (an approver) has
-    /// nothing to hear about itself.
-    pub fn subscribe(&self, topics: &[OwnTopic]) -> EventSubscription {
-        let topics = topics.iter().filter_map(|topic| match topic {
-            OwnTopic::Actor => match self.actor {
-                ActorId::Agent(agent) => Some(SubscriptionTopic::Agent(agent)),
-                ActorId::User(user) => Some(SubscriptionTopic::User(user)),
-                _ => None,
-            },
-            OwnTopic::Channel => Some(SubscriptionTopic::Channel(self.channel_id)),
-        }).collect();
-        self.runtime.runtime_manager.event_bus().subscribe(topics)
+    /// The global events about the actor's channel (issue 69): nothing about
+    /// other channels can be subscribed to. Changes to the actor's own user
+    /// or agent are the session's to take in, into the controller the actor
+    /// shares (issue 120).
+    pub fn subscribe_channel(&self) -> EventSubscription {
+        self.runtime.runtime_manager.event_bus().subscribe(vec![SubscriptionTopic::Channel(self.channel_id)])
     }
 
     /// Announces that this agent's state in its channel changed and is
@@ -276,14 +244,6 @@ impl ActorRuntime {
     /// (e.g. in tests) or once it is gone.
     pub(crate) fn session(&self) -> Option<Arc<SessionLoop>> {
         self.runtime.session.get().and_then(Weak::upgrade)
-    }
-
-    fn ensure_self(&self, actor: ActorId) -> Result<()> {
-        if actor == self.actor {
-            Ok(())
-        } else {
-            Err(anyhow!("The runtime of {} cannot act for {}", self.actor, actor))
-        }
     }
 
     fn agent_id(&self) -> Result<AgentId> {
@@ -395,39 +355,29 @@ impl RuntimeManager {
 mod tests {
     use super::*;
     use crate::llm_impl::ollama::OllamaClient;
-    use caelumora_model::agent::{Agent, AgentId};
+    use caelumora_model::agent::AgentId;
     use caelumora_model::command::default_commands;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store_impl::memory::MemoryStore;
-    use caelumora_model::user::{User, UserId};
+    use caelumora_model::user::UserId;
 
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
-        ChannelRuntime::new(manager, commands)
-    }
-
-    fn user(id: UserId) -> User {
-        User { id, username: "alice".to_string(), email: String::new(), roles: Vec::new() }
+        ChannelRuntime::new(manager, commands, Default::default())
     }
 
     #[tokio::test]
     async fn an_actor_runtime_acts_for_its_own_actor_only() {
         let runtime = channel_runtime();
-        let (alice, bob) = (UserId::new(), UserId::new());
-        let hers = runtime.new_actor_runtime(ActorId::User(alice), SessionId::new(), ChannelId::new());
+        let hers = runtime.new_actor_runtime(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new());
 
-        assert!(hers.new_user_controller(user(alice)).is_ok());
-        assert!(hers.new_user_controller(user(bob)).is_err(), "not someone else's controller");
         assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
         assert!(hers.agent_state(Default::default()).await.is_err());
 
-        let agent = Agent { id: AgentId::new(), metadata: Default::default(), personality_id: Default::default(), security_attributes: Default::default() };
-        let its = runtime.new_actor_runtime(ActorId::Agent(agent.id), SessionId::new(), ChannelId::new());
-        assert!(hers.new_agent_controller(agent.clone()).is_err(), "not another actor's agent");
-        assert!(its.new_agent_controller(agent).is_ok());
+        let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()), SessionId::new(), ChannelId::new());
         its.store_channel_state(&AgentChannelState::default()).await.expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
     }

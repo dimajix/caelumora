@@ -10,7 +10,8 @@ use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext}
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use crate::controller::SessionController;
+use crate::controller::{ParticipantControllers, SessionController};
+use crate::event::SubscriptionTopic;
 use dashmap::DashMap;
 use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::{mpsc, Mutex};
@@ -63,6 +64,9 @@ pub struct SessionLoop {
     runtime_manager: Arc<RuntimeManager>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor>,
+    /// The session's users and agents, one controller each for all its
+    /// channels (issue 120), kept current by `run`.
+    participants: Arc<ParticipantControllers>,
     /// The session's channels, and which of them run (issue 116). A channel
     /// deleted while it waits to be started has no entry any more, so `run`
     /// never starts it.
@@ -84,12 +88,13 @@ impl SessionLoop {
     pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Self> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
+        let participants = Arc::new(runtime_manager.controller_manager().participant_controllers(id, &session.participants).await?);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
         let handle = Arc::new(OnceLock::new());
         let channel_docs = channels;
         let channels = DashMap::new();
         for channel in channel_docs {
-            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone()).with_session(handle.clone());
+            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone(), participants.clone()).with_session(handle.clone());
             let cl = ChannelLoop::new(channel, runtime).await?;
             let id = cl.id();
             channels.insert(id, ChannelEntry { channel: cl, task: None });
@@ -103,6 +108,7 @@ impl SessionLoop {
             session_controller,
             runtime_manager,
             commands,
+            participants,
             channels,
             start_tx,
             start_rx: Mutex::new(start_rx),
@@ -205,7 +211,7 @@ impl SessionLoop {
             return Err(error.into());
         }
 
-        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone()).with_session(self.handle.clone());
+        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone(), self.participants.clone()).with_session(self.handle.clone());
         let channel_loop = match ChannelLoop::new(channel.clone(), runtime).await {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
@@ -280,7 +286,11 @@ impl SessionLoop {
             .map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        let mut global_rx = self.runtime_manager.event_bus().subscribe_session(self.id());
+        // The session's own events, and those about its users and agents -
+        // a rename is announced about them, whichever session made it.
+        let mut topics = vec![SubscriptionTopic::Session(self.id())];
+        topics.extend(self.participants.topics());
+        let mut global_rx = self.runtime_manager.event_bus().subscribe(topics);
 
         loop {
             tokio::select! {
@@ -313,6 +323,7 @@ impl SessionLoop {
     async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             self.session_controller.process_global_event(&global_event);
+            self.participants.process_global_event(&global_event);
         }
     }
 
@@ -826,6 +837,36 @@ mod tests {
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
         ChannelSpec { name: name.to_string(), moderator: None, participants, confidentiality: None }
+    }
+
+    #[tokio::test]
+    async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
+        use crate::actor::Actor;
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::user::UserUpdateEvent;
+
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
+        let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
+        let second = session.create_channel(&ctx, spec("second", vec![other])).await.unwrap();
+
+        // Announced about the user, as whoever changes users will: the
+        // session takes it into the one controller both actors share.
+        let renamed = async {
+            loop {
+                runtime.event_bus().publish(GlobalEvent::UserUpdated(owner, UserUpdateEvent::NameChanged("renamed".to_string())), Default::default());
+                let names: Vec<String> = [&first, &second].iter().map(|c| c.user_actor(owner).expect("takes part").name()).collect();
+                if names.iter().all(|n| n == "renamed") {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(2), renamed).await.expect("both channels show the new name");
+        assert_eq!(first.user_actor(other.as_user_id().unwrap()).unwrap().name(), "other", "nobody else is renamed");
+        manager.stop_session(session.id()).await;
     }
 
     #[tokio::test]

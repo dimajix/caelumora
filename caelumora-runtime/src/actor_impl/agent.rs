@@ -1,23 +1,21 @@
 use crate::actor::{Actor, MessageContextError};
 use crate::agent_turn::{CommittedTurn, Turn};
-use crate::event::EventSubscription;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
-use crate::runtime::{ActorRuntime, OwnTopic};
+use crate::runtime::ActorRuntime;
 use crate::tool::{ToolError, ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId, SeenContext};
+use caelumora_model::agent::{AgentChannelState, AgentId, SeenContext};
 use crate::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, Publication};
-use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
@@ -81,17 +79,22 @@ impl AgentActorState {
 }
 
 impl AgentActor {
+    /// The actor of the agent `agent_controller` holds - the session's
+    /// controller of it, shared with its actors in the session's other
+    /// channels (issue 120).
     pub async fn new(
         channel: &Channel,
-        agent: Agent,
+        agent_controller: Arc<AgentController>,
         actor_runtime: ActorRuntime,
     ) -> Result<Self> {
+        let agent = agent_controller.load();
         // The agent acts on behalf of its owner, in this channel (issue 87).
         let security_context = SecurityContext::new(agent.security_attributes.owner_id, channel.session_id, channel.id)
             .next(ActorId::Agent(agent.id));
         let personality = actor_runtime.personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
-        let agent_controller = actor_runtime.new_agent_controller(agent)?;
+        let attributes = agent.security_attributes.clone();
+        drop(agent);
 
         let components = ComponentContainer::from_config(
             &personality.components,
@@ -112,7 +115,7 @@ impl AgentActor {
         if not_executed > 0 {
             warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
         }
-        let agent_state = actor_runtime.agent_state(agent_controller.load().security_attributes.clone()).await?;
+        let agent_state = actor_runtime.agent_state(attributes).await?;
         let processing_state = Arc::new(ProcessingStateHolder::new(agent_channel_state.processing_state));
         let state = Mutex::new(AgentActorState {
             agent_id,
@@ -453,12 +456,6 @@ impl AgentActor {
         Ok(input)
     }
 
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
-        if let Some(global_event) = maybe_global {
-            self.agent_controller.process_global_event(&global_event);
-        }
-    }
-
     /// Idle and Sleeping wait for the next event alike: a
     /// `FullResponseGenerated` is perceived, a `ResponseRequested` starts a
     /// turn - unless `asleep`, where only `wakeup()` ends the sleep. `None`
@@ -468,41 +465,32 @@ impl AgentActor {
         asleep: bool,
         turn: &mut Turn<'a>,
         rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut EventSubscription,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
-        tokio::select! {
-            maybe_event = rx.recv() => {
-                let Some(event) = maybe_event else { return Ok(None) };
-                let span = crate::logging::envelope_span(&event.context, event.event.kind());
-                let started = async {
-                    debug!("Received {}", event.describe());
-                    Ok::<_, anyhow::Error>(match event.event {
-                        ActorEvent::FullResponseGenerated(messages) => {
-                            self.perceive(turn, messages).await;
+        let Some(event) = rx.recv().await else { return Ok(None) };
+        let span = crate::logging::envelope_span(&event.context, event.event.kind());
+        let started = async {
+            debug!("Received {}", event.describe());
+            Ok::<_, anyhow::Error>(match event.event {
+                ActorEvent::FullResponseGenerated(messages) => {
+                    self.perceive(turn, messages).await;
+                    false
+                }
+                ActorEvent::ResponseRequested if !asleep => {
+                    match self.request_response(turn, &event.context, &event.security, output).await {
+                        Ok(()) => true,
+                        // E.g. a fail-closed context provider: the turn never starts.
+                        Err(e) => {
+                            self.fail_turn(turn, &e, output).await;
                             false
                         }
-                        ActorEvent::ResponseRequested if !asleep => {
-                            match self.request_response(turn, &event.context, &event.security, output).await {
-                                Ok(()) => true,
-                                // E.g. a fail-closed context provider: the turn never starts.
-                                Err(e) => {
-                                    self.fail_turn(turn, &e, output).await;
-                                    false
-                                }
-                            }
-                        }
-                        _ => false,
-                    })
-                }.instrument(span).await?;
-                rx.commit().await?;
-                Ok(Some(if started { ActorState::Planning } else { self.processing_state.load() }))
-            }
-            maybe_global = global_rx.recv() => {
-                self.handle_global_event(maybe_global).await;
-                Ok(Some(self.processing_state.load()))
-            }
-        }
+                    }
+                }
+                _ => false,
+            })
+        }.instrument(span).await?;
+        rx.commit().await?;
+        Ok(Some(if started { ActorState::Planning } else { self.processing_state.load() }))
     }
 
     /// Whether `state` belongs to a turn, i.e. an error in it aborts the turn
@@ -586,7 +574,6 @@ impl AgentActor {
         &self,
         turn: &mut Turn<'a>,
         rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut EventSubscription,
     ) -> Result<Option<ActorState>> {
         let is_approval_event = |env: &Envelope| {
             matches!(
@@ -597,32 +584,24 @@ impl AgentActor {
             )
         };
 
-        tokio::select! {
-            maybe_event = rx.recv_matching(is_approval_event) => {
-                match maybe_event {
-                    Some(event) => {
-                        let (req, status) = match &event.event {
-                            ActorEvent::ApprovalGranted(r) => (r, ApprovalStatus::Approved),
-                            ActorEvent::ApprovalDenied(r) => (r, ApprovalStatus::Denied),
-                            ActorEvent::ApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
-                            _ => unreachable!("handle_approval_event called with non-approval event"),
-                        };
+        match rx.recv_matching(is_approval_event).await {
+            Some(event) => {
+                let (req, status) = match &event.event {
+                    ActorEvent::ApprovalGranted(r) => (r, ApprovalStatus::Approved),
+                    ActorEvent::ApprovalDenied(r) => (r, ApprovalStatus::Denied),
+                    ActorEvent::ApprovalTimedOut(r) => (r, ApprovalStatus::Timeout),
+                    _ => unreachable!("handle_approval_event called with non-approval event"),
+                };
 
-                        if !turn.tool_calls().decide(req.id, status) {
-                            warn!("Received approval for unknown approval id {}", req.id);
-                        }
-
-                        rx.commit().await?;
-                        Ok(Some(ActorState::ExecutingTools))
-                    }
-                    // Channel is closed
-                    None => Ok(None),
+                if !turn.tool_calls().decide(req.id, status) {
+                    warn!("Received approval for unknown approval id {}", req.id);
                 }
+
+                rx.commit().await?;
+                Ok(Some(ActorState::ExecutingTools))
             }
-            maybe_global = global_rx.recv() => {
-                self.handle_global_event(maybe_global).await;
-                Ok(Some(ActorState::WaitingForApproval))
-            }
+            // Channel is closed
+            None => Ok(None),
         }
     }
 
@@ -936,8 +915,6 @@ impl Actor for AgentActor {
             info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.processing_state.load());
         }
 
-        let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Actor]);
-
         loop {
             let current_state = self.processing_state.load();
             let mut turn = state.turn(self.agent_controller.name());
@@ -948,13 +925,13 @@ impl Actor for AgentActor {
             let span = self.state_span(current_state, &turn);
             let result = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle => {
-                    self.handle_waiting(false, &mut turn, &mut rx, &mut global_rx, &*output).await?
+                    self.handle_waiting(false, &mut turn, &mut rx, &*output).await?
                 }
                 ActorState::WaitingForApproval => {
-                    self.handle_waiting_for_approval(&mut turn, &mut rx, &mut global_rx).await?
+                    self.handle_waiting_for_approval(&mut turn, &mut rx).await?
                 }
                 ActorState::Sleeping => {
-                    self.handle_waiting(true, &mut turn, &mut rx, &mut global_rx, &*output).await?
+                    self.handle_waiting(true, &mut turn, &mut rx, &*output).await?
                 }
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut turn, &*output).await?),
                 ActorState::Planning => Some(self.handle_llm_turn(&mut turn, &*output).await?),

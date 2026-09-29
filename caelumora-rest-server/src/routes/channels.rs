@@ -305,7 +305,7 @@ fn participant_error(error: anyhow::Error, session_id: SessionId, act: &str, doi
     let detail = error.to_string();
     match error.downcast_ref::<ChannelError>() {
         Some(ChannelError::AlreadyParticipant { .. }) => ApiError::conflict("already_participant", detail),
-        Some(ChannelError::NotAParticipant { .. }) => ApiError::not_found("participant_not_found", detail),
+        Some(ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. }) => ApiError::not_found("participant_not_found", detail),
         Some(ChannelError::NotInSession { .. } | ChannelError::ApproverStays { .. }) => {
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_participant", detail)
         }

@@ -1,6 +1,6 @@
 use crate::actor::Actor;
 use crate::command::{CommandContext, CommandReply};
-use crate::runtime::{ActorRuntime, OwnTopic};
+use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -8,11 +8,9 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::approval::ApprovalResponse;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::event::GlobalEvent;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::user::User;
 use crate::controller::UserController;
 use chrono::Utc;
 use tracing::{debug, info, warn};
@@ -43,11 +41,12 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub async fn new(channel: &Channel, user:User, actor_runtime: ActorRuntime) -> Result<Self> {
-        let user_id = user.id;
+    /// The actor of the user `user` - the session's controller of them,
+    /// shared with their actors in its other channels (issue 120).
+    pub async fn new(channel: &Channel, user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
+        let user_id = user.id();
         // The user acts on their own behalf, in this channel (issue 87).
         let security_context = SecurityContext::new(ActorId::User(user_id), channel.session_id, channel.id);
-        let user_controller = actor_runtime.new_user_controller(user)?;
 
         let (utx,urx) = mpsc::channel(100);
 
@@ -56,7 +55,7 @@ impl UserActor {
             session_id: channel.session_id,
             channel_id: channel.id,
             security_context,
-            user: user_controller,
+            user,
             actor_runtime,
             user_rx: Mutex::new(urx),
             user_tx: utx,
@@ -195,19 +194,6 @@ impl UserActor {
             }
         }
     }
-
-    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) -> bool {
-        let mut global_rx_closed = false;
-        match maybe_global {
-            Some(event) => {
-                self.user.process_global_event(&event);
-            }
-            None => {
-                global_rx_closed = true;
-            }
-        }
-        global_rx_closed
-    }
 }
 
 #[async_trait]
@@ -240,13 +226,11 @@ impl Actor for UserActor {
         let mut user_rx = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
 
-        let mut global_rx = self.actor_runtime.subscribe(&[OwnTopic::Actor, OwnTopic::Channel]);
         let mut rx_closed = false;
         let mut user_rx_closed = false;
-        let mut global_rx_closed = false;
 
         info!("UserActor {} is starting", self.id());
-        while !rx_closed || !user_rx_closed || !global_rx_closed {
+        while !rx_closed || !user_rx_closed {
             tokio::select! {
                 maybe_event = rx.recv(), if !rx_closed => {
                     rx_closed = self.handle_actor_envelope(maybe_event);
@@ -256,9 +240,6 @@ impl Actor for UserActor {
                         Some(envelope) => if !self.forward(envelope, &*tx).await { break },
                         None => user_rx_closed = true,
                     }
-                }
-                maybe_global = global_rx.recv(), if !global_rx_closed => {
-                    global_rx_closed = self.handle_global_event(maybe_global).await;
                 }
                 else => break,
             }
@@ -283,16 +264,16 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())).unwrap());
-        let runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())));
+        let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(runtime.security_manager())), Default::default());
         let channel = Channel::new(SessionId::new(), "main".to_string(), "broadcast".to_string(), Vec::new(), SecurityAttributes::default());
-        let user = User {
+        let user = caelumora_model::user::User {
             id: caelumora_model::user::UserId::new(),
             username: "alice".to_string(),
             email: String::new(),
             roles: Vec::new(),
         };
-        let actor_runtime = runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
-        UserActor::new(&channel, user, actor_runtime).await.unwrap()
+        let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
+        UserActor::new(&channel, runtime.controller_manager().new_user_controller(user), actor_runtime).await.unwrap()
     }
 
     fn envelope_from(sender: ActorId) -> Envelope {

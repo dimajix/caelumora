@@ -1,6 +1,6 @@
 # 120 — Sessions and channels store copies of their participants
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -77,3 +77,23 @@ and restarts.
   is an error. REST's `describe_participant` reads names from the store
   as the system, and shows `(unknown)` without a handle for a record that
   is gone. `ChannelRuntime::entity_store` is new.
+- **2026-09-29** — Step 2, done: `ParticipantControllers` holds one
+  `UserController` and one `AgentController` per participant of a
+  session, loaded from the store as the system by
+  `ControllerManager::participant_controllers` when the session starts;
+  one whose record is gone is left out with a warning. The session hands
+  them to its channels through `ChannelRuntime::new`, and `UserActor::new`
+  / `AgentActor::new` take the controller instead of the record, so an
+  agent in several channels of a session has one writer.
+  `ActorRuntime::new_user_controller`/`new_agent_controller` and their
+  "only your own" check are gone - the session hands every actor its own
+  controller. The actors no longer subscribe to events about themselves:
+  the `SessionLoop` subscribes to its topic plus its users' and agents'
+  and keeps the controllers current, which leaves an actor only its
+  channel to subscribe to (`OwnTopic` became `subscribe_channel`). Adding
+  a participant whose record is gone is `ChannelError::ParticipantGone`
+  (REST `404 participant_not_found`). `ChannelRuntime::entity_store` from
+  step 1 is gone again. Still open, beyond this issue: an agent that
+  takes part in two sessions has a controller in each, i.e. two writers -
+  a process-wide controller per entity (option C) would end that.
+- **2026-09-29** — The remaining two writers across sessions are issue [121](121-agent-controller-per-process.md).
