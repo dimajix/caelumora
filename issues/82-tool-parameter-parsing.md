@@ -40,4 +40,5 @@ A malformed `create_plan` call is answered with `InvalidArguments`.
   failed `describe` into "No description" (`agent.rs:846`), and only the
   approved call then fails with `InvalidArguments`. The user approves
   something that cannot run; the call should be answered right away
-  instead. Not part of this issue.
+  instead. Not part of this issue; it is
+  [118](118-malformed-call-put-up-for-approval.md).
