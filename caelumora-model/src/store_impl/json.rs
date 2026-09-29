@@ -890,7 +890,7 @@ mod tests {
             "assistant-1".to_string(),
             Scope::GlobalScope,
             &template,
-            SecurityContext::default(),
+            crate::actor::ActorId::None,
         );
         store.create_agent(&ctx, &agent).await.unwrap();
 
@@ -914,7 +914,7 @@ mod tests {
             "assistant-1".to_string(),
             Scope::GlobalScope,
             &template,
-            SecurityContext::default(),
+            crate::actor::ActorId::None,
         );
 
         store.create_agent(&ctx, &agent).await.unwrap();

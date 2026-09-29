@@ -408,7 +408,7 @@ mod tests {
     }
 
     fn user(id: UserId) -> User {
-        User { id, username: "alice".to_string(), email: String::new(), roles: Vec::new(), security: SecurityContext::default() }
+        User { id, username: "alice".to_string(), email: String::new(), roles: Vec::new() }
     }
 
     #[tokio::test]
@@ -422,7 +422,7 @@ mod tests {
         assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
         assert!(hers.agent_state(Default::default()).await.is_err());
 
-        let agent = Agent { id: AgentId::new(), metadata: Default::default(), personality_id: Default::default(), security_attributes: Default::default(), security_context: Default::default() };
+        let agent = Agent { id: AgentId::new(), metadata: Default::default(), personality_id: Default::default(), security_attributes: Default::default() };
         let its = runtime.new_actor_runtime(ActorId::Agent(agent.id), SessionId::new(), ChannelId::new());
         assert!(hers.new_agent_controller(agent.clone()).is_err(), "not another actor's agent");
         assert!(its.new_agent_controller(agent).is_ok());

@@ -883,7 +883,6 @@ mod tests {
             username: username.to_string(),
             email: String::new(),
             roles: Vec::new(),
-            security: SecurityContext::default(),
         }
     }
 
@@ -1129,7 +1128,7 @@ mod tests {
 
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |u: &User| SecurityContext::new(ActorId::User(u.id), Default::default(), Default::default());
-        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, as_user(&alice));
+        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, ActorId::User(alice.id));
         let agent_id = ActorId::Agent(agent.id);
 
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
@@ -1245,7 +1244,7 @@ mod tests {
         store.put_personality(&SecurityContext::system(), &personality).await.unwrap();
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.clone());
+        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.initiator_id);
         let agent_id = agent.id;
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));

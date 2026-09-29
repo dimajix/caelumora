@@ -1,4 +1,3 @@
-use crate::security::SecurityContext;
 use serde::{Deserialize, Serialize};
 
 define_id!(UserId);
@@ -9,7 +8,6 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub roles: Vec<String>,
-    pub security: SecurityContext,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -43,11 +43,10 @@ pub struct UserActor {
 }
 
 impl UserActor {
-    pub async fn new(channel: &Channel, mut user:User, actor_runtime: ActorRuntime) -> Result<Self> {
-        user.security.session_id = channel.session_id;
-        user.security.channel_id = channel.id;
+    pub async fn new(channel: &Channel, user:User, actor_runtime: ActorRuntime) -> Result<Self> {
         let user_id = user.id;
-        let security_context = user.security.clone();
+        // The user acts on their own behalf, in this channel (issue 87).
+        let security_context = SecurityContext::new(ActorId::User(user_id), channel.session_id, channel.id);
         let user_controller = actor_runtime.new_user_controller(user)?;
 
         let (utx,urx) = mpsc::channel(100);
@@ -291,7 +290,6 @@ mod tests {
             username: "alice".to_string(),
             email: String::new(),
             roles: Vec::new(),
-            security: SecurityContext::default(),
         };
         let actor_runtime = runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
         UserActor::new(&channel, user, actor_runtime).await.unwrap()

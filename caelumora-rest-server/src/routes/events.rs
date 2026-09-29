@@ -141,7 +141,7 @@ fn stored_channel_response(channel: &Channel) -> ChannelResponse {
 mod tests {
     use super::*;
     use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::SessionId;
     use caelumora_model::user::{User, UserId};
     use uuid::Uuid;
@@ -153,7 +153,6 @@ mod tests {
             username: "Alice Example".to_string(),
             email: String::new(),
             roles: Vec::new(),
-            security: SecurityContext::default(),
         };
         let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
         let channel = Channel::new(

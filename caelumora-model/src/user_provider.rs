@@ -155,7 +155,6 @@ impl UserManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::SecurityContext;
     use std::collections::HashMap;
 
     fn user(name: &str) -> User {
@@ -164,7 +163,6 @@ mod tests {
             username: name.to_string(),
             email: String::new(),
             roles: Vec::new(),
-            security: SecurityContext::default(),
         }
     }
 

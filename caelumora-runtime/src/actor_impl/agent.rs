@@ -83,12 +83,12 @@ impl AgentActorState {
 impl AgentActor {
     pub async fn new(
         channel: &Channel,
-        mut agent: Agent,
+        agent: Agent,
         actor_runtime: ActorRuntime,
     ) -> Result<Self> {
-        agent.security_context.session_id = channel.session_id;
-        agent.security_context.channel_id = channel.id;
-        let security_context = agent.security_context.clone();
+        // The agent acts on behalf of its owner, in this channel (issue 87).
+        let security_context = SecurityContext::new(agent.security_attributes.owner_id, channel.session_id, channel.id)
+            .next(ActorId::Agent(agent.id));
         let personality = actor_runtime.personality(&security_context, agent.personality_id).await?;
         let agent_id = agent.id;
         let agent_controller = actor_runtime.new_agent_controller(agent)?;

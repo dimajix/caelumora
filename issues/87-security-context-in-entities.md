@@ -1,6 +1,6 @@
 # 87 — Stored entities carry a `SecurityContext`
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access
 
 ## The problem
@@ -36,3 +36,12 @@ No stored entity has a `SecurityContext` field; actors derive theirs.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.5).
+- **2026-09-29** — Done. `Agent::security_context` and `User::security`
+  are gone. `Agent::new` takes the owner (`ActorId`) instead of a context
+  - the owner was all it took from it. The `AgentActor` acts with
+  `SecurityContext::new(owner, session, channel).next(ActorId::Agent(id))`,
+  which follows the owner should it change; the `UserActor` with
+  `SecurityContext::new(ActorId::User(id), session, channel)`. Neither
+  overwrites a stored document any more. `User::roles` and `User::email`
+  stay for issue [23](23-acls-in-security-attributes.md). Stored channels
+  still carrying the old fields load, since unknown fields are ignored.

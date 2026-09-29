@@ -63,17 +63,18 @@ pub struct Agent {
     pub metadata: Metadata,
     pub personality_id: PersonalityId,
     pub security_attributes: SecurityAttributes,
-    pub security_context: SecurityContext,
 }
 
 impl Agent {
-    pub fn new(name:String, scope:Scope, personality: &Personality, mut security_context: SecurityContext) -> Self {
+    /// A new agent of `personality`, owned by `owner` - whoever creates it.
+    /// Whose authority it acts with is not stored with it: its actor derives
+    /// that from the owner, in the channel it runs in (issue 87).
+    pub fn new(name:String, scope:Scope, personality: &Personality, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
-        security_context.caller_id = ActorId::Agent(agent_id);
-        // Owned by whoever created it; the agent itself contributes, so that
-        // it may read its own definition (issue 11).
+        // The agent itself contributes, so that it may read its own
+        // definition (issue 11).
         let security_attributes = SecurityAttributes {
-            owner_id: security_context.initiator_id,
+            owner_id: owner,
             contributors: vec![ActorId::Agent(agent_id)],
         };
         Agent {
@@ -86,7 +87,6 @@ impl Agent {
                 ..Metadata::default()
             },
             security_attributes,
-            security_context,
         }
     }
 }

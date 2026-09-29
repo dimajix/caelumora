@@ -1,4 +1,3 @@
-use crate::actor::ActorId;
 use crate::security::SecurityContext;
 use crate::store::{EntityStore, StoreError};
 use crate::user::{User, UserId};
@@ -71,7 +70,6 @@ impl UserProvider for AcceptAnyUserProvider {
             username: username.to_string(),
             email: String::new(),
             roles: vec!["user".to_string()],
-            security: SecurityContext::new(ActorId::User(id), Default::default(), Default::default()),
         };
         self.store.create_user(&Self::context(), &user).await
             .map_err(|e| AuthError::Backend(e.to_string()))?;
@@ -99,7 +97,6 @@ mod tests {
 
         assert_eq!(first.id, second.id, "the same name must map to the same id");
         assert_ne!(first.id, bob.id, "different names must map to different ids");
-        assert_eq!(first.security.initiator_id, ActorId::User(first.id));
     }
 
     #[tokio::test]
@@ -128,7 +125,6 @@ mod tests {
             username: "user".to_string(),
             email: "user@example.com".to_string(),
             roles: vec!["user".to_string()],
-            security: SecurityContext::default(),
         };
         store.create_user(&SecurityContext::default(), &existing).await.unwrap();
 

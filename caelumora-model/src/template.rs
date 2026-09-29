@@ -236,7 +236,7 @@ impl ParticipantTemplate {
                         // of that name (issue 77).
                         Err(StoreError::NotFound { .. }) => {
                             let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await?;
-                            let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.clone());
+                            let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.initiator_id);
                             context.entity_store.create_agent(&context.security, &agent).await?;
                             agent
                         }
@@ -274,7 +274,6 @@ mod tests {
             username: "alice".to_string(),
             email: String::new(),
             roles: Vec::new(),
-            security: SecurityContext::default(),
         };
         store.create_user(&SecurityContext::default(), &alice).await.unwrap();
 

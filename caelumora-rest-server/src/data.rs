@@ -35,7 +35,6 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 username: username.to_string(),
                 email: format!("{}@example.com", username),
                 roles: vec!["user".to_string()],
-                security: SecurityContext::default(),
             };
         store.create_user(&ctx, &user).await?;
     }

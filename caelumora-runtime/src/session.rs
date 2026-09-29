@@ -803,7 +803,7 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::session::Participant;
         use caelumora_model::user::{User, UserId};
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (owner, other) = (user("owner"), user("other"));
         let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
         let mut session = make_session("with-users");
@@ -941,7 +941,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
 
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
@@ -974,7 +974,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime.clone());
 
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob) = (user("alice"), user("bob"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
@@ -1160,7 +1160,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), security: Default::default() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let (alice_id, bob_id, carol_id) = (ActorId::User(alice.id), ActorId::User(bob.id), ActorId::User(carol.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());

@@ -402,7 +402,6 @@ async fn main() -> anyhow::Result<()> {
             username: "user".to_string(),
             email: "user@example.com".to_string(),
             roles: vec!["user".to_string()],
-            security: SecurityContext::default(),
         }).await?;
     }
     let context = SessionContext {

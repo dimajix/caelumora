@@ -98,7 +98,7 @@ mod tests {
             security_attributes: Default::default(),
             reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
         };
-        let agent = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, SecurityContext::default());
+        let agent = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, caelumora_model::actor::ActorId::None);
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.create_agent(&ctx, &agent).await.unwrap();

@@ -391,7 +391,6 @@ mod tests {
             username: "user1".to_string(),
             email: "user1@example.com".to_string(),
             roles: vec![],
-            security: caelumora_model::security::SecurityContext::default(),
         };
 
         let approver = Approver {
@@ -533,7 +532,6 @@ mod tests {
             username: "user1".to_string(),
             email: "user1@example.com".to_string(),
             roles: vec![],
-            security: caelumora_model::security::SecurityContext::default(),
         };
         store.create_user(&caelumora_model::security::SecurityContext::default(), &user1).await.unwrap();
 
@@ -607,8 +605,8 @@ mod tests {
         let user1_id = UserId(Uuid::new_v4());
         let user2_id = UserId(Uuid::new_v4());
 
-        let user1 = User { id: user1_id, username: "u1".to_string(), email: "".to_string(), roles: vec![], security: Default::default() };
-        let user2 = User { id: user2_id, username: "u2".to_string(), email: "".to_string(), roles: vec![], security: Default::default() };
+        let user1 = User { id: user1_id, username: "u1".to_string(), email: "".to_string(), roles: vec![] };
+        let user2 = User { id: user2_id, username: "u2".to_string(), email: "".to_string(), roles: vec![] };
 
         let channel = Channel {
             id: channel_id,
@@ -685,7 +683,7 @@ mod tests {
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();
         let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::All };
-        let user = User { id: UserId(Uuid::new_v4()), username: "u1".to_string(), email: "".to_string(), roles: vec![], security: Default::default() };
+        let user = User { id: UserId(Uuid::new_v4()), username: "u1".to_string(), email: "".to_string(), roles: vec![] };
         let channel = Channel {
             id: channel_id,
             session_id,

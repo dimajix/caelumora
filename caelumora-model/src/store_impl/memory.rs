@@ -547,7 +547,7 @@ mod tests {
         let store = MemoryStore::new();
         let ctx = SecurityContext::default();
         let personality = make_personality("assistant", Scope::GlobalScope);
-        let agent = Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality, SecurityContext::default());
+        let agent = Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality, crate::actor::ActorId::None);
 
         store.create_agent(&ctx, &agent).await.unwrap();
         let conflict = store.create_agent(&ctx, &agent).await.unwrap_err();

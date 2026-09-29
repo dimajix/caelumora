@@ -129,7 +129,7 @@ pub mod tests {
     #[tokio::test]
     async fn get_or_create_agent_returns_existing_agent() {
         let personality = personality_template();
-        let existing = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, SecurityContext::default());
+        let existing = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, crate::actor::ActorId::None);
 
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
