@@ -96,10 +96,10 @@ impl ChannelRuntime {
 /// What an actor runs with (issue 69): the services every actor needs, and
 /// access to what concerns this actor alone - its controller, its state, its
 /// events, a narrow view of its channel. It is made for one actor
-/// (`ChannelRuntime::new_actor_runtime`) and hands out nothing about others,
-/// so it can be given to the actor's components (`ComponentContext`) without
-/// letting them read around the confidentiality rules: other channels are
-/// read through `session_reader()`, which enforces them. The full channel and
+/// (`ChannelRuntime::new_actor_runtime`) and hands out nothing about others.
+/// It is the actor's alone: its components get only what they need of it
+/// (`ComponentContext`, issue 128), such as `session_reader()`, which reads
+/// the other channels as the confidentiality rules allow. The full channel and
 /// session are `pub(crate)`, for the user's commands and the reader.
 #[derive(Debug, Clone)]
 pub struct ActorRuntime {
@@ -272,7 +272,7 @@ impl RuntimeManager {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
         // Commands run outside of any channel: they read none.
-        let context = ComponentContext::new(security, self.secret_manager(), None);
+        let context = ComponentContext::new(security, self.secret_manager(), crate::session_reader::detached());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.

@@ -152,7 +152,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
-            let component = Arc::new(PrivateNotesComponent { reader: context.session_reader() });
+            let component = Arc::new(PrivateNotesComponent { reader: context.session_reader.clone() });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);

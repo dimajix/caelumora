@@ -1,6 +1,6 @@
 # 128 — Components reach the whole ActorRuntime, including what only the actor may do
 
-**Status:** open
+**Status:** done
 **Area:** Open architecture questions
 
 ## The problem
@@ -63,3 +63,13 @@ actor's state or act as its actor outside of the `Turn` it is called with.
   [107](107-public-interface.md): the `pub(crate)` pass left
   `ActorRuntime` alone, because narrowing it is a question of what
   components may do, not of visibility.
+- **2026-09-29** — Done, with a variant of (b): `ComponentContext` holds no
+  runtime at all, only `session_reader: Arc<dyn SessionReader>`, a public
+  field like `security_context` and `secret_manager`. `AgentActor` passes
+  `ActorRuntime::session_reader()`, components of no actor
+  `session_reader::detached()`; the `Option` and its fallback are gone.
+  What a component is given is then exactly what the struct holds - a new
+  need gets its own narrow handle, as reading other channels did. (a) was
+  not enough: every component lives in the runtime crate, so `pub(crate)`
+  would have kept none of them out. (c) would have been this with an extra
+  type around one field.

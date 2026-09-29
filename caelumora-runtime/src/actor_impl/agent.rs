@@ -102,9 +102,9 @@ impl AgentActor {
         let components = ComponentContainer::from_config(
             &personality.components,
             &actor_runtime.component_registry(),
-            // Its components get the agent's runtime, and read the session's
-            // other channels through it (issues 17, 69).
-            &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager(), Some(actor_runtime.clone())),
+            // Its components read the session's other channels as the agent
+            // (issue 17), but get nothing else of its runtime (issue 128).
+            &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager(), actor_runtime.session_reader()),
         )
         .await?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
