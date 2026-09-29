@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{ChannelMemberResponse, ChannelResponse, GlobalSnapshot, ParticipantResponse, SessionSnapshot, StreamOptions};
+use crate::models::{ChannelMemberResponse, ChannelResponse, GlobalSnapshot, ParticipantKind, ParticipantResponse, SessionSnapshot, StreamOptions};
 use crate::state::AppState;
 use axum::{
     extract::{Query, State},
@@ -48,7 +48,7 @@ pub async fn global_events(
 /// events refer to them by id alone. A running session is described by its
 /// live channels, a stopped one by what the store holds.
 async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> GlobalSnapshot {
-    let sessions = match state.entity_store.list_sessions(&user.security_context()).await {
+    let sessions = match state.runtime_manager.entity_store().list_sessions(&user.security_context()).await {
         Ok(sessions) => sessions,
         Err(e) => {
             tracing::error!("Cannot assemble the snapshot of the global event stream: {}", e);
@@ -87,8 +87,8 @@ pub(crate) async fn describe_session(state: &AppState, session: Session, viewer:
             // viewer may read.
             let mut channels = Vec::new();
             for id in &session.channels {
-                if let Ok(channel) = state.entity_store.get_channel(viewer, *id).await {
-                    channels.push(stored_channel_response(state.entity_store.as_ref(), &channel).await);
+                if let Ok(channel) = state.runtime_manager.entity_store().get_channel(viewer, *id).await {
+                    channels.push(stored_channel_response(state.runtime_manager.entity_store().as_ref(), &channel).await);
                 }
             }
             session_snapshot(state, session, channels).await
@@ -104,13 +104,12 @@ async fn snapshot_event(state: &Arc<AppState>, user: &AuthenticatedUser) -> Even
 async fn session_snapshot(state: &AppState, session: Session, channels: Vec<ChannelResponse>) -> SessionSnapshot {
     let mut participants = Vec::new();
     for participant in &session.participants {
-        let (id, name, kind) = describe_participant(state.entity_store.as_ref(), participant).await;
-        participants.push(ParticipantResponse { id, name: name.unwrap_or_else(|| UNKNOWN.to_string()), kind: kind.to_string() });
+        let (id, name, kind) = describe_participant(state.runtime_manager.entity_store().as_ref(), participant).await;
+        participants.push(ParticipantResponse { id, name: name.unwrap_or_else(|| UNKNOWN.to_string()), kind });
     }
     SessionSnapshot {
         id: session.id,
-        name: session.metadata.name.clone(),
-        metadata: session.metadata,
+        name: session.metadata.name,
         channels,
         participants,
     }
@@ -124,12 +123,12 @@ const UNKNOWN: &str = "(unknown)";
 /// a name known to everybody in it - it stands at every message - even
 /// where the record itself is not theirs to read (issue 120). `None` for a
 /// user or agent that no longer exists.
-async fn describe_participant(store: &dyn EntityStore, participant: &Participant) -> (ActorId, Option<String>, &'static str) {
+async fn describe_participant(store: &dyn EntityStore, participant: &Participant) -> (ActorId, Option<String>, ParticipantKind) {
     let system = SecurityContext::system();
     match participant {
-        Participant::User(id) => (ActorId::User(*id), store.get_user(&system, *id).await.ok().map(|u| u.username), "user"),
-        Participant::Agent(id) => (ActorId::Agent(*id), store.get_agent(&system, *id).await.ok().map(|a| a.metadata.name), "agent"),
-        Participant::Approver(a) => (ActorId::Approver(a.id), Some("Approver".to_string()), "approver"),
+        Participant::User(id) => (ActorId::User(*id), store.get_user(&system, *id).await.ok().map(|u| u.username), ParticipantKind::User),
+        Participant::Agent(id) => (ActorId::Agent(*id), store.get_agent(&system, *id).await.ok().map(|a| a.metadata.name), ParticipantKind::Agent),
+        Participant::Approver(a) => (ActorId::Approver(a.id), Some("Approver".to_string()), ParticipantKind::Approver),
     }
 }
 
@@ -139,10 +138,10 @@ async fn stored_channel_response(store: &dyn EntityStore, channel: &Channel) -> 
     let mut members = Vec::new();
     for participant in &channel.participants {
         let (id, name, kind) = describe_participant(store, participant).await;
-        let handle = name.as_deref().map(handle_of).filter(|h| !h.is_empty() && kind != "approver");
+        let handle = name.as_deref().map(handle_of).filter(|h| !h.is_empty() && kind != ParticipantKind::Approver);
         // Not running: there is no actor to ask; opening the channel starts
         // it, and its own snapshot says.
-        members.push(ChannelMemberResponse { id, name: name.unwrap_or_else(|| UNKNOWN.to_string()), handle, kind: kind.to_string(), can_read_context: false });
+        members.push(ChannelMemberResponse { id, name: name.unwrap_or_else(|| UNKNOWN.to_string()), handle, kind, can_read_context: false });
     }
 
     ChannelResponse { id: channel.id, name: channel.name.clone(), members, moderator: channel.moderator.clone(), confidentiality: channel.confidentiality, can_change: false }
@@ -186,8 +185,8 @@ mod tests {
         assert_eq!(response.name, "main");
         let alice = response.members.iter().find(|m| m.name == "Alice Example").expect("the user is a member");
         assert_eq!(alice.handle.as_deref(), Some("alice-example"), "mentionable like in a running channel");
-        assert_eq!(alice.kind, "user");
-        let approver = response.members.iter().find(|m| m.kind == "approver").expect("the approver is a member");
+        assert_eq!(alice.kind, ParticipantKind::User);
+        let approver = response.members.iter().find(|m| m.kind == ParticipantKind::Approver).expect("the approver is a member");
         assert!(approver.handle.is_none(), "an approver cannot be mentioned");
         let gone = response.members.iter().find(|m| m.id == ActorId::User(gone)).expect("a deleted user is still listed");
         assert_eq!(gone.name, UNKNOWN);

@@ -132,7 +132,7 @@ against it, and what came out of the last attempt.
 | [102](102-rest-channel-lookup.md) | open | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
 | [103](103-rest-error-mappers.md) | open | Six REST functions map runtime errors to problem details with the same pattern. |
 | [104](104-sse-stream-and-subscribe.md) | open | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
-| [106](106-rest-small-findings.md) | open | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
+| [106](106-rest-small-findings.md) | done | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
 
 ## Context and knowledge
 

@@ -330,7 +330,6 @@ dependencies = [
  "caelumora-runtime",
  "chrono",
  "clap",
- "dashmap",
  "futures",
  "jsonwebtoken",
  "rand 0.10.3",
@@ -341,7 +340,6 @@ dependencies = [
  "tower",
  "tower-http 0.7.1",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

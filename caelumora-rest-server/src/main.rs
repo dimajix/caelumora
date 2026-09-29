@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let runtime_manager = Arc::new(RuntimeManager::new(
-        state_store.clone(),
+        state_store,
         entity_store.clone(),
         secret_manager.clone(),
         security_manager.clone(),
@@ -71,8 +71,6 @@ async fn main() -> anyhow::Result<()> {
         auth,
         runtime_manager,
         session_manager,
-        entity_store,
-        state_store,
     });
 
     // One span per request. `request_id` is filled in by `error::request_id`,
@@ -93,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    let listener = tokio::net::TcpListener::bind(config.server.address).await?;
     tracing::info!(
         "Caelumora REST server listening on {}",
         listener.local_addr()?

@@ -1,6 +1,6 @@
 # 106 — Small findings in the REST server
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -55,3 +55,30 @@ The list is worked through; deliberate keeps are noted here.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 5.1.4, 5.2.4, 5.2.5, 5.5).
+- **2026-09-29** — Worked through:
+  - `SessionResponse` is `{id, name}`, made by `From<&Session>`, and the
+    dead "prefer the running session" branch of `list_sessions` is gone;
+    `SessionSnapshot` lost its `metadata` too, which the web UI never read.
+  - `AppState` is `{auth, runtime_manager, session_manager}`; the handlers
+    get the store from the `RuntimeManager`.
+  - `GET /templates` answers `TemplateResponse {id, name, description}`
+    through `crate::error::Json`; the web UI reads the flat fields.
+  - `kind` is `ParticipantKind` (`user`/`agent`/`approver`, the same JSON),
+    for channel members derived from the `ActorId` instead of the actor's
+    kind string; the web UI types it as a union.
+  - One lookup of an actor by the UUID in a path (`actor_in`).
+  - `session_cookies` returns the expiry with the cookies; `kid` is
+    `key_id`, documented as the secret's name; `/auth/me` for a user no
+    provider knows clears the cookie, like a renewal; the cookie
+    `HeaderValue` is built without `expect` - a failure is logged, and
+    clearing cookies goes through one `clear_session`.
+  - The stale docs are fixed (`GlobalSnapshot`, `user_actor_of`,
+    `KnowledgeRefResponse.source` with `"memory"`).
+  - The bind address is `AppConfig::server.address`, default
+    `127.0.0.1:3000` (commented in `examples/config.yaml`). Kept on
+    purpose: the web UI's Vite proxy points at port 3000, the default.
+  - `dashmap` and `tracing-subscriber` are gone from the crate.
+  - Beyond the list: `ApiError::status`, which only tests use, is
+    `#[cfg(test)]` - the crate builds without warnings.
+  Checked against a running server: login, templates, creating and
+  listing sessions, a session's participants and members.

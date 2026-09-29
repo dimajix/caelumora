@@ -33,6 +33,11 @@ users:
   providers:
     - type: accept_any
 
+# Where the REST server listens. Default: 127.0.0.1:3000 - this machine
+# only, which `accept_any` above requires.
+#server:
+#  address: "127.0.0.1:3000"
+
 # Log format and destination; what is logged is selected with RUST_LOG.
 # Defaults: text, to stderr (REST server) or local/tui.log (TUI).
 #logging:

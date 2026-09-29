@@ -23,13 +23,16 @@ export interface SessionResponse {
 /** Serialized `ActorId`: `"None"` or an object like `{ "Agent": "<uuid>" }`. */
 export type ActorId = string | Record<string, string>;
 
+/** What kind of participant an actor is. */
+export type ParticipantKind = 'user' | 'agent' | 'approver';
+
 /** A participant of a channel. */
 export interface ChannelMember {
   id: ActorId;
   name: string;
   /** The handle it is `@`-mentioned by, or null if it cannot be mentioned. */
   handle: string | null;
-  kind: string;
+  kind: ParticipantKind;
   /** Whether you may see what this participant saw when it wrote a message (issue 41). */
   can_read_context: boolean;
 }
@@ -120,8 +123,7 @@ export interface SessionSnapshot {
 export interface SessionParticipant {
   id: ActorId;
   name: string;
-  /** `user`, `agent` or `approver`. */
-  kind: string;
+  kind: ParticipantKind;
 }
 
 /** The state of all sessions when the global event stream connects (issue 34). */
@@ -225,12 +227,11 @@ export interface Envelope {
   security: unknown;
 }
 
+/** A session template, as `GET /templates` offers it. */
 export interface SessionTemplate {
   id: string;
-  metadata: {
-    name: string;
-    description?: string;
-  };
+  name: string;
+  description: string;
 }
 
 export interface CreateSessionRequest {

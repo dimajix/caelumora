@@ -101,6 +101,8 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, code, detail)
     }
 
+    /// The status it answers with - for tests; a handler returns the error.
+    #[cfg(test)]
     pub fn status(&self) -> StatusCode {
         self.status
     }

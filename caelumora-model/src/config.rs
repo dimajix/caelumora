@@ -151,6 +151,21 @@ impl Default for AuthConfig {
     }
 }
 
+/// Where the REST server listens (issue 106).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServerConfig {
+    /// Address and port, `127.0.0.1:3000` unless configured: reachable from
+    /// this machine only, as long as `accept_any` may be enabled.
+    pub address: std::net::SocketAddr,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self { address: std::net::SocketAddr::from(([127, 0, 0, 1], 3000)) }
+    }
+}
+
 /// Format of log output.
 #[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -196,6 +211,8 @@ pub struct AppConfig {
     /// the entity store at startup (issue 105, see `examples/seed.yaml`).
     /// None unless configured.
     pub seed: Vec<PathBuf>,
+    /// Where the REST server listens.
+    pub server: ServerConfig,
 }
 
 // Not derived: the commands default to the built-in ones, not to none.
@@ -210,6 +227,7 @@ impl Default for AppConfig {
             commands: default_commands(),
             security: SecurityConfig::default(),
             seed: Vec::new(),
+            server: ServerConfig::default(),
         }
     }
 }
@@ -479,6 +497,14 @@ users:
 
         let config = AppConfig::from_yaml("commands:\n  component_nodes: []\n").unwrap();
         assert!(config.commands.component_nodes.is_empty(), "an explicit empty list means no global commands");
+    }
+
+    #[test]
+    fn the_server_listens_on_this_machine_unless_configured() {
+        assert_eq!(AppConfig::default().server.address.to_string(), "127.0.0.1:3000");
+        let config = AppConfig::from_yaml("server:\n  address: \"0.0.0.0:8080\"\n").unwrap();
+        assert_eq!(config.server.address.to_string(), "0.0.0.0:8080");
+        assert!(AppConfig::from_yaml("server:\n  address: nowhere\n").is_err(), "an address that is none");
     }
 
     #[test]

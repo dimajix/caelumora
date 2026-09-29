@@ -28,39 +28,17 @@ pub async fn create_session(
             }
         })?;
 
-    let meta = session_loop.get_session().metadata.clone();
-    Ok(Json(SessionResponse {
-        id: session_loop.id(),
-        name: meta.name.clone(),
-        metadata: meta,
-    }))
+    Ok(Json(SessionResponse::from(&**session_loop.get_session())))
 }
 
 pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
     let ctx = user.security_context();
-    let sessions = state.entity_store.list_sessions(&ctx).await
+    let sessions = state.runtime_manager.entity_store().list_sessions(&ctx).await
         .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
 
-    let response = sessions
-        .into_iter()
-        .map(|s| {
-            // If the session is running, get the latest metadata from the session loop
-            let (id, name, metadata) = if let Some(session_loop) = state.session_manager.get_session(s.id) {
-                let meta = session_loop.get_session().metadata.clone();
-                (session_loop.id(), meta.name.clone(), meta)
-            } else {
-                (s.id, s.metadata.name.clone(), s.metadata)
-            };
-
-            SessionResponse {
-                id,
-                name,
-                metadata,
-            }
-        })
-        .collect();
-
-    Ok(Json(response))
+    // A running session changes nothing it has not stored first: the store
+    // says what it is.
+    Ok(Json(sessions.iter().map(SessionResponse::from).collect()))
 }
 
 /// One session with its channels, in the form the global snapshot uses - so
@@ -72,7 +50,7 @@ pub async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session = state.entity_store.get_session(&user.security_context(), session_id).await
+    let session = state.runtime_manager.entity_store().get_session(&user.security_context(), session_id).await
         .map_err(|e| {
             let error = anyhow::Error::new(e);
             if caelumora_runtime::error::is_not_found(&error, "session") {
@@ -108,10 +86,5 @@ pub async fn rename_session(
     session_loop.update_name(&user.security_context(), payload.name).await
         .map_err(|e| crate::routes::session_error(e, session_id, "rename", "renaming"))?;
 
-    let meta =  session_loop.get_session().metadata.clone();
-    Ok(Json(SessionResponse {
-        id: session_id,
-        name: meta.name.clone(),
-        metadata: meta,
-    }))
+    Ok(Json(SessionResponse::from(&**session_loop.get_session())))
 }

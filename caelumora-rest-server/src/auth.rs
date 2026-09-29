@@ -65,7 +65,10 @@ pub struct TokenService {
     encoding: EncodingKey,
     decoding: DecodingKey,
     validation: Validation,
-    kid: String,
+    /// The token's `kid`: the *name* of the secret that holds the signing
+    /// key (`AuthConfig::jwt_secret`), never the key - so that pointing the
+    /// configuration at another secret invalidates the old tokens.
+    key_id: String,
     lifetime: i64,
     max_session: i64,
     secure_cookie: bool,
@@ -88,7 +91,7 @@ impl TokenService {
             encoding: EncodingKey::from_secret(key),
             decoding: DecodingKey::from_secret(key),
             validation,
-            kid: config.jwt_secret.clone(),
+            key_id: config.jwt_secret.clone(),
             lifetime: config.token_lifetime_secs as i64,
             max_session: config.max_session_secs as i64,
             secure_cookie: config.secure_cookie,
@@ -110,14 +113,14 @@ impl TokenService {
             auth_time,
         };
         let mut header = Header::new(Algorithm::HS256);
-        header.kid = Some(self.kid.clone());
+        header.kid = Some(self.key_id.clone());
         Ok(jsonwebtoken::encode(&header, &claims, &self.encoding)?)
     }
 
     /// Returns the claims of a valid, unexpired token signed with our key.
     fn verify(&self, token: &str) -> Option<Claims> {
         match jsonwebtoken::decode::<Claims>(token, &self.decoding, &self.validation) {
-            Ok(data) if data.header.kid.as_deref() == Some(self.kid.as_str()) => Some(data.claims),
+            Ok(data) if data.header.kid.as_deref() == Some(self.key_id.as_str()) => Some(data.claims),
             Ok(_) => None,
             Err(e) => {
                 tracing::debug!("Rejected session token: {}", e);
@@ -132,32 +135,34 @@ impl TokenService {
         now - claims.iat >= self.lifetime / 2 && claims.auth_time + self.max_session > now
     }
 
-    fn cookie(&self, name: &str, value: &str, max_age: i64, http_only: bool) -> HeaderValue {
+    /// A `Set-Cookie` value. The values are a JWT (base64url and dots), a
+    /// timestamp or nothing and the names constants, so this fails only if
+    /// that stops being true.
+    fn cookie(&self, name: &str, value: &str, max_age: i64, http_only: bool) -> anyhow::Result<HeaderValue> {
         let secure = if self.secure_cookie { "; Secure" } else { "" };
         let http_only = if http_only { "; HttpOnly" } else { "" };
         let cookie = format!("{name}={value}{http_only}; SameSite=Strict; Path=/; Max-Age={max_age}{secure}");
-        // The only values are a JWT (base64url and dots), a timestamp or
-        // nothing, and the names are constants: all visible ASCII.
-        HeaderValue::from_str(&cookie).expect("a token and a timestamp are valid header values")
+        HeaderValue::from_str(&cookie).map_err(|_| anyhow::anyhow!("cookie {name} is no valid header value"))
     }
 
-    /// The pair of cookies that carries a session: the token itself, and its
-    /// expiry for the UI to read.
-    fn session_cookies(&self, user: UserId, auth_time: i64, now: i64) -> anyhow::Result<[HeaderValue; 2]> {
+    /// The pair of cookies that carries a session - the token itself, and
+    /// its expiry for the UI to read - and that expiry.
+    fn session_cookies(&self, user: UserId, auth_time: i64, now: i64) -> anyhow::Result<([HeaderValue; 2], i64)> {
         let token = self.issue(user, auth_time, now)?;
         let expires_at = self.expires_at(auth_time, now);
         let max_age = expires_at - now;
-        Ok([
-            self.cookie(SESSION_COOKIE, &token, max_age, true),
-            self.cookie(SESSION_EXPIRES_COOKIE, &expires_at.to_string(), max_age, false),
-        ])
+        let cookies = [
+            self.cookie(SESSION_COOKIE, &token, max_age, true)?,
+            self.cookie(SESSION_EXPIRES_COOKIE, &expires_at.to_string(), max_age, false)?,
+        ];
+        Ok((cookies, expires_at))
     }
 
-    fn clear_cookies(&self) -> [HeaderValue; 2] {
-        [
-            self.cookie(SESSION_COOKIE, "", 0, true),
-            self.cookie(SESSION_EXPIRES_COOKIE, "", 0, false),
-        ]
+    fn clear_cookies(&self) -> anyhow::Result<[HeaderValue; 2]> {
+        Ok([
+            self.cookie(SESSION_COOKIE, "", 0, true)?,
+            self.cookie(SESSION_EXPIRES_COOKIE, "", 0, false)?,
+        ])
     }
 
     /// How long a freshly issued token is valid, in seconds.
@@ -223,9 +228,17 @@ fn not_logged_in() -> ApiError {
 fn unauthorized(auth: &Auth, had_cookie: bool) -> Response {
     let mut response = not_logged_in().into_response();
     if had_cookie {
-        set_cookies(&mut response, auth.tokens.clear_cookies());
+        clear_session(auth, &mut response);
     }
     response
+}
+
+/// Lets `response` delete the session cookies.
+fn clear_session(auth: &Auth, response: &mut Response) {
+    match auth.tokens.clear_cookies() {
+        Ok(cookies) => set_cookies(response, cookies),
+        Err(e) => tracing::error!("Cannot clear the session cookies: {}", e),
+    }
 }
 
 fn set_cookies(response: &mut Response, cookies: [HeaderValue; 2]) {
@@ -265,8 +278,8 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
     let renewed = if renew && auth.tokens.needs_renewal(&claims, now) {
         match auth.users.get_user(user).await {
             Ok(Some(_)) => match auth.tokens.session_cookies(user, claims.auth_time, now) {
-                Ok(cookies) => {
-                    expires_at = auth.tokens.expires_at(claims.auth_time, now);
+                Ok((cookies, renewed_until)) => {
+                    expires_at = renewed_until;
                     Some(cookies)
                 }
                 Err(e) => {
@@ -318,7 +331,7 @@ async fn login(State(auth): State<Arc<Auth>>, Json(request): Json<LoginRequest>)
         Ok(user) => {
             let now = Utc::now().timestamp();
             match auth.tokens.session_cookies(user.id, now, now) {
-                Ok(cookies) => {
+                Ok((cookies, _)) => {
                     let body = Json(UserResponse {
                         id: user.id,
                         username: user.username,
@@ -347,7 +360,7 @@ async fn login(State(auth): State<Arc<Auth>>, Json(request): Json<LoginRequest>)
 /// the module documentation.
 async fn logout(State(auth): State<Arc<Auth>>) -> Response {
     let mut response = StatusCode::NO_CONTENT.into_response();
-    set_cookies(&mut response, auth.tokens.clear_cookies());
+    clear_session(&auth, &mut response);
     response
 }
 
@@ -362,15 +375,17 @@ async fn refresh(_user: AuthenticatedUser) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-async fn me(State(auth): State<Arc<Auth>>, user: AuthenticatedUser) -> Result<Json<UserResponse>, ApiError> {
+async fn me(State(auth): State<Arc<Auth>>, user: AuthenticatedUser) -> Response {
     match auth.users.get_user(user.id).await {
-        Ok(Some(u)) => Ok(Json(UserResponse {
+        Ok(Some(u)) => Json(UserResponse {
             id: u.id,
             username: u.username,
             token_lifetime_secs: auth.tokens.lifetime_secs(),
-        })),
-        Ok(None) => Err(not_logged_in()),
-        Err(_) => Err(ApiError::unavailable("user_provider_unavailable", "The user directory is not available")),
+        }).into_response(),
+        // As when a renewal finds the user gone: the session ends, and so
+        // does its cookie.
+        Ok(None) => unauthorized(&auth, true),
+        Err(_) => ApiError::unavailable("user_provider_unavailable", "The user directory is not available").into_response(),
     }
 }
 
@@ -491,7 +506,7 @@ mod tests {
     #[test]
     fn the_token_cookie_is_http_only_and_the_expiry_cookie_is_readable() {
         let now = Utc::now().timestamp();
-        let [token, expires] = tokens().session_cookies(UserId::new(), now, now).unwrap();
+        let ([token, expires], expires_at) = tokens().session_cookies(UserId::new(), now, now).unwrap();
         let token = token.to_str().unwrap();
         let expires = expires.to_str().unwrap();
 
@@ -504,6 +519,7 @@ mod tests {
         }
         let value: i64 = expires[SESSION_EXPIRES_COOKIE.len() + 1..].split(';').next().unwrap().parse().unwrap();
         assert_eq!(value, now + 600, "the expiry cookie holds when the token expires");
+        assert_eq!(expires_at, value, "and says the same as the returned expiry");
     }
 
     #[tokio::test]
@@ -561,6 +577,18 @@ mod tests {
         let response = app.oneshot(get_with_cookie("/auth/me", "not-a-jwt")).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(cookie_value(&response).as_deref(), Some(""), "an invalid cookie is cleared");
+    }
+
+    #[tokio::test]
+    async fn me_for_a_user_no_provider_knows_ends_the_session() {
+        let auth = auth(accept_any());
+        let now = Utc::now().timestamp();
+        // A fresh token, so that no renewal asks about the user first.
+        let token = auth.tokens.issue(UserId::new(), now, now).unwrap();
+
+        let response = router(auth).oneshot(get_with_cookie("/auth/me", &token)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(cookie_value(&response).as_deref(), Some(""), "the cookie of an ended session is cleared");
     }
 
     #[tokio::test]

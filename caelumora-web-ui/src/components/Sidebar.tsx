@@ -167,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         reportError('Cannot create a session', 'no session template is available');
         return;
       }
-      const name = `New ${template.metadata.name}`;
+      const name = `New ${template.name}`;
       const newSession = await api.createSession(template.id, name);
       saveLastTemplate(template.id);
       setLastTemplateId(template.id);
@@ -252,19 +252,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onChange={(e) => setSelectedTemplateId(e.target.value)}
             disabled={templates.length === 0}
             className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-sm"
-            title={selectedTemplate?.metadata.description || 'Template of a new session'}
+            title={selectedTemplate?.description || 'Template of a new session'}
             aria-label="Template of a new session"
           >
             {templates.map(template => (
               <option
                 key={template.id}
                 value={template.id}
-                title={template.metadata.description}
+                title={template.description}
                 // The one used last, in bold - where the browser styles
                 // options at all (not on macOS).
                 style={{fontWeight: template.id === lastTemplateId ? 'bold' : 'normal'}}
               >
-                {template.metadata.name}
+                {template.name}
               </option>
             ))}
           </select>
@@ -272,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={handleCreateSession}
             disabled={!selectedTemplate}
             className="p-1 hover:bg-gray-800 rounded-md transition-colors disabled:opacity-50"
-            title={selectedTemplate ? `New ${selectedTemplate.metadata.name}` : 'New Session'}
+            title={selectedTemplate ? `New ${selectedTemplate.name}` : 'New Session'}
           >
             <Plus size={20} />
           </button>

@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, ChannelMemberResponse, ParticipantKind, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -119,11 +119,13 @@ pub async fn channel_response(state: &AppState, channel: &ChannelLoop, viewer: &
     let security = state.runtime_manager.security_manager();
     let mut members = Vec::new();
     for member in channel.members() {
+        // Every member is a user, an agent or an approver.
+        let Some(kind) = ParticipantKind::of(member.id) else { continue };
         let can_read_context = match channel.actor_by_id(member.id) {
             Some(actor) => actor.may_read_context(viewer).await,
             None => false,
         };
-        members.push(ChannelMemberResponse { id: member.id, name: member.name, handle: member.handle, kind: member.kind, can_read_context });
+        members.push(ChannelMemberResponse { id: member.id, name: member.name, handle: member.handle, kind, can_read_context });
     }
     ChannelResponse { id: channel.id(), name: channel.name(), members, moderator: channel.moderator(), confidentiality: channel.classification().level, can_change: security.may_change_channel(viewer, &channel.security_attributes()).await }
 }
@@ -291,7 +293,7 @@ pub async fn remove_participant(
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
     let channel = channel_of(&state, &session, ChannelId(cid), &context).await?;
-    let participant = channel.members().into_iter().map(|m| m.id).find(|m| m.id() == aid)
+    let participant = actor_in(&channel, aid)
         .ok_or_else(|| ApiError::not_found("participant_not_found", format!("{} takes no part in channel {}", aid, cid)))?;
     channel.remove_participant(&context, participant).await
         .map_err(|e| participant_error(e, session_id, "remove participants from", "removing a participant from"))?;
@@ -333,12 +335,16 @@ pub async fn send_message(
     Ok(StatusCode::OK)
 }
 
+/// The actor of `channel` whose id is `id`, whatever kind it is - a path
+/// names an actor by its UUID alone.
+fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
+    channel.actor_ids().into_iter().find(|actor| actor.id() == id)
+}
+
 /// The actor the authenticated user acts through in `channel` (issue 30).
 ///
 /// Whoever writes or approves does so in their own name, so someone who is
-/// not a participant of the channel has no actor here and is refused. Until
-/// participants can be added to a running channel ([46](issues/46-channel-participants.md)),
-/// that means the participants a channel was created with.
+/// not a participant of the channel has no actor here and is refused.
 fn user_actor_of(channel: &ChannelLoop, user: &AuthenticatedUser) -> Result<Arc<UserActor>, ApiError> {
     channel.user_actor(user.id).ok_or_else(|| {
         ApiError::forbidden("not_a_participant", format!("You are not a participant of channel {}", channel.id()))
@@ -434,8 +440,7 @@ pub async fn message_context(
 ) -> Result<Json<MessageContextResponse>, ApiError> {
     let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
     let channel = channel_of(&state, &session, ChannelId(cid), &user.security_context()).await?;
-    let actor = channel.actor_ids().into_iter()
-        .find(|actor| actor.id() == aid)
+    let actor = actor_in(&channel, aid)
         .and_then(|actor| channel.actor_by_id(actor))
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
     let seen = actor.message_context(&user.security_context(), MessageId(mid)).await

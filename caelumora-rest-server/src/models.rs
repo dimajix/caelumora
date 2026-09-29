@@ -1,8 +1,8 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::message::Message;
-use caelumora_model::meta::Metadata;
-use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -12,11 +12,54 @@ pub struct CreateSessionRequest {
     pub name: Option<String>,
 }
 
+/// A session in a list, or as creating or renaming it answers.
 #[derive(Debug, Serialize)]
 pub struct SessionResponse {
     pub id: SessionId,
     pub name: String,
-    pub metadata: Metadata,
+}
+
+impl From<&Session> for SessionResponse {
+    fn from(session: &Session) -> Self {
+        Self { id: session.id, name: session.metadata.name.clone() }
+    }
+}
+
+/// A session template, as a client offers it for a new session - its id,
+/// name and description, not the template itself (issue 106).
+#[derive(Debug, Serialize)]
+pub struct TemplateResponse {
+    pub id: SessionTemplateId,
+    pub name: String,
+    pub description: String,
+}
+
+impl From<&SessionTemplate> for TemplateResponse {
+    fn from(template: &SessionTemplate) -> Self {
+        Self { id: template.id, name: template.metadata.name.clone(), description: template.metadata.description.clone() }
+    }
+}
+
+/// What kind of participant an actor is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticipantKind {
+    User,
+    Agent,
+    Approver,
+}
+
+impl ParticipantKind {
+    /// The kind of participant `id` is; `None` for an id that is none - the
+    /// system, nobody.
+    pub fn of(id: ActorId) -> Option<Self> {
+        match id {
+            ActorId::User(_) => Some(Self::User),
+            ActorId::Agent(_) => Some(Self::Agent),
+            ActorId::Approver(_) => Some(Self::Approver),
+            _ => None,
+        }
+    }
 }
 
 /// Whether an event stream starts with a snapshot of the current state
@@ -56,11 +99,8 @@ impl From<caelumora_runtime::session_reader::PublishedNotes> for PublishedNotesR
     }
 }
 
-/// The state of the system when a global stream connects.
-///
-/// Unfiltered for now: every user sees every session, which is issue 11. The
-/// snapshot must go through the same check as the REST endpoints once that
-/// exists.
+/// The state of the system when a global stream connects: the sessions and
+/// channels the user may read, as the REST endpoints decide it.
 #[derive(Debug, Serialize)]
 pub struct GlobalSnapshot {
     pub sessions: Vec<SessionSnapshot>,
@@ -72,7 +112,6 @@ pub struct GlobalSnapshot {
 pub struct SessionSnapshot {
     pub id: SessionId,
     pub name: String,
-    pub metadata: Metadata,
     pub channels: Vec<ChannelResponse>,
     /// Everyone who takes part in the session - whom a new channel can be
     /// made of (issue 09).
@@ -84,8 +123,7 @@ pub struct SessionSnapshot {
 pub struct ParticipantResponse {
     pub id: ActorId,
     pub name: String,
-    /// `"user"`, `"agent"` or `"approver"`.
-    pub kind: String,
+    pub kind: ParticipantKind,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,7 +179,7 @@ pub struct ChannelMemberResponse {
     pub name: String,
     /// `None` if the participant cannot be mentioned.
     pub handle: Option<String>,
-    pub kind: String,
+    pub kind: ParticipantKind,
     /// Whether the requesting user may see what this participant saw when it
     /// produced a message (issue 41) - only ever for agents, and only as the
     /// policy decides for this user.
@@ -198,7 +236,7 @@ pub struct MessageContextResponse {
 pub struct KnowledgeRefResponse {
     pub channel_id: caelumora_model::session::ChannelId,
     pub channel_name: Option<String>,
-    /// `"notes"`, `"private_notes"` or `"history"`.
+    /// `"notes"`, `"private_notes"`, `"memory"` or `"history"`.
     pub source: &'static str,
     /// Whose notes, for `"notes"` and `"private_notes"`.
     pub agent_id: Option<ActorId>,

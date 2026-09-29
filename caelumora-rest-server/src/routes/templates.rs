@@ -1,17 +1,20 @@
 use std::sync::Arc;
-use axum::{extract::State, Json};
-use caelumora_model::template::SessionTemplate;
+use axum::extract::State;
 use crate::auth::AuthenticatedUser;
-use crate::error::ApiError;
+use crate::error::{ApiError, Json};
+use crate::models::TemplateResponse;
 use crate::state::AppState;
 
-pub async fn list_templates(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionTemplate>>, ApiError> {
+/// The session templates the user may start a session from - what a client
+/// offers, not the templates themselves (issue 106).
+pub async fn list_templates(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<TemplateResponse>>, ApiError> {
     let ctx = user.security_context();
-    let mut templates = state.entity_store.list_session_templates(&ctx).await
+    let templates = state.runtime_manager.entity_store().list_session_templates(&ctx).await
         .map_err(|e| ApiError::internal("templates_unavailable", "listing the session templates", &e.into()))?;
+    let mut templates: Vec<TemplateResponse> = templates.iter().map(TemplateResponse::from).collect();
     // Sorted by name: the store lists in no particular order (the JSON store
     // in its directory's), and clients should see the same order every time
     // (issue 40).
-    templates.sort_by(|l, r| l.metadata.name.cmp(&r.metadata.name));
+    templates.sort_by(|l, r| l.name.cmp(&r.name));
     Ok(Json(templates))
 }
