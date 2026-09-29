@@ -301,7 +301,7 @@ pub async fn remove_participant(
 /// cannot be met is the client's; refusals and everything else are answered
 /// as for the session.
 fn participant_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: &str) -> ApiError {
-    use caelumora_model::channel::ChannelError;
+    use caelumora_runtime::channel::ChannelError;
     let detail = error.to_string();
     match error.downcast_ref::<ChannelError>() {
         Some(ChannelError::AlreadyParticipant { .. }) => ApiError::conflict("already_participant", detail),
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(status(CommandError::Forbidden("x".to_string())), StatusCode::FORBIDDEN);
         assert_eq!(status(CommandError::Failed { command: "x".to_string(), reason: "y".to_string() }), StatusCode::INTERNAL_SERVER_ERROR);
 
-        let refused = anyhow::Error::new(caelumora_model::channel::ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default() });
+        let refused = anyhow::Error::new(caelumora_runtime::channel::ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default() });
         assert_eq!(command_error(refused).status(), StatusCode::FORBIDDEN);
     }
 

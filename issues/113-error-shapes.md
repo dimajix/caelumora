@@ -1,6 +1,6 @@
 # 113 — "Forbidden" and "not found" have three shapes each, and `ChannelError` lives in the wrong crate
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -34,3 +34,19 @@ errors, and no error type lives in a crate that never constructs it.
 
 - **2026-09-28** — Split off from [97](97-small-model-unifications.md)
   (structure review, 3.2.8).
+- **2026-09-29** — Done for the part that had a reason: `ChannelError`
+  moved from `caelumora_model::channel` to `caelumora_runtime::channel`,
+  next to the `ChannelLoop` that raises every one of its variants and the
+  `SessionError` it sits beside in `error::user_message`; REST and the
+  tests import it from there. Not changed, deliberately:
+  - `SecretError`. Its shape differs from `StoreError` for a reason - a
+    secret is found by its name, not as an entity with an id - and the
+    argument above does not hold for it: `user_message` and
+    `is_forbidden` never see a `SecretError` (the MCP component wraps it
+    into a tool error, the REST server matches `NotFound` once at start).
+    Aligning it would be churn without a reader who profits.
+  - `TemplateError::Store` wraps a `StoreError` because instantiating a
+    template does store I/O in the model; it goes with
+    [88](88-template-instantiation-in-the-model.md), not here.
+  "Forbidden" is recognised in one place, `error::is_forbidden`, which is
+  the one that matters to callers.

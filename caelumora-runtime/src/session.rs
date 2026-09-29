@@ -1045,7 +1045,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
-        use caelumora_model::channel::{ChannelError, HistoryAccess};
+        use crate::channel::ChannelError;
+        use caelumora_model::channel::HistoryAccess;
         let runtime = test_runtime();
         let manager = SessionManager::new(runtime.clone());
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
@@ -1094,7 +1095,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removed_participant_is_gone_and_announced_but_the_approver_stays() {
-        use caelumora_model::channel::ChannelError;
+        use crate::channel::ChannelError;
         let runtime = test_runtime();
         let manager = SessionManager::new(runtime.clone());
         let (session, ctx, other) = running_session_of_a_user(&manager).await;

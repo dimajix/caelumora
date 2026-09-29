@@ -17,27 +17,6 @@ use uuid::Uuid;
 /// The moderator of a channel whose template or request names none.
 pub const DEFAULT_MODERATOR: &str = "round_robin";
 
-/// Something that may not be done in a channel.
-#[derive(Debug, thiserror::Error)]
-pub enum ChannelError {
-    /// The `SecurityManager` refused the action. Deliberately silent about
-    /// which rule refused it and about what the caller would have to be
-    /// instead - like a refused tool call (issue 15).
-    #[error("{action} channel {channel} is not permitted")]
-    Forbidden { action: &'static str, channel: ChannelId },
-    /// Only participants of the session can be added to its channels
-    /// (issue 46).
-    #[error("{participant} is not a participant of the session of channel {channel}")]
-    NotInSession { participant: ActorId, channel: ChannelId },
-    #[error("{participant} already takes part in channel {channel}")]
-    AlreadyParticipant { participant: ActorId, channel: ChannelId },
-    #[error("{participant} takes no part in channel {channel}")]
-    NotAParticipant { participant: ActorId, channel: ChannelId },
-    /// Every channel keeps its approver.
-    #[error("the approver of channel {channel} cannot be removed")]
-    ApproverStays { channel: ChannelId },
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
     NameChanged(String),

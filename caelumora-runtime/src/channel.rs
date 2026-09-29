@@ -10,7 +10,7 @@ use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemor
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::channel::{Channel, ChannelController, ChannelError, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
+use caelumora_model::channel::{Channel, ChannelController, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
@@ -46,6 +46,28 @@ struct ActorHandle {
     id: ActorId,
     abort_handle: AbortHandle,
     sender: Box<dyn EventSender>,
+}
+
+/// Something that may not be done in a channel. Raised by `ChannelLoop`;
+/// the messages are meant for users (see `crate::error::user_message`).
+#[derive(Debug, thiserror::Error)]
+pub enum ChannelError {
+    /// The `SecurityManager` refused the action. Deliberately silent about
+    /// which rule refused it and about what the caller would have to be
+    /// instead - like a refused tool call (issue 15).
+    #[error("{action} channel {channel} is not permitted")]
+    Forbidden { action: &'static str, channel: ChannelId },
+    /// Only participants of the session can be added to its channels
+    /// (issue 46).
+    #[error("{participant} is not a participant of the session of channel {channel}")]
+    NotInSession { participant: ActorId, channel: ChannelId },
+    #[error("{participant} already takes part in channel {channel}")]
+    AlreadyParticipant { participant: ActorId, channel: ChannelId },
+    #[error("{participant} takes no part in channel {channel}")]
+    NotAParticipant { participant: ActorId, channel: ChannelId },
+    /// Every channel keeps its approver.
+    #[error("the approver of channel {channel} cannot be removed")]
+    ApproverStays { channel: ChannelId },
 }
 
 /// How long a stopped actor gets to end its task by itself before it is

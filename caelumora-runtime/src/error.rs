@@ -13,7 +13,7 @@ use crate::component::ComponentError;
 use crate::llm::LLMError;
 use crate::session::SessionError;
 use crate::tool::ToolError;
-use caelumora_model::channel::ChannelError;
+use crate::channel::ChannelError;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 
