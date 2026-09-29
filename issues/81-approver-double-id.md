@@ -1,6 +1,6 @@
 # 81 — The approver issues two ids per approval, and the agent detours through `ExecutingTools` to wait
 
-**Status:** open
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -40,3 +40,17 @@ detour is a state transition with no work in it.
 
 - **2026-09-28** — Found in the structure review
   (`work/2026-09-28-code-review.md`, section 1, error 7 and path 3.4 B).
+- **2026-09-29** — Done for the ids. The approver keeps a pending approval
+  under the agent's own `ApprovalId` and passes the request on unchanged;
+  `PendingApproval` lost `original_approval_id` and `_request`, and
+  `handle_timeouts` sends through `send_decision`. What keeps users from
+  deciding for themselves is the moderator, which routes their answers to
+  the approver only (`route_approval_events`), not a second id - now said
+  at `PendingApproval`. The existing approver tests pass unchanged; the
+  first asserts that the id stays the same.
+  The second half was not done, deliberately: going from `Planning` to
+  `WaitingForApproval` directly. The step through `ExecutingTools` is empty
+  only when *every* call of the batch waits for approval; in a mixed batch
+  it runs the calls that need no approval right away while the others wait.
+  Returning `WaitingForApproval` directly would need exactly that
+  distinction as a branch, to save one empty step - not worth a second path.

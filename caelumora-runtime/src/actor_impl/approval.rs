@@ -14,16 +14,19 @@ use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+/// An approval waiting for its decision, kept under the id the agent gave
+/// it: the same id from the agent's request through the users' answers to
+/// the decision (issue 81). Users' answers reach only the approver - the
+/// moderator routes them so - which is what keeps them from deciding for
+/// themselves, not a second id.
+#[derive(Debug)]
 struct PendingApproval {
+    id: ApprovalId,
     agent_id: AgentId,
-    original_approval_id: ApprovalId,
     strategy: ApprovalStrategy,
     responses: HashMap<ActorId, ApprovalStatus>,
     timeout: DateTime<Utc>,
-    _request: ApprovalRequest,
     security_context: SecurityContext,
     event_context: EventContext,
 }
@@ -106,26 +109,20 @@ impl ApproverActor {
         }
     }
 
-    async fn handle_request(&self, mut request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &dyn EventSender) -> Result<()> {
-        let new_id = ApprovalId(Uuid::new_v4());
+    async fn handle_request(&self, request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &dyn EventSender) -> Result<()> {
         let timeout = Utc::now() + Duration::minutes(10); // Default timeout 10 mins
 
-        let original_approval_id = request.id;
-        let agent_id = request.agent_id;
-        request.id = new_id;
-
         let pending = PendingApproval {
-            agent_id,
-            original_approval_id,
+            id: request.id,
+            agent_id: request.agent_id,
             strategy: self.approver.strategy,
             responses: HashMap::new(),
             timeout,
-            _request: request.clone(),
             security_context: security.clone(),
             event_context: context.clone(),
         };
 
-        self.pending.lock().await.insert(new_id, pending);
+        self.pending.lock().await.insert(request.id, pending);
 
         let new_event = ActorEvent::ApprovalRequested(request);
         let new_context = context.next(self.id, "Approver".to_string());
@@ -229,7 +226,7 @@ impl ApproverActor {
 
     async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
         let response = ApprovalResponse {
-            id: p.original_approval_id,
+            id: p.id,
             agent_id: p.agent_id,
         };
 
@@ -249,31 +246,14 @@ impl ApproverActor {
 
     async fn handle_timeouts(&self, output: &dyn EventSender) -> Result<()> {
         let now = Utc::now();
-        let mut timed_out = Vec::new();
-
-        {
+        let timed_out: Vec<PendingApproval> = {
             let mut pending = self.pending.lock().await;
-            pending.retain(|_id, p| {
-                if p.timeout <= now {
-                    timed_out.push(p.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-        }
-
+            let ids: Vec<ApprovalId> = pending.iter().filter(|(_, p)| p.timeout <= now).map(|(id, _)| *id).collect();
+            ids.iter().filter_map(|id| pending.remove(id)).collect()
+        };
         for p in timed_out {
-            let response = ApprovalResponse {
-                id: p.original_approval_id,
-                agent_id: p.agent_id,
-            };
-            let event = ActorEvent::ApprovalTimedOut(response);
-            let context = p.event_context.next(self.id, "Approver".to_string());
-            let envelope = Envelope::new(p.security_context.next(self.id), context, event);
-            output.send(envelope).await.context("Failed to send timeout")?;
+            self.send_decision(p, ApprovalStatus::Timeout, output).await?;
         }
-
         Ok(())
     }
 }
@@ -386,6 +366,7 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
+    use uuid::Uuid;
 
     fn test_secret_manager() -> Arc<SecretManager> {
         Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())))
@@ -469,6 +450,7 @@ mod tests {
         // Should receive forward request
         let forward_env = output_rx.recv().await.unwrap();
         let new_approval_id = if let ActorEvent::ApprovalRequested(req) = forward_env.event {
+            assert_eq!(req.id, approval_id, "one id from the agent's request to the decision");
             req.id
         } else {
             panic!("Expected ToolExecutionRequested");
