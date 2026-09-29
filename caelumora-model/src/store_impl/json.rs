@@ -4,15 +4,14 @@ use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityManager;
 use crate::store_impl::access::Access;
-use crate::session::{Session, SessionId, SessionState};
+use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
@@ -51,7 +50,6 @@ impl JsonFileStore {
             self.users_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
-            self.session_states_dir(),
             self.channel_states_dir(),
             self.components_dir(),
         ];
@@ -92,10 +90,6 @@ impl JsonFileStore {
 
     fn agent_channel_states_dir(&self) -> PathBuf {
         self.root.join("runtime").join("agent_channel_state")
-    }
-
-    fn session_states_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("session_state")
     }
 
     fn channel_states_dir(&self) -> PathBuf {
@@ -144,10 +138,6 @@ impl JsonFileStore {
         self.agent_states_dir().join(format!("{id}.json"))
     }
 
-    fn session_state_path(&self, id: SessionId) -> PathBuf {
-        self.session_states_dir().join(format!("{id}.json"))
-    }
-
     fn channel_state_path(&self, id: ChannelId) -> PathBuf {
         self.channel_states_dir().join(format!("{id}.json"))
     }
@@ -156,14 +146,6 @@ impl JsonFileStore {
         self.components_dir()
             .join(format!("{}.json", sanitize_file_component(id)))
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Persisted<T> {
-    schema_version: u32,
-    persisted_at: DateTime<Utc>,
-    #[serde(flatten)]
-    value: T,
 }
 
 /// Writes `value` to `path` atomically: into a temporary file beside it,
@@ -268,7 +250,7 @@ impl EntityStore for JsonFileStore {
     async fn get_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
         let path = self.personality_path(id);
         debug!("Reading personality template from {}", path.display());
-        let loaded = read_json_opt::<Persisted<Personality>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<Personality>(&path).await?;
         self.access(ctx).read(loaded, |a| ActionType::GetPersonality(a), "agent_template", id.to_string()).await
     }
 
@@ -287,9 +269,8 @@ impl EntityStore for JsonFileStore {
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         let access = self.access(ctx);
         access.allow(ActionType::ListPersonalities).await?;
-        let all = read_all_from_dir::<Persisted<Personality>>(&self.personality_dir()).await?
+        let all = read_all_from_dir::<Personality>(&self.personality_dir()).await?
             .into_iter()
-            .map(|p| p.value)
             .collect();
         Ok(access.filter(all, |a| ActionType::GetPersonality(a)).await)
     }
@@ -309,16 +290,15 @@ impl EntityStore for JsonFileStore {
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         let access = self.access(ctx);
         access.allow(ActionType::ListSessionTemplates).await?;
-        let all = read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir()).await?
+        let all = read_all_from_dir::<SessionTemplate>(&self.session_templates_dir()).await?
             .into_iter()
-            .map(|p| p.value)
             .collect();
         Ok(access.filter(all, |a| ActionType::GetSessionTemplate(a)).await)
     }
 
     async fn put_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()> {
         let path = self.personality_path(value.id);
-        let stored = read_json_opt::<Persisted<Personality>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<Personality>(&path).await?;
         self.access(ctx).put(
             stored.as_ref(), value,
             |a| ActionType::GetPersonality(a), |a| ActionType::CreatePersonality(a), |a| ActionType::UpdatePersonality(a),
@@ -327,17 +307,13 @@ impl EntityStore for JsonFileStore {
         debug!("Writing personality template to {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
         let path = self.personality_path(id);
-        let stored = read_json_opt::<Persisted<Personality>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<Personality>(&path).await?;
         if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetPersonality(a), |a| ActionType::DeletePersonality(a)).await? {
             return Ok(false);
         }
@@ -346,7 +322,7 @@ impl EntityStore for JsonFileStore {
 
     async fn put_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
         let path = self.session_template_path(&value.metadata.name);
-        let stored = read_json_opt::<Persisted<SessionTemplate>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<SessionTemplate>(&path).await?;
         self.access(ctx).put(
             stored.as_ref(), value,
             |a| ActionType::GetSessionTemplate(a), |a| ActionType::CreateSessionTemplate(a), |a| ActionType::UpdateSessionTemplate(a),
@@ -355,18 +331,13 @@ impl EntityStore for JsonFileStore {
         debug!("Writing session template to {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        let template = read_all_from_dir::<Persisted<SessionTemplate>>(&self.session_templates_dir()).await?
+        let template = read_all_from_dir::<SessionTemplate>(&self.session_templates_dir()).await?
             .into_iter()
-            .map(|p| p.value)
             .find(|t| t.id == id);
         if !self.access(ctx).delete(template.as_ref(), |a| ActionType::GetSessionTemplate(a), |a| ActionType::DeleteSessionTemplate(a)).await? {
             return Ok(false);
@@ -387,27 +358,22 @@ impl EntityStore for JsonFileStore {
         debug!("Creating agent at {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn get_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
         let path = self.agent_path(id);
         debug!("Reading agent from {}", path.display());
-        let loaded = read_json_opt::<Persisted<Agent>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<Agent>(&path).await?;
         self.access(ctx).read(loaded, |a| ActionType::GetAgent(a), "agent", id.to_string()).await
     }
 
     async fn find_agent_by_name(&self, ctx: &SecurityContext, name: &str, scope: &Scope) -> StoreResult<Agent> {
         let access = self.access(ctx);
         access.allow(ActionType::FindAgent).await?;
-        let agents = read_all_from_dir::<Persisted<Agent>>(&self.agents_dir()).await?
+        let agents = read_all_from_dir::<Agent>(&self.agents_dir()).await?
             .into_iter()
-            .map(|p| p.value)
             .collect();
         require_entity(
             access.filter(agents, |a| ActionType::GetAgent(a)).await
@@ -420,16 +386,12 @@ impl EntityStore for JsonFileStore {
 
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
         let path = self.agent_path(value.id);
-        let stored = read_json_opt::<Persisted<Agent>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<Agent>(&path).await?;
         self.access(ctx).change(stored.as_ref(), |a| ActionType::GetAgent(a), |a| ActionType::UpdateAgent(a), "agent", value.id.to_string()).await?;
         debug!("Updating agent at {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
@@ -443,40 +405,32 @@ impl EntityStore for JsonFileStore {
         debug!("Creating session at {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn get_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         let path = self.session_path(id);
         debug!("Reading session from {}", path.display());
-        let loaded = read_json_opt::<Persisted<Session>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<Session>(&path).await?;
         self.access(ctx).read(loaded, |a| ActionType::GetSession(a), "session", id.to_string()).await
     }
 
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()> {
         let path = self.session_path(value.id);
-        let stored = read_json_opt::<Persisted<Session>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<Session>(&path).await?;
         self.access(ctx).change(stored.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::UpdateSession(a), "session", value.id.to_string()).await?;
         debug!("Updating session at {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
         // The state of the session and its channels is the `StateStore`'s,
         // which may be another store: the caller deletes it there.
-        let session = read_json_opt::<Persisted<Session>>(&self.session_path(id)).await?.map(|p| p.value);
+        let session = read_json_opt::<Session>(&self.session_path(id)).await?;
         if !self.access(ctx).delete(session.as_ref(), |a| ActionType::GetSession(a), |a| ActionType::DeleteSession(a)).await? {
             return Ok(false);
         }
@@ -489,9 +443,8 @@ impl EntityStore for JsonFileStore {
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
         let access = self.access(ctx);
         access.allow(ActionType::ListSessions).await?;
-        let sessions = read_all_from_dir::<Persisted<Session>>(&self.sessions_dir()).await?
+        let sessions = read_all_from_dir::<Session>(&self.sessions_dir()).await?
             .into_iter()
-            .map(|p| p.value)
             .collect();
         Ok(access.filter(sessions, |a| ActionType::GetSession(a)).await)
     }
@@ -504,25 +457,25 @@ impl EntityStore for JsonFileStore {
             return Err(StoreError::Conflict(format!("channel {} already exists", value.id)));
         }
         debug!("Creating channel at {}", path.display());
-        write_json_atomic(&path, &Persisted { schema_version: 1, persisted_at: Utc::now(), value }).await
+        write_json_atomic(&path, value).await
     }
 
     async fn get_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
-        let loaded = read_json_opt::<Persisted<Channel>>(&self.channel_path(id)).await?.map(|p| p.value);
+        let loaded = read_json_opt::<Channel>(&self.channel_path(id)).await?;
         self.access(ctx).read(loaded, |a| ActionType::GetChannel(a), "channel", id.to_string()).await
     }
 
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
         let path = self.channel_path(value.id);
-        let stored = read_json_opt::<Persisted<Channel>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<Channel>(&path).await?;
         self.access(ctx).change(stored.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::UpdateChannel(a), "channel", value.id.to_string()).await?;
         debug!("Updating channel at {}", path.display());
-        write_json_atomic(&path, &Persisted { schema_version: 1, persisted_at: Utc::now(), value }).await
+        write_json_atomic(&path, value).await
     }
 
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
         // Its state is the `StateStore`'s: the caller deletes it there.
-        let channel = read_json_opt::<Persisted<Channel>>(&self.channel_path(id)).await?.map(|p| p.value);
+        let channel = read_json_opt::<Channel>(&self.channel_path(id)).await?;
         if !self.access(ctx).delete(channel.as_ref(), |a| ActionType::GetChannel(a), |a| ActionType::DeleteChannel(a)).await? {
             return Ok(false);
         }
@@ -540,28 +493,23 @@ impl EntityStore for JsonFileStore {
         debug!("Creating user at {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn get_user(&self, _ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
         let path = self.user_path(id);
         debug!("Reading user from {}", path.display());
-        let loaded = read_json_opt::<Persisted<User>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<User>(&path).await?;
         require_entity(loaded, "user", id.to_string())
     }
 
     async fn find_user_by_name(&self, _ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let dir = self.users_dir();
-        let users: Vec<Persisted<User>> = read_all_from_dir(&dir).await?;
+        let users: Vec<User> = read_all_from_dir(&dir).await?;
         require_entity(
             users
                 .into_iter()
-                .map(|p| p.value)
                 .find(|t| t.username == name),
             "user",
             name.to_string(),
@@ -576,34 +524,29 @@ impl EntityStore for JsonFileStore {
         debug!("Updating user at {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn get_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<ComponentDescriptor> {
         let path = self.component_path(id);
         debug!("Reading component from {}", path.display());
-        let loaded = read_json_opt::<Persisted<ComponentDescriptor>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<ComponentDescriptor>(&path).await?;
         self.access(ctx).read(loaded, |a| ActionType::GetComponent(a), "component", id.to_string()).await
     }
 
     async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>> {
         let access = self.access(ctx);
         access.allow(ActionType::ListComponents).await?;
-        let all = read_all_from_dir::<Persisted<ComponentDescriptor>>(&self.components_dir()).await?
+        let all = read_all_from_dir::<ComponentDescriptor>(&self.components_dir()).await?
             .into_iter()
-            .map(|p| p.value)
             .collect();
         Ok(access.filter(all, |a| ActionType::GetComponent(a)).await)
     }
 
     async fn put_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()> {
         let path = self.component_path(&value.id);
-        let stored = read_json_opt::<Persisted<ComponentDescriptor>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<ComponentDescriptor>(&path).await?;
         self.access(ctx).put(
             stored.as_ref(), value,
             |a| ActionType::GetComponent(a), |a| ActionType::CreateComponent(a), |a| ActionType::UpdateComponent(a),
@@ -612,17 +555,13 @@ impl EntityStore for JsonFileStore {
         debug!("Writing component to {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value,
-            },
+            value,
         ).await
     }
 
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
         let path = self.component_path(id);
-        let stored = read_json_opt::<Persisted<ComponentDescriptor>>(&path).await?.map(|p| p.value);
+        let stored = read_json_opt::<ComponentDescriptor>(&path).await?;
         if !self.access(ctx).delete(stored.as_ref(), |a| ActionType::GetComponent(a), |a| ActionType::DeleteComponent(a)).await? {
             return Ok(false);
         }
@@ -636,7 +575,7 @@ impl StateStore for JsonFileStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Reading agent channel state from {}", path.display());
-        let loaded = read_json_opt::<Persisted<AgentChannelState>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<AgentChannelState>(&path).await?;
         Ok(loaded.unwrap_or_default())
     }
 
@@ -648,18 +587,14 @@ impl StateStore for JsonFileStore {
         }
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value: state,
-            },
+            state,
         ).await
     }
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         debug!("Reading agent state from {}", path.display());
-        let loaded = read_json_opt::<Persisted<AgentState>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<AgentState>(&path).await?;
         Ok(loaded.unwrap_or_default())
     }
 
@@ -668,38 +603,14 @@ impl StateStore for JsonFileStore {
         debug!("Writing agent state to {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value: state,
-            },
-        ).await
-    }
-
-    async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
-        let path = self.session_state_path(session_id);
-        debug!("Reading session state from {}", path.display());
-        let loaded = read_json_opt::<Persisted<SessionState>>(&path).await?.map(|p| p.value);
-        Ok(loaded.unwrap_or_default())
-    }
-
-    async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
-        let path = self.session_state_path(session_id);
-        debug!("Writing session state to {}", path.display());
-        write_json_atomic(
-            &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value: state,
-            },
+            state,
         ).await
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let path = self.channel_state_path(channel_id);
         debug!("Reading channel state from {}", path.display());
-        let loaded = read_json_opt::<Persisted<ChannelState>>(&path).await?.map(|p| p.value);
+        let loaded = read_json_opt::<ChannelState>(&path).await?;
         loaded.ok_or(StoreError::NotFound {
             entity: "channel_state",
             id: channel_id.to_string(),
@@ -711,11 +622,7 @@ impl StateStore for JsonFileStore {
         debug!("Writing channel state to {}", path.display());
         write_json_atomic(
             &path,
-            &Persisted {
-                schema_version: 1,
-                persisted_at: Utc::now(),
-                value: state,
-            },
+            state,
         ).await
     }
 
@@ -726,16 +633,12 @@ impl StateStore for JsonFileStore {
         Ok(())
     }
 
-    async fn delete_session_state(&self, session_id: SessionId) -> StoreResult<()> {
-        debug!("Deleting the state of session {}", session_id);
-        delete_if_exists(&self.session_state_path(session_id)).await?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use crate::meta::{Metadata, Scope};
     use crate::security::SecurityAttributes;
     use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
@@ -1011,8 +914,7 @@ mod tests {
         };
         store.create_session(&ctx, &session).await.unwrap();
 
-        // Write out session state and channel state so we can assert they get removed.
-        store.put_session_state(session_id, &SessionState::default()).await.unwrap();
+        // Write out channel state so we can assert it gets removed.
         let agent_id = AgentId(Uuid::new_v4());
         store
             .put_agent_channel_state(agent_id, channel_id, &AgentChannelState::default())
@@ -1020,19 +922,15 @@ mod tests {
             .unwrap();
 
         assert!(store.session_path(session_id).exists());
-        assert!(store.session_state_path(session_id).exists());
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
         assert!(store.delete_session(&ctx, session_id).await.unwrap());
         assert!(!store.session_path(session_id).exists());
-        assert!(store.session_state_path(session_id).exists(), "the state may live in another store");
 
         store.put_channel_state(channel_id, &ChannelState::new(channel_id)).await.unwrap();
         store.delete_channel_state(channel_id).await.unwrap();
-        store.delete_session_state(session_id).await.unwrap();
         assert!(!store.channel_state_path(channel_id).exists());
         assert!(!store.agent_channel_state_dir(channel_id).exists());
-        assert!(!store.session_state_path(session_id).exists());
         store.delete_channel_state(channel_id).await.expect("nothing to delete is no error");
 
         // Deleting again reports that nothing was removed.

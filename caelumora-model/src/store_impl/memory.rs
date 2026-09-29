@@ -2,7 +2,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
-use crate::session::{Session, SessionId, SessionState};
+use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use async_trait::async_trait;
@@ -23,7 +23,6 @@ pub struct MemoryStore {
     users: RwLock<HashMap<UserId, User>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
-    session_states: RwLock<HashMap<SessionId, SessionState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
     components: RwLock<HashMap<String, ComponentDescriptor>>,
 }
@@ -53,7 +52,6 @@ impl MemoryStore {
             users: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
-            session_states: Default::default(),
             channel_states: Default::default(),
             components: Default::default(),
         }
@@ -388,21 +386,6 @@ impl StateStore for MemoryStore {
         })
     }
 
-    async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState> {
-        let values = self.read_lock(&self.session_states, |v| v.clone())?;
-        require_entity(
-            values.get(&session_id).cloned(),
-            "session_state",
-            session_id.to_string(),
-        )
-    }
-
-    async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()> {
-        self.write_lock(&self.session_states, |v| {
-            v.insert(session_id, state.clone());
-        })
-    }
-
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let values = self.read_lock(&self.channel_states, |v| v.clone())?;
         require_entity(values.get(&channel_id).cloned(), "channel_state", channel_id.to_string())
@@ -423,11 +406,6 @@ impl StateStore for MemoryStore {
         })
     }
 
-    async fn delete_session_state(&self, session_id: SessionId) -> StoreResult<()> {
-        self.write_lock(&self.session_states, |v| {
-            v.remove(&session_id);
-        })
-    }
 }
 
 #[cfg(test)]

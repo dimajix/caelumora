@@ -6,7 +6,7 @@ use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::meta::Scope;
 use crate::security::SecurityContext;
-use crate::session::{Session, SessionId, SessionState};
+use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId};
 
@@ -84,18 +84,12 @@ pub trait StateStore : Debug + Sync + Send {
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
     async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()>;
 
-    async fn get_session_state(&self, session_id: SessionId) -> StoreResult<SessionState>;
-    async fn put_session_state(&self, session_id: SessionId, state: &SessionState) -> StoreResult<()>;
-
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
     async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()>;
 
     /// Deletes the state of a channel that no longer exists: its own and that
     /// of every agent in it. Nothing to delete is not an error (issue 09).
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()>;
-    /// Deletes the state of a session that no longer exists; its channels'
-    /// states are deleted with `delete_channel_state`.
-    async fn delete_session_state(&self, session_id: SessionId) -> StoreResult<()>;
 }
 
 

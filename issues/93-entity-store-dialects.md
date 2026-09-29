@@ -1,6 +1,6 @@
 # 93 — The `EntityStore` speaks three CRUD dialects
 
-**Status:** open
+**Status:** in progress
 **Area:** Persistence
 
 ## The problem
@@ -50,3 +50,16 @@ seven small inconsistencies.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.2.3 and 3.2.10).
+- **2026-09-29** — Agreed with the maintainer, in four steps: (1) remove
+  `SessionState` and the JSON store's wrapper; (2) one dialect -
+  `create/get/update/delete/list` by id for all seven kinds, no upsert,
+  session templates by id; (3) find by name only for users, whose
+  username is an identity - the other callers filter `list_x`, and the
+  `Find*` actions go; (4) one store test suite for both stores.
+- **2026-09-29** — Step 1: `SessionState` and `get/put/delete_session_state`
+  are gone from the model, both stores and the runtime. The JSON store
+  writes documents as they are; the `Persisted` wrapper with its
+  `schema_version` (never read) and `persisted_at` is gone, so
+  `read_json_opt`/`write_json_atomic` are the read and write helpers the
+  considerations asked for. Files written with the wrapper still load:
+  the fields were flattened in, and unknown fields are ignored.

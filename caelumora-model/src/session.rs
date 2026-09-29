@@ -45,7 +45,3 @@ impl Secured for Session {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SessionState {
-    pub channels: std::collections::HashMap<ChannelId, ChannelState>,
-}

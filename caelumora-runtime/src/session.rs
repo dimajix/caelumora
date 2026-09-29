@@ -550,7 +550,6 @@ impl SessionManager {
         for channel_id in &session.channels {
             state_store.delete_channel_state(*channel_id).await?;
         }
-        state_store.delete_session_state(id).await?;
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         self.starts.remove(&id);
         Ok(removed)
