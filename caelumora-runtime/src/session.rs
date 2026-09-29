@@ -3,10 +3,12 @@ use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{Channel, DEFAULT_MODERATOR};
+use caelumora_model::channel::{Channel, Participant, DEFAULT_MODERATOR};
 use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
+use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
+use caelumora_model::mention::handle_of;
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -159,18 +161,6 @@ impl SessionLoop {
         self.runtime_manager.security_manager()
             .require(context, ActionType::GetChannel(&channel.security_attributes()), not_found).await?;
         Ok(channel)
-    }
-
-    /// The running channels `context` may read, in the order of the session.
-    pub async fn readable_channels(&self, context: &SecurityContext) -> Vec<Arc<ChannelLoop>> {
-        let security = self.runtime_manager.security_manager();
-        let mut readable = Vec::new();
-        for channel in self.channels() {
-            if security.may_read_channel(context, &channel.security_attributes()).await {
-                readable.push(channel);
-            }
-        }
-        readable
     }
 
     pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
@@ -362,6 +352,25 @@ pub struct SessionManager {
     runtime_manager: Arc<RuntimeManager>,
 }
 
+/// A session as [`SessionManager::find`] found it for a context that may
+/// read it: running or not, each asked about alike.
+enum Found {
+    /// It runs: its loop.
+    Running(Arc<SessionLoop>),
+    /// It does not run: its document, from the store.
+    Stored(Session),
+}
+
+impl Found {
+    /// The session as it is now.
+    fn session(&self) -> Session {
+        match self {
+            Found::Running(session_loop) => (**session_loop.get_session()).clone(),
+            Found::Stored(session) => session.clone(),
+        }
+    }
+}
+
 impl SessionManager {
     pub fn new(runtime_manager: Arc<RuntimeManager>) -> Self {
         Self {
@@ -398,39 +407,60 @@ impl SessionManager {
         Ok(session_loop)
     }
 
-    /// Create a brand-new session with its `channels`: persist them - the
-    /// channels as documents of their own (issue 70) - announce their
-    /// existence, then start the session.
+    /// Session `id` as `context` may read it: its loop if it runs, its
+    /// document from the store if not. A running session is asked about
+    /// like a stored one - `GetSession` with its attributes - so that it
+    /// being in memory is no way around the policy (issue 11).
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such session or `context` may
+    /// not read it, alike whether it runs.
+    async fn find(&self, context: &SecurityContext, id: SessionId) -> Result<Found> {
+        let running = self.sessions.get(&id).map(|entry| entry.clone());
+        match running {
+            Some(session_loop) => {
+                let attributes = session_loop.get_session().security_attributes.clone();
+                self.runtime_manager.security_manager()
+                    .require(context, ActionType::GetSession(&attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
+                Ok(Found::Running(session_loop))
+            }
+            None => Ok(Found::Stored(self.runtime_manager.entity_store().get_session(context, id).await?)),
+        }
+    }
+
     /// Creates a session from the template `template_id` on behalf of
-    /// `ctx`, whose user owns it and is the template's "user", names it
+    /// `context`, whose user owns it and is the template's "user", names it
     /// `name` - the template's name if `None` - and starts it (issue 88).
     /// The template's agents are found by name in their scope, or made.
     ///
     /// # Errors
-    /// `SessionError::OwnerNotAUser` if `ctx` acts for no user; a
+    /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
     /// `StoreError` if the template, a user or a personality it names does
     /// not exist or may not be read; a `TemplateError` if the template
     /// cannot be made into a session; whatever creating the session reports.
-    pub async fn create_from_template(&self, ctx: &SecurityContext, template_id: SessionTemplateId, name: Option<String>) -> Result<Arc<SessionLoop>> {
-        let owner = ctx.initiator_id.as_user_id().ok_or(SessionError::OwnerNotAUser(ctx.initiator_id))?;
+    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<String>) -> Result<Arc<SessionLoop>> {
+        let owner = context.initiator_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.initiator_id))?;
         let store = self.runtime_manager.entity_store();
-        let template = store.get_session_template(ctx, template_id).await?;
+        let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
-        let participants = crate::template::resolve_participants(store.as_ref(), ctx, &template, id, owner).await?;
+        let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.metadata.name.clone());
         let (session, channels) = template.build(id, owner, name, participants)?;
-        self.create_session(ctx, session, channels).await
+        self.create_session(context, session, channels).await
     }
 
-    pub async fn create_session(&self, ctx: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
+    /// Create a brand-new session with its `channels`: persist them - the
+    /// channels as documents of their own (issue 70) - announce their
+    /// existence, then start the session.
+    async fn create_session(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let start = self.start_lock(id);
         let _starting = start.lock().await;
 
         let store = self.runtime_manager.entity_store();
-        store.create_session(ctx, &session).await?;
+        store.create_session(context, &session).await?;
         for (index, channel) in channels.iter().enumerate() {
-            if let Err(error) = store.create_channel(ctx, channel).await {
+            if let Err(error) = store.create_channel(context, channel).await {
                 // Nothing half-made stays behind; the session's creation was
                 // permitted, so it is taken back in the runtime's name.
                 let system = SecurityContext::system();
@@ -464,62 +494,49 @@ impl SessionManager {
         Ok(channels)
     }
 
-    /// Load an already-persisted session and start it. Fires `SessionStarted`, but not
-    /// `SessionCreated` — the session already exists.
+    /// The session `id` for `context`: the running one, or loaded from the
+    /// store and started - which announces `SessionStarted`, not
+    /// `SessionCreated`, as the session exists already.
     ///
     /// Started once, however many ask at the same time (issue 62): whoever
     /// comes second waits for the first and gets the session it started -
     /// if they may read it.
-    pub async fn load_session(&self, id: SessionId, security_context: &SecurityContext) -> Result<Arc<SessionLoop>> {
-        let start = self.start_lock(id);
-        let _starting = start.lock().await;
-        if let Some(running) = self.running(security_context, id).await? {
-            return Ok(running);
-        }
-        let session = self.runtime_manager.entity_store().get_session(security_context, id).await?;
-        let channels = self.load_channels(&session).await?;
-        self.spawn_session(session, channels).await
-    }
-
-    /// The running session `id`, if `context` may read it - asked about
-    /// like a stored one, `GetSession` with its attributes, so that it being
-    /// in memory is no way around the policy (issue 11).
-    async fn running(&self, context: &SecurityContext, id: SessionId) -> Result<Option<Arc<SessionLoop>>> {
-        let Some(session_loop) = self.get_session(id) else { return Ok(None) };
-        let attributes = session_loop.get_session().security_attributes.clone();
-        self.runtime_manager.security_manager()
-            .require(context, ActionType::GetSession(&attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
-        Ok(Some(session_loop))
-    }
-
-    pub fn get_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
-        self.sessions.get(&id).map(|s| s.clone())
-    }
-
-    /// The session `id` for `context`: the running one, or loaded from the
-    /// store and started. A running session is asked about like a stored
-    /// one - `GetSession` with its attributes - so that it being in memory is
-    /// no way around the policy (issue 11).
     ///
     /// # Errors
     /// `StoreError::NotFound` if there is no such session or `context` may
     /// not read it; whatever loading or starting it reports otherwise.
     pub async fn open_session(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
-        match self.running(context, id).await? {
-            Some(session_loop) => Ok(session_loop),
-            None => self.load_session(id, context).await,
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
+        match self.find(context, id).await? {
+            Found::Running(session_loop) => Ok(session_loop),
+            Found::Stored(session) => {
+                let channels = self.load_channels(&session).await?;
+                self.spawn_session(session, channels).await
+            }
         }
     }
 
-    /// Stop a running session's loop without deleting its durable definition.
+    /// Stops session `id` on behalf of `context` without deleting it: its
+    /// channels and actors stop, for everybody in it (`StopSession`).
+    /// Returns whether it ran.
     ///
     /// Waits for a start of the same session that is under way (issue 62):
     /// otherwise that start could register the session after it was stopped,
     /// and it would run on.
-    pub async fn stop_session(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such session or `context` may
+    /// not read it, `StoreError::PermissionDenied` if they may read but not
+    /// stop it - whether it runs or not.
+    pub async fn stop_session(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        self.stop_running(id)
+        let found = self.find(context, id).await?;
+        let attributes = found.session().security_attributes;
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::StopSession(&attributes), || StoreError::PermissionDenied).await?;
+        Ok(matches!(found, Found::Running(_)) && self.stop_running(id).is_some())
     }
 
     /// Stops session `id` if it runs. Called with its start lock held.
@@ -541,22 +558,17 @@ impl SessionManager {
     /// stop the session on the way (issue 11).
     ///
     /// # Errors
-    /// `StoreError::NotFound` if there is no such session or `ctx` may not
-    /// read it, `StoreError::PermissionDenied` if they may read but not
+    /// `StoreError::NotFound` if there is no such session or `context` may
+    /// not read it, `StoreError::PermissionDenied` if they may read but not
     /// delete it.
-    pub async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> Result<bool> {
+    pub async fn delete_session(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         // Held until the session is gone from the store, so that no request
         // starts it again from there in the meantime (issue 62).
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let session: Session = match self.get_session(id) {
-            Some(session_loop) => (**session_loop.get_session()).clone(),
-            None => self.runtime_manager.entity_store().get_session(ctx, id).await?,
-        };
-        let not_found = || StoreError::NotFound { entity: "session", id: id.to_string() };
-        let security = self.runtime_manager.security_manager();
-        security.require(ctx, ActionType::GetSession(&session.security_attributes), not_found).await?;
-        security.require(ctx, ActionType::DeleteSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
+        let session = self.find(context, id).await?.session();
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::DeleteSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
@@ -572,7 +584,7 @@ impl SessionManager {
         }
 
         let store = self.runtime_manager.entity_store();
-        let removed = store.delete_session(ctx, id).await?;
+        let removed = store.delete_session(context, id).await?;
         // Its channels go with it - in the runtime's name, since deleting the
         // session was permitted (issue 70).
         for channel_id in &session.channels {
@@ -587,6 +599,145 @@ impl SessionManager {
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         self.starts.remove(&id);
         Ok(removed)
+    }
+
+    /// Every session `context` may read, as they see it (issue 80). Running
+    /// or not; describing a session does not start it.
+    ///
+    /// # Errors
+    /// Whatever listing the sessions in the store reports.
+    pub async fn session_views(&self, context: &SecurityContext) -> Result<Vec<SessionView>> {
+        let sessions = self.runtime_manager.entity_store().list_sessions(context).await?;
+        let mut views = Vec::with_capacity(sessions.len());
+        for session in sessions {
+            // The store lists what `context` may read; a running session is
+            // described by its loop.
+            let running = self.sessions.get(&session.id).map(|entry| entry.clone());
+            let found = match running {
+                Some(session_loop) => Found::Running(session_loop),
+                None => Found::Stored(session),
+            };
+            views.push(self.describe_session(context, &found).await);
+        }
+        Ok(views)
+    }
+
+    /// Session `id` as `context` sees it (issue 80): its participants and
+    /// the channels they may read. Running or not; describing it does not
+    /// start it.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such session or `context` may
+    /// not read it.
+    pub async fn session_view(&self, context: &SecurityContext, id: SessionId) -> Result<SessionView> {
+        let found = self.find(context, id).await?;
+        Ok(self.describe_session(context, &found).await)
+    }
+
+    /// Channel `channel_id` of session `session_id` as `context` sees it
+    /// (issue 80). Running or not; describing it does not start it.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such session or `context` may
+    /// not read it; `SessionError::ChannelNotFound` if the session has no
+    /// such channel, and equally if `context` may not read it, so that
+    /// channels cannot be probed.
+    pub async fn channel_view(&self, context: &SecurityContext, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelView> {
+        let not_found = || SessionError::ChannelNotFound { session: session_id, channel: channel_id };
+        let channel = match self.find(context, session_id).await? {
+            Found::Running(session_loop) => session_loop.channel_by_id(channel_id).map(|channel| channel.channel()),
+            Found::Stored(session) if session.channels.contains(&channel_id) => {
+                Some(self.runtime_manager.entity_store().get_channel(&SecurityContext::system(), channel_id).await?)
+            }
+            Found::Stored(_) => None,
+        };
+        let channel = channel.ok_or_else(not_found)?;
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::GetChannel(&channel.security_attributes), not_found).await?;
+        Ok(self.describe_channel(context, &channel).await)
+    }
+
+    /// `found` as `context` sees it: only the channels they may read
+    /// (`GetChannel`, issue 70). A channel whose document cannot be read is
+    /// left out, so that one broken channel does not hide its session.
+    async fn describe_session(&self, context: &SecurityContext, found: &Found) -> SessionView {
+        let session = found.session();
+        let channels = match found {
+            Found::Running(session_loop) => session_loop.channels().iter().map(|channel| channel.channel()).collect(),
+            Found::Stored(session) => {
+                let store = self.runtime_manager.entity_store();
+                let system = SecurityContext::system();
+                let mut channels = Vec::with_capacity(session.channels.len());
+                for id in &session.channels {
+                    match store.get_channel(&system, *id).await {
+                        Ok(channel) => channels.push(channel),
+                        Err(e) => warn!("Cannot read channel {} of session {}: {}", id, session.id, e),
+                    }
+                }
+                channels
+            }
+        };
+
+        let security = self.runtime_manager.security_manager();
+        let mut readable = Vec::with_capacity(channels.len());
+        for channel in &channels {
+            if security.may_read_channel(context, &channel.security_attributes).await {
+                readable.push(self.describe_channel(context, channel).await);
+            }
+        }
+        let mut participants = Vec::with_capacity(session.participants.len());
+        for participant in &session.participants {
+            let (name, _) = self.look_up(participant).await;
+            participants.push(ParticipantView { id: participant.actor_id(), name });
+        }
+        SessionView { id: session.id, name: session.metadata.name, participants, channels: readable }
+    }
+
+    /// `channel` as `context` sees it: whether they may change it
+    /// (`UpdateChannel`) and, per agent, read what it saw
+    /// (`ReadAgentContext`). The one place a channel is described, running
+    /// or not.
+    async fn describe_channel(&self, context: &SecurityContext, channel: &Channel) -> ChannelView {
+        let security = self.runtime_manager.security_manager();
+        let mut members = Vec::with_capacity(channel.participants.len());
+        for participant in &channel.participants {
+            let (name, agent) = self.look_up(participant).await;
+            let can_read_context = match &agent {
+                Some(attributes) => security.may_read_agent_context(context, attributes).await,
+                None => false,
+            };
+            let handle = match participant {
+                Participant::Approver(_) => None,
+                _ => name.as_deref().map(handle_of).filter(|handle| !handle.is_empty()),
+            };
+            members.push(MemberView { id: participant.actor_id(), name, handle, can_read_context });
+        }
+        ChannelView {
+            id: channel.id,
+            name: channel.name.clone(),
+            moderator: channel.moderator.clone(),
+            confidentiality: channel.confidentiality,
+            can_change: security.may_change_channel(context, &channel.security_attributes).await,
+            members,
+        }
+    }
+
+    /// The name of `participant` and, for an agent, its attributes; `None`
+    /// for a user or agent that no longer exists. Read in the runtime's
+    /// name: taking part in a session makes a name known to everybody in
+    /// it - it stands at every message - even where the record itself is
+    /// not theirs to read (issue 120).
+    async fn look_up(&self, participant: &Participant) -> (Option<String>, Option<SecurityAttributes>) {
+        let store = self.runtime_manager.entity_store();
+        let system = SecurityContext::system();
+        match participant {
+            Participant::User(id) => (store.get_user(&system, *id).await.ok().map(|user| user.username), None),
+            Participant::Agent(id) => match store.get_agent(&system, *id).await {
+                Ok(agent) => (Some(agent.metadata.name), Some(agent.security_attributes)),
+                Err(_) => (None, None),
+            },
+            Participant::Approver(_) => (Some("Approver".to_string()), None),
+        }
     }
 }
 
@@ -699,9 +850,9 @@ mod tests {
 
         // It is now persisted and running.
         assert!(runtime.entity_store().get_session(&ctx, session_id).await.is_ok());
-        assert!(manager.get_session(session_id).is_some());
+        assert!(manager.sessions.contains_key(&session_id));
 
-        manager.stop_session(session_id).await;
+        manager.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     #[tokio::test]
@@ -730,11 +881,11 @@ mod tests {
         assert!(stopped < ch_deleted && ch_deleted < deleted, "wrong order: {:?}", events);
 
         assert!(runtime.entity_store().get_session(&ctx, session_id).await.is_err());
-        assert!(manager.get_session(session_id).is_none());
+        assert!(!manager.sessions.contains_key(&session_id));
     }
 
     #[tokio::test]
-    async fn load_session_emits_started_but_not_created() {
+    async fn opening_a_stored_session_emits_started_but_not_created() {
         let runtime = test_runtime();
         let manager = SessionManager::new(runtime.clone());
         let ctx = SecurityContext::default();
@@ -745,7 +896,7 @@ mod tests {
         persist(&runtime, &ctx, &session).await;
 
         let mut rx = runtime.event_bus().subscribe_all();
-        manager.load_session(session_id, &ctx).await.unwrap();
+        manager.open_session(&ctx, session_id).await.unwrap();
 
         let events = drain(&mut rx);
         assert!(
@@ -757,7 +908,7 @@ mod tests {
             "load must not emit SessionCreated, got {:?}", events
         );
 
-        manager.stop_session(session_id).await;
+        manager.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     #[tokio::test]
@@ -773,14 +924,14 @@ mod tests {
         let (first, second, third) = tokio::join!(
             manager.open_session(&ctx, session_id),
             manager.open_session(&ctx, session_id),
-            manager.load_session(session_id, &ctx),
+            manager.open_session(&ctx, session_id),
         );
         let (first, second, third) = (first.unwrap(), second.unwrap(), third.unwrap());
         assert!(Arc::ptr_eq(&first, &second) && Arc::ptr_eq(&first, &third), "one loop for all of them");
 
         let started = drain(&mut rx).into_iter().filter(|e| matches!(e, GlobalEvent::SessionStarted(id) if *id == session_id)).count();
         assert_eq!(started, 1, "the session started once");
-        manager.stop_session(session_id).await;
+        manager.stop_session(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     #[tokio::test]
@@ -797,7 +948,7 @@ mod tests {
         let starting = start.lock().await;
         let stopping = tokio::spawn({
             let manager = manager.clone();
-            async move { manager.stop_session(session_id).await.is_some() }
+            async move { manager.stop_session(&SecurityContext::system(), session_id).await.unwrap() }
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(!stopping.is_finished(), "the stop waits for the start");
@@ -808,7 +959,7 @@ mod tests {
         manager.spawn_session(session, channels).await.unwrap();
         drop(starting);
         assert!(stopping.await.unwrap(), "the stop stopped what the start started");
-        assert!(manager.get_session(session_id).is_none());
+        assert!(!manager.sessions.contains_key(&session_id));
     }
 
     #[tokio::test]
@@ -902,7 +1053,7 @@ mod tests {
         assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
         let stored = store.get_channel(&hers, main.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
 
         let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None).await.expect_err("no such template");
         assert!(crate::error::is_not_found(&missing, "session_template"), "{missing}");
@@ -937,7 +1088,7 @@ mod tests {
         };
         tokio::time::timeout(std::time::Duration::from_secs(2), renamed).await.expect("both channels show the new name");
         assert_eq!(first.user_actor(other.as_user_id().unwrap()).unwrap().name(), "other", "nobody else is renamed");
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -970,7 +1121,7 @@ mod tests {
         let started = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStarted(_, cid) if *cid == channel.id()));
         assert!(created.is_some() && started.is_some() && created < started, "created, then started: {events:?}");
 
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -989,7 +1140,7 @@ mod tests {
 
         assert_eq!(session.channels().len(), 1);
         assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1023,7 +1174,7 @@ mod tests {
         session.delete_channel(&ctx, main).await.expect("the last channel may be deleted");
         assert!(session.channels().is_empty());
         session.create_channel(&ctx, spec("again", vec![])).await.expect("and a new one created");
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1078,7 +1229,7 @@ mod tests {
         assert!(session.channel_by_id(main).is_some(), "a refused deletion leaves the channel");
 
         session.create_channel(&alice_ctx, spec("hers", vec![])).await.expect("the owner may");
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1105,10 +1256,102 @@ mod tests {
         let hidden = session.channel_for(&as_user(bob.id), hers.id()).await.expect_err("not bob's to read");
         assert!(matches!(hidden.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "absent, not refused: {hidden}");
         assert!(session.channel_for(&as_user(alice.id), hers.id()).await.is_ok(), "the owner reads it");
-        let names = |channels: Vec<Arc<ChannelLoop>>| channels.iter().map(|c| c.name()).collect::<Vec<_>>();
-        assert!(!names(session.readable_channels(&as_user(bob.id)).await).contains(&"hers".to_string()), "nor is it listed for bob");
-        assert!(names(session.readable_channels(&as_user(alice.id)).await).contains(&"hers".to_string()));
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_channel_is_described_with_handles_only_for_who_can_be_mentioned() {
+        use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
+        use caelumora_model::user::{User, UserId};
+
+        let manager = SessionManager::new(test_runtime());
+        let alice = User { id: UserId::new(), username: "Alice Example".to_string(), email: String::new(), roles: Vec::new() };
+        let gone = UserId::new();
+        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+        let mut channel = main_channel(&make_session("s"));
+        channel.participants = record_users(&manager, &[&alice]).await;
+        channel.participants.extend([Participant::User(gone), Participant::Approver(approver)]);
+
+        let view = manager.describe_channel(&SecurityContext::default(), &channel).await;
+
+        let [alice, gone, approver] = view.members.as_slice() else { panic!("three members, in order: {view:?}") };
+        assert_eq!((alice.name.as_deref(), alice.handle.as_deref()), (Some("Alice Example"), Some("alice-example")));
+        assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
+        assert!(approver.handle.is_none(), "an approver cannot be mentioned");
+        assert!(view.members.iter().all(|m| !m.can_read_context), "no member is an agent");
+    }
+
+    #[tokio::test]
+    async fn a_view_shows_what_its_viewer_may_read_and_do_whether_the_session_runs_or_not() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::agent::{Agent, Personality, PersonalityId};
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::store::EntityStore;
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let manager = SessionManager::new(runtime);
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+
+        let personality = Personality {
+            reasoning_confidentiality: Confidentiality::Public,
+            id: PersonalityId::new(),
+            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            components: Default::default(),
+            security_attributes: Default::default(),
+        };
+        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+        let helper = Agent::new("Helper".to_string(), Scope::GlobalScope, &personality, ActorId::User(alice.id));
+        store.create_agent(&SecurityContext::system(), &helper).await.unwrap();
+
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice.id), contributors: vec![ActorId::User(bob.id), ActorId::Agent(helper.id)] };
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let mut main = main_channel(&session);
+        main.participants = session.participants.clone();
+        let running = manager.create_session(&as_user(alice.id), session, vec![main]).await.unwrap();
+        // Alice's alone: bob takes part in the session, not in this channel.
+        let hers = running.create_channel(&as_user(alice.id), spec("private", vec![])).await.unwrap().id();
+        let id = running.id();
+
+        let check = |state: &'static str| {
+            let manager = &manager;
+            async move {
+                let names = |view: &SessionView| view.channels.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+                let for_alice = manager.session_view(&as_user(alice.id), id).await.unwrap();
+                assert_eq!(names(&for_alice), ["main", "private"], "{state}: the owner reads every channel");
+                assert_eq!(for_alice.participants.iter().filter_map(|p| p.name.as_deref()).collect::<Vec<_>>(), ["alice", "bob", "Helper"], "{state}");
+                let for_bob = manager.session_view(&as_user(bob.id), id).await.unwrap();
+                assert_eq!(names(&for_bob), ["main"], "{state}: bob is not in the private channel");
+
+                let main = &for_alice.channels[0];
+                assert!(main.can_change, "{state}: the owner changes the channel");
+                let agent = main.members.iter().find(|m| m.id == ActorId::Agent(helper.id)).expect("the agent is a member");
+                assert_eq!(agent.handle.as_deref(), Some("helper"), "{state}");
+                assert!(agent.can_read_context, "{state}: alice made the agent");
+                let main = &for_bob.channels[0];
+                assert!(!main.can_change, "{state}: a participant does not change it");
+                assert!(main.members.iter().all(|m| !m.can_read_context), "{state}: bob reads no agent's context");
+
+                let hidden = manager.channel_view(&as_user(bob.id), id, hers).await.expect_err("not bob's to read");
+                assert!(matches!(hidden.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "{state}: absent, not refused: {hidden}");
+                assert_eq!(manager.channel_view(&as_user(alice.id), id, hers).await.unwrap().name, "private", "{state}");
+                let refused = manager.session_view(&as_user(carol.id), id).await.expect_err("carol may not see it");
+                assert!(crate::error::is_not_found(&refused, "session"), "{state}: {refused}");
+                assert_eq!(manager.session_views(&as_user(carol.id)).await.unwrap(), Vec::new(), "{state}: nor is it listed for her");
+                assert_eq!(manager.session_views(&as_user(bob.id)).await.unwrap(), [for_bob], "{state}");
+            }
+        };
+        check("running").await;
+        assert!(manager.stop_session(&as_user(alice.id), id).await.unwrap(), "it ran");
+        check("stopped").await;
+        assert!(!manager.sessions.contains_key(&id), "describing a session does not start it");
     }
 
     #[tokio::test]
@@ -1154,7 +1397,7 @@ mod tests {
 
         let refused = session.create_channel(&alice_ctx, with("mine", Confidentiality::Private, vec![])).await.expect_err("private is an actor's");
         assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::InvalidConfidentiality(_))), "{refused}");
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1204,7 +1447,7 @@ mod tests {
         main.update_name(&as_user(alice), "lobby".to_string()).await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
         assert_eq!(store.get_channel(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
-        manager.stop_session(running.id()).await;
+        manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
     /// Waits until `channel`'s history holds `count` messages.
@@ -1266,7 +1509,7 @@ mod tests {
         let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
         let outside = channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("not in the session");
         assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1290,7 +1533,7 @@ mod tests {
         // So does deleting the channel, for everybody.
         session.delete_channel(&ctx, channel.id()).await.expect("deleted");
         within(mine.ended).await.expect("a deleted channel is watched by nobody");
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1317,7 +1560,7 @@ mod tests {
         let approver = channel.members().into_iter().find(|m| m.kind == "approver").expect("an approver").id;
         let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
         assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
-        manager.stop_session(session.id()).await;
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1351,7 +1594,7 @@ mod tests {
         channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");
         channel.remove_participant(&as_user(alice_id), bob_id).await.expect("the owner may");
         assert!(channel.members().iter().any(|m| m.id == carol_id) && !channel.members().iter().any(|m| m.id == bob_id));
-        manager.stop_session(running.id()).await;
+        manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1379,9 +1622,17 @@ mod tests {
 
         let refused = manager.delete_session(&as_user(bob), id).await.expect_err("a contributor may not delete it");
         assert!(crate::error::is_forbidden(&refused), "{refused}");
-        assert!(manager.get_session(id).is_some(), "a refused deletion must not stop the session on the way");
+        assert!(manager.sessions.contains_key(&id), "a refused deletion must not stop the session on the way");
+
+        let refused = manager.stop_session(&as_user(carol), id).await.expect_err("carol may not see it");
+        assert!(crate::error::is_not_found(&refused, "session"), "not refused - absent: {refused}");
+        let refused = manager.stop_session(&as_user(bob), id).await.expect_err("a contributor may not stop it");
+        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(manager.sessions.contains_key(&id), "it runs on");
+        assert!(manager.stop_session(&as_user(alice), id).await.unwrap(), "the owner stops it");
+        assert!(!manager.stop_session(&as_user(alice), id).await.unwrap(), "stopped already");
 
         manager.delete_session(&as_user(alice), id).await.expect("the owner deletes it");
-        assert!(manager.get_session(id).is_none());
+        assert!(!manager.sessions.contains_key(&id));
     }
 }

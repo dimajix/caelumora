@@ -1,6 +1,6 @@
 # 80 — A stored channel is described as not changeable, and the response builders are scattered
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -125,3 +125,60 @@ decides it from the participant kind is to be settled when implementing.
   live. Kept in this issue rather than opening a new one. Problem,
   considerations and "done when" extended accordingly; nothing implemented
   yet.
+- **2026-09-29** — Done, except that `AccessQuestions` stays, which the
+  maintainer decided while it was being implemented.
+  *Where views are built.* On the `SessionManager`, which alone knows
+  whether a session runs, and which has the `RuntimeManager` already:
+  `session_views(ctx)`, `session_view(ctx, id)` and `channel_view(ctx,
+  session, channel)`, for running and stopped sessions alike and without
+  starting one. The types are `caelumora_model::view` (`SessionView`,
+  `ParticipantView`, `ChannelView`, `MemberView`). One private
+  `describe_channel` builds a `ChannelView` from the `Channel` document -
+  the running channel's (`ChannelLoop::channel()`) or the stored one - so
+  the two cases cannot drift apart again: `can_change` and, per agent,
+  `can_read_context` come from the policy for a stopped channel too. Which
+  channels a viewer sees is decided there as well (`GetChannel`), for both
+  cases. Names are read in the runtime's name, as before (issue 120); a
+  member's name comes from its record, not the actor - the caveat above.
+  `Actor::may_read_context` is gone: whether there is a context to read is
+  decided from the participant kind, which works without an actor.
+  *Rejected: dissolving `AccessQuestions`.* A first version removed the
+  trait and had every caller use `check(ctx, ActionType::…)`. The
+  maintainer preferred the named questions in one place to access checks
+  scattered again over the callers; the trait stays with all six
+  questions, and the view builder asks `may_read_channel`,
+  `may_change_channel` and `may_read_agent_context`. Its doc and AGENTS.md
+  now say that what a client is shown or offered comes from a view built
+  with these questions.
+  *The `SessionManager` made consistent,* as agreed with the maintainer:
+  methods ending in `_session` act on a running session (its
+  `SessionLoop`), those ending in `_view` describe one that may not run.
+  A private `find(ctx, id)` answers `Found::Running(loop)` or
+  `Found::Stored(session)` - no `Option`, and no unchecked branch: a
+  running session is checked with `GetSession` like a stored one, and
+  "not found" is the same answer either way. `open_session` takes the start
+  lock and uses it (`load_session` went into it); `delete_session` uses it;
+  `create_session` is private; `get_session`, which handed out a running
+  session unchecked, and `running` are gone. `stop_session(ctx, id)` takes a
+  context and checks the new `ActionType::StopSession` (the owner's alone in
+  `OwnershipSecurityManager`, as a stop affects everybody in the session),
+  and answers whether the session ran. Contexts are called `context`
+  throughout. `SessionLoop::readable_channels` is gone, its job being the
+  views'.
+  *REST.* It maps views (`From<SessionView>`, `From<ChannelView>` and
+  `KnowledgeRefResponse::describe` in `models.rs`); `channel_response`,
+  `stored_channel_response`, `describe_session`, `session_snapshot` and
+  `describe_participant` are gone, `routes::channels` is private, and no
+  handler uses the `SecurityManager` or reads sessions from the store.
+  `GET /sessions` lists `session_views` - more than it needs, cheap at
+  today's sizes. Describing a channel no longer starts its session
+  (`GET …/channels`, `GET …/channels/{cid}`). A stream's snapshot may be
+  absent (`sse::stream`): a channel that can no longer be described to
+  its viewer sends none. The JSON is unchanged; members are now listed in
+  the channel's order instead of none in particular.
+  Checked against a running server with JSON stores: a session described
+  while running and, after a restart, stopped gives the same answer -
+  `can_change` and `can_read_context` set for the owner - in `GET
+  /sessions/{id}`, `GET …/channels/{cid}`, the global and the channel
+  snapshot, without starting it; another user gets 404 and an empty list.
+

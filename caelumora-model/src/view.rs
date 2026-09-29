@@ -1,0 +1,64 @@
+//! Sessions and channels as one viewer sees them (issue 80): what a client
+//! lists and offers, built by the runtime (`SessionManager::session_view`,
+//! `channel_view`) for running and stopped sessions alike, and only of what
+//! the viewer may read.
+//!
+//! A view answers the access questions that decide what to show or offer -
+//! may the viewer change the channel, read an agent's context - at the time
+//! it is built. It is a snapshot for listing and offering: an operation still
+//! checks its own permission when it acts, never by a view.
+
+use crate::actor::ActorId;
+use crate::confidentiality::Confidentiality;
+use crate::session::{ChannelId, SessionId};
+
+/// A session with its participants and the channels the viewer may read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionView {
+    pub id: SessionId,
+    pub name: String,
+    /// Everyone who takes part in the session - whom a new channel can be
+    /// made of (issue 09).
+    pub participants: Vec<ParticipantView>,
+    /// The channels the viewer may read, in the order of the session.
+    pub channels: Vec<ChannelView>,
+}
+
+/// A participant of a session.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParticipantView {
+    pub id: ActorId,
+    /// `None` for a user or agent that no longer exists.
+    pub name: Option<String>,
+}
+
+/// A channel as the viewer sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelView {
+    pub id: ChannelId,
+    pub name: String,
+    /// The kind of moderator, e.g. `round_robin` (issue 44).
+    pub moderator: String,
+    /// How far the channel's contents may travel (issue 61).
+    pub confidentiality: Confidentiality,
+    /// Whether the viewer may rename the channel and add or remove its
+    /// participants (`UpdateChannel`, issue 46).
+    pub can_change: bool,
+    /// Its participants, in the order of the channel.
+    pub members: Vec<MemberView>,
+}
+
+/// A participant of a channel as the viewer sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberView {
+    pub id: ActorId,
+    /// `None` for a user or agent that no longer exists.
+    pub name: Option<String>,
+    /// The handle the participant is `@`-mentioned by (see
+    /// `crate::mention`), or `None` if it cannot be mentioned - approvers,
+    /// participants that no longer exist, names that yield no handle.
+    pub handle: Option<String>,
+    /// Whether the viewer may see what this participant saw when it produced
+    /// a message (`ReadAgentContext`, issue 41) - only ever for agents.
+    pub can_read_context: bool,
+}

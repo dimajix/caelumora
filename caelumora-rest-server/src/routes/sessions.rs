@@ -23,13 +23,9 @@ pub async fn create_session(
 }
 
 pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let ctx = user.security_context();
-    let sessions = state.runtime_manager.entity_store().list_sessions(&ctx).await
-        .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
-
-    // A running session changes nothing it has not stored first: the store
-    // says what it is.
-    Ok(Json(sessions.iter().map(SessionResponse::from).collect()))
+    let sessions = state.session_manager.session_views(&user.security_context()).await
+        .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e))?;
+    Ok(Json(sessions.into_iter().map(SessionResponse::from).collect()))
 }
 
 /// One session with its channels, in the form the global snapshot uses - so
@@ -41,18 +37,16 @@ pub async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session = state.runtime_manager.entity_store().get_session(&user.security_context(), session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(crate::routes::events::describe_session(&state, session, &user.security_context()).await))
+    let session = state.session_manager.session_view(&user.security_context(), session_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(Json(session.into()))
 }
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
-    let ctx = user.security_context();
-
     // `delete_session` stops the running loop, removes the persisted session (and all of its
     // channels), and emits the corresponding lifecycle events.
-    match state.session_manager.delete_session(&ctx, session_id).await {
+    match state.session_manager.delete_session(&user.security_context(), session_id).await {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
         Err(e) => Err(ApiError::from_runtime(e, Subject::Session, &format!("deleting session {session_id}"))),
     }

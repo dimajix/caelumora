@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelMemberResponse, ParticipantKind, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -10,12 +10,11 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::{ChannelSpec, SessionLoop};
-use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
+use caelumora_runtime::session::ChannelSpec;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
 use std::convert::Infallible;
@@ -28,15 +27,11 @@ pub async fn list_channels(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<ChannelResponse>>, ApiError> {
     let session_id = SessionId(id);
-    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
-
-    let context = user.security_context();
-    let mut channels = Vec::new();
-    // Only the channels the user may read (issue 70).
-    for channel in session.readable_channels(&context).await {
-        channels.push(channel_response(&state, &channel, &context).await);
-    }
-    Ok(Json(channels))
+    // Only the channels the user may read (issue 70), as they see them
+    // (issue 80).
+    let session = state.session_manager.session_view(&user.security_context(), session_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("listing the channels of session {session_id}")))?;
+    Ok(Json(session.channels.into_iter().map(Into::into).collect()))
 }
 
 /// Creates a channel in the session and starts it (issue 09). Only who may
@@ -54,7 +49,7 @@ pub async fn create_channel(
     let spec = ChannelSpec { name: payload.name, moderator: payload.moderator, participants: payload.participants, confidentiality: payload.confidentiality };
     let channel = session.create_channel(&context, spec).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a channel in session {session_id}")))?;
-    Ok(Json(channel_response(&state, &channel, &context).await))
+    Ok(Json(crate::routes::channel_view(&state, &user, session_id, channel.id()).await?))
 }
 
 /// Stops and deletes a channel of the session, with its history (issue 09).
@@ -77,32 +72,13 @@ pub async fn get_channel(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-
-    Ok(Json(channel_response(&state, &channel, &user.security_context()).await))
+    Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// How many messages a snapshot carries: the end of the conversation, which
 /// is what a client needs to show it. Everything older is fetched over REST
 /// (`GET .../messages`), which `has_more` tells the client to do.
 const SNAPSHOT_MESSAGES: usize = 20;
-
-/// A running channel as `viewer` sees it: its members, with what the viewer
-/// may do with each (see `ChannelMemberResponse::can_read_context`).
-pub async fn channel_response(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> ChannelResponse {
-    let security = state.runtime_manager.security_manager();
-    let mut members = Vec::new();
-    for member in channel.members() {
-        // Every member is a user, an agent or an approver.
-        let Some(kind) = ParticipantKind::of(member.id) else { continue };
-        let can_read_context = match channel.actor_by_id(member.id) {
-            Some(actor) => actor.may_read_context(viewer).await,
-            None => false,
-        };
-        members.push(ChannelMemberResponse { id: member.id, name: member.name, handle: member.handle, kind, can_read_context });
-    }
-    ChannelResponse { id: channel.id(), name: channel.name(), members, moderator: channel.moderator(), confidentiality: channel.classification().level, can_change: security.may_change_channel(viewer, &channel.security_attributes()).await }
-}
 
 pub async fn get_channel_messages(
     State(state): State<Arc<AppState>>,
@@ -131,20 +107,29 @@ pub async fn get_notes(
 }
 
 /// The state of `channel` right now, for a stream that starts with a
-/// snapshot (issue 34).
-async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> ChannelSnapshot {
+/// snapshot (issue 34); `None` if the channel cannot be described to
+/// `viewer` any more - deleted, or no longer theirs to read - in which case
+/// their watch ends.
+async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> Option<ChannelSnapshot> {
+    let view = match state.session_manager.channel_view(viewer, channel.session_id(), channel.id()).await {
+        Ok(view) => view,
+        Err(e) => {
+            tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel.id(), e);
+            return None;
+        }
+    };
     let (messages, has_more) = recent_messages(channel.visible_history(viewer.initiator_id).await.messages);
     let notes = channel.published_notes().await.unwrap_or_else(|e| {
         // The conversation can be shown without them.
         tracing::warn!("Reading the notes of channel {} failed: {:#}", channel.id(), e);
         Vec::new()
     });
-    ChannelSnapshot {
-        channel: channel_response(state, channel, viewer).await,
+    Some(ChannelSnapshot {
+        channel: view.into(),
         messages,
         has_more,
         notes: notes.into_iter().map(Into::into).collect(),
-    }
+    })
 }
 
 /// The end of a history, and whether it was cut.
@@ -191,7 +176,7 @@ pub async fn add_participant(
     let context = user.security_context();
     channel.add_participant(&context, payload.participant, payload.history).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Participant, &format!("adding a participant to channel {cid}")))?;
-    Ok(Json(channel_response(&state, &channel, &context).await))
+    Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
 /// Removes a participant from the channel (issue 46); `aid` is the id of the
@@ -302,7 +287,7 @@ pub async fn message_context(
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
     let seen = actor.message_context(&user.security_context(), MessageId(mid)).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
-    let knowledge = seen.reference.knowledge.iter().map(|k| knowledge_response(&session, k)).collect();
+    let knowledge = seen.reference.knowledge.iter().map(|k| KnowledgeRefResponse::describe(&session, k)).collect();
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
         actor_id: actor.id(),
@@ -311,29 +296,6 @@ pub async fn message_context(
         knowledge,
     }))
 }
-
-/// `knowledge` with the names of its channel and agent, as far as the
-/// session still has them.
-fn knowledge_response(session: &SessionLoop, knowledge: &KnowledgeRef) -> KnowledgeRefResponse {
-    let channel = session.channel_by_id(knowledge.channel);
-    let (source, agent_id, digest, history_start) = match knowledge.source {
-        KnowledgeSource::Notes { agent, digest } => ("notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest, None),
-        KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(caelumora_model::actor::ActorId::Agent(agent)), digest, None),
-        KnowledgeSource::History { digest, start } => ("history", None, digest, start),
-        KnowledgeSource::Memory { agent, digest } => ("memory", Some(caelumora_model::actor::ActorId::Agent(agent)), digest, None),
-    };
-    let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
-    KnowledgeRefResponse {
-        channel_id: knowledge.channel,
-        channel_name: channel.map(|c| c.name()),
-        source,
-        agent_id,
-        agent_name,
-        digest,
-        history_start,
-    }
-}
-
 
 pub async fn send_approval(
     State(state): State<Arc<AppState>>,

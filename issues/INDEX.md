@@ -131,7 +131,7 @@ against it, and what came out of the last attempt.
 | [44](44-mentions-only-moderator.md) | done | Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned. |
 | [45](45-agent-mentions.md) | open | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
 | [56](56-response-language.md) | open | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
-| [80](80-stored-channel-response.md) | open | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
+| [80](80-stored-channel-response.md) | done | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | done | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
 | [103](103-rest-error-mappers.md) | done | Six REST functions map runtime errors to problem details with the same pattern. |
 | [104](104-sse-stream-and-subscribe.md) | done | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |

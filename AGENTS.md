@@ -131,6 +131,11 @@ difference is fine, but say why it exists.
 A pure access question - "may they?" asked from outside an entity, to
 decide what to list or offer - is a method of
 `caelumora_model::security::AccessQuestions`, not of the entity (issue 71).
+What a client may see or be offered comes from a view the runtime builds
+(`caelumora_model::view`, via `SessionManager::session_view` and
+`channel_view`, issue 80), which asks those questions; a frontend never asks
+them itself. A view is a snapshot for listing and offering - an operation
+never relies on it and checks its own permission when it acts.
 An operation that checks its permission as part of what it does keeps that
 check itself, and makes it with `Enforcement::require` (issue 95), which
 answers a refusal with the operation's own error and logs it.

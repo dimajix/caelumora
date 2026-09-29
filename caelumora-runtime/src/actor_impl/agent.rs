@@ -1008,11 +1008,6 @@ impl Actor for AgentActor {
         context_of(&state, self.id, message)
     }
 
-    async fn may_read_context(&self, caller: &SecurityContext) -> bool {
-        let attributes = self.agent_controller.load().security_attributes.clone();
-        self.actor_runtime.security_manager().may_read_agent_context(caller, &attributes).await
-    }
-
     fn cancel(&self) {
         info!(
             "Cancelling agent {} {}",

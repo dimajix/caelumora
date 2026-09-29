@@ -41,6 +41,9 @@ pub enum ActionType<'a> {
     GetSession(&'a SecurityAttributes),
     UpdateSession(&'a SecurityAttributes),
     DeleteSession(&'a SecurityAttributes),
+    /// Stopping a running session - all its channels and actors - without
+    /// deleting it, carrying its attributes. It stops for everybody in it.
+    StopSession(&'a SecurityAttributes),
     ListSessions,
     /// Reading a channel, carrying its attributes (issue 70).
     GetChannel(&'a SecurityAttributes),
@@ -120,6 +123,7 @@ impl ActionType<'_> {
             ActionType::GetSession(_) => "GetSession".into(),
             ActionType::UpdateSession(_) => "UpdateSession".into(),
             ActionType::DeleteSession(_) => "DeleteSession".into(),
+            ActionType::StopSession(_) => "StopSession".into(),
             ActionType::ListSessions => "ListSessions".into(),
             ActionType::GetChannel(_) => "GetChannel".into(),
             ActionType::ListChannels => "ListChannels".into(),
@@ -233,6 +237,10 @@ pub trait SecurityManager : Debug + Sync + Send {
 /// Operations that check their permission as part of what they do (a
 /// channel's `cancel`, a store's `update_channel`) keep their check; a pure
 /// question goes here, not onto the entity.
+///
+/// What a client is shown or offered - may it change a channel, read an
+/// agent's context - comes from a view (`crate::view`, issue 80) that the
+/// runtime builds with these questions; clients do not ask them themselves.
 #[async_trait]
 pub trait AccessQuestions {
     /// Whether `context` may read the channel with `channel` attributes -
@@ -353,7 +361,7 @@ impl SecurityManager for DummySecurityManager {
 ///   template - is allowed to the owner, to contributors, and to everybody
 ///   for entities owned by the system or by no one.
 /// - Creating is allowed only with oneself as owner.
-/// - Changing and deleting are the owner's alone, and so is reading what an
+/// - Changing, deleting and stopping are the owner's alone, and so is reading what an
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
@@ -422,6 +430,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ReadAgentContext(a)
             | ActionType::UpdateSession(a)
             | ActionType::DeleteSession(a)
+            | ActionType::StopSession(a)
             | ActionType::UpdateChannel(a)
             | ActionType::DeleteChannel(a)
             | ActionType::UpdateUser(a)
@@ -469,6 +478,8 @@ mod tests {
         assert!(policy.may_change_channel(&context(alice), &hers).await, "the owner changes it");
         assert!(!policy.may_change_channel(&context(bob), &hers).await, "a participant does not");
         assert!(!policy.may_read_agent_context(&context(bob), &hers).await, "what an agent saw is its owner's alone");
+        assert!(allows(alice, ActionType::StopSession(&hers)).await, "the owner stops a session");
+        assert!(!allows(bob, ActionType::StopSession(&hers)).await, "a participant does not");
 
         /// Refuses everything.
         #[derive(Debug)]

@@ -1,5 +1,6 @@
 use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
 use crate::error::{ApiError, Subject};
+use crate::models::ChannelResponse;
 use crate::state::AppState;
 use axum::{
     routing::{get, post},
@@ -10,7 +11,7 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
 use std::sync::Arc;
 
-pub mod channels;
+mod channels;
 mod events;
 mod sessions;
 mod templates;
@@ -38,6 +39,15 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
     let channel = session.channel_for(&user.security_context(), channel_id).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("opening channel {channel_id}")))?;
     Ok((session, channel))
+}
+
+/// Channel `channel_id` of session `session_id` as `user` sees it (issue
+/// 80) - what a handler answers with a channel. Described by the runtime,
+/// which decides what the user may read and do; does not start the session.
+pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
+    let view = state.session_manager.channel_view(&user.security_context(), session_id, channel_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("describing channel {channel_id}")))?;
+    Ok(view.into())
 }
 
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a

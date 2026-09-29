@@ -1,8 +1,11 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::message::Message;
-use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
+use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
+use caelumora_runtime::session::SessionLoop;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -19,11 +22,20 @@ pub struct SessionResponse {
     pub name: String,
 }
 
-impl From<&Session> for SessionResponse {
-    fn from(session: &Session) -> Self {
+impl From<&caelumora_model::session::Session> for SessionResponse {
+    fn from(session: &caelumora_model::session::Session) -> Self {
         Self { id: session.id, name: session.metadata.name.clone() }
     }
 }
+
+impl From<SessionView> for SessionResponse {
+    fn from(view: SessionView) -> Self {
+        Self { id: view.id, name: view.name }
+    }
+}
+
+/// What a participant is called whose user or agent no longer exists.
+const UNKNOWN: &str = "(unknown)";
 
 /// A session template, as a client offers it for a new session - its id,
 /// name and description, not the template itself (issue 106).
@@ -118,12 +130,31 @@ pub struct SessionSnapshot {
     pub participants: Vec<ParticipantResponse>,
 }
 
+impl From<SessionView> for SessionSnapshot {
+    fn from(view: SessionView) -> Self {
+        Self {
+            id: view.id,
+            name: view.name,
+            channels: view.channels.into_iter().map(Into::into).collect(),
+            // Every participant is a user, an agent or an approver.
+            participants: view.participants.into_iter().filter_map(ParticipantResponse::of).collect(),
+        }
+    }
+}
+
 /// A participant of a session.
 #[derive(Debug, Serialize)]
 pub struct ParticipantResponse {
     pub id: ActorId,
     pub name: String,
     pub kind: ParticipantKind,
+}
+
+impl ParticipantResponse {
+    /// `view` as the API shows it; `None` for an id that is no participant.
+    fn of(view: ParticipantView) -> Option<Self> {
+        Some(Self { id: view.id, kind: ParticipantKind::of(view.id)?, name: view.name.unwrap_or_else(|| UNKNOWN.to_string()) })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,6 +204,20 @@ pub struct ChannelResponse {
     pub can_change: bool,
 }
 
+impl From<ChannelView> for ChannelResponse {
+    fn from(view: ChannelView) -> Self {
+        Self {
+            id: view.id,
+            name: view.name,
+            // Every member is a user, an agent or an approver.
+            members: view.members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
+            moderator: view.moderator,
+            confidentiality: view.confidentiality,
+            can_change: view.can_change,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ChannelMemberResponse {
     pub id: ActorId,
@@ -184,6 +229,19 @@ pub struct ChannelMemberResponse {
     /// produced a message (issue 41) - only ever for agents, and only as the
     /// policy decides for this user.
     pub can_read_context: bool,
+}
+
+impl ChannelMemberResponse {
+    /// `view` as the API shows it; `None` for an id that is no participant.
+    fn of(view: MemberView) -> Option<Self> {
+        Some(Self {
+            id: view.id,
+            kind: ParticipantKind::of(view.id)?,
+            name: view.name.unwrap_or_else(|| UNKNOWN.to_string()),
+            handle: view.handle,
+            can_read_context: view.can_read_context,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,6 +306,30 @@ pub struct KnowledgeRefResponse {
     pub history_start: Option<caelumora_model::channel::HistoryStart>,
 }
 
+impl KnowledgeRefResponse {
+    /// `knowledge` with the names of its channel and agent, as far as
+    /// `session` still has them.
+    pub fn describe(session: &SessionLoop, knowledge: &KnowledgeRef) -> Self {
+        let channel = session.channel_by_id(knowledge.channel);
+        let (source, agent_id, digest, history_start) = match knowledge.source {
+            KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
+            KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
+            KnowledgeSource::History { digest, start } => ("history", None, digest, start),
+            KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
+        };
+        let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
+        Self {
+            channel_id: knowledge.channel,
+            channel_name: channel.map(|c| c.name()),
+            source,
+            agent_id,
+            agent_name,
+            digest,
+            history_start,
+        }
+    }
+}
+
 /// One element of a `MessageContextResponse`.
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -267,3 +349,29 @@ impl From<caelumora_model::message::ContextItem> for SeenItemResponse {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::approval::ApproverId;
+    use caelumora_model::user::UserId;
+
+    #[test]
+    fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
+        let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
+        let member = |id, name: Option<&str>| MemberView { id, name: name.map(str::to_string), handle: None, can_read_context: false };
+        let view = ChannelView {
+            id: ChannelId::new(),
+            name: "main".to_string(),
+            moderator: "broadcast".to_string(),
+            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            can_change: true,
+            members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
+        };
+
+        let response = ChannelResponse::from(view);
+
+        assert!(response.can_change);
+        let kinds: Vec<_> = response.members.iter().map(|m| (m.kind, m.name.as_str())).collect();
+        assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
+    }
+}

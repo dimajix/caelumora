@@ -96,7 +96,8 @@ fn json(value: &impl Serialize) -> String {
 }
 
 /// One server-sent event stream (issue 104): the snapshot `snapshot`
-/// produces, if the client asked for one (`with_snapshot`); then the events
+/// produces, if the client asked for one (`with_snapshot`) - none if it
+/// produces `None`, having logged why; then the events
 /// of `receiver` - with a fresh snapshot instead of a gap when the client
 /// falls behind, see [`resync_on_lag`]; until `until` completes, or the
 /// token that authenticated the request is about to expire (see
@@ -113,14 +114,14 @@ where
     T: Serialize + Clone + Send + 'static,
     V: Serialize,
     S: Fn() -> F + Send + Sync + 'static,
-    F: Future<Output = V> + Send,
+    F: Future<Output = Option<V>> + Send,
     U: Future<Output = ()> + Send + 'static,
 {
     let snapshot = Arc::new(snapshot);
-    let first = if with_snapshot { Some(named_event("snapshot", &snapshot().await)) } else { None };
+    let first = if with_snapshot { snapshot().await.map(|value| named_event("snapshot", &value)) } else { None };
     let resync = with_snapshot.then(|| move || {
         let snapshot = snapshot.clone();
-        async move { named_event("snapshot", &snapshot().await) }
+        async move { snapshot().await.map(|value| named_event("snapshot", &value)) }
     });
     let updates = resync_on_lag(receiver, what, resync).take_until(until);
     bounded_by_token(user, stream::iter(first.map(Ok)).chain(updates))
@@ -130,7 +131,8 @@ where
 ///
 /// When the client falls behind and events are lost, it is sent what
 /// `snapshot` produces, if it asked for snapshots - the state instead of a
-/// gap - and otherwise a comment saying how many were lost. `what` names the
+/// gap - and otherwise, or if `snapshot` produces none, a comment saying how
+/// many were lost. `what` names the
 /// stream in the log.
 pub fn resync_on_lag<T, S, F>(
     receiver: broadcast::Receiver<T>,
@@ -140,7 +142,7 @@ pub fn resync_on_lag<T, S, F>(
 where
     T: Serialize + Clone + Send + 'static,
     S: Fn() -> F + Send + Sync + 'static,
-    F: Future<Output = Event> + Send,
+    F: Future<Output = Option<Event>> + Send,
 {
     let snapshot = snapshot.map(Arc::new);
     BroadcastStream::new(receiver).then(move |item| {
@@ -151,10 +153,11 @@ where
                 Ok(value) => Ok(Event::default().data(json(&value))),
                 Err(BroadcastStreamRecvError::Lagged(lost)) => {
                     tracing::warn!("SSE client of {} fell behind and lost {} events", what, lost);
-                    match snapshot {
-                        Some(snapshot) => Ok(snapshot().await),
-                        None => Ok(Event::default().comment(format!("{} events lost", lost))),
-                    }
+                    let resynced = match snapshot {
+                        Some(snapshot) => snapshot().await,
+                        None => None,
+                    };
+                    Ok(resynced.unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost))))
                 }
             }
         }
@@ -216,7 +219,7 @@ mod tests {
             tx.send(n).unwrap();
         }
         drop(tx);
-        let snapshot = with_snapshot.then_some(|| async { Event::default().event("snapshot").data("state") });
+        let snapshot = with_snapshot.then_some(|| async { Some(Event::default().event("snapshot").data("state")) });
         let events = resync_on_lag(rx, "test".to_string(), snapshot);
         let body = axum::body::to_bytes(Sse::new(events).into_response().into_body(), usize::MAX).await.unwrap();
         String::from_utf8(body.to_vec()).unwrap()

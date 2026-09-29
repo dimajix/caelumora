@@ -28,3 +28,4 @@ pub mod secret;
 pub mod secret_impl;
 pub mod user_provider;
 pub mod user_provider_impl;
+pub mod view;
