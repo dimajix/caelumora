@@ -11,15 +11,12 @@ pub mod random;
 pub mod round_robin;
 
 use crate::actor::Actor;
-use crate::actor_impl::approval::ApproverActor;
-use crate::actor_impl::user::UserActor;
 use crate::moderator::{Moderator, RouteDecision};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::{Message, MessageRole};
-use dashmap::DashMap;
-use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use tracing::warn;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -89,68 +86,63 @@ impl<P: ResponderPolicy> Moderator for PolicyModerator<P> {
         self.actors.add_actor(actor);
     }
 
-    fn remove_actor(&mut self, actor: Arc<dyn Actor>) -> () {
+    fn remove_actor(&mut self, actor: ActorId) -> () {
         self.actors.remove_actor(actor);
     }
 }
 
-#[derive(Debug)]
+/// The actors of a channel, by kind. Plain maps: the channel holds its
+/// moderator behind a lock, so nothing here is shared (issue 114).
+#[derive(Debug, Default)]
 struct ModeratorActors {
-    agent_actors: DashMap<ActorId, Arc<dyn Actor>>,
-    user_actors: DashMap<ActorId, Arc<dyn Actor>>,
-    approval_actors: DashMap<ActorId, Arc<dyn Actor>>,
+    agent_actors: HashMap<ActorId, Arc<dyn Actor>>,
+    user_actors: HashMap<ActorId, Arc<dyn Actor>>,
+    approval_actors: HashMap<ActorId, Arc<dyn Actor>>,
 }
 
 impl ModeratorActors {
     fn new() -> Self {
-        Self {
-            agent_actors: DashMap::new(),
-            user_actors: DashMap::new(),
-            approval_actors: DashMap::new(),
-        }
+        Self::default()
     }
 
+    /// Files `actor` by its kind, which its id tells.
     fn add_actor(&mut self, actor: Arc<dyn Actor>) {
-        let any_actor:&dyn Any = actor.as_ref();
-        if any_actor.downcast_ref::<UserActor>().is_some() {
-            self.user_actors.insert(actor.id(), actor);
-        }
-        else if any_actor.downcast_ref::<ApproverActor>().is_some() {
-            self.approval_actors.insert(actor.id(), actor);
-        }
-        else {
-            self.agent_actors.insert(actor.id(), actor);
+        let id = actor.id();
+        match id {
+            ActorId::User(_) => { self.user_actors.insert(id, actor); }
+            ActorId::Approver(_) => { self.approval_actors.insert(id, actor); }
+            ActorId::Agent(_) => { self.agent_actors.insert(id, actor); }
+            ActorId::None | ActorId::System => warn!("Actor {} takes no part in routing", id),
         }
     }
 
-    fn remove_actor(&mut self, actor: Arc<dyn Actor>) {
-        self.agent_actors.remove(&actor.id());
-        self.user_actors.remove(&actor.id());
-        self.approval_actors.remove(&actor.id());
+    fn remove_actor(&mut self, id: ActorId) {
+        self.agent_actors.remove(&id);
+        self.user_actors.remove(&id);
+        self.approval_actors.remove(&id);
     }
 
     fn forward_routes(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
-        let user_messages = replace_role(messages, MessageRole::User);
-        let user_messages = remove_tools(&user_messages);
+        let user_messages = as_user_messages(messages);
 
         if user_messages.is_empty() {
             return Vec::new();
         }
 
         let forward_event = event.forward_with_response(user_messages);
-        self.agent_actors.iter()
-            .chain(self.user_actors.iter())
-            .filter(|r| !sender_ids.contains(r.key()))
-            .map(|r| (*r.key(), forward_event.clone()))
+        self.agent_actors.keys()
+            .chain(self.user_actors.keys())
+            .filter(|id| !sender_ids.contains(id))
+            .map(|id| (*id, forward_event.clone()))
             .collect()
     }
 
     fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorId> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         self.agent_actors.iter()
-            .filter(|r| r.value().state() != ActorState::Sleeping)
-            .map(|r| *r.key())
+            .filter(|(_, actor)| actor.state() != ActorState::Sleeping)
+            .map(|(id, _)| *id)
             .filter(|id| !sender_ids.contains(id))
             .collect()
     }
@@ -181,8 +173,8 @@ impl ModeratorActors {
     /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`,
     /// which concerns the users watching and none of the other agents.
     fn route_to_users(&self, event: &Envelope) -> RouteDecision {
-        self.user_actors.iter()
-            .map(|r| (*r.key(), event.clone()))
+        self.user_actors.keys()
+            .map(|id| (*id, event.clone()))
             .collect::<Vec<_>>()
             .into()
     }
@@ -192,14 +184,14 @@ impl ModeratorActors {
             ActorEvent::ApprovalRequested(_) => {
                 if matches!(event.context.sender_id, ActorId::Agent(_)) {
                     // Agent -> ApproverActor: internal plumbing, not shown to users yet.
-                    let forwards = self.approval_actors.iter()
-                        .map(|r| (*r.key(), event.clone()))
+                    let forwards = self.approval_actors.keys()
+                        .map(|id| (*id, event.clone()))
                         .collect();
                     RouteDecision { forwards, broadcast: false }
                 } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
                     // ApproverActor -> Users: the request users actually act on.
-                    let forwards = self.user_actors.iter()
-                        .map(|r| (*r.key(), event.clone()))
+                    let forwards = self.user_actors.keys()
+                        .map(|id| (*id, event.clone()))
                         .collect();
                     RouteDecision { forwards, broadcast: true }
                 } else {
@@ -209,8 +201,8 @@ impl ModeratorActors {
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) => {
                 if matches!(event.context.sender_id, ActorId::User(_)) {
                     // User -> ApproverActor: lets other observers see the decision too.
-                    let forwards = self.approval_actors.iter()
-                        .map(|r| (*r.key(), event.clone()))
+                    let forwards = self.approval_actors.keys()
+                        .map(|id| (*id, event.clone()))
                         .collect();
                     RouteDecision { forwards, broadcast: true }
                 } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
@@ -246,23 +238,14 @@ impl ModeratorActors {
 }
 
 
-fn remove_tools(messages:&[Message]) -> Vec<Message> {
-    let mut result = Vec::new();
-    for m in messages {
-        if m.content.is_some() && m.role != MessageRole::Tool {
-            let mut m2 = m.clone();
-            m2.tool_calls = Vec::new();
-            m2.tool_results = Vec::new();
-            result.push(m2);
-        }
-    }
-    result
-}
-
-fn replace_role(messages:&Vec<Message>, role:MessageRole) -> Vec<Message> {
-    let mut result = messages.clone();
-    result.iter_mut().for_each(|m| { m.role = role.clone() });
-    result
+/// What `messages` are to the other participants, in one pass: the text of
+/// each, as said by a user - without tool calls and tool results, which are
+/// the sender's own business. Tool messages are left out entirely.
+fn as_user_messages(messages: &[Message]) -> Vec<Message> {
+    messages.iter()
+        .filter(|m| m.content.is_some() && m.role != MessageRole::Tool)
+        .map(|m| Message { role: MessageRole::User, tool_calls: Vec::new(), tool_results: Vec::new(), ..m.clone() })
+        .collect()
 }
 
 
@@ -464,6 +447,25 @@ mod tests {
             assert!(decision.forwards.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
             assert!(decision.broadcast, "{:?} must broadcast an announced command", moderator);
         }
+    }
+
+    #[test]
+    fn others_hear_what_was_said_as_a_user_without_the_tool_traffic() {
+        use caelumora_model::tool::{ToolCallResult, ToolConfidentiality};
+        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC };
+        let result = ToolCallResult { id: Some("1".to_string()), tool_name: "noop".to_string(), content: "done".to_string(), status: Default::default(), confidentiality: ToolConfidentiality::PUBLIC };
+        let said = vec![
+            Message { role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::default() },
+            Message { role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::default() },
+            Message { role: MessageRole::Assistant, content: None, ..Message::default() },
+            Message { role: MessageRole::Assistant, content: Some("All done.".to_string()), ..Message::default() },
+        ];
+
+        let heard = as_user_messages(&said);
+
+        let texts: Vec<_> = heard.iter().map(|m| m.content.as_deref().unwrap()).collect();
+        assert_eq!(texts, ["Let me check.", "All done."], "neither the tool message nor an empty one");
+        assert!(heard.iter().all(|m| m.role == MessageRole::User && m.tool_calls.is_empty() && m.tool_results.is_empty()));
     }
 
     #[test]

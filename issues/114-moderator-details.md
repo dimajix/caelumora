@@ -1,6 +1,6 @@
 # 114 — Moderator internals: a `DashMap` behind `&mut self`, a downcast for a known kind, two clones per message
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -32,3 +32,13 @@ the messages.
 
 - **2026-09-28** — Split off from [97](97-small-model-unifications.md)
   (structure review, 3.2.10).
+- **2026-09-29** — Done. `ModeratorActors` keeps plain `HashMap`s, files
+  an actor by its `ActorId` instead of downcasting it (an id that is
+  neither user, agent nor approver is logged and not routed), and
+  `Moderator::remove_actor` takes the id. `replace_role` and
+  `remove_tools` are one `as_user_messages`, one clone per message. On
+  the way: the old order - roles replaced first, then tool messages
+  filtered by role - could never filter by role, since every message was
+  a user's by then; only the empty content kept tool messages out. The
+  one pass filters them by role as intended. A test states what the
+  others hear.

@@ -9,7 +9,7 @@ use caelumora_model::actor::{ActorId, Envelope};
 pub trait Moderator : Send + Sync + Debug {
     async fn route(&mut self, event: &Envelope) -> RouteDecision;
     fn add_actor(&mut self, actor: Arc<dyn Actor>) -> ();
-    fn remove_actor(&mut self, actor: Arc<dyn Actor>) -> ();
+    fn remove_actor(&mut self, actor: ActorId) -> ();
 }
 
 pub struct RouteDecision {

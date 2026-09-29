@@ -308,7 +308,7 @@ impl ChannelLoop {
             actors.remove(&participant);
             actors
         });
-        self.moderator.lock().await.remove_actor(actor.clone());
+        self.moderator.lock().await.remove_actor(participant);
         self.rebuild_mentions();
         actor.stop();
         let _ = self.changes_tx.send(ActorChange::Stop(participant));
@@ -1161,7 +1161,7 @@ mod tests {
             vec![(self.0, event.clone()), (self.0, event.forward_with_event(ActorEvent::ResponseRequested))].into()
         }
         fn add_actor(&mut self, _: Arc<dyn Actor>) {}
-        fn remove_actor(&mut self, _: Arc<dyn Actor>) {}
+        fn remove_actor(&mut self, _: ActorId) {}
     }
 
     #[tokio::test]
