@@ -174,7 +174,7 @@ against it, and what came out of the last attempt.
 | [112](112-id-types.md) | done | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
 | [113](113-error-shapes.md) | done | "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it. |
 | [114](114-moderator-details.md) | open | `ModeratorActors` uses a concurrent map behind `&mut self`, downcasts for a kind the id already tells, and clones every message twice. |
-| [115](115-filtering-event-sender.md) | open | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |
+| [115](115-filtering-event-sender.md) | done | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |
 | [105](105-seed-data-twice.md) | open | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
 | [109](109-code-hygiene.md) | open | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
 | [110](110-docs-contradicting-code.md) | open | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |

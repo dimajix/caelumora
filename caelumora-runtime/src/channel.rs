@@ -743,7 +743,6 @@ impl ChannelLoop {
                 if let Err(e) = actor.sender.try_send(target_event) {
                     match e {
                         TransportError::Full => warn!("Queue full for actor {}", target_id),
-                        TransportError::Filtered => {}, // Normal: FilteringEventSender drops unmatched events
                         _ => warn!("Could not forward event {} from={} to={}: {:?}", event_desc, sender_id, target_id, e)
                     }
                 }

@@ -120,7 +120,8 @@ impl EventSender for InMemoryEventSender {
 }
 
 /// Decorator that applies a filter predicate before forwarding to an inner `EventSender`.
-/// Filtered events are silently dropped on `send()` and return `TransportError::Filtered` on `try_send()`.
+/// An event the filter rejects is dropped and the send succeeds, on `send()` and
+/// `try_send()` alike: filtering is what this sender is for, not a failure (issue 115).
 /// Implements `EventSender`, so it can be composed with another `FilteringEventSender`.
 pub struct FilteringEventSender {
     inner: Box<dyn EventSender>,
@@ -147,7 +148,34 @@ impl EventSender for FilteringEventSender {
         if (self.filter)(&event) {
             self.inner.try_send(event)
         } else {
-            Err(TransportError::Filtered)
+            Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::actor::{ActorEvent, EventContext};
+    use caelumora_model::security::SecurityContext;
+
+    fn envelope(event: ActorEvent) -> Envelope {
+        Envelope::new(SecurityContext::default(), EventContext::default(), event)
+    }
+
+    #[tokio::test]
+    async fn a_filtered_event_is_dropped_and_both_sends_succeed() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let sender = FilteringEventSender::new(
+            Box::new(InMemoryEventSender::new(tx)),
+            |e| matches!(e.event, ActorEvent::ResponseRequested),
+        );
+
+        sender.send(envelope(ActorEvent::ResponseStarted)).await.expect("filtered, not failed");
+        sender.try_send(envelope(ActorEvent::ResponseStarted)).expect("filtered, not failed");
+        sender.try_send(envelope(ActorEvent::ResponseRequested)).expect("passes the filter");
+
+        assert!(matches!(rx.try_recv().map(|e| e.event), Ok(ActorEvent::ResponseRequested)), "only what passes arrives");
+        assert!(rx.try_recv().is_err(), "nothing else");
     }
 }

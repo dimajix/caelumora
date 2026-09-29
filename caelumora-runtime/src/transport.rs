@@ -7,8 +7,6 @@ pub enum TransportError {
     Full,
     #[error("channel closed")]
     Closed,
-    #[error("event filtered")]
-    Filtered,
     #[error("transport backend: {0}")]
     Backend(String),
 }

@@ -1,6 +1,6 @@
 # 115 — `FilteringEventSender::send` drops silently while `try_send` reports the drop as an error
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -31,3 +31,9 @@ answer, not an error. Two methods, one call site.
 
 - **2026-09-28** — Split off from [97](97-small-model-unifications.md)
   (structure review, 3.2.10).
+- **2026-09-29** — Done. `FilteringEventSender::try_send` returns `Ok(())`
+  for an event its filter rejects, like `send`; `TransportError::Filtered`
+  had no other use and is gone, and `route_event_impl` no longer matches
+  it. A unit test sends a filtered event both ways and checks that only
+  what passes the filter arrives. No caller needed to know whether an
+  event was filtered, so no `bool` was added.
