@@ -1,12 +1,9 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::component::ComponentConfig;
 use crate::meta::Metadata;
-use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::store::EntityStore;
-use crate::user::UserId;
+use crate::security::{Secured, SecurityAttributes};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -15,12 +12,6 @@ pub enum SessionUpdateEvent {
 
 define_id!(SessionId);
 
-pub struct SessionContext {
-    pub id: SessionId,
-    pub owner: UserId,
-    pub security: SecurityContext,
-    pub entity_store: Arc<dyn EntityStore>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {

@@ -7,12 +7,12 @@ use caelumora_model::command::{parse_input, UserInput};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::config::AppConfig;
 use caelumora_model::mention::mention_spans;
+use caelumora_model::approval::ApprovalStrategy;
 use caelumora_model::message::Message;
 use caelumora_model::meta::{Metadata, Scope};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::session::{SessionContext, SessionId};
 use caelumora_model::store::EntityStore;
-use caelumora_model::template::{ChannelTemplate, ParticipantId, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component_impl::transcript_appender::TRANSCRIPT_APPENDER_KIND;
@@ -153,6 +153,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
         scope: ScopeTemplate::GlobalScope,
         participants: vec![
             ParticipantTemplate::User { name: "user".to_string() },
+                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
             ParticipantTemplate::Agent {
                 name: "Jonathan".to_string(),
                 scope: ScopeTemplate::GlobalScope,
@@ -171,6 +172,7 @@ async fn setup_templates(store: &Arc<dyn EntityStore>) -> anyhow::Result<Session
                 confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
+                    "approval".to_string(),
                     "Jonathan".to_string(),
                     "Sarah".to_string(),
                 ],
@@ -392,10 +394,9 @@ async fn main() -> anyhow::Result<()> {
     ));
     let template = setup_templates(&entity_store).await?;
 
-    let session_id = SessionId(Uuid::new_v4());
     let owner = UserId::default();
     // The session is this terminal user's own.
-    let security = SecurityContext::new(ActorId::User(owner), session_id, Default::default());
+    let security = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
     // Users belong to the system (issue 94), so the system records this one.
     let system = SecurityContext::system();
     if entity_store.get_user(&system, owner).await.is_err() {
@@ -406,19 +407,10 @@ async fn main() -> anyhow::Result<()> {
             roles: vec!["user".to_string()],
         }).await?;
     }
-    let context = SessionContext {
-        id: session_id,
-        owner,
-        security,
-        entity_store: entity_store.clone(),
-    };
-    let mut mapping = HashMap::new();
-    mapping.insert("user".to_string(), ParticipantId::UserId(owner));
-    let (session, channels) = template.instantiate("default-session".to_string(), &context, mapping).await?;
 
-    // SessionManager owns persistence, spawning the run loop, and lifecycle events.
     let session_manager = SessionManager::new(runtime.clone());
-    let session_loop = session_manager.create_session(&context.security, session, channels).await?;
+    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session".to_string())).await?;
+    let session_id = session_loop.id();
 
     let channel = session_loop
         .channel_by_name("main")

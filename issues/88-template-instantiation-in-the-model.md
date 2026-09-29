@@ -1,6 +1,6 @@
 # 88 — Template instantiation does store I/O in the model, and both frontends drive it by hand
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -43,3 +43,27 @@ sequence is a third copy waiting to happen.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.7 and 3.4 G).
+- **2026-09-29** — Done, as agreed with the maintainer. The model makes no
+  store call any more: `ParticipantTemplate::request(session, owner)` says
+  what a participant is for a session (`ParticipantRequest`), and
+  `SessionTemplate::build(id, owner, name, participants)` builds the
+  session and its channels from the participants it is given.
+  `SessionContext` is gone, and so is the `mapping`: the template's "user"
+  is the session's owner, another user participant is
+  `TemplateError::UnboundUser` - no frontend passed more, and naming
+  members at creation would be a parameter later. The runtime resolves:
+  `SessionManager::create_from_template(ctx, template_id, name)` reads the
+  template, checks the owner exists, finds or makes the agents
+  (`caelumora_runtime::template`, with the rule of issue 77) and creates
+  the session; REST and the TUI call only that. REST answers a missing
+  template with 404 and an invalid one with 400 (`template_invalid`)
+  instead of 500. Approvers, on the maintainer's wish, stay in the
+  template as ordinary named participants with a `strategy` (default
+  `any`), so a template lists every actor of its session; the magic
+  channel participant "approval" is gone, `ParticipantTemplate::name` is
+  always a name, and `Channel::build` keeps adding an approver to a
+  channel that has none - one guarantee for channels from templates and
+  on request. `ScopeTemplate::GroupScope` is `TemplateError::
+  UnsupportedScope` instead of a `todo!()` panic. `TemplateError::Store`
+  is gone; store errors are the runtime's. The setup templates of REST
+  and TUI name their approver.

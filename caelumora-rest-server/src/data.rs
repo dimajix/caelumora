@@ -1,3 +1,4 @@
+use caelumora_model::approval::ApprovalStrategy;
 use caelumora_model::agent::{Personality, PersonalityId};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, STAGE_PERCEIVE};
 use caelumora_model::meta::{Metadata, Scope};
@@ -83,6 +84,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             scope: ScopeTemplate::SessionScope,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
+                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
                 ParticipantTemplate::Agent {
                     name: "assistant".to_string(),
                     scope: ScopeTemplate::SessionScope,
@@ -95,6 +97,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
+                    "approval".to_string(),
                     "assistant".to_string(),
                 ],
             }],
@@ -115,6 +118,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             scope: ScopeTemplate::SessionScope,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
+                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
                 ParticipantTemplate::Agent {
                     name: "Jonathan".to_string(),
                     // One Jonathan per user, in all their sessions: his
@@ -134,6 +138,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
+                    "approval".to_string(),
                     "Jonathan".to_string(),
                     "Sassy".to_string(),
                 ],
@@ -156,6 +161,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
             scope: ScopeTemplate::SessionScope,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
+                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
                 ParticipantTemplate::Agent {
                     name: "Jonathan".to_string(),
                     // One Jonathan per user, in all their sessions: his
@@ -175,6 +181,7 @@ pub async fn setup_initial_data(store: &Arc<dyn EntityStore>, username: &str) ->
                 confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
                 participants: vec![
                     "user".to_string(),
+                    "approval".to_string(),
                     "Jonathan".to_string(),
                     "Sassy".to_string(),
                 ],

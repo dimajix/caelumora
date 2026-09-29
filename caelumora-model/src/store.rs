@@ -113,97 +113,10 @@ pub mod tests {
     use crate::meta::Scope;
     use crate::meta::Metadata;
     use crate::security::{SecurityAttributes, SecurityContext};
-    use crate::session::Participant;
     use crate::store_impl::memory::MemoryStore;
-    use crate::user::UserId;
-    use std::collections::HashMap;
     use std::sync::Arc;
     use uuid::Uuid;
 
-
-    fn personality_template() -> Personality {
-        Personality {
-            reasoning_confidentiality: crate::confidentiality::Confidentiality::Public,
-            security_attributes: Default::default(),
-            id: PersonalityId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "helper".to_string(),
-                scope: Scope::GlobalScope,
-                description: "Helpful assistant".to_string(),
-            },
-            components: crate::component::ComponentConfig::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn get_or_create_agent_returns_existing_agent() {
-        let personality = personality_template();
-        let existing = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, crate::actor::ActorId::None);
-
-        let store = Arc::new(MemoryStore::new());
-        let ctx = SecurityContext::default();
-        store.create_personality(&ctx, &personality).await.unwrap();
-        store.create_agent(&ctx, &existing).await.unwrap();
-
-        let context = crate::session::SessionContext {
-            id: SessionId(Uuid::new_v4()),
-            owner: UserId::default(),
-            security: SecurityContext::default(),
-            entity_store: store.clone(),
-        };
-
-        let pt = crate::template::ParticipantTemplate::Agent {
-            name: "assistant".to_string(),
-            scope: crate::template::ScopeTemplate::GlobalScope,
-            personality_id: personality.id,
-        };
-
-        let resolved = pt.instantiate(&context, &HashMap::new()).await.unwrap();
-
-        if let Participant::Agent(agent) = resolved {
-            assert_eq!(agent, existing.id);
-        } else {
-            panic!("Expected agent participant");
-        }
-    }
-
-    #[tokio::test]
-    async fn get_or_create_agent_creates_agent_when_missing() {
-        let personality = personality_template();
-        let store = Arc::new(MemoryStore::new());
-        let ctx = SecurityContext::default();
-        store.create_personality(&ctx, &personality).await.unwrap();
-
-        let context = crate::session::SessionContext {
-            id: SessionId(Uuid::new_v4()),
-            owner: UserId::default(),
-            security: SecurityContext::default(),
-            entity_store: store.clone(),
-        };
-
-        let pt = crate::template::ParticipantTemplate::Agent {
-            name: "assistant".to_string(),
-            scope: crate::template::ScopeTemplate::GlobalScope,
-            personality_id: personality.id,
-        };
-
-        let created_participant = pt.instantiate(&context, &HashMap::new()).await.unwrap();
-        let created = if let Participant::Agent(agent) = created_participant {
-            agent
-        } else {
-            panic!("Expected agent participant");
-        };
-
-        let fetched_participant = pt.instantiate(&context, &HashMap::new()).await.unwrap();
-        let fetched = if let Participant::Agent(agent) = fetched_participant {
-            agent
-        } else {
-            panic!("Expected agent participant");
-        };
-
-        assert_eq!(created, fetched);
-        assert_eq!(store.get_agent(&ctx, created).await.unwrap().personality_id, personality.id);
-    }
 
     #[tokio::test]
     async fn list_sessions_works() {

@@ -10,6 +10,7 @@ use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, Sec
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::template::SessionTemplateId;
 use crate::controller::SessionController;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -28,6 +29,9 @@ pub enum SessionError {
     UnknownModerator(String),
     #[error("{participant} is not a participant of session {session}")]
     NotAParticipant { session: SessionId, participant: ActorId },
+    /// Only a user owns a session made from a template (issue 88).
+    #[error("{0} cannot own a session: only a user can")]
+    OwnerNotAUser(ActorId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
     #[error("A channel cannot be {0}: that level is an actor's, not a channel's")]
@@ -378,6 +382,27 @@ impl SessionManager {
     /// Create a brand-new session with its `channels`: persist them - the
     /// channels as documents of their own (issue 70) - announce their
     /// existence, then start the session.
+    /// Creates a session from the template `template_id` on behalf of
+    /// `ctx`, whose user owns it and is the template's "user", names it
+    /// `name` - the template's name if `None` - and starts it (issue 88).
+    /// The template's agents are found by name in their scope, or made.
+    ///
+    /// # Errors
+    /// `SessionError::OwnerNotAUser` if `ctx` acts for no user; a
+    /// `StoreError` if the template, a user or a personality it names does
+    /// not exist or may not be read; a `TemplateError` if the template
+    /// cannot be made into a session; whatever creating the session reports.
+    pub async fn create_from_template(&self, ctx: &SecurityContext, template_id: SessionTemplateId, name: Option<String>) -> Result<Arc<SessionLoop>> {
+        let owner = ctx.initiator_id.as_user_id().ok_or(SessionError::OwnerNotAUser(ctx.initiator_id))?;
+        let store = self.runtime_manager.entity_store();
+        let template = store.get_session_template(ctx, template_id).await?;
+        let id = SessionId::new();
+        let participants = crate::template::resolve_participants(store.as_ref(), ctx, &template, id, owner).await?;
+        let name = name.unwrap_or_else(|| template.metadata.name.clone());
+        let (session, channels) = template.build(id, owner, name, participants)?;
+        self.create_session(ctx, session, channels).await
+    }
+
     pub async fn create_session(&self, ctx: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let start = self.start_lock(id);
@@ -816,6 +841,54 @@ mod tests {
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
         ChannelSpec { name: name.to_string(), moderator: None, participants, confidentiality: None }
+    }
+
+    #[tokio::test]
+    async fn a_session_is_created_from_a_template_for_its_owner() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::approval::ApprovalStrategy;
+        use caelumora_model::channel::Participant;
+        use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+        use caelumora_model::user::{User, UserId};
+
+        let runtime = test_runtime();
+        let manager = SessionManager::new(runtime.clone());
+        let store = runtime.entity_store();
+        let owner = UserId::new();
+        store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new() }).await.unwrap();
+        let template = SessionTemplate {
+            id: SessionTemplateId::new(),
+            metadata: Metadata { name: "pairing".to_string(), ..Metadata::default() },
+            scope: ScopeTemplate::SessionScope,
+            participants: vec![
+                ParticipantTemplate::User { name: "user".to_string() },
+                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
+            ],
+            channels: vec![ChannelTemplate {
+                name: "main".to_string(),
+                moderator: "broadcast".to_string(),
+                confidentiality: Confidentiality::CHANNEL_DEFAULT,
+                participants: vec!["user".to_string(), "approval".to_string()],
+            }],
+            security_attributes: Default::default(),
+            commands: Default::default(),
+        };
+        store.create_session_template(&SecurityContext::system(), &template).await.unwrap();
+        let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+
+        let session = manager.create_from_template(&hers, template.id, None).await.expect("created and started");
+        assert_eq!(session.name(), "pairing", "named after the template unless named");
+        assert_eq!(session.get_session().security_attributes.owner_id, ActorId::User(owner));
+        let main = session.channel_by_name("main").expect("the template's channel runs");
+        assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
+        let stored = store.get_channel(&hers, main.id()).await.unwrap();
+        assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
+        manager.stop_session(session.id()).await;
+
+        let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None).await.expect_err("no such template");
+        assert!(crate::error::is_not_found(&missing, "session_template"), "{missing}");
+        let not_a_user = manager.create_from_template(&SecurityContext::system(), template.id, None).await.expect_err("the system owns no session");
+        assert!(matches!(not_a_user.downcast_ref::<SessionError>(), Some(SessionError::OwnerNotAUser(_))), "{not_a_user}");
     }
 
     #[tokio::test]

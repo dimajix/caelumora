@@ -38,10 +38,7 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
         } else if let Some(e) = e.downcast_ref::<SessionError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<TemplateError>() {
-            match e {
-                TemplateError::Store(store) => store_message(store),
-                _ => Some(e.to_string()),
-            }
+            Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<StoreError>() {
             store_message(e)
         } else {
@@ -66,7 +63,6 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
         matches!(e.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. }))
             || matches!(e.downcast_ref::<CommandError>(), Some(CommandError::Forbidden(_)))
             || matches!(e.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied))
-            || matches!(e.downcast_ref::<TemplateError>(), Some(TemplateError::Store(StoreError::PermissionDenied)))
     })
 }
 
@@ -75,10 +71,7 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
 /// agent's personality is missing, and that is not "session not found".
 pub fn is_not_found(error: &anyhow::Error, entity: &str) -> bool {
     let matches = |e: &StoreError| matches!(e, StoreError::NotFound { entity: kind, .. } if *kind == entity);
-    error.chain().any(|e| {
-        e.downcast_ref::<StoreError>().is_some_and(matches)
-            || matches!(e.downcast_ref::<TemplateError>(), Some(TemplateError::Store(store)) if matches(store))
-    })
+    error.chain().any(|e| e.downcast_ref::<StoreError>().is_some_and(matches))
 }
 
 #[cfg(test)]
@@ -121,7 +114,7 @@ mod tests {
     #[test]
     fn not_found_is_recognised_through_wrappers() {
         let not_found = |entity| StoreError::NotFound { entity, id: "42".to_string() };
-        assert!(is_not_found(&anyhow::Error::new(TemplateError::Store(not_found("session"))).context("loading"), "session"));
+        assert!(is_not_found(&anyhow::Error::new(not_found("session")).context("loading"), "session"));
         assert!(!is_not_found(&anyhow::Error::new(not_found("personality")), "session"), "another entity is missing");
         assert!(!is_not_found(&anyhow::Error::new(StoreError::Backend("x".to_string())), "session"));
     }

@@ -1,13 +1,12 @@
-use caelumora_model::store::StoreError;
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse, SessionSnapshot};
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode};
 use crate::error::{Json, Path};
-use caelumora_model::session::{SessionContext, SessionId};
-use caelumora_model::template::{ParticipantId, SessionTemplateId};
-use std::collections::HashMap;
+use caelumora_model::session::SessionId;
+use caelumora_model::template::{SessionTemplateId, TemplateError};
+use caelumora_runtime::error::is_not_found;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,40 +15,22 @@ pub async fn create_session(
     user: AuthenticatedUser,
     Json(payload): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    let ctx = user.security_context();
+    // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let template = match state.entity_store.get_session_template(&ctx, template_id).await {
-        Ok(template) => template,
-        Err(StoreError::NotFound { .. }) => {
-            return Err(ApiError::not_found("template_not_found", format!("Session template {} does not exist", template_id)));
-        }
-        Err(e) => return Err(ApiError::internal("templates_unavailable", "reading the session template", &e.into())),
-    };
+    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name).await
+        .map_err(|e| {
+            if is_not_found(&e, "session_template") {
+                ApiError::not_found("template_not_found", format!("Session template {} does not exist", template_id))
+            } else if let Some(invalid) = e.downcast_ref::<TemplateError>() {
+                ApiError::new(StatusCode::BAD_REQUEST, "template_invalid", invalid.to_string())
+            } else {
+                ApiError::internal("session_start_failed", "creating a session from a template", &e)
+            }
+        })?;
 
-    let session_id = SessionId(Uuid::new_v4());
-    // The logged-in user owns the session and fills its "user" participant.
-    let owner = user.id;
-    let security = user.security_context();
-    let context = SessionContext {
-        id: session_id,
-        owner,
-        security,
-        entity_store: state.entity_store.clone(),
-    };
-
-    let name = payload.name.unwrap_or_else(|| template.metadata.name.clone());
-    let mut mapping = HashMap::new();
-    mapping.insert("user".to_string(), ParticipantId::UserId(owner));
-    let (session, channels) = template.instantiate(name, &context, mapping).await
-        .map_err(|e| ApiError::internal("template_invalid", &format!("instantiating template '{}'", template.metadata.name), &e.into()))?;
-
-    // `create_session` persists the session, emits its lifecycle events, and starts it.
-    let session_loop = state.session_manager.create_session(&ctx, session, channels).await
-        .map_err(|e| ApiError::internal("session_start_failed", "starting the new session", &e))?;
-
-    let meta =  session_loop.get_session().metadata.clone();
+    let meta = session_loop.get_session().metadata.clone();
     Ok(Json(SessionResponse {
-        id: session_id,
+        id: session_loop.id(),
         name: meta.name.clone(),
         metadata: meta,
     }))

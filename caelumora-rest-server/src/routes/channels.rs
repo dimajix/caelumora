@@ -89,7 +89,8 @@ fn channel_error(error: anyhow::Error, session_id: SessionId, act: &str, doing: 
         Some(SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. } | SessionError::InvalidConfidentiality(_)) => {
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_channel", detail)
         }
-        None => crate::routes::session_error(error, session_id, act, doing),
+        // Not about a channel at all.
+        Some(SessionError::OwnerNotAUser(_)) | None => crate::routes::session_error(error, session_id, act, doing),
     }
 }
 
