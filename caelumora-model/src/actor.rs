@@ -333,8 +333,6 @@ pub enum ActorState {
     Cancelling,
     /// Fall asleep, do not generate new messages
     Sleeping,
-    /// Stop current turn
-    Stopping,
     WaitingForApproval,
 }
 
@@ -345,7 +343,6 @@ impl ActorState {
             0 => ActorState::Idle,
             2 => ActorState::Cancelling,
             3 => ActorState::Sleeping,
-            4 => ActorState::Stopping,
             5 => ActorState::WaitingForApproval,
             6 => ActorState::Planning,
             7 => ActorState::ExecutingTools,
@@ -359,7 +356,6 @@ impl ActorState {
             ActorState::Idle => 0,
             ActorState::Cancelling => 2,
             ActorState::Sleeping => 3,
-            ActorState::Stopping => 4,
             ActorState::WaitingForApproval => 5,
             ActorState::Planning => 6,
             ActorState::ExecutingTools => 7,

@@ -55,7 +55,7 @@ impl ToolProvider for StopToolProvider {
             },
             "silence" => {
                 info!("Silencing agent {} {}", turn.agent_id, turn.agent_name);
-                turn.request_state(ActorState::Stopping);
+                turn.request_state(ActorState::Idle);
                 Ok(serde_json::json!({ "status": "silent" }))
             },
             &_ => {
@@ -90,6 +90,9 @@ mod tests {
 
         let result = provider.execute("stop", &json!({}), &mut turn).await.unwrap();
         assert_eq!(result["status"], "stopped");
+        assert_eq!(turn.requested_state(), Some(ActorState::Sleeping), "the turn ends, the agent sleeps");
+        provider.execute("silence", &json!({}), &mut turn).await.unwrap();
+        assert_eq!(turn.requested_state(), Some(ActorState::Idle), "the turn ends, the agent waits");
 
         let tools = provider.tools();
         assert_eq!(tools.len(), 3);

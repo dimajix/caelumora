@@ -110,6 +110,7 @@ against it, and what came out of the last attempt.
 | [82](82-tool-parameter-parsing.md) | done | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
 | [100](100-tool-executor-table-and-result.md) | open | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |
 | [111](111-tool-parameter-reading.md) | open | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
+| [118](118-malformed-call-put-up-for-approval.md) | open | A tool call with invalid arguments is put up for approval as "No description" and fails only after a user approved it. |
 
 ## User interaction
 
@@ -183,7 +184,7 @@ against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [83](83-turn-logic-on-agent-actor.md) | open | The logic of a turn lives in `AgentActor`, which drives `Turn` through eight to ten setters per step. |
-| [84](84-agent-state-machine.md) | open | The agent's state machine has a state that only forwards and two handlers that differ in one branch. |
+| [84](84-agent-state-machine.md) | done | The agent's state machine has a state that only forwards and two handlers that differ in one branch. |
 | [85](85-turn-state-in-agent-channel-state.md) | open | The working state of a turn is eleven loose fields of `AgentChannelState`, reset by three overlapping lists. |
 | [86](86-controllers-in-the-model.md) | open | The five controllers write to the store and publish events from inside the model, each built differently. |
 | [88](88-template-instantiation-in-the-model.md) | open | Instantiating a template does store I/O in the model, and both frontends drive the sequence by hand. |

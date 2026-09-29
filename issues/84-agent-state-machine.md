@@ -1,6 +1,6 @@
 # 84 — The agent's state machine has states and handlers that do nothing of their own
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -44,3 +44,23 @@ the resume logic ([75](75-agent-resumes-half-turn.md)) wrong.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.2.6, 3.2.7).
+- **2026-09-29** — Done.
+  - `ActorState::Stopping` and `handle_stopping` are gone. A requested
+    state (`Turn::request_state`, set only by the stop tool) now means:
+    the turn ends with this tool step, and reflecting takes the state up.
+    `silence` requests `Idle`, `stop`/`bye` request `Sleeping`. This
+    changes `stop` and `bye`: they used to let the model answer once more
+    after the tool result before the agent fell asleep; now the turn ends
+    right after the call, like `silence` - which is what their
+    descriptions say ("no further input", "stop the conversation"); the
+    good-bye is in the message that makes the call.
+  - `handle_idle` and `handle_sleep` are one `handle_waiting(asleep, …)`;
+    after an event it continues in the live state, which also covers a
+    `wakeup()` that arrived while waiting - `state_after_sleep` is gone.
+  - `event_for(message, partial)` chooses the event in one place (three
+    sites; the two plan sites that send a fixed event keep it on purpose).
+    `respond_complete` is `respond_partial` plus keeping the message.
+  - `handle_global_event` and `handle_waiting_for_approval` lost their
+    unused sender parameter; `perceive` no longer clones its input for a
+    result it discards.
+  `Reflecting` and the order store → announce → answer are unchanged (55).

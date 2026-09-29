@@ -166,37 +166,29 @@ impl AgentActor {
             return;
         }
 
-        let original_messages = messages.clone();
-        let perceived =
-            Self::apply_stage_processors(&self.perceive_in_processors, messages, turn)
-                .await
-                .unwrap_or_else(|e| {
-                    warn!("PerceiveIn stage failed: {}", e);
-                    original_messages.clone()
-                });
-
-        let _ = perceived;
+        // The processors act on the turn (transcript, history); what they
+        // return is not used.
+        if let Err(e) = Self::apply_stage_processors(&self.perceive_in_processors, messages, turn).await {
+            warn!("PerceiveIn stage failed: {}", e);
+        }
     }
 
+    /// A complete message as it leaves the agent - through the emit
+    /// processors - and becomes part of the turn. `None` if the processors
+    /// dropped it.
     async fn respond_complete<'a>(
         &self,
         message: Message,
         turn: &mut Turn<'a>,
     ) -> Option<Message> {
-        let mut output =
-            Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn)
-                .await
-                .ok()?;
-        if output.is_empty() {
-            return None;
-        }
-
-        let msg = output.remove(0);
+        let msg = self.respond_partial(message, turn).await?;
         turn.push_message(msg.clone());
-
         Some(msg)
     }
 
+    /// A message as it leaves the agent, through the emit processors; a
+    /// partial one is only shown, not kept. `None` if the processors
+    /// dropped it.
     async fn respond_partial<'a>(
         &self,
         message: Message,
@@ -210,6 +202,18 @@ impl AgentActor {
             return None;
         }
         Some(output.remove(0))
+    }
+
+    /// The event that publishes `message`: internal messages (plan steps)
+    /// are intermediate, the others what the channel shows as the answer;
+    /// `partial` for a streamed chunk.
+    fn event_for(message: Message, partial: bool) -> ActorEvent {
+        match (message.internal, partial) {
+            (true, true) => ActorEvent::IntermediatePartialGenerated(message),
+            (false, true) => ActorEvent::PartialMessageGenerated(message),
+            (true, false) => ActorEvent::IntermediateMessageGenerated(message),
+            (false, false) => ActorEvent::CompleteMessageGenerated(message),
+        }
     }
 
     async fn next_turn<'a>(&self, turn: &mut Turn<'a>) -> Result<()> {
@@ -313,8 +317,8 @@ impl AgentActor {
     /// between two steps of a turn is a turn to resume - the server
     /// stopped or crashed in the middle of it - and most states resume as
     /// they are: `Planning` repeats the model call, `Reflecting` the
-    /// reflection, `WaitingForApproval` keeps waiting, `Cancelling` and
-    /// `Stopping` end the turn. A deliberate end never leaves a turn in the
+    /// reflection, `WaitingForApproval` keeps waiting, `Cancelling` ends the
+    /// turn. A deliberate end never leaves a turn in the
     /// store (`stop`, `cancel`, the stop tool).
     ///
     /// `ExecutingTools` is the exception: a tool may have run without its
@@ -591,11 +595,7 @@ impl AgentActor {
         Ok(input)
     }
 
-    async fn handle_global_event(
-        &self,
-        maybe_global: Option<GlobalEvent>,
-        _tx: &dyn EventSender,
-    ) {
+    async fn handle_global_event(&self, maybe_global: Option<GlobalEvent>) {
         if let Some(global_event) = maybe_global {
             self.agent_controller
                 .process_global_event(&global_event)
@@ -603,11 +603,13 @@ impl AgentActor {
         }
     }
 
-    /// Idle just waits for the next event: `FullResponseGenerated` updates local
-    /// context, `ResponseRequested` starts a turn. Dispatch already guarantees
-    /// we're actually Idle, so no CAS is needed here.
-    async fn handle_idle<'a>(
+    /// Idle and Sleeping wait for the next event alike: a
+    /// `FullResponseGenerated` is perceived, a `ResponseRequested` starts a
+    /// turn - unless `asleep`, where only `wakeup()` ends the sleep. `None`
+    /// once the actor's input is closed.
+    async fn handle_waiting<'a>(
         &self,
+        asleep: bool,
         turn: &mut Turn<'a>,
         rx: &mut Box<dyn EventReceiver>,
         global_rx: &mut EventSubscription,
@@ -615,39 +617,34 @@ impl AgentActor {
     ) -> Result<Option<ActorState>> {
         tokio::select! {
             maybe_event = rx.recv() => {
-                match maybe_event {
-                    Some(event) => {
-                        let span = crate::logging::envelope_span(&event.context, event.event.kind());
-                        let next = async {
-                            debug!("Received {}", event.describe());
-                            Ok::<_, anyhow::Error>(match event.event {
-                                ActorEvent::FullResponseGenerated(messages) => {
-                                    self.perceive(turn, messages, &event.context, &event.security).await;
-                                    Some(ActorState::Idle)
+                let Some(event) = maybe_event else { return Ok(None) };
+                let span = crate::logging::envelope_span(&event.context, event.event.kind());
+                let started = async {
+                    debug!("Received {}", event.describe());
+                    Ok::<_, anyhow::Error>(match event.event {
+                        ActorEvent::FullResponseGenerated(messages) => {
+                            self.perceive(turn, messages, &event.context, &event.security).await;
+                            false
+                        }
+                        ActorEvent::ResponseRequested if !asleep => {
+                            match self.request_response(turn, &event.context, &event.security, output).await {
+                                Ok(()) => true,
+                                // E.g. a fail-closed context provider: the turn never starts.
+                                Err(e) => {
+                                    self.fail_turn(turn, &e, output).await;
+                                    false
                                 }
-                                ActorEvent::ResponseRequested => {
-                                    match self.request_response(turn, &event.context, &event.security, output).await {
-                                        Ok(()) => Some(ActorState::Planning),
-                                        // E.g. a fail-closed context provider: the turn never starts.
-                                        Err(e) => {
-                                            self.fail_turn(turn, &e, output).await;
-                                            Some(ActorState::Idle)
-                                        }
-                                    }
-                                }
-                                _ => Some(ActorState::Idle),
-                            })
-                        }.instrument(span).await?;
-                        rx.commit().await?;
-                        Ok(next)
-                    }
-                    // Channel is closed
-                    None => Ok(None)
-                }
+                            }
+                        }
+                        _ => false,
+                    })
+                }.instrument(span).await?;
+                rx.commit().await?;
+                Ok(Some(if started { ActorState::Planning } else { self.processing_state.load() }))
             }
             maybe_global = global_rx.recv() => {
-                self.handle_global_event(maybe_global, output).await;
-                Ok(Some(ActorState::Idle))
+                self.handle_global_event(maybe_global).await;
+                Ok(Some(self.processing_state.load()))
             }
         }
     }
@@ -710,58 +707,6 @@ impl AgentActor {
         }
     }
 
-    /// `Sleep` differs from `Idle` in that it deliberately does *not* react to
-    /// `ResponseRequested` at all (only an external `wakeup()` call ends a sleep) -
-    /// it only keeps local context current via `FullResponseGenerated`.
-    async fn handle_sleep<'a>(
-        &self,
-        turn: &mut Turn<'a>,
-        rx: &mut Box<dyn EventReceiver>,
-        global_rx: &mut EventSubscription,
-        output: &dyn EventSender,
-    ) -> Result<Option<ActorState>> {
-        tokio::select! {
-            maybe_event = rx.recv() => {
-                match maybe_event {
-                    Some(event) => {
-                        if let ActorEvent::FullResponseGenerated(messages) = event.event {
-                            self.perceive(turn, messages, &event.context, &event.security).await;
-                        }
-                        rx.commit().await?;
-                        Ok(Some(self.state_after_sleep()))
-                    }
-                    // Channel is closed
-                    None => Ok(None)
-                }
-            }
-            maybe_global = global_rx.recv() => {
-                self.handle_global_event(maybe_global, output).await;
-                Ok(Some(self.state_after_sleep()))
-            }
-        }
-    }
-
-    /// The state to continue with after `handle_sleep` consumed an event. A
-    /// `wakeup()` while `handle_sleep` was blocked on its inputs has already
-    /// moved the processing state to `Idle`; returning a hard `Sleeping` would
-    /// overwrite that and put the agent straight back to sleep - so a
-    /// mentioned agent would perceive the message waking it, then ignore the
-    /// `ResponseRequested` that follows.
-    fn state_after_sleep(&self) -> ActorState {
-        match self.processing_state.load() {
-            ActorState::Idle => ActorState::Idle,
-            _ => ActorState::Sleeping,
-        }
-    }
-
-    /// `Silence` and `Cancelling` are momentary: the run loop dispatches to them
-    /// once (so the reason is observable for a beat), and they immediately fall
-    /// through to `Idle` without consuming any event.
-    fn handle_stopping(&self) -> Result<ActorState> {
-        info!("Agent {} {} stopped, not reflecting", self.id, self.agent_controller.name());
-        Ok(ActorState::Reflecting)
-    }
-
     async fn handle_cancelling<'a>(
         &self,
         turn: &mut Turn<'a>,
@@ -786,7 +731,6 @@ impl AgentActor {
         turn: &mut Turn<'a>,
         rx: &mut Box<dyn EventReceiver>,
         global_rx: &mut EventSubscription,
-        output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         let is_approval_event = |env: &Envelope| {
             matches!(
@@ -820,7 +764,7 @@ impl AgentActor {
                 }
             }
             maybe_global = global_rx.recv() => {
-                self.handle_global_event(maybe_global, output).await;
+                self.handle_global_event(maybe_global).await;
                 Ok(Some(ActorState::WaitingForApproval))
             }
         }
@@ -954,12 +898,7 @@ impl AgentActor {
                     self.label(&mut message, turn, false);
                     message.internal = internal_message;
                     if let Some(msg) = self.respond_partial(message, turn).await {
-                        let event = if msg.internal {
-                            ActorEvent::IntermediatePartialGenerated(msg)
-                        } else {
-                            ActorEvent::PartialMessageGenerated(msg)
-                        };
-                        turn.send_event(event, output).await?;
+                        turn.send_event(Self::event_for(msg, true), output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
@@ -1009,12 +948,7 @@ impl AgentActor {
                         // mid-plan research/extension tool calls stay internal.
                         message.internal = internal_message;
                         if let Some(msg) = self.respond_complete(message, turn).await {
-                            let event = if msg.internal {
-                                ActorEvent::IntermediateMessageGenerated(msg)
-                            } else {
-                                ActorEvent::CompleteMessageGenerated(msg)
-                            };
-                            turn.send_event(event, output).await?;
+                            turn.send_event(Self::event_for(msg, false), output).await?;
                         }
                     }
 
@@ -1040,12 +974,7 @@ impl AgentActor {
     ) -> Result<ActorState> {
         let progress_before = turn.plan().map(|p| p.progress);
         if let Some(tool_message) = self.execute_tools(turn).await {
-            let event = if tool_message.internal {
-                ActorEvent::IntermediateMessageGenerated(tool_message)
-            } else {
-                ActorEvent::CompleteMessageGenerated(tool_message)
-            };
-            turn.send_event(event, output).await?;
+            turn.send_event(Self::event_for(tool_message, false), output).await?;
 
             // A plan was just created, or extended after already reaching
             // Finalizing, by a create_plan call in this batch (progress only
@@ -1064,13 +993,12 @@ impl AgentActor {
                 }
             }
 
-            // Handle "Silent" requested state
-            if turn.requested_state() == Some(ActorState::Stopping) {
-                // "Stopping" is a one-time state, so we remove it
-                turn.take_requested_state();
-                Ok(ActorState::Stopping)
-            }
-            else {
+            // A tool asked for the turn to end (the stop tool): it ends
+            // with this tool step, without asking the model again; the
+            // state it asked for is taken up when reflecting.
+            if turn.requested_state().is_some() {
+                Ok(ActorState::Reflecting)
+            } else {
                 Ok(ActorState::Planning)
             }
         } else {
@@ -1155,15 +1083,14 @@ impl Actor for AgentActor {
             let span = self.state_span(current_state, &turn);
             let result = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle => {
-                    self.handle_idle(&mut turn, &mut rx, &mut global_rx, &*output).await?
+                    self.handle_waiting(false, &mut turn, &mut rx, &mut global_rx, &*output).await?
                 }
                 ActorState::WaitingForApproval => {
-                    self.handle_waiting_for_approval(&mut turn, &mut rx, &mut global_rx, &*output).await?
+                    self.handle_waiting_for_approval(&mut turn, &mut rx, &mut global_rx).await?
                 }
                 ActorState::Sleeping => {
-                    self.handle_sleep(&mut turn, &mut rx, &mut global_rx, &*output).await?
+                    self.handle_waiting(true, &mut turn, &mut rx, &mut global_rx, &*output).await?
                 }
-                ActorState::Stopping => Some(self.handle_stopping()?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut turn, &*output).await?),
                 ActorState::Planning => Some(self.handle_llm_turn(&mut turn, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn, &*output).await?),
