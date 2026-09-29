@@ -13,6 +13,12 @@
 //! `abandon_turn` when it fails; both end it and return it as an
 //! [`EndedTurn`], which sends the turn's last event.
 //!
+//! The logic of a turn's steps lives here too - plan progress, registering
+//! tool calls, answering and collecting their results (issue 83) - while the
+//! `AgentActor` keeps what is input and output: the model call, the tool
+//! executor, sending. What only the actor calls is `pub(crate)`; the rest is
+//! the API components work with.
+//!
 //! Between turns there is no working state. What a `Turn` is asked about it
 //! then reads as empty; nothing in the runtime asks - work between turns
 //! (perceiving a message) touches only the transcript and the history.
@@ -25,16 +31,16 @@ use tracing::warn;
 
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-use caelumora_model::approval::{ApprovalId, ApprovalStatus};
+use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelClassification, Publication};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnKnowledge;
-use caelumora_model::message::{ContextItem, ContextRef, KnowledgeRef, Message, PromptRef};
-use caelumora_model::plan::{PlanProgress, PlanState};
+use caelumora_model::message::{ContextItem, ContextRef, KnowledgeRef, Message, MessageId, MessageRole, PromptRef};
+use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::tool::ToolCallState;
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 
 /// What a turn reads as when none runs.
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
@@ -61,7 +67,7 @@ impl EndedTurn {
     }
 
     /// Sends `event` as the ended turn would have: see [`Turn::send_event`].
-    pub async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
+    pub(crate) async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
         send(&self.event_context, &self.security_context, self.publication, self.agent_id, event, output).await
     }
 }
@@ -157,7 +163,7 @@ impl<'a> Turn<'a> {
     ///
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
-    pub async fn commit_turn(&mut self) -> CommittedTurn {
+    pub(crate) async fn commit_turn(&mut self) -> CommittedTurn {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
         // Every part is used up exactly once.
@@ -172,7 +178,7 @@ impl<'a> Turn<'a> {
 
     /// Discards the turn after it failed or was stopped: its working state,
     /// the changes it staged and what it read - none of it is taken over.
-    pub fn abandon_turn(&mut self) -> EndedTurn {
+    pub(crate) fn abandon_turn(&mut self) -> EndedTurn {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         EndedTurn::of(self.agent_id, &turn)
     }
@@ -183,7 +189,7 @@ impl<'a> Turn<'a> {
     /// 61). The last two hold for the whole turn, so that what it reads,
     /// publishes and remembers is judged alike. Whatever a previous turn
     /// left behind is gone.
-    pub fn next_turn(
+    pub(crate) fn next_turn(
         &mut self,
         event_context: EventContext,
         security_context: SecurityContext,
@@ -208,7 +214,7 @@ impl<'a> Turn<'a> {
 
     /// The event context of the current turn: carries the ids (`span_id`,
     /// `correlation_id`) that tie the turn to the envelope that started it.
-    pub fn event_context(&self) -> &EventContext {
+    pub(crate) fn event_context(&self) -> &EventContext {
         &self.current().event_context
     }
 
@@ -229,7 +235,7 @@ impl<'a> Turn<'a> {
             .collect()
     }
 
-    pub fn full_context(&self) -> Vec<Message> {
+    pub(crate) fn full_context(&self) -> Vec<Message> {
         let mut context = self.context();
         context.extend_from_slice(self.current().messages.as_slice());
         context
@@ -251,17 +257,95 @@ impl<'a> Turn<'a> {
     pub fn messages(&self) -> &Vec<Message> {
         &self.current().messages
     }
-    pub fn last_message(&self) -> Option<&Message> {
-        self.current().messages.last()
-    }
-    pub fn push_message(&mut self, message: Message) {
+    pub(crate) fn push_message(&mut self, message: Message) {
         self.current_mut().messages.push(message);
     }
 
-    pub fn set_tool_calls(&mut self, tool_calls: Vec<ToolCallState>) {
-        self.current_mut().tool_calls = tool_calls;
+    /// Takes the tool calls of this step over, as the actor prepared them -
+    /// some answered already (issue 118) - and returns the approval requests
+    /// for those that wait for a decision (issue 83).
+    pub(crate) fn register_tool_calls(&mut self, calls: Vec<ToolCallState>) -> Vec<ApprovalRequest> {
+        let requests = calls.iter()
+            .filter(|c| c.status == ApprovalStatus::Pending)
+            .map(|c| ApprovalRequest {
+                id: c.id,
+                session_id: self.session_id(),
+                channel_id: self.channel_id(),
+                agent_id: self.agent_id,
+                tool_call: c.tool_call.clone(),
+                description: c.description.clone(),
+            })
+            .collect();
+        self.current_mut().tool_calls = calls;
+        requests
     }
-    pub fn set_tool_approval_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
+
+    /// Answers every call of the step that a decision settles without
+    /// running it - denied, timed out - and returns the approved ones that
+    /// still wait for their result, for the actor to run. What the model is
+    /// given for each outcome is decided in `crate::tool` (issue 15).
+    pub(crate) fn calls_to_run(&mut self) -> Vec<(ApprovalId, ToolCall)> {
+        let mut to_run = Vec::new();
+        for call in self.current_mut().tool_calls.iter_mut().filter(|c| c.result.is_none()) {
+            let answer = match call.status {
+                ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
+                ApprovalStatus::Timeout => Some((ToolResultStatus::TimedOut, crate::tool::timed_out_result())),
+                ApprovalStatus::Approved => {
+                    to_run.push((call.id, call.tool_call.clone()));
+                    None
+                }
+                ApprovalStatus::Pending => None,
+            };
+            if let Some((status, result)) = answer {
+                call.result_status = status;
+                call.result = Some(result);
+            }
+        }
+        to_run
+    }
+
+    /// Records `result` as what the call `id` gave.
+    pub(crate) fn record_tool_result(&mut self, id: ApprovalId, status: ToolResultStatus, result: String) {
+        if let Some(call) = self.current_mut().tool_calls.iter_mut().find(|c| c.id == id) {
+            call.result_status = status;
+            call.result = Some(result);
+        }
+    }
+
+    /// Once every call of the step has its result: the tool message that
+    /// gives them to the model, kept in the turn - `internal` like the step
+    /// that made the calls. `None` while a call still waits for its approval.
+    pub(crate) fn collect_tool_results(&mut self, internal: bool) -> Option<Message> {
+        if self.current().tool_calls.iter().any(|c| c.result.is_none()) {
+            return None;
+        }
+        let prev_id = self.current().messages.last().map(|m| m.id).unwrap_or_default();
+        let tool_results = mem::take(&mut self.current_mut().tool_calls).into_iter()
+            .filter_map(|c| Some(ToolCallResult {
+                id: c.tool_call.id,
+                tool_name: c.tool_call.function_name,
+                content: c.result?,
+                status: c.result_status,
+                confidentiality: c.tool_call.confidentiality,
+            }))
+            .collect();
+        let message = Message {
+            id: MessageId::new(),
+            prev_id,
+            sender_id: ActorId::Agent(self.agent_id),
+            sender_name: self.agent_name.clone(),
+            role: MessageRole::Tool,
+            tool_results,
+            content: None,
+            timestamp: chrono::Utc::now(),
+            internal,
+            ..Message::default()
+        };
+        self.push_message(message.clone());
+        Some(message)
+    }
+
+    pub(crate) fn set_tool_approval_status(&mut self, id:ApprovalId, status: ApprovalStatus) -> bool {
         if let Some(tool_call) = self.current_mut().tool_calls.iter_mut().find(|tc| tc.id == id) {
             tool_call.status = status;
             true
@@ -270,13 +354,11 @@ impl<'a> Turn<'a> {
             false
         }
     }
-    pub fn tool_calls(&self) -> &Vec<ToolCallState> {
+    #[cfg(test)]
+    pub(crate) fn tool_calls(&self) -> &Vec<ToolCallState> {
         &self.current().tool_calls
     }
-    pub fn take_tool_calls(&mut self) -> Vec<ToolCallState> {
-        mem::take(&mut self.current_mut().tool_calls)
-    }
-    pub fn has_tool_calls(&self) -> bool {
+    pub(crate) fn has_tool_calls(&self) -> bool {
         !self.current().tool_calls.is_empty()
     }
 
@@ -293,12 +375,37 @@ impl<'a> Turn<'a> {
     /// constructed after its `create_plan` tool call has already been
     /// through the generic tool-call approval gate, so its mere presence
     /// implies "approved and executing".
-    pub fn has_plan(&self) -> bool {
+    pub(crate) fn has_plan(&self) -> bool {
         self.current().plan.is_some()
     }
-    pub fn set_plan_progress(&mut self, progress: PlanProgress) {
+    fn set_plan_progress(&mut self, progress: PlanProgress) {
         if let Some(plan) = self.current_mut().plan.as_mut() {
             plan.progress = progress;
+        }
+    }
+
+    /// Moves the plan on to step `next`: gives the model the instruction for
+    /// it and returns the `PlanStepStarted` to announce - or, with no such
+    /// step, gives it the instruction to write the final answer, which is no
+    /// step and announces nothing (an empty plan finalizes at once). Called
+    /// when a plan is accepted or extended, and each time a step converges.
+    pub(crate) fn advance_plan(&mut self, next: usize) -> Option<ActorEvent> {
+        let plan = self.plan()?.plan.clone();
+        match plan.steps.get(next) {
+            Some(step) => {
+                self.push_message(plan_step_message(next + 1, plan.steps.len(), step));
+                self.set_plan_progress(PlanProgress::Step(next));
+                Some(ActorEvent::PlanStepStarted {
+                    step_index: next,
+                    total_steps: plan.steps.len(),
+                    description: step.description.clone(),
+                })
+            }
+            None => {
+                self.push_message(plan_finalize_message(&plan));
+                self.set_plan_progress(PlanProgress::Finalizing);
+                None
+            }
         }
     }
 
@@ -319,7 +426,7 @@ impl<'a> Turn<'a> {
     /// Whether the turn was given or read private knowledge of the agent -
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
-    pub fn saw_private_knowledge(&self) -> bool {
+    pub(crate) fn saw_private_knowledge(&self) -> bool {
         self.current().knowledge.iter()
             .any(|k| matches!(k.reference.source,
                 caelumora_model::message::KnowledgeSource::PrivateNotes { .. } | caelumora_model::message::KnowledgeSource::Memory { .. }))
@@ -416,6 +523,51 @@ impl<'a> Turn<'a> {
     }
 }
 
+/// The instruction to work on step `step_number` of `total_steps` - an
+/// internal system message, scaffolding rather than an answer (issue 49).
+fn plan_step_message(step_number: usize, total_steps: usize, step: &PlanStep) -> Message {
+    Message {
+        id: MessageId::new(),
+        sender_id: ActorId::None,
+        sender_name: "system".to_string(),
+        role: MessageRole::System,
+        content: Some(format!(
+            "Step {} of {}: {}\n\nWork on this step now, using any tools you need. \
+             When you are finished, describe the outcome.",
+            step_number, total_steps, step.description
+        )),
+        timestamp: chrono::Utc::now(),
+        internal: true,
+        ..Message::default()
+    }
+}
+
+/// The instruction to write the final answer once every step of `plan` is
+/// done.
+fn plan_finalize_message(plan: &Plan) -> Message {
+    let recap = plan
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{}. {}", i + 1, s.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Message {
+        id: MessageId::new(),
+        sender_id: ActorId::None,
+        sender_name: "system".to_string(),
+        role: MessageRole::System,
+        content: Some(format!(
+            "You have completed every step of the plan:\n{}\n\nNow provide your final, \
+             complete answer to the user's original request, incorporating what you learned.",
+            recap
+        )),
+        timestamp: chrono::Utc::now(),
+        internal: true,
+        ..Message::default()
+    }
+}
+
 /// Where the prompt parts of `context` were placed: each by the digest of
 /// its text, with the transcript entry it followed (issue 47).
 fn prompt_refs(context: &[ContextItem]) -> Vec<PromptRef> {
@@ -466,6 +618,103 @@ mod tests {
                 steps: vec![PlanStep { description: "step 1".to_string() }],
             },
         }
+    }
+
+    fn plan_of(steps: &[&str]) -> PlanState {
+        PlanState {
+            progress: PlanProgress::Step(0),
+            plan: Plan {
+                id: PlanId::new(),
+                summary: "do the thing".to_string(),
+                steps: steps.iter().map(|d| PlanStep { description: d.to_string() }).collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn advance_plan_moves_to_the_next_step_when_one_remains() {
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
+        turn.set_plan(plan_of(&["first", "second"]));
+
+        let started = turn.advance_plan(1);
+
+        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
+        let last = turn.messages().last().expect("a step message should have been pushed");
+        assert_eq!(last.role, MessageRole::System);
+        assert!(last.content.as_ref().unwrap().contains("second"));
+        assert!(last.internal, "plan-step instructions are scaffolding, never final answers");
+        match started {
+            Some(ActorEvent::PlanStepStarted { step_index, total_steps, description }) => {
+                assert_eq!((step_index, total_steps, description.as_str()), (1, 2, "second"));
+            }
+            other => panic!("expected PlanStepStarted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn advance_plan_finalizes_once_steps_are_exhausted() {
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
+        turn.set_plan(plan_of(&["first", "second"]));
+
+        let started = turn.advance_plan(2);
+
+        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
+        let last = turn.messages().last().expect("a finalize message should have been pushed");
+        assert_eq!(last.role, MessageRole::System);
+        assert!(last.content.as_ref().unwrap().contains("completed every step"));
+        assert!(started.is_none(), "finalization is not a step, so nothing is announced");
+    }
+
+    #[test]
+    fn advance_plan_finalizes_immediately_for_an_empty_plan() {
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
+        turn.set_plan(plan_of(&[]));
+
+        assert!(turn.advance_plan(0).is_none());
+        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
+    }
+
+    #[test]
+    fn tool_calls_are_answered_run_and_given_back_to_the_model_in_one_message() {
+        use caelumora_model::tool::ToolConfidentiality;
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
+        let call = |name: &str, status| ToolCallState {
+            id: ApprovalId::new(),
+            status,
+            tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC },
+            description: String::new(),
+            result: None,
+            result_status: ToolResultStatus::Ok,
+        };
+
+        // Registering asks for the approvals still to be given.
+        let requests = turn.register_tool_calls(vec![call("run", ApprovalStatus::Approved), call("ask", ApprovalStatus::Pending)]);
+        assert_eq!(requests.iter().map(|r| r.tool_call.function_name.as_str()).collect::<Vec<_>>(), ["ask"]);
+
+        // Waiting for one of them, there is no tool message yet.
+        let to_run = turn.calls_to_run();
+        assert_eq!(to_run.iter().map(|(_, c)| c.function_name.as_str()).collect::<Vec<_>>(), ["run"]);
+        turn.record_tool_result(to_run[0].0, ToolResultStatus::Ok, "ran".to_string());
+        assert!(turn.collect_tool_results(false).is_none(), "one call still waits");
+
+        // A denial answers the other without running it.
+        let asked = requests[0].id;
+        turn.set_tool_approval_status(asked, ApprovalStatus::Denied);
+        assert!(turn.calls_to_run().is_empty(), "nothing left to run");
+        let message = turn.collect_tool_results(false).expect("every call has its result");
+        let results: Vec<_> = message.tool_results.iter().map(|r| (r.tool_name.as_str(), r.status)).collect();
+        assert_eq!(results, [("run", ToolResultStatus::Ok), ("ask", ToolResultStatus::Denied)]);
+        assert_eq!(message.role, MessageRole::Tool);
+        assert!(turn.tool_calls().is_empty(), "the step's calls are done");
+        assert_eq!(turn.messages().last().map(|m| m.id), Some(message.id), "the turn keeps it for the model");
     }
 
     #[test]

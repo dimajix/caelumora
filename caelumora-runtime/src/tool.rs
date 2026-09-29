@@ -327,7 +327,8 @@ mod tests {
 
         let note: Note = arguments(&json!({ "text": "hello", "extra": 1 })).expect("unknown fields are ignored");
         assert_eq!((note.text.as_str(), note.channel), ("hello", None));
-        assert!(arguments::<Optional>(&Value::Null).is_ok(), "no arguments are an empty object");
+        let Optional { channel } = arguments(&Value::Null).expect("no arguments are an empty object");
+        assert!(channel.is_none());
 
         let missing = arguments::<Note>(&json!({})).unwrap_err();
         assert!(matches!(&missing, ToolError::InvalidParameter(m) if m.contains("`text`")), "serde names what is missing: {missing}");

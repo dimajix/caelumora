@@ -1,6 +1,6 @@
 # 83 — `AgentActor` runs the turn; `Turn` is only a view of the state
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -50,3 +50,21 @@ of turn logic lands in a 1400-line file.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.1.2).
+- **2026-09-29** — Done, after [84](84-agent-state-machine.md) and
+  [85](85-turn-state-in-agent-channel-state.md). On `Turn` now:
+  `advance_plan(next)` - pushes the step or finalize instruction, sets the
+  progress and returns the `PlanStepStarted` to announce, instead of
+  sending it itself - with the two plan messages as private functions;
+  `register_tool_calls(states)`, which returns the approval requests;
+  `calls_to_run()`, which answers denied and timed-out calls and returns
+  the approved ones; `record_tool_result`; and `collect_tool_results`,
+  which builds the tool message once every call has its result (without
+  the `unwrap` the actor had). The actor keeps the executor calls - it
+  prepares the call states, runs the calls, sends what the turn returns -
+  and lost `advance_plan`, `plan_step_message`, `plan_finalize_message`
+  and the bookkeeping in `execute_tools` and `request_approvals`.
+  `set_tool_calls`, `take_tool_calls` and `last_message` are gone,
+  `set_plan_progress` is private, and the half of `Turn` only the actor
+  calls is `pub(crate)`. The `advance_plan` tests moved along and need no
+  event sender any more; a new test walks a step's tool calls through
+  registering, a denial, a result and the tool message.

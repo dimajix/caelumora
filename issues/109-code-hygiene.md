@@ -52,3 +52,5 @@ only justified cases with a comment; no `unsafe` in the runtime.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, section 6).
+- **2026-09-29** — The `c.result.unwrap()` in the agent actor is gone
+  with [83](83-turn-logic-on-agent-actor.md).

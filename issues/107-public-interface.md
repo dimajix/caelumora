@@ -78,3 +78,7 @@ comment saying why it is public.
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.3, 4.3, 5.3).
 - **2026-09-29** — `ToolId` removed with [112](112-id-types.md).
+- **2026-09-29** — The actor-only half of `Turn` is `pub(crate)` with
+  [83](83-turn-logic-on-agent-actor.md); `Turn::take_requested_state`,
+  `set_tool_calls`, `take_tool_calls` and `last_message` are gone
+  ([85](85-turn-state-in-agent-channel-state.md), 83).

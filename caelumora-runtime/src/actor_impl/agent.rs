@@ -13,15 +13,15 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId, SeenContext};
 use crate::controller::AgentController;
-use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
+use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, Publication};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::plan::{Plan, PlanProgress, PlanStep};
+use caelumora_model::message::{Message, MessageEvent, MessageId};
+use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{ToolCall, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
@@ -368,6 +368,9 @@ impl AgentActor {
         Publication::new(allows(Confidentiality::Session).await, allows(Confidentiality::Channel).await)
     }
 
+    /// Runs the approved calls of the step that have no result yet - the
+    /// executor is the actor's - and, once every call has its result, returns
+    /// the tool message the turn keeps for the model (issue 83).
     async fn execute_tools<'a>(
         &self,
         turn: &mut Turn<'a>,
@@ -378,156 +381,22 @@ impl AgentActor {
         // as the assistant message that triggered it), not the state that
         // call itself just brought about.
         let had_plan_before = turn.has_plan();
-        let mut tool_calls = turn.take_tool_calls();
-        let mut complete = true;
-        for c in &mut tool_calls {
-            // TODO: Check for cancellation!
-
-            // Try to execute tool if no result is available so far...
-            // What the model is given for each outcome is decided in
-            // `crate::tool` (issue 15): the tool's result, or a JSON object
-            // saying what happened and what to do next.
-            if c.result.is_none() {
-                let outcome = match c.status {
-                    ApprovalStatus::Approved => {
-                        match self.tool_executor.execute(&c.tool_call, turn).await {
-                            Ok(r) => Some((ToolResultStatus::Ok, r.content)),
-                            Err(e) => {
-                                warn!("Tool call '{}' failed: {}", c.tool_call.function_name, e);
-                                let available: Vec<String> = self.tool_executor.tools().into_iter().map(|t| t.name).collect();
-                                Some(e.to_result(&available))
-                            }
-                        }
-                    }
-                    ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
-                    ApprovalStatus::Timeout => Some((ToolResultStatus::TimedOut, crate::tool::timed_out_result())),
-                    ApprovalStatus::Pending => {
-                        complete = false;
-                        None
-                    }
-                };
-                if let Some((status, result)) = outcome {
-                    c.result_status = status;
-                    c.result = Some(result);
+        for (id, call) in turn.calls_to_run() {
+            let (status, result) = match self.tool_executor.execute(&call, turn).await {
+                Ok(r) => (ToolResultStatus::Ok, r.content),
+                Err(e) => {
+                    warn!("Tool call '{}' failed: {}", call.function_name, e);
+                    let available: Vec<String> = self.tool_executor.tools().into_iter().map(|t| t.name).collect();
+                    e.to_result(&available)
                 }
-            }
-        }
-        turn.set_tool_calls(tool_calls);
-
-        if complete {
-            let message_id = turn
-                .last_message()
-                .map(|m| m.id)
-                .unwrap_or_default();
-
-            let mut tool_results = Vec::new();
-            for c in turn.take_tool_calls() {
-                tool_results.push(ToolCallResult {
-                    id: c.tool_call.id,
-                    tool_name: c.tool_call.function_name,
-                    content: c.result.unwrap(),
-                    status: c.result_status,
-                    confidentiality: c.tool_call.confidentiality,
-                })
-            }
-            // A tool result is only ever "final" (shown as the real answer)
-            // when it's not part of executing an in-progress plan - mirrors
-            // the same internal/final rule applied to the assistant message
-            // that triggered it.
-            let internal = had_plan_before;
-            let tool_message = Message {
-                id: MessageId(uuid::Uuid::new_v4()),
-                prev_id: message_id,
-                sender_id: ActorId::Agent(self.agent_id),
-                sender_name: self.agent_controller.name(),
-                role: MessageRole::Tool,
-                tool_results,
-                content: None,
-                timestamp: chrono::Utc::now(),
-                internal,
-                ..Message::default()
             };
-            turn.push_message(tool_message.clone());
-            Some(tool_message)
-        } else {
-            None
+            turn.record_tool_result(id, status, result);
         }
-    }
-
-    fn plan_step_message(step_number: usize, total_steps: usize, step: &PlanStep) -> Message {
-        Message {
-            id: MessageId(uuid::Uuid::new_v4()),
-            sender_id: ActorId::None,
-            sender_name: "system".to_string(),
-            role: MessageRole::System,
-            content: Some(format!(
-                "Step {} of {}: {}\n\nWork on this step now, using any tools you need. \
-                 When you are finished, describe the outcome.",
-                step_number, total_steps, step.description
-            )),
-            timestamp: chrono::Utc::now(),
-            internal: true,
-            ..Message::default()
-        }
-    }
-
-    fn plan_finalize_message(plan: &Plan) -> Message {
-        let recap = plan
-            .steps
-            .iter()
-            .enumerate()
-            .map(|(i, s)| format!("{}. {}", i + 1, s.description))
-            .collect::<Vec<_>>()
-            .join("\n");
-        Message {
-            id: MessageId(uuid::Uuid::new_v4()),
-            sender_id: ActorId::None,
-            sender_name: "system".to_string(),
-            role: MessageRole::System,
-            content: Some(format!(
-                "You have completed every step of the plan:\n{}\n\nNow provide your final, \
-                 complete answer to the user's original request, incorporating what you learned.",
-                recap
-            )),
-            timestamp: chrono::Utc::now(),
-            internal: true,
-            ..Message::default()
-        }
-    }
-
-    /// Pushes the instruction for `next_step_index` and sets progress to
-    /// `Step(next_step_index)`, or - if there is no such step - pushes the
-    /// finalize instruction and sets progress to `Finalizing`. Handles the
-    /// empty-plan edge case (next_step_index == 0 immediately finalizes).
-    /// Called once at approval time (next_step_index == 0) and once each
-    /// time a step converges in `handle_planning`. Emits `PlanStepStarted`
-    /// when a step instruction is actually pushed - finalization is not a
-    /// step, so it gets no event of its own.
-    async fn advance_plan<'a>(
-        turn: &mut Turn<'a>,
-        next_step_index: usize,
-        output: &dyn EventSender,
-    ) -> Result<()> {
-        let Some(plan) = turn.plan().map(|p| p.plan.clone()) else { return Ok(()) };
-        match plan.steps.get(next_step_index) {
-            Some(step) => {
-                turn.push_message(Self::plan_step_message(next_step_index + 1, plan.steps.len(), step));
-                turn.set_plan_progress(PlanProgress::Step(next_step_index));
-                turn.send_event(
-                    ActorEvent::PlanStepStarted {
-                        step_index: next_step_index,
-                        total_steps: plan.steps.len(),
-                        description: step.description.clone(),
-                    },
-                    output,
-                ).await?;
-            }
-            None => {
-                turn.push_message(Self::plan_finalize_message(&plan));
-                turn.set_plan_progress(PlanProgress::Finalizing);
-            }
-        }
-        Ok(())
+        // A tool result is only ever "final" (shown as the real answer) when
+        // it's not part of executing an in-progress plan - mirrors the same
+        // internal/final rule applied to the assistant message that
+        // triggered it.
+        turn.collect_tool_results(had_plan_before)
     }
 
     /// `context` (this agent's own future-turn LLM input) keeps every message
@@ -815,28 +684,12 @@ impl AgentActor {
             }
             states.push(state);
         }
-        let tool_calls = states;
-
-        if tool_calls.is_empty() {
+        if states.is_empty() {
             return Ok(());
         }
-
-        turn.set_tool_calls(tool_calls);
-
-        for tc in turn.tool_calls() {
-            if tc.status == ApprovalStatus::Pending {
-                let request = ApprovalRequest {
-                    id: tc.id,
-                    session_id: turn.session_id(),
-                    channel_id: turn.channel_id(),
-                    agent_id: self.agent_id,
-                    tool_call: tc.tool_call.clone(),
-                    description: tc.description.clone(),
-                };
-                turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
-            }
+        for request in turn.register_tool_calls(states) {
+            turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
         }
-
         Ok(())
     }
 
@@ -944,7 +797,9 @@ impl AgentActor {
                                         output,
                                     ).await?;
                                 }
-                                Self::advance_plan(turn, idx + 1, output).await?;
+                                if let Some(started) = turn.advance_plan(idx + 1) {
+                                    turn.send_event(started, output).await?;
+                                }
                                 return Ok(ActorState::Planning);
                             }
                             None => unreachable!("executing_plan implies a plan is present"),
@@ -997,7 +852,9 @@ impl AgentActor {
             let progress_after = turn.plan().map(|p| p.progress);
             if progress_after != progress_before {
                 if let Some(PlanProgress::Step(idx)) = progress_after {
-                    Self::advance_plan(turn, idx, output).await?;
+                    if let Some(started) = turn.advance_plan(idx) {
+                        turn.send_event(started, output).await?;
+                    }
                 }
             }
 
@@ -1220,7 +1077,6 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
     use crate::context::{ContextProvider, PromptPosition};
     use crate::component_impl::transcript_appender::TranscriptAppender;
     use crate::component_impl::state_context_provider::StateContextProvider;
@@ -1228,7 +1084,6 @@ mod tests {
     use crate::component_impl::static_system_prompt_provider::StaticPromptProvider;
     use crate::message::MessageProcessor;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::plan::{PlanId, PlanState};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -1374,78 +1229,6 @@ mod tests {
         turn.extend_transcript(vec![own]);
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
-    }
-
-    fn make_plan_state(steps: Vec<&str>) -> PlanState {
-        PlanState {
-            progress: PlanProgress::Step(0),
-            plan: Plan {
-                id: PlanId::new(),
-                summary: "do the thing".to_string(),
-                steps: steps.into_iter().map(|d| PlanStep { description: d.to_string() }).collect(),
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn advance_plan_moves_to_the_next_step_when_one_remains() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
-        turn.begin();
-        turn.set_plan(make_plan_state(vec!["first", "second"]));
-        let (tx, mut rx) = mpsc::channel(10);
-        let output = crate::transport_impl::InMemoryEventSender::new(tx);
-
-        AgentActor::advance_plan(&mut turn, 1, &output).await.unwrap();
-
-        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
-        let last = turn.messages().last().expect("a step message should have been pushed");
-        assert_eq!(last.role, MessageRole::System);
-        assert!(last.content.as_ref().unwrap().contains("second"));
-        assert!(last.internal, "plan-step instructions are scaffolding, never final answers");
-
-        let event = rx.try_recv().expect("a PlanStepStarted event should have been sent");
-        match event.event {
-            ActorEvent::PlanStepStarted { step_index, total_steps, description } => {
-                assert_eq!(step_index, 1);
-                assert_eq!(total_steps, 2);
-                assert_eq!(description, "second");
-            }
-            other => panic!("expected PlanStepStarted, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn advance_plan_finalizes_once_steps_are_exhausted() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
-        turn.begin();
-        turn.set_plan(make_plan_state(vec!["first", "second"]));
-        let (tx, mut rx) = mpsc::channel(10);
-        let output = crate::transport_impl::InMemoryEventSender::new(tx);
-
-        AgentActor::advance_plan(&mut turn, 2, &output).await.unwrap();
-
-        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
-        let last = turn.messages().last().expect("a finalize message should have been pushed");
-        assert_eq!(last.role, MessageRole::System);
-        assert!(last.content.as_ref().unwrap().contains("completed every step"));
-
-        assert!(rx.try_recv().is_err(), "finalization is not a step, so no PlanStepStarted should be sent");
-    }
-
-    #[tokio::test]
-    async fn advance_plan_finalizes_immediately_for_an_empty_plan() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
-        turn.begin();
-        turn.set_plan(make_plan_state(vec![]));
-        let (tx, _rx) = mpsc::channel(10);
-        let output = crate::transport_impl::InMemoryEventSender::new(tx);
-
-        AgentActor::advance_plan(&mut turn, 0, &output).await.unwrap();
-
-        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
     }
 
     #[tokio::test]
