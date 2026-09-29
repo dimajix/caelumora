@@ -19,7 +19,7 @@ use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, P
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
-use caelumora_model::tool::{Tool, ToolCall, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
@@ -326,8 +326,7 @@ impl AgentActor {
         let mut answered = 0;
         for call in &mut turn.tool_calls {
             if call.status == ApprovalStatus::Approved && call.result.is_none() {
-                call.result_status = ToolResultStatus::Failed;
-                call.result = Some(crate::tool::not_executed_result());
+                call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result()));
                 answered += 1;
             }
         }
@@ -385,15 +384,8 @@ impl AgentActor {
         // call itself just brought about.
         let had_plan_before = turn.has_plan();
         for (id, call) in turn.tool_calls().to_run() {
-            let (status, result) = match self.tool_executor.execute(&call, turn).await {
-                Ok(r) => (ToolResultStatus::Ok, r.content),
-                Err(e) => {
-                    warn!("Tool call '{}' failed: {}", call.function_name, e);
-                    let available: Vec<String> = self.tool_executor.tools().into_iter().map(|t| t.name).collect();
-                    e.to_result(&available)
-                }
-            };
-            turn.tool_calls().record(id, status, result);
+            let result = self.tool_executor.execute(&call, turn).await;
+            turn.tool_calls().record(id, result);
         }
         // A tool result is only ever "final" (shown as the real answer) when
         // it's not part of executing an in-progress plan - mirrors the same
@@ -628,7 +620,6 @@ impl AgentActor {
                 tool_call: tc.clone(),
                 description: String::new(),
                 result: None,
-                result_status: ToolResultStatus::Ok,
             };
             // A call that cannot succeed is answered right away rather than
             // put to a user who could only approve it in vain - in the order
@@ -656,10 +647,9 @@ impl AgentActor {
                     }
                 }
             };
-            if let Some((status, result)) = answer {
+            if let Some((status, content)) = answer {
                 state.status = ApprovalStatus::Approved;
-                state.result = Some(result);
-                state.result_status = status;
+                state.result = Some(ToolCallResult::of(tc, status, content));
             }
             states.push(state);
         }
@@ -1068,13 +1058,15 @@ mod tests {
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
         use caelumora_model::approval::ApprovalId;
         use caelumora_model::tool::ToolConfidentiality;
-        let call = |status: ApprovalStatus, result: Option<&str>| ToolCallState {
-            id: ApprovalId::new(),
-            status,
-            tool_call: ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC },
-            description: String::new(),
-            result: result.map(str::to_string),
-            result_status: ToolResultStatus::Ok,
+        let call = |status: ApprovalStatus, result: Option<&str>| {
+            let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC };
+            ToolCallState {
+                id: ApprovalId::new(),
+                status,
+                result: result.map(|r| ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string())),
+                tool_call,
+                description: String::new(),
+            }
         };
         let state_in = |actor_state: ActorState| AgentChannelState {
             processing_state: actor_state,
@@ -1090,9 +1082,10 @@ mod tests {
         assert_eq!(AgentActor::prepare_resume(&mut executing), 1, "one approved call had no result");
         let executing = calls(&executing);
         let [unfinished, finished, pending] = executing.as_slice() else { panic!("three calls") };
-        assert_eq!(unfinished.result_status, ToolResultStatus::Failed);
-        assert!(unfinished.result.as_deref().unwrap_or_default().contains("not executed"), "the model is told: {:?}", unfinished.result);
-        assert_eq!(finished.result.as_deref(), Some("done"), "a stored result stays");
+        let unfinished = unfinished.result.as_ref().expect("answered");
+        assert_eq!(unfinished.status, ToolResultStatus::Failed);
+        assert!(unfinished.content.contains("not executed"), "the model is told: {}", unfinished.content);
+        assert_eq!(finished.result.as_ref().map(|r| r.content.as_str()), Some("done"), "a stored result stays");
         assert!(pending.result.is_none(), "a call nobody approved is still waiting");
 
         // Every other state resumes as it is.

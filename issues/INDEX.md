@@ -113,9 +113,10 @@ against it, and what came out of the last attempt.
 | [78](78-mcp-requires-approval-ignored.md) | done | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |
 | [81](81-approver-double-id.md) | done | The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting. |
 | [82](82-tool-parameter-parsing.md) | done | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
-| [100](100-tool-executor-table-and-result.md) | open | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |
+| [100](100-tool-executor-table-and-result.md) | done | The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model. |
 | [111](111-tool-parameter-reading.md) | done | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
 | [118](118-malformed-call-put-up-for-approval.md) | done | A tool call with invalid arguments is put up for approval as "No description" and fails only after a user approved it. |
+| [126](126-mcp-tools-discovered-once.md) | open | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
 
 ## User interaction
 

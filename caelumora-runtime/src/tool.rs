@@ -1,19 +1,15 @@
 use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use async_trait::async_trait;
-use caelumora_model::agent::AgentId;
 use caelumora_model::confidentiality::Publication;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
-use caelumora_model::session::SessionId;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
-use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::debug;
-use uuid::Uuid;
+use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -153,42 +149,30 @@ pub trait ToolProvider: Send + Sync + Debug {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolExecution {
-    pub id: Uuid,
-    pub session_id: SessionId,
-    pub agent_id: AgentId,
-    pub status: ExecutionStatus,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ExecutionStatus {
-    PendingApproval,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolCallResult>;
+    /// Runs `call` and answers it - always with a result for the model: what
+    /// the tool gave, or what went wrong and what to do next (issue 15).
+    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult;
     /// Whether the policy permits `call` in `context`. Checked before asking
     /// anyone for approval, so that users are not asked about calls that
     /// would be refused anyway; `execute` checks again.
     async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
-    fn providers(&self) -> Vec<Arc<dyn ToolProvider>>;
+    /// The tools there are now, for the model and for labelling its calls.
+    /// Asked of the providers each time: a provider's tools may change while
+    /// the agent runs - an MCP server replaced by a newer one - and caching
+    /// them is the provider's (issue 100).
     fn tools(&self) -> Vec<Tool>;
 }
 
+/// Runs the tools of an agent's components. It keeps the providers, not
+/// their tools: those are asked for each time, since a provider's tools may
+/// change while the agent runs (issue 100).
 #[derive(Debug)]
 pub struct DefaultToolExecutor {
     security_manager: Arc<dyn SecurityManager>,
-    tool_providers: Vec<Arc<dyn ToolProvider>>,
+    providers: Vec<Arc<dyn ToolProvider>>,
 }
 
 impl DefaultToolExecutor {
@@ -215,60 +199,42 @@ impl DefaultToolExecutor {
                 seen.push((tool.name, provider.id.clone()));
             }
         }
-        Ok(Self {
-            security_manager,
-            tool_providers: providers.into_iter().map(|p| p.facet).collect(),
-        })
+        Ok(Self { security_manager, providers: providers.into_iter().map(|p| p.facet).collect() })
+    }
+
+    /// The provider of the tool `name`, as the providers' tools are now.
+    fn provider_of(&self, name: &str) -> ToolResult<&Arc<dyn ToolProvider>> {
+        self.providers.iter().find(|p| p.tools().iter().any(|t| t.name == name))
+            .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
+    }
+
+    /// What the tool of `call` gives, or why it gives nothing.
+    async fn run(&self, call: &ToolCall, turn: &mut Turn<'_>) -> ToolResult<String> {
+        let security = turn.security_context();
+        // Session, channel and agent are on the turn's span.
+        debug!(tool = %call.function_name, initiator = %security.initiator_id, "Executing tool");
+        if security.caller_id.as_agent_id().is_none() {
+            return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
+        }
+        self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await?;
+        let provider = self.provider_of(&call.function_name)?;
+        let value = provider.execute(&call.function_name, &call.arguments, turn).await?;
+        Ok(successful_result(value, call.confidentiality, turn.publication()))
     }
 }
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolCallResult> {
-        let security = &turn.security_context();
-        // Session, channel and agent are on the turn's span.
-        debug!(tool = %call.function_name, initiator = %security.initiator_id, "Executing tool");
-
-        let agent_id = security.caller_id.as_agent_id()
-            .ok_or_else(|| ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)))?;
-        let mut _execution = ToolExecution {
-            id: Uuid::new_v4(),
-            session_id: security.session_id,
-            agent_id,
-            status: ExecutionStatus::PendingApproval,
-            started_at: Utc::now(),
-            finished_at: None,
-        };
-
-        self.security_manager.require(security, ActionType::CallTool(call), || ToolError::PermissionDenied(call.function_name.clone())).await?;
-
-        let tool_name = &call.function_name;
-        for provider in &self.tool_providers {
-            let tools = provider.tools();
-            if let Some(_tool) = tools.iter().find(|t| t.name == *tool_name) {
-                _execution.status = ExecutionStatus::Running;
-                return match provider.execute(tool_name, &call.arguments, turn).await {
-                    Ok(value) => {
-                        _execution.status = ExecutionStatus::Completed;
-                        _execution.finished_at = Some(Utc::now());
-                        Ok(ToolCallResult {
-                            id: call.id.clone(),
-                            tool_name: call.function_name.clone(),
-                            content: successful_result(value, call.confidentiality, turn.publication()),
-                            status: ToolResultStatus::Ok,
-                            confidentiality: call.confidentiality,
-                        })
-                    }
-                    Err(e) => {
-                        _execution.status = ExecutionStatus::Failed;
-                        _execution.finished_at = Some(Utc::now());
-                        // TODO: Log error in execution
-                        Err(e)
-                    }
-                }
+    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult {
+        match self.run(call, turn).await {
+            Ok(content) => ToolCallResult::of(call, ToolResultStatus::Ok, content),
+            Err(e) => {
+                warn!("Tool call '{}' failed: {}", call.function_name, e);
+                let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
+                let (status, content) = e.to_result(&available);
+                ToolCallResult::of(call, status, content)
             }
         }
-        Err(ToolError::UnknownTool(tool_name.clone()))
     }
 
     async fn is_permitted(&self, call: &ToolCall, turn: &Turn) -> bool {
@@ -276,26 +242,11 @@ impl ToolExecutor for DefaultToolExecutor {
     }
 
     fn describe(&self, call: &ToolCall) -> ToolResult<String> {
-        let tool_name = &call.function_name;
-        for provider in &self.tool_providers {
-            let tools = provider.tools();
-            if let Some(_tool) = tools.iter().find(|t| t.name == *tool_name) {
-                return provider.describe(tool_name, &call.arguments)
-            }
-        }
-
-        Err(ToolError::UnknownTool(tool_name.clone()))
-    }
-
-    fn providers(&self) -> Vec<Arc<dyn ToolProvider>> {
-        self.tool_providers.clone()
+        self.provider_of(&call.function_name)?.describe(&call.function_name, &call.arguments)
     }
 
     fn tools(&self) -> Vec<Tool> {
-        self.tool_providers
-            .iter()
-            .flat_map(|p| p.tools())
-            .collect()
+        self.providers.iter().flat_map(|p| p.tools()).collect()
     }
 }
 
@@ -304,7 +255,7 @@ mod tests {
     use super::*;
     use crate::agent_turn::Turn;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::agent::{AgentChannelState, AgentId};
 
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use serde_json::json;
@@ -413,8 +364,9 @@ mod tests {
         let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         assert!(!executor.is_permitted(&call("test_tool"), &context).await);
-        let error = executor.execute(&call("test_tool"), &mut context).await.unwrap_err();
-        assert!(matches!(error, ToolError::PermissionDenied(_)));
+        let result = executor.execute(&call("test_tool"), &mut context).await;
+        assert_eq!(result.status, ToolResultStatus::Forbidden);
+        assert_eq!(result.content, forbidden_result());
     }
 
     #[tokio::test]
@@ -424,8 +376,10 @@ mod tests {
         agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let error = executor.execute(&call("does_not_exist"), &mut context).await.unwrap_err();
-        assert!(matches!(error, ToolError::UnknownTool(ref name) if name == "does_not_exist"));
+        let result = executor.execute(&call("does_not_exist"), &mut context).await;
+        assert_eq!(result.status, ToolResultStatus::UnknownTool);
+        assert!(result.content.contains("Available tools: test_tool"), "{}", result.content);
+        assert_eq!((result.id.as_deref(), result.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
     }
 
     fn component(id: &str, facet: Arc<dyn ToolProvider>) -> ComponentImpl<dyn ToolProvider> {
@@ -472,7 +426,8 @@ mod tests {
         agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
-        let result = executor.execute(&call, &mut context).await.unwrap();
+        let result = executor.execute(&call, &mut context).await;
+        assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.content, "{\"result\":\"ok\"}");
     }
 

@@ -81,18 +81,16 @@ impl<'t> ToolCalls<'t> {
                 }
                 ApprovalStatus::Pending => None,
             };
-            if let Some((status, result)) = answer {
-                call.result_status = status;
-                call.result = Some(result);
+            if let Some((status, content)) = answer {
+                call.result = Some(ToolCallResult::of(&call.tool_call, status, content));
             }
         }
         to_run
     }
 
     /// Records `result` as what the call `id` gave.
-    pub(crate) fn record(&mut self, id: ApprovalId, status: ToolResultStatus, result: String) {
+    pub(crate) fn record(&mut self, id: ApprovalId, result: ToolCallResult) {
         if let Some(call) = self.turn.tool_calls.iter_mut().find(|c| c.id == id) {
-            call.result_status = status;
             call.result = Some(result);
         }
     }
@@ -107,13 +105,7 @@ impl<'t> ToolCalls<'t> {
         }
         let prev_id = self.turn.messages.last().map(|m| m.id).unwrap_or_default();
         let tool_results = mem::take(&mut self.turn.tool_calls).into_iter()
-            .filter_map(|c| Some(ToolCallResult {
-                id: c.tool_call.id,
-                tool_name: c.tool_call.function_name,
-                content: c.result?,
-                status: c.result_status,
-                confidentiality: c.tool_call.confidentiality,
-            }))
+            .filter_map(|c| c.result)
             .collect();
         let message = Message {
             id: MessageId::new(),
@@ -144,7 +136,6 @@ mod tests {
             tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC },
             description: String::new(),
             result: None,
-            result_status: ToolResultStatus::Ok,
         }
     }
 
@@ -162,7 +153,7 @@ mod tests {
         // Waiting for one of them, there is no tool message yet.
         let to_run = view(&mut turn).to_run();
         assert_eq!(to_run.iter().map(|(_, c)| c.function_name.as_str()).collect::<Vec<_>>(), ["run"]);
-        view(&mut turn).record(to_run[0].0, ToolResultStatus::Ok, "ran".to_string());
+        view(&mut turn).record(to_run[0].0, ToolCallResult::of(&to_run[0].1, ToolResultStatus::Ok, "ran".to_string()));
         assert!(view(&mut turn).collect(false).is_none(), "one call still waits");
 
         // A denial answers the other without running it.

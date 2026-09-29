@@ -170,15 +170,30 @@ pub struct ToolCallResult {
     pub confidentiality: ToolConfidentiality,
 }
 
+impl ToolCallResult {
+    /// How `call` ended: `status`, and `content` for the model. Carries the
+    /// call's id, tool and labels, so that the result is published by what
+    /// applied to the call.
+    pub fn of(call: &ToolCall, status: ToolResultStatus, content: String) -> Self {
+        Self {
+            id: call.id.clone(),
+            tool_name: call.function_name.clone(),
+            content,
+            status,
+            confidentiality: call.confidentiality,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallState {
     pub id: ApprovalId,
     pub status: ApprovalStatus,
     pub tool_call: ToolCall,
     pub description: String,
-    pub result: Option<String>,
-    /// How the call ended, once `result` is set.
-    pub result_status: ToolResultStatus,
+    /// How the call ended - its one result, from the executor or from a
+    /// decision that settled it (issue 100) - once it has.
+    pub result: Option<ToolCallResult>,
 }
 
 #[cfg(test)]
