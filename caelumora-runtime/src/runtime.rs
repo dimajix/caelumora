@@ -363,4 +363,19 @@ mod tests {
         its.store_channel_state(&AgentChannelState::default()).await.expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
     }
+
+    #[test]
+    fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
+        let manager = |defaults: serde_json::Value| {
+            let store = Arc::new(MemoryStore::new());
+            let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+            let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
+            RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, Arc::new(OllamaClient::default()))
+        };
+        // As in `examples/config.yaml`.
+        assert!(manager(serde_json::json!({"component_nodes": [{"id": "context", "kind": "state_context_provider"}]})).is_ok());
+        let refused = manager(serde_json::json!({"component_nodes": [{"id": "context", "kind": "calculator_tool"}]})).err().expect("provides no context");
+        assert!(refused.to_string().contains("exactly one facet"), "{refused}");
+    }
 }
+

@@ -1,7 +1,9 @@
 //! The facets that build what an agent's model is given: a
 //! `ContextProvider` assembles it, `PromptProvider`s contribute prompt parts
 //! (issue 47). Their implementations are components of their own, e.g.
-//! `state_context_provider` and `static_system_prompt_provider`.
+//! `state_context_provider` and `static_system_prompt_provider`. An agent
+//! has exactly one `ContextProvider` and any number of `PromptProvider`s
+//! (issue 98).
 
 use crate::agent_turn::Turn;
 use anyhow::Result;
@@ -41,7 +43,8 @@ impl From<String> for Prompt {
 
 /// Contributes a prompt part: the system prompt, or other text the model is
 /// given besides the conversation. `StateContextProvider` composes the parts
-/// of the providers it depends on, by position.
+/// of every one of the agent's providers, by position, in the order of its
+/// configuration.
 #[async_trait]
 pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     fn position(&self) -> PromptPosition {
@@ -51,6 +54,12 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt>;
 }
 
+/// Assembles what the model is given in a turn (`Turn::set_context`), once,
+/// at its start. An agent has exactly one (`ComponentRegistry::single`,
+/// issue 98): the component of its personality that provides it, or the
+/// default - `state_context_provider`, unless the configuration names
+/// another (`AppConfig::component_defaults`). Two would overwrite each
+/// other, so a personality with two is refused.
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
     async fn current_context(&self, turn: &mut Turn) -> Result<()>;

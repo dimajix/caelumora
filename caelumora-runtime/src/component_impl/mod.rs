@@ -22,8 +22,11 @@ pub mod static_system_prompt_provider;
 pub mod stop_tool;
 pub mod wakeup_command;
 
-/// Registers every built-in component kind with `registry`.
+/// Registers every built-in component kind with `registry`, and the facets
+/// of which an agent has exactly one, with their default kinds (issue 99).
 pub fn register_all(registry: &mut ComponentRegistry) {
+    registry.single::<dyn crate::context::ContextProvider>(state_context_provider::STATE_CONTEXT_PROVIDER_KIND);
+
     agent_memory::register(registry);
     calculator_tool::register(registry);
     channel_history::register(registry);

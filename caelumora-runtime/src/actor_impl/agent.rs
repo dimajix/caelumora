@@ -38,7 +38,8 @@ pub struct AgentActor {
     actor_runtime: ActorRuntime,
 
     // Components
-    context_provider: Vec<ComponentImpl<dyn ContextProvider>>,
+    /// Assembles the model's context: exactly one (issue 98).
+    context_provider: ComponentImpl<dyn ContextProvider>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     tool_executor: Box<dyn ToolExecutor>,
@@ -104,7 +105,7 @@ impl AgentActor {
             &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager(), Some(actor_runtime.clone())),
         )
         .await?;
-        let context_provider = components.get_all::<dyn ContextProvider>(None);
+        let context_provider = components.one::<dyn ContextProvider>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
         let tool_providers = components.get_all::<dyn ToolProvider>(None);
@@ -199,22 +200,11 @@ impl AgentActor {
     }
 
     async fn next_turn<'a>(&self, turn: &mut Turn<'a>) -> Result<()> {
-        for context_provider in &self.context_provider {
-            match context_provider.facet.current_context(turn).await {
-                Ok(_) => {}
-                Err(e) => match context_provider.fail_policy {
-                    ComponentFailPolicy::FailOpen => {
-                        warn!(
-                            "Component '{}' failed with fail-open policy: {}",
-                            context_provider.id, e
-                        );
-                    }
-                    ComponentFailPolicy::FailClosed => return Err(e),
-                },
-            }
-        }
-
-        Ok(())
+        // Whatever its fail policy: without a context there is nothing to
+        // give the model. Parts that may be left out are the prompt
+        // providers', each by its own policy.
+        self.context_provider.facet.current_context(turn).await
+            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
     }
 
     /// Starts a new turn in answer to a `ResponseRequested`: begins it,
@@ -1039,7 +1029,7 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{ContextProvider, PromptPosition};
+    use crate::context::{ContextProvider, PromptPosition, PromptProvider};
     use crate::component_impl::transcript_appender::TranscriptAppender;
     use crate::component_impl::state_context_provider::StateContextProvider;
     use crate::component_impl::state_history_appender::StateHistoryAppender;
@@ -1162,14 +1152,46 @@ mod tests {
         assert_eq!(turn.context()[0].id, input[0].id);
     }
 
+    /// `provider` as a component with `fail_policy`.
+    fn part(provider: Arc<dyn PromptProvider>, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn PromptProvider> {
+        ComponentImpl { id: "part".to_string(), fail_policy, facet: provider }
+    }
+
+    /// A prompt part that cannot be had.
+    #[derive(Debug)]
+    struct Unavailable;
+
+    #[async_trait::async_trait]
+    impl PromptProvider for Unavailable {
+        async fn get_prompt(&self, _turn: &Turn) -> anyhow::Result<crate::context::Prompt> {
+            Err(anyhow::anyhow!("unavailable"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        turn.begin();
+        let brief = || part(Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
+
+        let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
+        open.current_context(&mut turn).await.expect("a part that fails open is left out");
+        assert_eq!(turn.context()[0].content.as_deref(), Some("Be brief."), "the others are given");
+
+        let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
+        let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
+        assert!(format!("{error:#}").contains("component 'part'"), "{error:#}");
+    }
+
     #[tokio::test]
     async fn prompt_parts_go_where_their_position_says_and_only_the_conversation_is_stored() {
         let agent_id = AgentId::new();
         let mut agent_channel_state = AgentChannelState::default();
         let provider = StateContextProvider {
             prompt_providers: vec![
-                Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }),
-                Arc::new(StaticPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }),
+                part(Arc::new(StaticPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed),
+                part(Arc::new(StaticPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
             ],
         };
         let contents = |turn: &Turn| turn.context().iter()

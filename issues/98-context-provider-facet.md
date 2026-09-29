@@ -1,6 +1,6 @@
 # 98 — `ContextProvider` is a facet with one implementation and undefined behaviour for two
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -61,4 +61,19 @@ implemented. Followed by [99](99-component-factory-and-tags.md).
   `fail_policy` is to be honoured (today a failing part fails the turn,
   whatever its policy). The executor follows as issue
   [127](127-tool-executor-not-replaceable.md).
+- **2026-09-29** — Done. `ContextProvider` is the first facet of which an
+  agent has exactly one (`ComponentRegistry::single` in
+  `component_impl::register_all`, default kind `state_context_provider`):
+  the agent takes it with `components.one::<dyn ContextProvider>()`, a
+  personality with two is refused before anything is built, and one with
+  none gets the default - so the `context` nodes are gone from
+  `seed.yaml`. `AppConfig::component_defaults` can replace the default for
+  all personalities (a test checks the example of `examples/config.yaml`
+  and that a component that provides no context is refused).
+  `StateContextProvider` has every `PromptProvider` injected with its
+  component's id and fail policy, and honours the policy: a part that fails
+  open is left out of the turn with a warning, one that fails closed fails
+  the turn, named. The `ContextProvider` itself fails the turn whatever its
+  own policy - without a context there is nothing to give the model.
+  ARCHITECTURE.md says so under the prompt parts.
 

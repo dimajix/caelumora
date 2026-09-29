@@ -24,9 +24,6 @@ personalities:
       tags:
       - perceive
       fail_policy: FailClosed
-    - id: context
-      kind: state_context_provider
-      fail_policy: FailClosed
     - id: transcript-appender
       kind: transcript_appender
       tags:
@@ -67,9 +64,6 @@ personalities:
       kind: state_history_appender
       tags:
       - perceive
-      fail_policy: FailClosed
-    - id: context
-      kind: state_context_provider
       fail_policy: FailClosed
     - id: transcript-appender
       kind: transcript_appender
