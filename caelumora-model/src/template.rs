@@ -230,15 +230,21 @@ impl ParticipantTemplate {
                 });
 
                 let sc = scope.instantiate(&context);
-                let agent = if let Some(aid) = agent_id {
-                    context.entity_store.get_agent(&context.security, aid).await?
-                } else if let Ok(agent) = context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
-                    agent
-                } else {
-                    let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await?;
-                    let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.clone());
-                    context.entity_store.create_agent(&context.security, &agent).await?;
-                    agent
+                let agent = match agent_id {
+                    Some(aid) => context.entity_store.get_agent(&context.security, aid).await?,
+                    None => match context.entity_store.find_agent_by_name(&context.security, name, &sc).await {
+                        Ok(agent) => agent,
+                        // Only "there is none" means "make one": a lookup that
+                        // failed or was refused must not end in a second agent
+                        // of that name (issue 77).
+                        Err(StoreError::NotFound { .. }) => {
+                            let personality = context.entity_store.get_personality(&context.security, personality_id.clone()).await?;
+                            let agent = crate::agent::Agent::new(name.clone(), sc, &personality, context.security.clone());
+                            context.entity_store.create_agent(&context.security, &agent).await?;
+                            agent
+                        }
+                        Err(e) => return Err(e.into()),
+                    },
                 };
                 Participant::Agent(agent)
             },
@@ -322,5 +328,54 @@ mod tests {
         stored.as_object_mut().unwrap().remove("commands");
         let loaded: Session = serde_json::from_value(stored).expect("a session without commands loads");
         assert!(loaded.commands.component_nodes.is_empty());
+    }
+
+    /// Allows everything but looking agents up by name.
+    #[derive(Debug)]
+    struct NoAgentLookup;
+
+    #[async_trait::async_trait]
+    impl crate::security::SecurityManager for NoAgentLookup {
+        async fn check(&self, _context: &SecurityContext, action: crate::security::ActionType<'_>) -> bool {
+            !matches!(action, crate::security::ActionType::FindAgent)
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_is_created_only_when_the_lookup_finds_none() {
+        use crate::agent::{Personality, PersonalityId};
+        let agent = ParticipantTemplate::Agent {
+            name: "helper".to_string(),
+            scope: ScopeTemplate::GlobalScope,
+            personality_id: PersonalityId::new(),
+        };
+        let personality = |id| Personality {
+            id,
+            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            components: Default::default(),
+            security_attributes: Default::default(),
+            reasoning_confidentiality: Confidentiality::Public,
+        };
+        let ParticipantTemplate::Agent { personality_id, .. } = &agent else { unreachable!() };
+        let context_with = |store: Arc<dyn EntityStore>| SessionContext {
+            id: Default::default(),
+            owner: UserId::new(),
+            security: SecurityContext::default(),
+            entity_store: store,
+        };
+
+        // None there yet: one is made, and found the next time.
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        store.put_personality(&SecurityContext::system(), &personality(*personality_id)).await.unwrap();
+        let context = context_with(store);
+        let Participant::Agent(first) = agent.instantiate(&context, &HashMap::new()).await.expect("created") else { panic!("an agent") };
+        let Participant::Agent(again) = agent.instantiate(&context, &HashMap::new()).await.expect("found") else { panic!("an agent") };
+        assert_eq!(first.id, again.id, "the same agent, not a second one");
+
+        // A lookup that fails is an error, not a reason to make another.
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::with_security_manager(Arc::new(NoAgentLookup)));
+        store.put_personality(&SecurityContext::system(), &personality(*personality_id)).await.unwrap();
+        let refused = agent.instantiate(&context_with(store), &HashMap::new()).await.expect_err("the lookup is refused");
+        assert!(matches!(refused, TemplateError::Store(StoreError::PermissionDenied)), "{refused}");
     }
 }

@@ -1,6 +1,6 @@
 # 77 — `ParticipantTemplate::instantiate` swallows store errors
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -35,3 +35,9 @@ A test with a failing store covers it.
 
 - **2026-09-28** — Found in the structure review
   (`work/2026-09-28-code-review.md`, section 1, error 3).
+- **2026-09-29** — Done with the minimal fix: `instantiate` matches the
+  lookup and creates the agent only on `StoreError::NotFound`; every other
+  error is returned. A test covers both: an agent is made once and found
+  the second time, and a refused lookup (`FindAgent` denied) is an error
+  instead of a second agent. The structural move out of the model stays
+  with [88](88-template-instantiation-in-the-model.md).
