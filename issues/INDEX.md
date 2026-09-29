@@ -192,7 +192,7 @@ against it, and what came out of the last attempt.
 | [91](91-double-actor-table.md) | open | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
 | [99](99-component-factory-and-tags.md) | open | The component factory is synchronous while building is async, and component tags have no reader. |
 | [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
-| [116](116-session-loop-channel-tables.md) | open | `SessionLoop` describes the one set of its channels with two tables and a queue. |
+| [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 
 ## Open architecture questions
 
