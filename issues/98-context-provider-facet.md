@@ -51,3 +51,14 @@ implemented. Followed by [99](99-component-factory-and-tags.md).
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 4.1.1).
+- **2026-09-29** — Discussed with the maintainer, who wants the agent
+  assembled from components like a Spring Boot application rather than
+  fewer components: neither (a) nor (b). The `ContextProvider` stays a
+  component, as a facet of which there is exactly one, with the default
+  kind `state_context_provider`, which has every `PromptProvider` injected
+  by type instead of through `deps` - the mechanism is issue
+  [99](99-component-factory-and-tags.md). Each `PromptProvider`'s own
+  `fail_policy` is to be honoured (today a failing part fails the turn,
+  whatever its policy). The executor follows as issue
+  [127](127-tool-executor-not-replaceable.md).
+

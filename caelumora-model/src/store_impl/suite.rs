@@ -125,7 +125,6 @@ fn component() -> ComponentDescriptor {
         id: "search".to_string(),
         kind: "web_search".to_string(),
         params: Default::default(),
-        deps: Vec::new(),
         tags: Vec::new(),
         fail_policy: Default::default(),
         security_attributes: Default::default(),

@@ -2,9 +2,7 @@
 //! date with what it perceives.
 
 use crate::agent_turn::Turn;
-use crate::component::{
-    ComponentFacets, ComponentRegistry,
-};
+use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -19,10 +17,6 @@ pub struct StateHistoryAppender {
 
 #[async_trait]
 impl MessageProcessor for StateHistoryAppender {
-    fn name(&self) -> &str {
-        STATE_HISTORY_APPENDER_KIND
-    }
-
     async fn process_messages(&self, input: Vec<Message>, turn: &mut Turn) -> Result<Vec<Message>> {
         turn.extend_history(input.clone());
         Ok(input)
@@ -33,12 +27,12 @@ impl PerceiveInProcessor for StateHistoryAppender {}
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        STATE_HISTORY_APPENDER_KIND,
-        Box::new(|_descriptor, _context| {
+        ComponentKind::new(STATE_HISTORY_APPENDER_KIND).provides::<dyn PerceiveInProcessor>(),
+        |_descriptor, _context| {
             let mut capabilities = ComponentFacets::empty();
             capabilities.insert::<dyn PerceiveInProcessor>(Arc::new(StateHistoryAppender { }));
             Ok(capabilities)
-        }),
+        },
     );
 }
 

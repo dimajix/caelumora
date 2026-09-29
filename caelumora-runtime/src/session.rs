@@ -768,7 +768,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())))
+        Arc::new(RuntimeManager::new(store.clone(), store, secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap())
     }
 
     fn make_session(name: &str) -> Session {
@@ -984,7 +984,6 @@ mod tests {
                 id: "help".to_string(),
                 kind: HELP_COMMAND_KIND.to_string(),
                 params: serde_json::Value::Null,
-                deps: Vec::new(),
                 tags: Vec::new(),
                 fail_policy: Default::default(),
             }],
@@ -1209,7 +1208,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
@@ -1241,7 +1240,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1292,7 +1291,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -1363,7 +1362,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime.clone());
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
@@ -1406,7 +1405,7 @@ mod tests {
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(states.clone(), entities.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(states.clone(), entities.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores");
@@ -1431,7 +1430,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
@@ -1573,7 +1572,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -1606,7 +1605,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, policy, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let manager = SessionManager::new(runtime);
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());

@@ -19,7 +19,7 @@
 
 use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::component_impl::notes::{note_id, note_text};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::session_reader::{ChannelNotes, SessionReader};
@@ -162,14 +162,14 @@ fn render(own: &[Note], elsewhere: &[ChannelNotes]) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        PRIVATE_NOTES_KIND,
-        Box::new(|_descriptor, context| {
+        ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        |_descriptor, context| {
             let component = Arc::new(PrivateNotesComponent::new(context.session_reader()));
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);
             Ok(facets)
-        }),
+        },
     );
 }
 

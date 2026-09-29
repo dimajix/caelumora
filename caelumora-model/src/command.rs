@@ -84,7 +84,6 @@ pub fn default_commands() -> ComponentConfig {
         id: id.to_string(),
         kind: kind.to_string(),
         params: serde_json::Value::Null,
-        deps: Vec::new(),
         tags: Vec::new(),
         fail_policy: Default::default(),
         security_attributes: Default::default(),

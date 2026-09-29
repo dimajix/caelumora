@@ -205,6 +205,11 @@ pub struct AppConfig {
     /// components; a session template can add its own. Defaults to `/help`
     /// and `/wakeup`; an empty `component_nodes` list switches them off.
     pub commands: ComponentConfig,
+    /// Components that replace the built-in default of a facet of which an
+    /// agent has exactly one (issue 99) - how it assembles the model's
+    /// context, say - for every personality that does not configure its own.
+    /// Empty unless configured: the built-in defaults apply.
+    pub component_defaults: ComponentConfig,
     /// The access policy; `ownership` unless configured otherwise.
     pub security: SecurityConfig,
     /// Files of demo data - personalities and session templates - put into
@@ -225,6 +230,7 @@ impl Default for AppConfig {
             auth: AuthConfig::default(),
             logging: LoggingConfig::default(),
             commands: default_commands(),
+            component_defaults: ComponentConfig::default(),
             security: SecurityConfig::default(),
             seed: Vec::new(),
             server: ServerConfig::default(),

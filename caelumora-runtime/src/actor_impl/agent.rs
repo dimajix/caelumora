@@ -104,10 +104,10 @@ impl AgentActor {
             &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager(), Some(actor_runtime.clone())),
         )
         .await?;
-        let context_provider = components.get_all::<dyn ContextProvider>(None)?;
-        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
-        let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
-        let tool_providers = components.get_all::<dyn ToolProvider>(None)?;
+        let context_provider = components.get_all::<dyn ContextProvider>(None);
+        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
+        let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
+        let tool_providers = components.get_all::<dyn ToolProvider>(None);
         let tool_executor = actor_runtime.new_tool_executor(tool_providers)?;
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;

@@ -117,6 +117,7 @@ against it, and what came out of the last attempt.
 | [111](111-tool-parameter-reading.md) | done | Every built-in tool reads its parameters in its own way, so schema and reading code are written twice and can disagree. |
 | [118](118-malformed-call-put-up-for-approval.md) | done | A tool call with invalid arguments is put up for approval as "No description" and fails only after a user approved it. |
 | [126](126-mcp-tools-discovered-once.md) | open | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
+| [127](127-tool-executor-not-replaceable.md) | open | The tool executor is fixed in the runtime, so how tools are executed cannot be tried out by configuring a different component. |
 
 ## User interaction
 
@@ -197,7 +198,7 @@ against it, and what came out of the last attempt.
 | [88](88-template-instantiation-in-the-model.md) | done | Instantiating a template does store I/O in the model, and both frontends drive the sequence by hand. |
 | [89](89-channel-runtime-delegators.md) | rejected | `ChannelRuntime` is six methods that forward to `RuntimeManager`. |
 | [91](91-double-actor-table.md) | done | `ChannelLoop` keeps its actors in two tables kept in step by a queue. |
-| [99](99-component-factory-and-tags.md) | open | The component factory is synchronous while building is async, and component tags have no reader. |
+| [99](99-component-factory-and-tags.md) | done | The component factory is synchronous while building is async, and component tags have no reader. |
 | [107](107-public-interface.md) | open | Many `pub` items of the three crates have no caller, or one, outside their file. |
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 | [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |

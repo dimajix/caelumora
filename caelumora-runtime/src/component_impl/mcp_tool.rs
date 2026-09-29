@@ -1,5 +1,5 @@
 use crate::agent_turn::Turn;
-use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
@@ -253,33 +253,21 @@ impl ToolProvider for McpToolProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        MCP_TOOL_PROVIDER_KIND,
-        Box::new(|descriptor, context| {
+    registry.register_async(
+        ComponentKind::new(MCP_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>(),
+        |descriptor, context| async move {
             let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
                 .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {}", e)))?;
 
             let secret_manager = context.secret_manager.clone();
-            let security_context = context.security_context.clone();
-            let descriptor_id = descriptor.id.clone();
-            let discovery_config = config.clone();
-
-            // Requires a multi-threaded tokio runtime (both binaries use the
-            // #[tokio::main] default); a #[tokio::test] exercising this path
-            // needs `flavor = "multi_thread"` or this panics.
-            let discovery_result: McpResult<Vec<Tool>> = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let discover = async {
-                        let auth_header =
-                            resolve_auth_header(&discovery_config.auth, &secret_manager, &security_context).await?;
-                        discover_tools(&descriptor_id, &discovery_config, auth_header).await
-                    };
-                    match tokio::time::timeout(Duration::from_secs(discovery_config.timeout_secs), discover).await {
-                        Ok(result) => result,
-                        Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", discovery_config.url))),
-                    }
-                })
-            });
+            let discover = async {
+                let auth_header = resolve_auth_header(&config.auth, &secret_manager, &context.security_context).await?;
+                discover_tools(&descriptor.id, &config, auth_header).await
+            };
+            let discovery_result: McpResult<Vec<Tool>> = match tokio::time::timeout(Duration::from_secs(config.timeout_secs), discover).await {
+                Ok(result) => result,
+                Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.url))),
+            };
 
             let cached_tools = match discovery_result {
                 Ok(tools) => tools,
@@ -300,7 +288,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 secret_manager,
             }));
             Ok(facets)
-        }),
+        },
     );
 }
 

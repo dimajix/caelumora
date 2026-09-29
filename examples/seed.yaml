@@ -26,11 +26,6 @@ personalities:
       fail_policy: FailClosed
     - id: context
       kind: state_context_provider
-      deps:
-      - system-prompt
-      - notes
-      - memory
-      - create-plan-tool
       fail_policy: FailClosed
     - id: transcript-appender
       kind: transcript_appender
@@ -75,11 +70,6 @@ personalities:
       fail_policy: FailClosed
     - id: context
       kind: state_context_provider
-      deps:
-      - system-prompt
-      - notes
-      - private-notes
-      - create-plan-tool
       fail_policy: FailClosed
     - id: transcript-appender
       kind: transcript_appender

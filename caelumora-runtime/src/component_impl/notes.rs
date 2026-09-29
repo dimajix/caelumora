@@ -12,7 +12,7 @@
 
 use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::session_reader::{NotReadable, PublishedNotes, SessionReader};
 use crate::tool::{arguments, IdArgument, ToolError, ToolProvider, ToolResult};
@@ -243,14 +243,14 @@ fn render<'a>(own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>)
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        NOTES_KIND,
-        Box::new(|_descriptor, context| {
+        ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        |_descriptor, context| {
             let component = Arc::new(NotesComponent::new(context.session_reader()));
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);
             Ok(facets)
-        }),
+        },
     );
 }
 

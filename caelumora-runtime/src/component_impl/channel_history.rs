@@ -6,7 +6,7 @@
 //! `KnowledgeRef` with the turn's messages.
 
 use crate::agent_turn::Turn;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::session_reader::{NotReadable, SessionReader};
 use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -112,12 +112,12 @@ fn select<'a>(messages: &'a [Message], last: usize, query: Option<&str>) -> (Vec
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        CHANNEL_HISTORY_KIND,
-        Box::new(|_descriptor, context| {
+        ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>(),
+        |_descriptor, context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryReader { reader: context.session_reader() }));
             Ok(facets)
-        }),
+        },
     );
 }
 

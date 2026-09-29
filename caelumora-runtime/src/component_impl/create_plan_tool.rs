@@ -2,7 +2,7 @@
 //! prompt that nudges the model towards it (extended planning).
 
 use crate::agent_turn::Turn;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{Prompt, PromptProvider};
 use crate::tool::{arguments, ToolProvider, ToolResult};
 use anyhow::Result;
@@ -38,9 +38,8 @@ steps, skip `create_plan` entirely and just answer directly.";
 /// the submission is inherently "approved" - it parses the plan and either
 /// stores it on `Turn` as a fresh plan, or, if one is already in
 /// progress, appends the new steps to it (see `execute` below). Also
-/// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT`; the
-/// prompt reaches the model only if the personality's context provider
-/// lists this component among its `deps` (issue 98).
+/// implements `PromptProvider` to contribute `PLANNING_SYSTEM_PROMPT`, which
+/// the context provider collects with every other prompt part (issue 99).
 #[derive(Debug)]
 pub struct CreatePlanToolProvider;
 
@@ -154,13 +153,13 @@ impl ToolProvider for CreatePlanToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        CREATE_PLAN_TOOL_PROVIDER_KIND,
-        Box::new(|_descriptor, _context| {
+        ComponentKind::new(CREATE_PLAN_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CreatePlanToolProvider));
             facets.insert::<dyn PromptProvider>(Arc::new(CreatePlanToolProvider));
             Ok(facets)
-        }),
+        },
     );
 }
 

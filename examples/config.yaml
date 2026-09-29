@@ -54,6 +54,17 @@ users:
 #    - id: wakeup
 #      kind: wakeup_command
 
+# Components that replace a built-in default for every personality that does
+# not configure its own (issue 99): of some facets an agent has exactly one -
+# `ContextProvider`, what assembles the model's context, say - and a
+# personality without a component for it gets the default. A component here
+# must provide exactly one such facet. Without this section the built-in
+# defaults are used.
+#component_defaults:
+#  component_nodes:
+#    - id: context
+#      kind: state_context_provider
+
 # Who may do what (issue 11). `ownership` - the default - lets owners do
 # everything with their sessions, agents and templates, contributors (e.g.
 # the other participants of a session) read and use them, and everybody use

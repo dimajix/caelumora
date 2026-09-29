@@ -1,7 +1,7 @@
 //! The built-in `/wakeup` command (issue 28).
 
 use crate::command::{CommandContext, CommandError, CommandProvider, CommandResult};
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
@@ -82,12 +82,12 @@ impl CommandProvider for WakeupCommandProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        WAKEUP_COMMAND_KIND,
-        Box::new(|_descriptor, _context| {
+        ComponentKind::new(WAKEUP_COMMAND_KIND).provides::<dyn CommandProvider>(),
+        |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn CommandProvider>(Arc::new(WakeupCommandProvider));
             Ok(facets)
-        }),
+        },
     );
 }
 

@@ -17,7 +17,7 @@
 
 use crate::agent_memory::AgentMemory;
 use crate::agent_turn::Turn;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::component_impl::notes::note_text;
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use crate::tool::{arguments, IdArgument, ToolError, ToolProvider, ToolResult};
@@ -133,13 +133,13 @@ fn render(recalled: &[Memory]) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        AGENT_MEMORY_KIND,
-        Box::new(|_descriptor, _context| {
+        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
+        |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(AgentMemoryComponent));
             facets.insert::<dyn PromptProvider>(Arc::new(AgentMemoryComponent));
             Ok(facets)
-        }),
+        },
     );
 }
 

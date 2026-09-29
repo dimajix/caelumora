@@ -72,7 +72,7 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default()));
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap();
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), runtime_manager.secret_manager(), None);
 
@@ -82,7 +82,6 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
             id: "test-echo".to_string(),
             kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
             params,
-            deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
         }],
@@ -91,13 +90,13 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
     ComponentContainer::from_config(&config, &registry, &context).await.unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({ "url": url })).await;
-    let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
+    let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
     let provider = providers[0].facet.clone();
 
@@ -119,20 +118,20 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert_eq!(result, json!("hello mcp"));
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn a_configured_approval_reaches_every_discovered_tool() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({ "url": url, "requires_approval": true })).await;
-    let provider = container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet.clone();
+    let provider = container.get_all::<dyn ToolProvider>(None)[0].facet.clone();
 
     let tools = provider.tools();
     assert!(!tools.is_empty(), "the server's tools are discovered");
     assert!(tools.iter().all(|t| t.requires_approval), "every tool of this server needs approval: {tools:?}");
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn shared_component_via_ref_reuses_config_but_builds_independently_per_container() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
@@ -150,7 +149,6 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
                 id: "shared-echo".to_string(),
                 kind: mcp_tool::MCP_TOOL_PROVIDER_KIND.to_string(),
                 params: json!({ "url": url }),
-                deps: vec![],
                 tags: vec![],
                 fail_policy: ComponentFailPolicy::FailOpen,
             },
@@ -158,7 +156,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Arc::new(OllamaClient::default()));
+    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap();
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), runtime_manager.secret_manager(), None);
 
@@ -168,7 +166,6 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
             id: "github-tool".to_string(),
             kind: caelumora_runtime::component::PRECONFIGURED_REF_KIND.to_string(),
             params: json!({ "id": "shared-echo" }),
-            deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
         }],
@@ -179,8 +176,8 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     let container_a = ComponentContainer::from_config(&ref_config, &registry, &context).await.unwrap();
     let container_b = ComponentContainer::from_config(&ref_config, &registry, &context).await.unwrap();
 
-    let provider_a = container_a.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
-    let provider_b = container_b.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
+    let provider_a = container_a.get_all::<dyn ToolProvider>(None).remove(0).facet;
+    let provider_b = container_b.get_all::<dyn ToolProvider>(None).remove(0).facet;
 
     // Each container builds its own instance (using its own ComponentContext), rather than
     // sharing a single instance built once under a synthetic system context.
@@ -193,13 +190,13 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn unreachable_server_degrades_gracefully_instead_of_failing_construction() {
     // Port 1 is reserved and nothing will ever listen there, guaranteeing a
     // connection failure without depending on OS-specific "closed port"
     // behavior.
     let container = build_container(json!({ "url": "http://127.0.0.1:1/mcp" })).await;
-    let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
+    let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].facet.tools().len(), 0);
 }

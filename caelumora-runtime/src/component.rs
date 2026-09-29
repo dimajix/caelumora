@@ -1,11 +1,26 @@
+//! Components and how they are wired (issue 99), the way Spring Boot wires
+//! beans: a component kind declares, when it is registered, which facets it
+//! provides; what a component needs, its factory asks its context for by
+//! type while it is built - `context.all::<dyn PromptProvider>()` - which
+//! builds the components that provide it on demand. Nothing is wired by
+//! hand, so nothing can be forgotten.
+//!
+//! Of most facets there may be any number. Of some there is exactly one per
+//! container (`ComponentRegistry::single`, e.g. what assembles the model's
+//! context): two components providing one are an error, and if none does,
+//! a default is built when it is first asked for - the configuration's
+//! (`AppConfig::component_defaults`), or else the kind registered in code.
+
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::EntityStore;
+use futures::future::BoxFuture;
 use serde::Deserialize;
 use std::any::{Any, TypeId};
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::sync::{Arc, Mutex};
 use crate::runtime::ActorRuntime;
 use crate::session_reader::SessionReader;
 
@@ -15,12 +30,11 @@ pub enum ComponentError {
     UnsupportedKind(String),
     #[error("duplicate component id: {0}")]
     DuplicateId(String),
-    #[error("component '{component}' depends on unknown component '{dependency}'")]
-    UnknownDependency { component: String, dependency: String },
-    #[error("cycle detected in component graph")]
-    CycleDetected,
-    #[error("unknown component node '{0}'")]
-    NodeNotFound(String),
+    /// Two components need each other: `component` asked for `facet`,
+    /// which `other` provides - and `other` is still being built, waiting
+    /// for `component` or for something that waits for it.
+    #[error("component '{component}' needs the {facet} of component '{other}', which is being built and needs it in turn")]
+    Cycle { component: String, facet: &'static str, other: String },
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
     /// A component of a graph could not be built. Wraps whatever went wrong
@@ -32,27 +46,54 @@ pub enum ComponentError {
 
 pub type ComponentResult<T> = Result<T, ComponentError>;
 
+/// A facet type, by its id and - for messages - its name.
+#[derive(Debug, Clone, Copy)]
+struct FacetType {
+    id: TypeId,
+    name: &'static str,
+}
 
-/// What a component is built with: the facets of the components it
-/// depends on, and the environment of the whole graph - the security
-/// context it is built under, the secrets it may resolve, and, for the
-/// components of an actor, the actor's runtime.
-#[derive(Debug, Clone)]
+impl FacetType {
+    fn of<T: ?Sized + 'static>() -> Self {
+        // The trait's name without its path: `dyn crate::context::PromptProvider`
+        // is shown as `PromptProvider`.
+        let full = std::any::type_name::<T>();
+        let name = full.rfind("::").map_or(full, |at| &full[at + 2..]);
+        Self { id: TypeId::of::<T>(), name }
+    }
+}
+
+/// What a component is built with: the environment of the whole graph - the
+/// security context it is built under, the secrets it may resolve, and, for
+/// the components of an actor, the actor's runtime - and, while it is built,
+/// the other components of its graph, asked for by type (`all`, `one`).
+#[derive(Clone)]
 pub struct ComponentContext {
-    pub deps: HashMap<String, ComponentFacets>,
     pub security_context: SecurityContext,
     pub secret_manager: Arc<SecretManager>,
     /// The runtime of the actor the components are built for (issue 69);
     /// `None` for components of no actor, such as the commands of a session.
     pub actor_runtime: Option<ActorRuntime>,
+    /// The graph being built and the component this context was given to;
+    /// set by `ComponentContainer::from_config`.
+    building: Option<(Arc<Graph>, String)>,
+}
+
+impl std::fmt::Debug for ComponentContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComponentContext")
+            .field("security_context", &self.security_context)
+            .field("building", &self.building.as_ref().map(|(_, component)| component))
+            .finish()
+    }
 }
 
 impl ComponentContext {
-    /// The context a component graph is built in, without dependencies:
-    /// `ComponentContainer::from_config` gives each component this context
-    /// with its own dependencies added.
+    /// The environment a component graph is built in:
+    /// `ComponentContainer::from_config` gives each component this context,
+    /// through which it reaches the others.
     pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>, actor_runtime: Option<ActorRuntime>) -> Self {
-        Self { deps: HashMap::new(), security_context, secret_manager, actor_runtime }
+        Self { security_context, secret_manager, actor_runtime, building: None }
     }
 
     /// What the components may read of the session's other channels (issue
@@ -64,11 +105,40 @@ impl ComponentContext {
             None => crate::session_reader::detached(),
         }
     }
+
+    /// Every other component of the graph that provides `T`, in the order of
+    /// the configuration - built first if they are not yet.
+    ///
+    /// # Errors
+    /// Whatever building one of them reports; `ComponentError::Cycle` if one
+    /// of them is being built and waits for this one.
+    pub async fn all<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<Vec<ComponentImpl<T>>> {
+        let (graph, component) = self.building()?;
+        graph.all::<T>(Some(component)).await
+    }
+
+    /// The one component that provides `T`, a facet of which there is
+    /// exactly one (`ComponentRegistry::single`): the graph's, or the
+    /// default - built first if it is not yet.
+    ///
+    /// # Errors
+    /// As [`all`](Self::all).
+    pub async fn one<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<ComponentImpl<T>> {
+        let (graph, component) = self.building()?;
+        graph.one::<T>(Some(component)).await
+    }
+
+    fn building(&self) -> ComponentResult<(&Arc<Graph>, &str)> {
+        self.building.as_ref()
+            .map(|(graph, component)| (graph, component.as_str()))
+            .ok_or_else(|| ComponentError::InvalidConfig("other components can only be asked for while a component is built".to_string()))
+    }
 }
 
+/// The facets a component provides, by type.
 #[derive(Default, Debug, Clone)]
 pub struct ComponentFacets {
-    map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+    map: HashMap<TypeId, (&'static str, Arc<dyn Any + Send + Sync>)>,
 }
 
 impl ComponentFacets {
@@ -77,18 +147,62 @@ impl ComponentFacets {
     }
 
     pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
-        self.map.insert(TypeId::of::<T>(), Arc::new(value) as Arc<dyn Any + Send + Sync>);
+        let facet = FacetType::of::<T>();
+        self.map.insert(facet.id, (facet.name, Arc::new(value) as Arc<dyn Any + Send + Sync>));
     }
 
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.map
             .get(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast_ref::<Arc<T>>())
+            .and_then(|(_, boxed)| boxed.downcast_ref::<Arc<T>>())
             .cloned()
+    }
+
+    /// The names of the facets, sorted - for messages.
+    fn names(&self) -> Vec<&'static str> {
+        let mut names: Vec<_> = self.map.values().map(|(name, _)| *name).collect();
+        names.sort_unstable();
+        names
     }
 }
 
-pub type ComponentFactory = Box<dyn Fn(&ComponentDescriptor, &ComponentContext) -> ComponentResult<ComponentFacets> + Send + Sync>;
+/// A component kind as it is registered: its name and the facets it
+/// provides, whatever its parameters - which is how components that provide
+/// a facet are found before they are built. The container checks that the
+/// factory kept to it.
+#[derive(Debug, Clone)]
+pub struct ComponentKind {
+    name: String,
+    provides: Vec<FacetType>,
+}
+
+impl ComponentKind {
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_string(), provides: Vec::new() }
+    }
+
+    /// Declares that components of this kind provide `T`.
+    pub fn provides<T: ?Sized + 'static>(mut self) -> Self {
+        self.provides.push(FacetType::of::<T>());
+        self
+    }
+}
+
+type ComponentFactory = Box<dyn Fn(ComponentDescriptor, ComponentContext) -> BoxFuture<'static, ComponentResult<ComponentFacets>> + Send + Sync>;
+
+/// A registered kind.
+struct Registration {
+    provides: Vec<FacetType>,
+    factory: ComponentFactory,
+}
+
+/// A facet of which there is exactly one per container, with the kind that
+/// is built if no component of the container provides it.
+#[derive(Debug, Clone)]
+struct Single {
+    facet: FacetType,
+    default_kind: String,
+}
 
 /// Reserved `kind` that resolves to a preconfigured component stored in the `EntityStore`
 /// instead of invoking a factory. `params` must deserialize to `{ "id": "<preconfigured id>" }`.
@@ -100,14 +214,19 @@ struct PreconfiguredRef {
 }
 
 pub struct ComponentRegistry {
-    factories: HashMap<String, ComponentFactory>,
+    kinds: HashMap<String, Registration>,
+    singles: HashMap<TypeId, Single>,
+    /// The configuration's defaults for singles (`AppConfig::component_defaults`),
+    /// by the single they provide.
+    defaults: HashMap<TypeId, ComponentDescriptor>,
     entity_store: Arc<dyn EntityStore>,
 }
 
 impl std::fmt::Debug for ComponentRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComponentRegistry")
-            .field("factory_count", &self.factories.len())
+            .field("kind_count", &self.kinds.len())
+            .field("singles", &self.singles.values().map(|s| s.facet.name).collect::<Vec<_>>())
             .finish()
     }
 }
@@ -115,57 +234,172 @@ impl std::fmt::Debug for ComponentRegistry {
 impl ComponentRegistry {
     pub fn new(entity_store: Arc<dyn EntityStore>) -> Self {
         Self {
-            factories: HashMap::new(),
+            kinds: HashMap::new(),
+            singles: HashMap::new(),
+            defaults: HashMap::new(),
             entity_store,
         }
     }
 
-    pub fn register(&mut self, kind: &str, factory: ComponentFactory) {
-        self.factories.insert(kind.to_string(), factory);
+    /// Registers `kind` with a factory that builds without waiting.
+    pub fn register<F>(&mut self, kind: ComponentKind, factory: F)
+    where
+        F: Fn(&ComponentDescriptor, &ComponentContext) -> ComponentResult<ComponentFacets> + Send + Sync + 'static,
+    {
+        let factory: ComponentFactory = Box::new(move |descriptor, context| {
+            let built = factory(&descriptor, &context);
+            Box::pin(std::future::ready(built))
+        });
+        self.kinds.insert(kind.name, Registration { provides: kind.provides, factory });
     }
 
-    /// Builds a component node. `kind: "ref"` nodes are resolved by fetching the preconfigured
-    /// descriptor from the EntityStore, fresh on every call, using the ComponentContext of
-    /// whichever component graph is referencing it. This ensures things like secret resolution
-    /// run under the actual caller's ComponentContext rather than a synthetic one, at the cost of
-    /// not sharing a single instance across references (e.g. a preconfigured `mcp_tool` re-runs
-    /// discovery for every personality that references it).
-    async fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
-        if node.kind == PRECONFIGURED_REF_KIND {
-            let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
-                .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-            let descriptor = self
-                .entity_store
-                .get_component(&context.security_context, &target.id)
-                .await
-                .map_err(|e| ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e)))?;
-            if descriptor.kind == PRECONFIGURED_REF_KIND {
+    /// Registers `kind` with a factory that waits: for a remote system, or
+    /// for other components (`ComponentContext::all`, `one`).
+    pub fn register_async<F, Fut>(&mut self, kind: ComponentKind, factory: F)
+    where
+        F: Fn(ComponentDescriptor, ComponentContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ComponentResult<ComponentFacets>> + Send + 'static,
+    {
+        let factory: ComponentFactory = Box::new(move |descriptor, context| Box::pin(factory(descriptor, context)));
+        self.kinds.insert(kind.name, Registration { provides: kind.provides, factory });
+    }
+
+    /// Makes `T` a facet of which there is exactly one per container, built
+    /// from `default_kind` - unless the configuration names another default
+    /// (`set_defaults`) - if no component of the container provides it.
+    pub fn single<T: ?Sized + 'static>(&mut self, default_kind: &str) {
+        let facet = FacetType::of::<T>();
+        self.singles.insert(facet.id, Single { facet, default_kind: default_kind.to_string() });
+    }
+
+    /// Checks that the default kind of every single is registered and
+    /// provides it.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` naming the facet and kind otherwise.
+    pub fn verify(&self) -> ComponentResult<()> {
+        for single in self.singles.values() {
+            let provided = self.kinds.get(&single.default_kind)
+                .is_some_and(|registration| registration.provides.iter().any(|f| f.id == single.facet.id));
+            if !provided {
                 return Err(ComponentError::InvalidConfig(format!(
-                    "preconfigured component '{}' cannot itself be a ref",
-                    descriptor.id
+                    "the default kind '{}' of {} is not registered as providing it", single.default_kind, single.facet.name
                 )));
             }
-            return self.dispatch(&descriptor, context);
         }
-
-        self.dispatch(node, context)
+        Ok(())
     }
 
-    fn dispatch(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
-        let Some(factory) = self.factories.get(&node.kind) else {
+    /// Takes the configuration's defaults (`AppConfig::component_defaults`):
+    /// each of its components replaces the default kind of the one single it
+    /// provides, for every container.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` naming the component if one is a
+    /// `ref`, has an unknown kind, does not provide exactly one single, or
+    /// provides one that another of them provides too; nothing is taken then.
+    pub fn set_defaults(&mut self, config: &ComponentConfig) -> ComponentResult<()> {
+        let mut defaults: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
+        for node in &config.component_nodes {
+            if node.kind == PRECONFIGURED_REF_KIND {
+                return Err(ComponentError::InvalidConfig(format!("component default '{}' cannot be a ref", node.id)));
+            }
+            let registration = self.kinds.get(&node.kind)
+                .ok_or_else(|| ComponentError::InvalidConfig(format!("component default '{}' has the unknown kind '{}'", node.id, node.kind)))?;
+            let singles: Vec<&Single> = registration.provides.iter().filter_map(|f| self.singles.get(&f.id)).collect();
+            let [single] = singles.as_slice() else {
+                return Err(ComponentError::InvalidConfig(format!(
+                    "component default '{}' ({}) must provide exactly one facet of which there is one per agent, not {}",
+                    node.id, node.kind, singles.len()
+                )));
+            };
+            if let Some(other) = defaults.insert(single.facet.id, node.clone()) {
+                return Err(ComponentError::InvalidConfig(format!(
+                    "component defaults '{}' and '{}' both provide {}", other.id, node.id, single.facet.name
+                )));
+            }
+        }
+        self.defaults = defaults;
+        Ok(())
+    }
+
+    /// The facets `kind` provides; `None` for a kind that is not registered.
+    fn provides(&self, kind: &str) -> Option<&[FacetType]> {
+        self.kinds.get(kind).map(|registration| registration.provides.as_slice())
+    }
+
+    /// What is built for the single `facet` if no component of a container
+    /// provides it: the configuration's default, or else the default kind.
+    fn default_of(&self, facet: TypeId) -> Option<ComponentDescriptor> {
+        if let Some(descriptor) = self.defaults.get(&facet) {
+            return Some(descriptor.clone());
+        }
+        let single = self.singles.get(&facet)?;
+        Some(ComponentDescriptor {
+            id: single.default_kind.clone(),
+            kind: single.default_kind.clone(),
+            params: serde_json::Value::Null,
+            tags: Vec::new(),
+            fail_policy: ComponentFailPolicy::default(),
+            security_attributes: Default::default(),
+        })
+    }
+
+    /// `node` itself, or - for `kind: "ref"` - the preconfigured descriptor
+    /// it names, fetched from the EntityStore fresh on every call, using the
+    /// ComponentContext of whichever component graph is referencing it. This
+    /// ensures things like secret resolution run under the actual caller's
+    /// ComponentContext rather than a synthetic one, at the cost of not
+    /// sharing a single instance across references (e.g. a preconfigured
+    /// `mcp_tool` re-runs discovery for every personality that references it).
+    async fn resolve(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentDescriptor> {
+        if node.kind != PRECONFIGURED_REF_KIND {
+            return Ok(node.clone());
+        }
+        let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
+            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+        let descriptor = self
+            .entity_store
+            .get_component(&context.security_context, &target.id)
+            .await
+            .map_err(|e| ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e)))?;
+        if descriptor.kind == PRECONFIGURED_REF_KIND {
+            return Err(ComponentError::InvalidConfig(format!(
+                "preconfigured component '{}' cannot itself be a ref",
+                descriptor.id
+            )));
+        }
+        Ok(descriptor)
+    }
+
+    /// Builds `node` alone, with `context` - resolving a `ref` first.
+    #[cfg(test)]
+    async fn build(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<ComponentFacets> {
+        let descriptor = self.resolve(node, context).await?;
+        self.dispatch(descriptor, context.clone())?.await
+    }
+
+    fn dispatch(&self, node: ComponentDescriptor, context: ComponentContext) -> ComponentResult<BoxFuture<'static, ComponentResult<ComponentFacets>>> {
+        let Some(registration) = self.kinds.get(&node.kind) else {
             return Err(ComponentError::UnsupportedKind(node.kind.clone()));
         };
-        factory(node, context)
+        Ok((registration.factory)(node, context))
     }
 }
 
-
+/// A built component.
 #[derive(Debug)]
 struct ComponentNode {
     id: String,
     fail_policy: ComponentFailPolicy,
     tags: Vec<String>,
     facets: ComponentFacets,
+}
+
+impl ComponentNode {
+    fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<ComponentImpl<T>> {
+        self.facets.get::<T>().map(|facet| ComponentImpl { id: self.id.clone(), fail_policy: self.fail_policy, facet })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -178,148 +412,237 @@ where
     pub facet: Arc<T>,
 }
 
+/// A component of a graph, as far as it has been built.
+#[derive(Debug)]
+enum State {
+    Pending,
+    Building,
+    Built(Arc<ComponentNode>),
+}
+
+/// A component of a graph to be built: its descriptor, `ref`s resolved, and
+/// the facets its kind provides.
+#[derive(Debug)]
+struct Planned {
+    descriptor: ComponentDescriptor,
+    provides: Vec<FacetType>,
+}
+
+/// A component graph, built on demand: each component when it is asked for,
+/// the rest in the order of the configuration.
+#[derive(Debug)]
+struct Graph {
+    registry: Arc<ComponentRegistry>,
+    /// The environment every component is built in.
+    context: ComponentContext,
+    planned: Vec<Planned>,
+    states: Mutex<Vec<State>>,
+    /// The defaults built for singles no component of the graph provides.
+    defaults: Mutex<HashMap<TypeId, State>>,
+}
+
+impl Graph {
+    /// The planned component `index`, built if it is not yet. `asked` is who
+    /// asked for which facet, for the message if it is being built.
+    fn ensure(self: &Arc<Self>, index: usize, asked: Option<(&str, FacetType)>) -> BoxFuture<'static, ComponentResult<Arc<ComponentNode>>> {
+        let graph = self.clone();
+        let asked = asked.map(|(component, facet)| (component.to_string(), facet));
+        Box::pin(async move {
+            let planned = &graph.planned[index];
+            {
+                let mut states = graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                match &states[index] {
+                    State::Built(node) => return Ok(node.clone()),
+                    State::Building => return Err(cycle(asked, &planned.descriptor.id)),
+                    State::Pending => states[index] = State::Building,
+                }
+            }
+            let node = graph.construct(&planned.descriptor, &planned.provides).await?;
+            graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner())[index] = State::Built(node.clone());
+            Ok(node)
+        })
+    }
+
+    /// Builds `descriptor` with a context through which it reaches the rest
+    /// of the graph, and checks that it provides exactly `provides`.
+    async fn construct(self: &Arc<Self>, descriptor: &ComponentDescriptor, provides: &[FacetType]) -> ComponentResult<Arc<ComponentNode>> {
+        let failed = |cause| ComponentError::Build { component: descriptor.id.clone(), kind: descriptor.kind.clone(), cause: Box::new(cause) };
+        let context = ComponentContext { building: Some((self.clone(), descriptor.id.clone())), ..self.context.clone() };
+        let facets = self.registry.dispatch(descriptor.clone(), context).map_err(failed)?.await.map_err(failed)?;
+
+        let mut declared: Vec<&'static str> = provides.iter().map(|f| f.name).collect();
+        declared.sort_unstable();
+        if facets.names() != declared {
+            return Err(failed(ComponentError::InvalidConfig(format!(
+                "provides [{}] instead of the declared [{}]", facets.names().join(", "), declared.join(", ")
+            ))));
+        }
+        Ok(Arc::new(ComponentNode {
+            id: descriptor.id.clone(),
+            fail_policy: descriptor.fail_policy,
+            tags: descriptor.tags.clone(),
+            facets,
+        }))
+    }
+
+    /// Every planned component that provides `T`, except `asking` itself.
+    async fn all<T: ?Sized + Send + Sync + 'static>(self: &Arc<Self>, asking: Option<&str>) -> ComponentResult<Vec<ComponentImpl<T>>> {
+        let facet = FacetType::of::<T>();
+        let mut found = Vec::new();
+        for (index, planned) in self.planned.iter().enumerate() {
+            if Some(planned.descriptor.id.as_str()) == asking || !planned.provides.iter().any(|f| f.id == facet.id) {
+                continue;
+            }
+            let node = self.ensure(index, asking.map(|component| (component, facet))).await?;
+            found.extend(node.get::<T>());
+        }
+        Ok(found)
+    }
+
+    /// The one component that provides the single `T`: the planned one, or
+    /// the default.
+    async fn one<T: ?Sized + Send + Sync + 'static>(self: &Arc<Self>, asking: Option<&str>) -> ComponentResult<ComponentImpl<T>> {
+        let facet = FacetType::of::<T>();
+        let not_single = || ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name));
+        if !self.registry.singles.contains_key(&facet.id) {
+            return Err(not_single());
+        }
+        let asked = asking.map(|component| (component, facet));
+        let providers: Vec<usize> = self.planned.iter().enumerate()
+            .filter(|(_, planned)| planned.provides.iter().any(|f| f.id == facet.id))
+            .map(|(index, _)| index)
+            .collect();
+        let node = match providers.as_slice() {
+            [index] => self.ensure(*index, asked).await?,
+            // `from_config` refuses a graph with two.
+            [] => self.default(facet, asked).await?,
+            _ => return Err(not_single()),
+        };
+        node.get::<T>().ok_or_else(not_single)
+    }
+
+    /// The default for the single `facet`, built if it is not yet.
+    async fn default(self: &Arc<Self>, facet: FacetType, asked: Option<(&str, FacetType)>) -> ComponentResult<Arc<ComponentNode>> {
+        let descriptor = self.registry.default_of(facet.id)
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("{} has no default", facet.name)))?;
+        {
+            let mut defaults = self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match defaults.get(&facet.id) {
+                Some(State::Built(node)) => return Ok(node.clone()),
+                Some(State::Building) => return Err(cycle(asked.map(|(c, f)| (c.to_string(), f)), &descriptor.id)),
+                Some(State::Pending) | None => { defaults.insert(facet.id, State::Building); }
+            }
+        }
+        let provides = self.registry.provides(&descriptor.kind).unwrap_or_default().to_vec();
+        let node = self.construct(&descriptor, &provides).await?;
+        self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(facet.id, State::Built(node.clone()));
+        Ok(node)
+    }
+}
+
+/// The error for asking for a component that is being built.
+fn cycle(asked: Option<(String, FacetType)>, other: &str) -> ComponentError {
+    match asked {
+        Some((component, facet)) => ComponentError::Cycle { component, facet: facet.name, other: other.to_string() },
+        // Only a component being built asks for another while the graph is
+        // built; anything else waits for it.
+        None => ComponentError::InvalidConfig(format!("component '{other}' is being built")),
+    }
+}
+
+/// The components of one configuration, built.
 #[derive(Debug, Default)]
 pub struct ComponentContainer {
-    nodes: HashMap<String, ComponentNode>,
-    node_order: Vec<String>,
+    graph: Option<Arc<Graph>>,
 }
 
 impl ComponentContainer {
-    /// Builds the components of `config` in dependency order with the
-    /// factories of `registry`. Each component gets `context` with its own
-    /// dependencies as `deps`; whatever `deps` `context` carries is replaced,
-    /// not merged.
+    /// Builds the components of `config` with the factories of `registry`,
+    /// each with `context` - a component asked for by another first, the
+    /// rest in the order of the configuration.
+    ///
+    /// # Errors
+    /// `ComponentError::DuplicateId` if two components share an id;
+    /// `ComponentError::InvalidConfig` if two provide a facet of which there
+    /// is one; whatever building a component reports, wrapped with its id and
+    /// kind.
     pub async fn from_config(
         config: &ComponentConfig,
-        registry: &ComponentRegistry,
+        registry: &Arc<ComponentRegistry>,
         context: &ComponentContext,
     ) -> ComponentResult<Self> {
-
-        // Kahn's algorithm over the descriptors themselves, so that the
-        // order yields them without a second lookup by id.
-        let mut indegree: HashMap<&str, usize> = HashMap::new();
-        let mut dependents: HashMap<&str, Vec<&ComponentDescriptor>> = HashMap::new();
-
+        let mut ids = HashSet::new();
+        let mut planned = Vec::with_capacity(config.component_nodes.len());
         for node in &config.component_nodes {
-            if indegree.insert(node.id.as_str(), node.deps.len()).is_some() {
+            if !ids.insert(node.id.as_str()) {
                 return Err(ComponentError::DuplicateId(node.id.clone()));
             }
+            let failed = |cause| ComponentError::Build { component: node.id.clone(), kind: node.kind.clone(), cause: Box::new(cause) };
+            let descriptor = registry.resolve(node, context).await.map_err(failed)?;
+            let provides = registry.provides(&descriptor.kind)
+                .ok_or_else(|| failed(ComponentError::UnsupportedKind(descriptor.kind.clone())))?
+                .to_vec();
+            planned.push(Planned { descriptor, provides });
         }
-
-        for node in &config.component_nodes {
-            for dep in &node.deps {
-                if !indegree.contains_key(dep.as_str()) {
-                    return Err(ComponentError::UnknownDependency { component: node.id.clone(), dependency: dep.clone() });
-                }
-                dependents.entry(dep.as_str()).or_default().push(node);
+        for single in registry.singles.values() {
+            let providers: Vec<&str> = planned.iter()
+                .filter(|p| p.provides.iter().any(|f| f.id == single.facet.id))
+                .map(|p| p.descriptor.id.as_str())
+                .collect();
+            if let [first, second, ..] = providers.as_slice() {
+                return Err(ComponentError::InvalidConfig(format!(
+                    "components '{first}' and '{second}' both provide {}, of which there is one", single.facet.name
+                )));
             }
         }
 
-        let mut queue: VecDeque<&ComponentDescriptor> = config.component_nodes.iter().filter(|node| node.deps.is_empty()).collect();
-        let mut ordered: Vec<&ComponentDescriptor> = Vec::with_capacity(config.component_nodes.len());
-
-        while let Some(node) = queue.pop_front() {
-            ordered.push(node);
-            for &child in dependents.get(node.id.as_str()).into_iter().flatten() {
-                if let Some(degree) = indegree.get_mut(child.id.as_str()) {
-                    *degree -= 1;
-                    if *degree == 0 {
-                        queue.push_back(child);
-                    }
-                }
-            }
+        let graph = Arc::new(Graph {
+            registry: registry.clone(),
+            context: ComponentContext { building: None, ..context.clone() },
+            states: Mutex::new(planned.iter().map(|_| State::Pending).collect()),
+            planned,
+            defaults: Mutex::new(HashMap::new()),
+        });
+        for index in 0..graph.planned.len() {
+            graph.ensure(index, None).await?;
         }
-
-        if ordered.len() != config.component_nodes.len() {
-            return Err(ComponentError::CycleDetected);
-        }
-
-        let mut nodes: HashMap<String, ComponentNode> = HashMap::new();
-        let mut node_order = Vec::with_capacity(ordered.len());
-        for node_config in ordered {
-            let id = node_config.id.clone();
-            node_order.push(id.clone());
-
-            let mut dep_facets = HashMap::new();
-            for dep_id in &node_config.deps {
-                let dep_node = nodes.get(dep_id).ok_or_else(|| ComponentError::UnknownDependency { component: id.clone(), dependency: dep_id.clone() })?;
-                dep_facets.insert(dep_id.clone(), dep_node.facets.clone());
-            }
-
-            let context = ComponentContext { deps: dep_facets, ..context.clone() };
-
-            let facets = registry.build(node_config, &context).await
-                .map_err(|e| ComponentError::Build {
-                    component: id.clone(),
-                    kind: node_config.kind.clone(),
-                    cause: Box::new(e),
-                })?;
-            nodes.insert(
-                id.clone(),
-                ComponentNode {
-                    id,
-                    fail_policy: node_config.fail_policy,
-                    tags: node_config.tags.clone(),
-                    facets,
-                },
-            );
-        }
-
-        Ok(Self {
-            nodes,
-            node_order,
-        })
+        Ok(Self { graph: Some(graph) })
     }
 
     pub fn empty() -> Self {
         Self::default()
     }
 
-    fn nodes(
-        &self,
-        tag: &str,
-    ) -> ComponentResult<Vec<&ComponentNode>> {
-        let mut nodes = Vec::new();
-        for id in &self.node_order {
-            let node = self
-                .nodes
-                .get(id)
-                .ok_or_else(|| ComponentError::NodeNotFound(id.clone()))?;
-            if node.tags.iter().any(|t| t == tag) {
-                nodes.push(node);
-            }
-        }
-        Ok(nodes)
-    }
-
-
-    pub fn get_all<T>(&self, tag: Option<&str>) -> ComponentResult<Vec<ComponentImpl<T>>>
+    /// Every component that provides `T` - with `tag`, if one is given - in
+    /// the order of the configuration.
+    pub fn get_all<T>(&self, tag: Option<&str>) -> Vec<ComponentImpl<T>>
     where
         T: ?Sized + Send + Sync + 'static,
     {
-        let nodes = match tag {
-            Some(s) => self.nodes(s)?,
-            None => self
-                .node_order
-                .iter()
-                .map(|id| {
-                    self.nodes
-                        .get(id)
-                        .ok_or_else(|| ComponentError::NodeNotFound(id.clone()))
-                })
-                .collect::<ComponentResult<Vec<_>>>()?,
-        };
-
-        Ok(nodes
-            .into_iter()
-            .filter_map(|n| {
-                n.facets.get::<T>().map(|processor| ComponentImpl {
-                    id: n.id.clone(),
-                    fail_policy: n.fail_policy,
-                    facet: processor,
-                })
+        let Some(graph) = &self.graph else { return Vec::new() };
+        let states = graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        states.iter()
+            .filter_map(|state| match state {
+                State::Built(node) => Some(node),
+                _ => None,
             })
-            .collect())
+            .filter(|node| tag.is_none_or(|tag| node.tags.iter().any(|t| t == tag)))
+            .filter_map(|node| node.get::<T>())
+            .collect()
+    }
+
+    /// The one component that provides `T`, a facet of which there is
+    /// exactly one: the container's, or the default - built when it is first
+    /// asked for.
+    ///
+    /// # Errors
+    /// Whatever building the default reports; `ComponentError::InvalidConfig`
+    /// if `T` is not a facet of which there is one.
+    pub async fn one<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<ComponentImpl<T>> {
+        match &self.graph {
+            Some(graph) => graph.one::<T>(None).await,
+            None => Err(ComponentError::InvalidConfig(format!("an empty container has no {}", FacetType::of::<T>().name))),
+        }
     }
 }
 
@@ -357,7 +680,6 @@ mod tests {
             id: id.to_string(),
             kind: kind.to_string(),
             params,
-            deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
         }
@@ -378,14 +700,14 @@ mod tests {
 
         let mut registry = ComponentRegistry::new(store);
         registry.register(
-            "counter",
-            Box::new(move |_node, context| {
+            ComponentKind::new("counter").provides::<dyn Marker>(),
+            move |_node, context| {
                 counted.fetch_add(1, Ordering::SeqCst);
                 recorded.lock().unwrap().push(context.security_context.session_id);
                 let mut facets = ComponentFacets::empty();
                 facets.insert::<dyn Marker>(Arc::new(MarkerImpl));
                 Ok(facets)
-            }),
+            },
         );
 
         let ref_a = descriptor("ref-a", PRECONFIGURED_REF_KIND, json!({ "id": "shared-marker" }));
@@ -426,4 +748,178 @@ mod tests {
         let result = registry.build(&node, &test_context()).await;
         assert!(matches!(result, Err(ComponentError::InvalidConfig(_))));
     }
+
+    /// A facet that says which component it came from.
+    trait Named: std::fmt::Debug + Send + Sync {
+        fn name(&self) -> String;
+    }
+
+    #[derive(Debug)]
+    struct Name(String);
+    impl Named for Name {
+        fn name(&self) -> String {
+            self.0.clone()
+        }
+    }
+
+    /// A second facet, for components that need each other.
+    trait Other: std::fmt::Debug + Send + Sync {}
+    impl Other for Name {}
+
+    /// A facet of which there is one.
+    trait Choice: std::fmt::Debug + Send + Sync {}
+    impl Choice for Name {}
+
+    fn named(id: &str) -> ComponentFacets {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn Named>(Arc::new(Name(id.to_string())));
+        facets
+    }
+
+    fn config(nodes: &[(&str, &str)]) -> ComponentConfig {
+        ComponentConfig { component_nodes: nodes.iter().map(|(id, kind)| descriptor(id, kind, json!(null))).collect() }
+    }
+
+    /// The component errors from the outermost to the innermost.
+    fn causes(error: &ComponentError) -> Vec<&ComponentError> {
+        let mut chain = vec![error];
+        while let ComponentError::Build { cause, .. } = chain[chain.len() - 1] {
+            chain.push(cause);
+        }
+        chain
+    }
+
+    #[tokio::test]
+    async fn a_component_gets_every_other_that_provides_what_it_asks_for_in_the_order_of_the_configuration() {
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        // Provides what it collects, so that it has to leave itself out.
+        registry.register_async(ComponentKind::new("collector").provides::<dyn Named>(), move |descriptor, context| {
+            let recorded = recorded.clone();
+            async move {
+                let parts = context.all::<dyn Named>().await?;
+                recorded.lock().unwrap().extend(parts.iter().map(|part| part.facet.name()));
+                Ok(named(&descriptor.id))
+            }
+        });
+        let registry = Arc::new(registry);
+
+        // Configured before what it collects, which is built for it first.
+        let container = ComponentContainer::from_config(&config(&[("collector", "collector"), ("a", "part"), ("b", "part")]), &registry, &test_context())
+            .await.expect("builds");
+
+        assert_eq!(*seen.lock().unwrap(), ["a", "b"], "every other component with the facet, in the order of the configuration");
+        let all: Vec<_> = container.get_all::<dyn Named>(None).iter().map(|c| c.id.clone()).collect();
+        assert_eq!(all, ["collector", "a", "b"], "the container keeps the order of the configuration");
+    }
+
+    #[tokio::test]
+    async fn components_that_need_each_other_are_refused_naming_both() {
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        registry.register_async(ComponentKind::new("chicken").provides::<dyn Named>(), |descriptor, context| async move {
+            context.all::<dyn Other>().await?;
+            Ok(named(&descriptor.id))
+        });
+        registry.register_async(ComponentKind::new("egg").provides::<dyn Other>(), |descriptor, context| async move {
+            context.all::<dyn Named>().await?;
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn Other>(Arc::new(Name(descriptor.id.clone())));
+            Ok(facets)
+        });
+        let registry = Arc::new(registry);
+
+        let error = ComponentContainer::from_config(&config(&[("hen", "chicken"), ("egg", "egg")]), &registry, &test_context())
+            .await.expect_err("they need each other");
+
+        let innermost = causes(&error).last().copied().unwrap();
+        assert!(matches!(innermost, ComponentError::Cycle { component, facet: "Named", other } if component == "egg" && other == "hen"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_component_must_provide_what_its_kind_declares() {
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        registry.register(ComponentKind::new("liar").provides::<dyn Named>(), |_, _| Ok(ComponentFacets::empty()));
+        let registry = Arc::new(registry);
+
+        let error = ComponentContainer::from_config(&config(&[("liar", "liar")]), &registry, &test_context())
+            .await.expect_err("provides nothing");
+
+        let message = error.to_string();
+        assert!(message.contains("'liar'") && message.contains("instead of the declared [Named]"), "{message}");
+    }
+
+    /// A registry with the single `Choice`, the kinds `default` and `other`
+    /// that provide it, and how often `default` was built.
+    fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        let built = Arc::new(AtomicUsize::new(0));
+        let counted = built.clone();
+        let choice = |id: &str| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn Choice>(Arc::new(Name(id.to_string())));
+            facets
+        };
+        registry.register(ComponentKind::new("default").provides::<dyn Choice>(), move |descriptor, _| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(choice(&descriptor.id))
+        });
+        registry.register(ComponentKind::new("other").provides::<dyn Choice>(), move |descriptor, _| Ok(choice(&descriptor.id)));
+        registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
+        registry.single::<dyn Choice>("default");
+        (registry, built)
+    }
+
+    #[tokio::test]
+    async fn of_a_single_facet_there_is_the_configured_one_or_the_default_built_when_first_asked_for() {
+        let (registry, built) = choices();
+        registry.verify().expect("the default kind provides the facet");
+        let registry = Arc::new(registry);
+
+        let without = ComponentContainer::from_config(&config(&[("a", "part")]), &registry, &test_context()).await.unwrap();
+        assert_eq!(built.load(Ordering::SeqCst), 0, "nobody asked for it yet");
+        assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "default");
+        assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "default");
+        assert_eq!(built.load(Ordering::SeqCst), 1, "built once");
+
+        let with = ComponentContainer::from_config(&config(&[("mine", "other")]), &registry, &test_context()).await.unwrap();
+        assert_eq!(with.one::<dyn Choice>().await.unwrap().id, "mine", "the configured one replaces the default");
+
+        let two = ComponentContainer::from_config(&config(&[("mine", "other"), ("yours", "other")]), &registry, &test_context()).await;
+        let message = two.expect_err("there is one").to_string();
+        assert!(message.contains("'mine' and 'yours' both provide Choice"), "{message}");
+
+        let not_single = without.one::<dyn Named>().await.expect_err("of Named there may be any number");
+        assert!(matches!(not_single, ComponentError::InvalidConfig(_)), "{not_single}");
+    }
+
+    #[tokio::test]
+    async fn the_configuration_replaces_a_default_for_every_container() {
+        let (mut registry, built) = choices();
+        registry.set_defaults(&config(&[("configured", "other")])).expect("replaces the default of Choice");
+        let registry = Arc::new(registry);
+
+        let container = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.unwrap();
+        assert_eq!(container.one::<dyn Choice>().await.unwrap().id, "configured");
+        assert_eq!(built.load(Ordering::SeqCst), 0, "the built-in default is not built");
+    }
+
+    #[test]
+    fn a_default_the_configuration_cannot_use_is_refused() {
+        let (mut registry, _) = choices();
+        for (nodes, expected) in [
+            (config(&[("x", PRECONFIGURED_REF_KIND)]), "cannot be a ref"),
+            (config(&[("x", "unknown")]), "unknown kind 'unknown'"),
+            (config(&[("x", "part")]), "exactly one facet"),
+            (config(&[("x", "other"), ("y", "default")]), "'x' and 'y' both provide Choice"),
+        ] {
+            let message = registry.set_defaults(&nodes).expect_err(expected).to_string();
+            assert!(message.contains(expected), "{message}");
+        }
+
+        registry.single::<dyn Named>("missing");
+        assert!(registry.verify().is_err(), "a default kind that is not registered");
+    }
 }
+

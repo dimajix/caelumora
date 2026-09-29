@@ -25,8 +25,6 @@ pub struct ComponentDescriptor {
     #[serde(default)]
     pub params: Value,
     #[serde(default)]
-    pub deps: Vec<String>,
-    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub fail_policy: ComponentFailPolicy,

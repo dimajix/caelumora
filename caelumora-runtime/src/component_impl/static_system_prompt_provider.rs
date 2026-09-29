@@ -2,7 +2,7 @@
 //! system prompt by default (parameters `prompt` and `position`).
 
 use crate::agent_turn::Turn;
-use crate::component::{ComponentError, ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -28,8 +28,8 @@ impl PromptProvider for StaticPromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        STATIC_SYSTEM_PROMPT_PROVIDER_KIND,
-        Box::new(|descriptor, _context| {
+        ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        |descriptor, _context| {
             let prompt = descriptor.params.get("prompt")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -46,6 +46,6 @@ pub fn register(registry: &mut ComponentRegistry) {
                 position,
             }));
             Ok(capabilities)
-        }),
+        },
     );
 }

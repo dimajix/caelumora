@@ -61,8 +61,9 @@ async fn main() -> anyhow::Result<()> {
         secret_manager.clone(),
         security_manager.clone(),
         config.commands.clone(),
+        config.component_defaults.clone(),
         Arc::new(OllamaClient::default()),
-    ));
+    )?);
     let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
 
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;

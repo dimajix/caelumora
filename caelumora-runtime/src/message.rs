@@ -8,7 +8,6 @@ use caelumora_model::message::Message;
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
-    fn name(&self) -> &str;
     async fn process_messages(&self, input: Vec<Message>, turn: &mut Turn) -> anyhow::Result<Vec<Message>>;
 }
 

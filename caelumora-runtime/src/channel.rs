@@ -972,7 +972,7 @@ mod tests {
     /// A channel of `participants`, whose actors are read from `store`.
     async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Arc::new(OllamaClient::default())));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -1328,7 +1328,7 @@ mod tests {
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), model));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), model).unwrap());
         let channel = Channel::new(
             SessionId::new(),
             "main".to_string(),
@@ -1388,7 +1388,6 @@ mod tests {
             id: "stop".to_string(),
             kind: crate::component_impl::stop_tool::STOP_TOOL_PROVIDER_KIND.to_string(),
             params: serde_json::Value::Null,
-            deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),
@@ -1433,7 +1432,6 @@ mod tests {
             id: "calculator".to_string(),
             kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_PROVIDER_KIND.to_string(),
             params: serde_json::Value::Null,
-            deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),
@@ -1473,7 +1471,6 @@ mod tests {
             id: "plan".to_string(),
             kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_PROVIDER_KIND.to_string(),
             params: serde_json::Value::Null,
-            deps: vec![],
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),

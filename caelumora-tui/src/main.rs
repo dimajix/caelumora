@@ -228,8 +228,9 @@ async fn main() -> anyhow::Result<()> {
         secret_manager,
         security_manager.clone(),
         config.commands.clone(),
+        config.component_defaults.clone(),
         Arc::new(OllamaClient::default()),
-    ));
+    )?);
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
 
     let owner = UserId::default();

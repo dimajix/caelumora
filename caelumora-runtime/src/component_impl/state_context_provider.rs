@@ -1,9 +1,9 @@
 //! The `state_context_provider` component: the agent's stored context with
-//! the prompt parts of the `PromptProvider`s it depends on (issue 47).
+//! the prompt parts of every `PromptProvider` of the agent (issues 47, 99).
 
 use crate::agent_turn::Turn;
 use caelumora_model::message::ContextItem;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -69,22 +69,23 @@ impl ContextProvider for StateContextProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        STATE_CONTEXT_PROVIDER_KIND,
-        Box::new(|descriptor, context| {
-            // In the order the dependencies are declared, not the map's: the
-            // parts of one position are joined in this order, and a part that
-            // changes its place changes the prompt - and its cache - for
-            // nothing.
-            let prompt_providers = descriptor.deps.iter()
-                .filter_map(|id| context.deps.get(id)?.get::<dyn PromptProvider>())
+    registry.register_async(
+        ComponentKind::new(STATE_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>(),
+        |_descriptor, context| async move {
+            // Every prompt part of the agent, in the order of its
+            // configuration: the parts of one position are joined in this
+            // order, and a part that changes its place changes the prompt -
+            // and its cache - for nothing.
+            let prompt_providers = context.all::<dyn PromptProvider>().await?
+                .into_iter()
+                .map(|provider| provider.facet)
                 .collect();
 
-            let mut capabilities = ComponentFacets::empty();
-            capabilities.insert::<dyn ContextProvider>(Arc::new(StateContextProvider {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ContextProvider>(Arc::new(StateContextProvider {
                 prompt_providers
             }));
-            Ok(capabilities)
-        }),
+            Ok(facets)
+        },
     );
 }

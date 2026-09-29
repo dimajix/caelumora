@@ -2,7 +2,7 @@
 //! expressions.
 
 use crate::agent_turn::Turn;
-use crate::component::{ComponentFacets, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
@@ -48,12 +48,12 @@ impl ToolProvider for CalculatorToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        CALCULATOR_TOOL_PROVIDER_KIND,
-        Box::new(|_descriptor, _context| {
+        ComponentKind::new(CALCULATOR_TOOL_PROVIDER_KIND).provides::<dyn ToolProvider>(),
+        |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider));
             Ok(facets)
-        }),
+        },
     );
 }
 
