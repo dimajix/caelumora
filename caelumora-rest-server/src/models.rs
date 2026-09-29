@@ -220,11 +220,11 @@ pub enum SeenItemResponse {
     Message { message: Message },
 }
 
-impl From<caelumora_model::agent::SeenItem> for SeenItemResponse {
-    fn from(item: caelumora_model::agent::SeenItem) -> Self {
+impl From<caelumora_model::message::ContextItem> for SeenItemResponse {
+    fn from(item: caelumora_model::message::ContextItem) -> Self {
         match item {
-            caelumora_model::agent::SeenItem::Prompt { digest, role, text } => SeenItemResponse::Prompt { digest, role, text },
-            caelumora_model::agent::SeenItem::Message(message) => SeenItemResponse::Message { message },
+            caelumora_model::message::ContextItem::Prompt { digest, role, text } => SeenItemResponse::Prompt { digest, role, text },
+            caelumora_model::message::ContextItem::Conversation { message, .. } => SeenItemResponse::Message { message },
         }
     }
 }

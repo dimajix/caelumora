@@ -160,6 +160,7 @@ against it, and what came out of the last attempt.
 | [98](98-context-provider-facet.md) | open | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | open | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | open | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
+| [119](119-seen-item-and-context-item.md) | done | What a model saw when it produced a message and what its turn gave it are two types of the same thing. |
 
 ## Maintenance
 

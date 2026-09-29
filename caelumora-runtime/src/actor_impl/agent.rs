@@ -1254,9 +1254,8 @@ mod tests {
 
     #[test]
     fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_resolve() {
-        use caelumora_model::agent::SeenItem;
         use caelumora_model::digest::prompt;
-        use caelumora_model::message::{ContextRef, MessageRole, PromptRef};
+        use caelumora_model::message::{ContextItem, ContextRef, MessageRole, PromptRef};
 
         let actor = ActorId::Agent(AgentId::new());
         let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
@@ -1270,8 +1269,8 @@ mod tests {
 
         let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
-            SeenItem::Message(m) => Some(m.id),
-            SeenItem::Prompt { .. } => None,
+            ContextItem::Conversation { message, .. } => Some(message.id),
+            ContextItem::Prompt { .. } => None,
         }).collect();
         assert_eq!(ids, vec![question.id]);
         assert!(matches!(context_of(&state, actor, question.id), Err(MessageContextError::NotRecorded { .. })), "someone else wrote it");

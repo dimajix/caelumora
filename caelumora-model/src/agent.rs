@@ -1,7 +1,7 @@
 use crate::actor::{ActorId, ActorState, EventContext};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
-use crate::message::{ContextRef, Message, Transcript, MessageHistory, MessageId, PromptRef};
+use crate::message::{ContextItem, ContextRef, Message, Transcript, MessageHistory, MessageId, PromptRef};
 use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
@@ -174,19 +174,13 @@ pub struct TurnKnowledge {
 
 /// What an agent's model saw when it produced a message (issues 06, 47):
 /// its context - the messages of its transcript and the prompt parts of that
-/// turn, in the order the model was given them.
+/// turn, in the order the model was given them, as the items it was given
+/// (issue 119).
 #[derive(Debug, Clone)]
 pub struct SeenContext {
     /// The digests the history recorded for the message.
     pub reference: ContextRef,
-    pub items: Vec<SeenItem>,
-}
-
-/// One element of a [`SeenContext`].
-#[derive(Debug, Clone)]
-pub enum SeenItem {
-    Prompt { digest: Digest, role: crate::message::MessageRole, text: String },
-    Message(Message),
+    pub items: Vec<crate::message::ContextItem>,
 }
 
 /// A change to an [`AgentChannelState`], staged by a turn and applied when
@@ -221,15 +215,15 @@ impl AgentChannelState {
             Some(digest) => self.transcript.prefix_entries(digest)?,
             None => &[],
         };
-        let prompt = |p: &PromptRef| -> Option<SeenItem> {
-            Some(SeenItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone() })
+        let prompt = |p: &PromptRef| -> Option<ContextItem> {
+            Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone() })
         };
         let mut items = Vec::with_capacity(entries.len() + reference.prompts.len());
         for p in reference.prompts.iter().filter(|p| p.after.is_none()) {
             items.push(prompt(p)?);
         }
         for entry in entries {
-            items.push(SeenItem::Message(entry.message.clone()));
+            items.push(ContextItem::Conversation { message: entry.message.clone(), digest: entry.digest });
             for p in reference.prompts.iter().filter(|p| p.after == Some(entry.digest)) {
                 items.push(prompt(p)?);
             }
@@ -332,8 +326,8 @@ mod tests {
 
         let seen = state.resolve(&reference).expect("everything it names is here");
         let order: Vec<String> = seen.items.iter().map(|item| match item {
-            SeenItem::Prompt { text, .. } => format!("prompt:{text}"),
-            SeenItem::Message(m) => m.content.clone().unwrap_or_default(),
+            ContextItem::Prompt { text, .. } => format!("prompt:{text}"),
+            ContextItem::Conversation { message, .. } => message.content.clone().unwrap_or_default(),
         }).collect();
         assert_eq!(order, ["prompt:system", "earlier", "prompt:notes", "question"]);
 

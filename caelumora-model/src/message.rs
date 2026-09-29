@@ -273,18 +273,27 @@ pub struct PromptRef {
     pub after: Option<Digest>,
 }
 
-/// An element of the context a `ContextProvider` hands a turn (issue 47):
-/// the conversation, with the prompt parts placed where the provider wants
-/// them. The provider decides where each part goes; the turn keeps the items
-/// as given, and derives from them both what the model is sent and where
-/// each prompt part was placed (`PromptRef`).
+/// An element of what an agent's model is given (issue 47): the
+/// conversation, with the prompt parts placed where the `ContextProvider`
+/// wants them. The turn keeps the items as given and derives from them both
+/// what the model is sent and where each prompt part was placed
+/// (`PromptRef`); resolving a `ContextRef` later gives the same items back -
+/// what the model saw is told in the shape it was given (issue 119).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ContextItem {
-    /// An entry of the stored context, with the digest it has there.
+    /// An entry of the transcript, with the digest it has there.
     Conversation { message: Message, digest: Digest },
     /// A prompt part - the system prompt, notes, ... - that is not part of
-    /// the conversation, given to the model in `role`.
-    Prompt { role: MessageRole, text: String },
+    /// the conversation, given to the model in `role`; `digest` is the
+    /// digest of `text`, by which the part is kept once and referred to.
+    Prompt { digest: Digest, role: MessageRole, text: String },
+}
+
+impl ContextItem {
+    /// The prompt part `text`, given in `role`.
+    pub fn prompt(role: MessageRole, text: String) -> Self {
+        ContextItem::Prompt { digest: crate::digest::prompt(&text), role, text }
+    }
 }
 
 /// Knowledge from another place an agent's model was given (issue 17): what

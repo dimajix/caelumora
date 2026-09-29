@@ -222,7 +222,7 @@ impl<'a> Turn<'a> {
         self.current().context.iter()
             .map(|item| match item {
                 ContextItem::Conversation { message, .. } => message.clone(),
-                ContextItem::Prompt { role, text } => Message {
+                ContextItem::Prompt { role, text, .. } => Message {
                     role: *role,
                     content: Some(text.clone()),
                     sender_id: ActorId::Agent(self.agent_id),
@@ -244,9 +244,8 @@ impl<'a> Turn<'a> {
     /// digest, so that what the agent saw can be told later (issues 06, 47).
     pub fn set_context(&mut self, items: Vec<ContextItem>) {
         for item in &items {
-            if let ContextItem::Prompt { text, .. } = item {
-                let digest = caelumora_model::digest::prompt(text);
-                self.agent_channel_state.prompts.entry(digest).or_insert_with(|| text.clone());
+            if let ContextItem::Prompt { digest, text, .. } = item {
+                self.agent_channel_state.prompts.entry(*digest).or_insert_with(|| text.clone());
             }
         }
         self.current_mut().context = items;
@@ -482,8 +481,8 @@ fn prompt_refs(context: &[ContextItem]) -> Vec<PromptRef> {
     for item in context {
         match item {
             ContextItem::Conversation { digest, .. } => after = Some(*digest),
-            ContextItem::Prompt { role, text } => {
-                prompts.push(PromptRef { text: caelumora_model::digest::prompt(text), role: *role, after });
+            ContextItem::Prompt { digest, role, .. } => {
+                prompts.push(PromptRef { text: *digest, role: *role, after });
             }
         }
     }
@@ -620,7 +619,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
-        use caelumora_model::agent::{AgentChannelState, AgentId, SeenItem};
+        use caelumora_model::agent::{AgentChannelState, AgentId};
         use caelumora_model::message::{MessageId, MessageRole};
 
         let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
@@ -629,13 +628,20 @@ mod tests {
         state.transcript.push(question.clone());
 
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
-        let system = || ContextItem::Prompt { role: MessageRole::System, text: "You are good at sums.".to_string() };
+        let system = || ContextItem::prompt(MessageRole::System, "You are good at sums.".to_string());
+        // Items compare by kind and digest - what they are, not their text.
+        let key = |item: &ContextItem| match item {
+            ContextItem::Conversation { digest, .. } => (false, *digest),
+            ContextItem::Prompt { digest, .. } => (true, *digest),
+        };
+        let given;
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.begin();
             let mut items = vec![system()];
             items.extend(turn.agent_channel_state().transcript.entries().iter()
                 .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest }));
+            given = items.iter().map(key).collect::<Vec<_>>();
             turn.set_context(items);
             assert_eq!(turn.context().len(), 2, "the prompt is given to the model as a message");
             turn.push_message(first.clone());
@@ -643,10 +649,12 @@ mod tests {
             turn.commit_turn().await;
         }
 
+        let seen = state.seen_context_of(first.id).expect("the agent produced it");
+        assert_eq!(seen.items.iter().map(key).collect::<Vec<_>>(), given, "the first answer saw exactly what the turn gave the model");
         let seen = state.seen_context_of(second.id).expect("the agent produced it");
         let order: Vec<String> = seen.items.iter().map(|item| match item {
-            SeenItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
-            SeenItem::Message(m) => m.content.clone().unwrap_or_default(),
+            ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
+            ContextItem::Conversation { message, .. } => message.content.clone().unwrap_or_default(),
         }).collect();
         assert_eq!(order, ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
         assert!(state.seen_context_of(question.id).is_none(), "not produced by the agent");

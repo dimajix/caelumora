@@ -54,12 +54,12 @@ impl ContextProvider for StateContextProvider {
                 Some(ContextItem::Conversation { message, .. }) if message.sender_id != own => conversation.len() - 1,
                 _ => conversation.len(),
             };
-            conversation.insert(at, ContextItem::Prompt { role: MessageRole::User, text: before_input.join("\n\n") });
+            conversation.insert(at, ContextItem::prompt(MessageRole::User, before_input.join("\n\n")));
         }
 
         let mut items = Vec::with_capacity(conversation.len() + 1);
         if !start.is_empty() {
-            items.push(ContextItem::Prompt { role: MessageRole::System, text: start.join("\n\n") });
+            items.push(ContextItem::prompt(MessageRole::System, start.join("\n\n")));
         }
         items.extend(conversation);
         state.set_context(items);
