@@ -325,55 +325,15 @@ impl StateStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meta::Scope;
-    use crate::meta::Metadata;
-    use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
-    use uuid::Uuid;
+    use crate::store_impl::suite;
 
-    fn make_personality(name: &str, scope: Scope) -> Personality {
-        Personality {
-            reasoning_confidentiality: crate::confidentiality::Confidentiality::Public,
-            security_attributes: Default::default(),
-            id: PersonalityId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: name.to_string(),
-                scope,
-                ..Metadata::default()
-            },
-            components: crate::component::ComponentConfig::default(),
-        }
-    }
-
-    fn make_session_template(name: &str, scope: Scope) -> SessionTemplate {
-        SessionTemplate {
-            security_attributes: Default::default(),
-            commands: Default::default(),
-            id: SessionTemplateId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: name.to_string(),
-                scope,
-                ..Metadata::default()
-            },
-            scope: ScopeTemplate::GlobalScope,
-            participants: vec![ParticipantTemplate::User{ name: "user".to_string() }],
-            channels: vec![ChannelTemplate {
-                name: "general".to_string(),
-                moderator: "broadcast".to_string(),
-                confidentiality: crate::confidentiality::Confidentiality::CHANNEL_DEFAULT,
-                participants: vec![],
-            }],
-        }
+    #[tokio::test]
+    async fn behaves_as_an_entity_store() {
+        suite::entity_store_behaves(&MemoryStore::new()).await;
     }
 
     #[tokio::test]
-    async fn create_agent_conflict_is_reported() {
-        let store = MemoryStore::new();
-        let ctx = SecurityContext::default();
-        let personality = make_personality("assistant", Scope::GlobalScope);
-        let agent = Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality, crate::actor::ActorId::None);
-
-        store.create_agent(&ctx, &agent).await.unwrap();
-        let conflict = store.create_agent(&ctx, &agent).await.unwrap_err();
-        assert!(matches!(conflict, StoreError::Conflict(_)));
+    async fn behaves_as_a_state_store() {
+        suite::state_store_behaves(&MemoryStore::new()).await;
     }
 }

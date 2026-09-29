@@ -1,6 +1,6 @@
 # 93 — The `EntityStore` speaks three CRUD dialects
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -89,3 +89,15 @@ seven small inconsistencies.
   reason to create a second agent (77) - and the seeding in REST looks
   personalities and templates up in their lists. The three store tests of
   the name lookups went with them; `Scope::contains` has its own tests.
+- **2026-09-29** — Step 4: `store_impl::suite` (test-only) is the behaviour
+  every store owes. `entity_store_behaves` takes each of the seven kinds
+  through the same life: create, create again (`Conflict`), update, get,
+  list, delete, delete again (`false`), and get and update once it is
+  gone (`NotFound`, naming the kind). It also finds users by name.
+  `state_store_behaves` checks that agent states never stored read as
+  their default, a missing channel state is `NotFound`, and deleting a
+  channel's state takes its agents' states in that channel along. Both
+  stores run both suites. The JSON tests that the suite covers are gone;
+  what is specific to files (concurrent writers, corrupted files, the
+  files a delete removes) stays in `json.rs`. Both stores passed without
+  a change, so the step found no further divergence. Done.

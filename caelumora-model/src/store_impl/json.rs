@@ -490,42 +490,24 @@ mod tests {
     use chrono::Utc;
     use crate::meta::{Metadata, Scope};
     use crate::security::SecurityAttributes;
-    use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate};
+    use crate::store_impl::suite;
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    fn make_personality() -> Personality {
-        Personality {
-            reasoning_confidentiality: crate::confidentiality::Confidentiality::Public,
-            security_attributes: Default::default(),
-            id: PersonalityId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "assistant".to_string(),
-                description: "Helpful assistant".to_string(),
-                ..Metadata::default()
-            },
-            components: crate::component::ComponentConfig::default(),
-        }
+    fn store(dir: &std::path::Path) -> JsonFileStore {
+        JsonFileStore::new(dir, Arc::new(crate::security::DummySecurityManager::new())).unwrap()
     }
 
-    fn make_session_template() -> SessionTemplate {
-        SessionTemplate {
-            security_attributes: Default::default(),
-            commands: Default::default(),
-            id: SessionTemplateId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "pairing".to_string(),
-                ..Metadata::default()
-            },
-            scope: ScopeTemplate::GlobalScope,
-            participants: vec![ParticipantTemplate::User{ name: "user".to_string() }],
-            channels: vec![ChannelTemplate {
-                name: "general".to_string(),
-                moderator: "broadcast".to_string(),
-                confidentiality: crate::confidentiality::Confidentiality::CHANNEL_DEFAULT,
-                participants: vec!["user".to_string()],
-            }],
-        }
+    #[tokio::test]
+    async fn behaves_as_an_entity_store() {
+        let dir = tempdir().unwrap();
+        suite::entity_store_behaves(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
+    async fn behaves_as_a_state_store() {
+        let dir = tempdir().unwrap();
+        suite::state_store_behaves(&store(dir.path())).await;
     }
 
     #[tokio::test]
@@ -550,148 +532,6 @@ mod tests {
             .collect();
         assert_eq!(names, [format!("{agent}.json")], "only the file itself");
         store.get_agent_channel_state(agent, channel).await.expect("readable");
-    }
-
-    #[tokio::test]
-    async fn template_roundtrip_works() {
-        let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
-        let ctx = SecurityContext::default();
-
-        let personality = make_personality();
-        store.create_personality(&ctx, &personality).await.unwrap();
-
-        let found = store.get_personality(&ctx, personality.id).await.unwrap();
-        assert_eq!(found.metadata.name, personality.metadata.name);
-
-        let session_template = make_session_template();
-        store.create_session_template(&ctx, &session_template).await.unwrap();
-        let found_session = store.get_session_template(&ctx, session_template.id).await.unwrap();
-        assert_eq!(
-            found_session.metadata.name,
-            session_template.metadata.name
-        );
-    }
-
-    #[tokio::test]
-    async fn template_list_and_delete_work() {
-        let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
-        let ctx = SecurityContext::default();
-
-        let mut t1 = make_personality();
-        t1.metadata.name = "assistant-a".to_string();
-        let mut t2 = make_personality();
-        t2.metadata.name = "assistant-b".to_string();
-
-        store.create_personality(&ctx, &t1).await.unwrap();
-        store.create_personality(&ctx, &t2).await.unwrap();
-
-        let templates = store.list_personalities(&ctx).await.unwrap();
-        assert_eq!(templates.len(), 2);
-
-        assert!(store.delete_personality(&ctx, t1.id).await.unwrap());
-        assert!(!store.delete_personality(&ctx, t1.id).await.unwrap());
-        let err = store.get_personality(&ctx, t1.id).await.unwrap_err();
-        assert!(matches!(err, StoreError::NotFound { entity: "personality", .. }));
-    }
-
-    #[tokio::test]
-    async fn state_roundtrip_works() {
-        let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
-        let ctx = SecurityContext::default();
-
-        let template = make_personality();
-        let agent = Agent::new(
-            "assistant-1".to_string(),
-            Scope::GlobalScope,
-            &template,
-            crate::actor::ActorId::None,
-        );
-        store.create_agent(&ctx, &agent).await.unwrap();
-
-        let loaded = store.get_agent(&ctx, agent.id).await.unwrap();
-        assert_eq!(loaded.metadata.name, agent.metadata.name);
-
-        let state = AgentState::default();
-        store.put_agent_state(agent.id, &state).await.unwrap();
-        store.get_agent_state(agent.id).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn create_conflict_and_update_not_found_are_reported() {
-        let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
-        let ctx = SecurityContext::default();
-
-        let template = make_personality();
-        let agent = Agent::new(
-            "assistant-1".to_string(),
-            Scope::GlobalScope,
-            &template,
-            crate::actor::ActorId::None,
-        );
-
-        store.create_agent(&ctx, &agent).await.unwrap();
-        let conflict = store.create_agent(&ctx, &agent).await.unwrap_err();
-        assert!(matches!(conflict, StoreError::Conflict(_)));
-
-        let missing_agent = Agent {
-            id: AgentId(Uuid::new_v4()),
-            ..agent
-        };
-        let not_found = store.update_agent(&ctx, &missing_agent).await.unwrap_err();
-        assert!(matches!(not_found, StoreError::NotFound { entity: "agent", .. }));
-    }
-
-    #[tokio::test]
-    async fn session_list_works() {
-        let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager).unwrap();
-        let ctx = SecurityContext::default();
-
-        let s1 = Session {
-            commands: Default::default(),
-            id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "session-1".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
-        };
-        let s2 = Session {
-            commands: Default::default(),
-            id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "session-2".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
-            participants: Vec::new(),
-            channels: Vec::new(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            security_attributes: SecurityAttributes::default(),
-        };
-
-        store.create_session(&ctx, &s1).await.unwrap();
-        store.create_session(&ctx, &s2).await.unwrap();
-
-        let sessions = store.list_sessions(&ctx).await.unwrap();
-        assert_eq!(sessions.len(), 2);
-        assert!(sessions.iter().any(|s| s.id == s1.id));
-        assert!(sessions.iter().any(|s| s.id == s2.id));
     }
 
     #[tokio::test]

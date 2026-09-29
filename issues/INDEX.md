@@ -51,7 +51,7 @@ against it, and what came out of the last attempt.
 | [06](06-context-in-message-for-auditability.md) | done | For a past message there is no way to reconstruct what the agent actually saw when it wrote it. |
 | [62](62-json-store-concurrent-writes.md) | done | Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost. |
 | [77](77-template-swallows-store-errors.md) | done | `ParticipantTemplate::instantiate` treats every store error as "not found" and creates a second agent. |
-| [93](93-entity-store-dialects.md) | in progress | The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id. |
+| [93](93-entity-store-dialects.md) | done | The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id. |
 | [108](108-serde-defaults-for-legacy.md) | open | Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to. |
 
 ## Sessions and channels
