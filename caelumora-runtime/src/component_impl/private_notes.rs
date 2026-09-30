@@ -23,11 +23,12 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::session_reader::{ChannelNotes, SessionReader};
-use crate::tool::{id_argument, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
+use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
@@ -37,11 +38,16 @@ pub const PRIVATE_NOTES_KIND: &str = "private_notes";
 
 pub const NOTE_PRIVATE_TOOL_NAME: &str = "note_private";
 pub const REVOKE_PRIVATE_NOTE_TOOL_NAME: &str = "revoke_private_note";
+pub const RECLASSIFY_PRIVATE_NOTE_TOOL_NAME: &str = "reclassify_private_note";
 
 #[derive(Debug)]
 pub struct PrivateNotesComponent {
     /// The agent's private notes in the session's other channels.
     reader: Arc<dyn SessionReader>,
+    /// The policy that decides whether a note may be reclassified, asked in
+    /// `security_context` - the agent's (issues 131, 133).
+    security_manager: Arc<dyn SecurityManager>,
+    security_context: SecurityContext,
 }
 
 #[async_trait]
@@ -76,6 +82,17 @@ impl ToolProvider for PrivateNotesComponent {
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
             },
+            Tool {
+                name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: "Change how one of your private notes of this channel is classified, by its \
+                    number: its level and the compartments it is meant for, never above this channel. It \
+                    decides in which of your other channels you are shown it. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
+                    .to_string(),
+                parameters: reclassify_parameters("your private note"),
+                requires_approval: true,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+            },
         ]
     }
 
@@ -83,6 +100,7 @@ impl ToolProvider for PrivateNotesComponent {
         let value = match name {
             NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, turn),
             REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, turn),
+            RECLASSIFY_PRIVATE_NOTE_TOOL_NAME => self.execute_reclassify_private_note(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }?;
         Ok(value.into())
@@ -95,6 +113,15 @@ impl PrivateNotesComponent {
     fn execute_note_private(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentNotes::note(turn, NoteKind::Private, text_argument(params)?);
         Ok(serde_json::json!({ "status": "noted privately", "id": id.0 }))
+    }
+
+    /// `reclassify_private_note(id, level, compartments?)`: reclassifies one
+    /// of the agent's private notes of this channel, as the policy allows.
+    async fn execute_reclassify_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id: NoteId = id_argument(params)?;
+        let classification = classification_argument(params)?;
+        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone(), self.security_manager.as_ref(), &self.security_context).await?;
+        Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `revoke_private_note(id)`: revokes one of the agent's private notes
@@ -156,7 +183,11 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
-            let component = Arc::new(PrivateNotesComponent { reader: context.session_reader.clone() });
+            let component = Arc::new(PrivateNotesComponent {
+                reader: context.session_reader.clone(),
+                security_manager: context.security_manager.clone(),
+                security_context: context.security_context.clone(),
+            });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);
@@ -192,7 +223,11 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent { reader: crate::session_reader::detached() };
+        let tools = PrivateNotesComponent {
+            reader: crate::session_reader::detached(),
+            security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
+            security_context: Default::default(),
+        };
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());

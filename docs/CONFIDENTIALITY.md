@@ -134,8 +134,19 @@ channel, and only with configured compartments.
     it was - and announced as `GlobalEvent::MessageReclassified`, without
     content.
 
+*   **A note or a memory entry** is reclassified by its agent, through a
+    tool that asks for approval (`reclassify_note`,
+    `reclassify_private_note`, `reclassify_memory`): a change of its chain
+    (`NoteChange::Reclassify`, `MemoryChange::Reclassify`), taken over with
+    the turn. The policy allows it to the author - the agent calling -
+    never above the turn's channel; a memory entry only where it may be
+    recalled. A reclassified memory entry is recalled where its new
+    classification may be read. Agents do not reclassify channels or
+    messages: people do.
+
 Who reclassified what, and when, is not recorded: that is an audit log
-([140](../issues/140-audit-log.md)).
+([140](../issues/140-audit-log.md)); the chains of notes and memory keep
+the change, but not who made it or who approved it.
 
 ## The flow rule
 
@@ -309,7 +320,7 @@ theirs alone (issue 54).
 ## Open questions
 
 The classification model is introduced in steps
-([133](../issues/133-classification-model.md)); steps 1 to 3 are done.
+([133](../issues/133-classification-model.md)); steps 1 to 4 are done.
 Still to come:
 
 *   **Sources that classify.** No built-in tool classifies its results, and
@@ -317,12 +328,10 @@ Still to come:
     configured with one classification for all of them
     ([139](../issues/139-mcp-result-classification.md)). Configuring a tool
     with a classification is trusted: it is not asked as `Classify`.
-*   **Reclassifying notes and memory.** Channels and messages can be
-    reclassified; notes and memory entries, and an agent reclassifying
-    through a tool that asks for approval, are step 4b.
 *   **A turn during a reclassification.** A turn keeps the classification
     it began with: its messages, after the channel was lowered, are
-    classified above the channel and refused by it.
+    classified above the channel and refused by it
+    ([141](../issues/141-turn-during-reclassification.md)).
 *   **Clearances.** Who may join a channel is asked as
     `ActionType::JoinChannel` with the channel's classification
     ([46](../issues/46-channel-participants.md)). The ownership policy

@@ -316,11 +316,10 @@ impl ChannelLoop {
         let channel = self.classification();
         let attributes = self.security_attributes();
         let action = ActionType::Reclassify {
-            target: Reclassified::Channel,
+            target: Reclassified::Channel { attributes: &attributes },
             current: &channel.classification,
             new: &classification,
             channel: &channel,
-            attributes: &attributes,
         };
         self.require(context, action, "reclassifying").await?;
         self.channel.update_classification(context, classification.clone()).await?;
@@ -352,11 +351,10 @@ impl ChannelLoop {
             .map(|e| (e.message.sender_id, e.message.classification.clone()))
             .ok_or_else(not_found)?;
         let action = ActionType::Reclassify {
-            target: Reclassified::Message { author },
+            target: Reclassified::Message { author, attributes: &attributes },
             current: &current,
             new: &classification,
             channel: &channel,
-            attributes: &attributes,
         };
         self.require(context, action, "reclassifying a message of").await?;
         state.history.reclassify(message, classification.clone());

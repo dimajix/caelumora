@@ -70,6 +70,31 @@ pub fn id_argument<T: DeserializeOwned>(params: &Value) -> ToolResult<T> {
     Ok(id)
 }
 
+/// The parameters `level` and `compartments` of a tool that reclassifies
+/// something (issue 133), as a classification. One that cannot be - a
+/// public one with compartments - is the model's to correct.
+pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
+    #[derive(Deserialize)]
+    struct Asked { level: caelumora_model::confidentiality::Confidentiality, #[serde(default)] compartments: Vec<String> }
+    let Asked { level, compartments } = arguments(params)?;
+    Classification::new(level, compartments.into_iter().map(caelumora_model::confidentiality::Compartment::new))
+        .map_err(|e| ToolError::InvalidParameter(e.to_string()))
+}
+
+/// The parameters of a tool that reclassifies the entry numbered `id`,
+/// described as `what` (e.g. "your note"): `id`, `level` and `compartments`.
+pub fn reclassify_parameters(what: &str) -> caelumora_model::tool::ToolParameters {
+    use caelumora_model::tool::ToolParameters;
+    ToolParameters::object(
+        [
+            ("id", ToolParameters::number(format!("The number of {what}"))),
+            ("level", ToolParameters::string("The new level: public, internal, confidential or strictly_confidential")),
+            ("compartments", ToolParameters::array(ToolParameters::string("A compartment"), "Who it is meant for; none: everybody of the level. Public takes none.")),
+        ],
+        ["id", "level"],
+    )
+}
+
 /// The parameter `text` of a tool that notes or remembers something,
 /// trimmed; an empty one is no text.
 pub fn text_argument(params: &Value) -> ToolResult<String> {

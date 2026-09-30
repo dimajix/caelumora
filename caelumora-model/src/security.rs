@@ -95,9 +95,8 @@ pub enum ActionType<'a> {
     /// Changing the classification of `target` from `current` to `new`
     /// (issue 133) - lowering it releases what it holds to a wider circle,
     /// raising it retracts nothing already read. `channel` is the channel
-    /// it belongs to, as it is classified now, with the channel's
-    /// attributes: who owns the channel, and so what is in it.
-    Reclassify { target: Reclassified, current: &'a Classification, new: &'a Classification, channel: &'a ChannelClassification, attributes: &'a SecurityAttributes },
+    /// it belongs to, or is reclassified in, as it is classified now.
+    Reclassify { target: Reclassified<'a>, current: &'a Classification, new: &'a Classification, channel: &'a ChannelClassification },
     /// Seeing that a user command exists - in `/help` and in completion.
     /// Keyed by the command's name, without the slash (issue 28).
     ShowCommand(&'a str),
@@ -156,7 +155,7 @@ impl ActionType<'_> {
             ActionType::ReadChannel { source, classification, reader } => format!("ReadChannel({classification} of {} from {})", source.channel_id, reader.channel_id),
             ActionType::Publish { classification, actor, channel } => format!("Publish({classification} by {actor} to {})", channel.channel_id),
             ActionType::Classify(classification) => format!("Classify({classification})"),
-            ActionType::Reclassify { target, current, new, channel, .. } => format!("Reclassify({target:?} of {} from {current} to {new})", channel.channel_id),
+            ActionType::Reclassify { target, current, new, channel } => format!("Reclassify({target:?} of {} from {current} to {new})", channel.channel_id),
             ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
             ActionType::ExecuteCommand(name) => format!("ExecuteCommand(/{name})"),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
@@ -170,13 +169,20 @@ impl ActionType<'_> {
     }
 }
 
-/// What is reclassified (`ActionType::Reclassify`, issue 133).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reclassified {
-    /// The channel itself.
-    Channel,
-    /// A message of the channel, written by `author`.
-    Message { author: ActorId },
+/// What is reclassified (`ActionType::Reclassify`, issue 133), with who it
+/// belongs to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reclassified<'a> {
+    /// The channel itself, with its attributes: who owns it.
+    Channel { attributes: &'a SecurityAttributes },
+    /// A message of the channel, written by `author`; with the channel's
+    /// attributes, since its owner owns what is in it.
+    Message { author: ActorId, attributes: &'a SecurityAttributes },
+    /// A note, public or private, of the agent `author` in the channel.
+    Note { author: ActorId },
+    /// An entry of the memory of the agent `author`, reclassified in the
+    /// channel.
+    Memory { author: ActorId },
 }
 
 /// Who an entity belongs to - what a policy decides by (issue 11).
@@ -393,8 +399,8 @@ impl SecurityManager for DummySecurityManager {
 ///   channel and the actor putting it there is the one acting - its author,
 ///   who may release what they write.
 /// - A channel may be reclassified by its owner, a message by the channel's
-///   owner or its author - never above the channel - and only with
-///   configured compartments.
+///   owner or its author, a note or memory entry by its author - never above
+///   the channel - and only with configured compartments.
 ///   That these rules live in the ownership policy is issue 138.
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
@@ -455,13 +461,13 @@ impl SecurityManager for OwnershipSecurityManager {
                 source.channel_id == reader.channel_id || self.may_read_from(source, classification, reader)
             }
             ActionType::Classify(classification) => self.compartments.check(classification).is_ok(),
-            ActionType::Reclassify { target, new, channel, attributes, .. } => {
-                let owner = attributes.owner_id == me && me != ActorId::None;
+            ActionType::Reclassify { target, new, channel, .. } => {
+                let owns = |attributes: &SecurityAttributes| attributes.owner_id == me && me != ActorId::None;
+                let within = || new.flows_to(&channel.classification, &self.compartments);
                 self.compartments.check(new).is_ok() && match target {
-                    Reclassified::Channel => owner,
-                    Reclassified::Message { author } => {
-                        (owner || author == context.caller_id) && new.flows_to(&channel.classification, &self.compartments)
-                    }
+                    Reclassified::Channel { attributes } => owns(attributes),
+                    Reclassified::Message { author, attributes } => (owns(attributes) || author == context.caller_id) && within(),
+                    Reclassified::Note { author } | Reclassified::Memory { author } => author == context.caller_id && within(),
                 }
             }
             ActionType::Publish { classification, actor, channel } => {
@@ -659,27 +665,36 @@ mod tests {
     async fn a_channel_is_reclassified_by_its_owner_a_message_also_by_its_author() {
         let policy = hr_reads_finance();
         let (owner, author, stranger) = (user(), user(), user());
-        let attributes = SecurityAttributes { owner_id: owner, contributors: vec![author, stranger] };
+        // Leaked, so that the targets can be built outside the closure.
+        let attributes: &'static SecurityAttributes = Box::leak(Box::new(SecurityAttributes { owner_id: owner, contributors: vec![author, stranger] }));
+        let channel_itself = Reclassified::Channel { attributes };
         let hr = channel(SessionId::new(), Confidentiality::Confidential, &["hr"]);
         let classified = |level, c: &[&str]| Classification::new(level, c.iter().map(|c| Compartment::new(*c))).unwrap();
         let current = hr.classification.clone();
-        let reclassify = |who: ActorId, target: Reclassified, new: Classification| {
-            let (policy, hr, attributes, current) = (&policy, &hr, &attributes, &current);
+        let reclassify = |who: ActorId, target: Reclassified<'static>, new: Classification| {
+            let (policy, hr, current) = (&policy, &hr, &current);
             async move {
-                policy.check(&context(who), ActionType::Reclassify { target, current, new: &new, channel: hr, attributes }).await
+                policy.check(&context(who), ActionType::Reclassify { target, current, new: &new, channel: hr }).await
             }
         };
         let internal = classified(Confidentiality::Internal, &["hr"]);
-        assert!(reclassify(owner, Reclassified::Channel, internal.clone()).await, "the owner releases the channel");
-        assert!(!reclassify(author, Reclassified::Channel, internal.clone()).await, "a participant does not");
-        assert!(!reclassify(owner, Reclassified::Channel, classified(Confidentiality::Internal, &["payroll"])).await, "not configured");
+        assert!(reclassify(owner, channel_itself, internal.clone()).await, "the owner releases the channel");
+        assert!(!reclassify(author, channel_itself, internal.clone()).await, "a participant does not");
+        assert!(!reclassify(owner, channel_itself, classified(Confidentiality::Internal, &["payroll"])).await, "not configured");
 
-        let message = Reclassified::Message { author };
+        let message = Reclassified::Message { author, attributes };
         let released = classified(Confidentiality::Internal, &["hr", "finance"]);
         assert!(reclassify(author, message, released.clone()).await, "the author releases their message");
         assert!(reclassify(owner, message, released.clone()).await, "so does the channel's owner");
         assert!(!reclassify(stranger, message, released).await, "nobody else");
         assert!(!reclassify(author, message, classified(Confidentiality::StrictlyConfidential, &["hr"])).await, "never above the channel");
+
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        for own in [Reclassified::Note { author: agent }, Reclassified::Memory { author: agent }] {
+            assert!(reclassify(agent, own, classified(Confidentiality::Internal, &["hr", "finance"])).await, "an agent releases what it wrote");
+            assert!(!reclassify(owner, own, classified(Confidentiality::Internal, &["hr", "finance"])).await, "not even the channel's owner another's");
+            assert!(!reclassify(agent, own, classified(Confidentiality::StrictlyConfidential, &["hr"])).await, "never above the channel");
+        }
     }
 
     #[tokio::test]

@@ -22,7 +22,7 @@ use crate::agent_memory::AgentMemory;
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::tool::{id_argument, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::memory::{Memory, MemoryId};
@@ -36,6 +36,7 @@ pub const AGENT_MEMORY_KIND: &str = "agent_memory";
 
 pub const REMEMBER_TOOL_NAME: &str = "remember";
 pub const FORGET_TOOL_NAME: &str = "forget";
+pub const RECLASSIFY_MEMORY_TOOL_NAME: &str = "reclassify_memory";
 
 pub struct AgentMemoryComponent {
     /// The policy that decides what may be recalled, asked in
@@ -81,6 +82,17 @@ impl ToolProvider for AgentMemoryComponent {
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
             },
+            Tool {
+                name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
+                description: "Change how one of the things you remember is classified, by its number: its \
+                    level and the compartments it is meant for, never above this channel. It decides where \
+                    you recall it. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
+                    .to_string(),
+                parameters: reclassify_parameters("what you remember"),
+                requires_approval: true,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+            },
         ]
     }
 
@@ -88,6 +100,7 @@ impl ToolProvider for AgentMemoryComponent {
         let value = match name {
             REMEMBER_TOOL_NAME => self.execute_remember(params, turn),
             FORGET_TOOL_NAME => self.execute_forget(params, turn).await,
+            RECLASSIFY_MEMORY_TOOL_NAME => self.execute_reclassify(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }?;
         Ok(value.into())
@@ -100,6 +113,15 @@ impl AgentMemoryComponent {
     fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id = AgentMemory::remember(turn, text_argument(params)?);
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
+    }
+
+    /// `reclassify_memory(id, level, compartments?)`: reclassifies an entry
+    /// that may be recalled here, as the policy allows.
+    async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id: MemoryId = id_argument(params)?;
+        let classification = classification_argument(params)?;
+        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref(), &self.security_context).await?;
+        Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
@@ -165,6 +187,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{ChannelClassification, Classification, Confidentiality};
+    use crate::tool::ToolError;
     use caelumora_model::security::{ActionType, OwnershipSecurityManager};
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::store::StateStore;
@@ -270,5 +293,43 @@ mod tests {
         assert!(asked_by_stranger.text.is_empty(), "the policy refuses, whatever the levels say: {}", asked_by_stranger.text);
         let in_its_own_channel = recall(&component(policy, stranger), &handle, agent, origin).await;
         assert!(in_its_own_channel.text.contains("Kaya likes tea."), "a channel always reads itself");
+    }
+
+    #[tokio::test]
+    async fn an_entry_released_to_another_compartment_is_recalled_there() {
+        use caelumora_model::confidentiality::{Compartment, Compartments};
+        let agent = AgentId::new();
+        let handle = handle(agent).await;
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        // As the agent's components are given it: its owner's, called by the agent.
+        let memory = AgentMemoryComponent {
+            security_manager: policy,
+            security_context: SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default()).next(ActorId::Agent(agent)),
+        };
+        let session = SessionId::new();
+        let in_compartments = |names: &[&str]| ChannelClassification {
+            session_id: session,
+            channel_id: ChannelId::new(),
+            classification: Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap(),
+        };
+        let (hr, finance) = (in_compartments(&["hr"]), in_compartments(&["finance"]));
+        remember(&memory, &handle, agent, hr.clone(), "The budget is tight.").await;
+        assert!(recall(&memory, &handle, agent, finance.clone()).await.text.is_empty(), "HR's, not finance's");
+
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
+        turn.next_turn(Default::default(), Default::default(), hr.clone(), Vec::new());
+        let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
+        assert!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, &mut turn).await.is_err(), "never above the channel");
+        let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });
+        assert!(matches!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &unknown, &mut turn).await, Err(ToolError::InvalidParameter(_))));
+        let released = serde_json::json!({ "id": 1, "level": "internal", "compartments": ["hr", "finance"] });
+        memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &released, &mut turn).await.expect("the agent releases what it remembers");
+        turn.commit_turn().await;
+
+        let there = recall(&memory, &handle, agent, finance).await;
+        assert!(there.text.contains("The budget is tight."), "released to finance: {}", there.text);
+        assert!(recall(&memory, &handle, agent, hr).await.text.contains("The budget is tight."), "and still HR's");
     }
 }

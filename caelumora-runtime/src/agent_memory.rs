@@ -5,16 +5,18 @@
 //! generic access to that state - a snapshot, staged changes - and knows
 //! nothing of memory. [`AgentMemory`] is the logic on top: which entries may
 //! be recalled in the turn's channel - as the policy decides, asked in the
-//! agent's name (issue 131) - remembering and forgetting. The
+//! agent's name (issue 131) - remembering, forgetting and reclassifying. The
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too.
 
 use crate::agent_turn::Turn;
+use crate::tool::{ToolError, ToolResult};
+use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
-use caelumora_model::confidentiality::ChannelClassification;
+use caelumora_model::confidentiality::{ChannelClassification, Classification};
 use caelumora_model::memory::{Memory, MemoryChange, MemoryId};
-use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub struct AgentMemory;
@@ -85,5 +87,42 @@ impl AgentMemory {
         }
         turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Forget { id }, origin });
         true
+    }
+
+    /// Reclassifies entry `id` as `classification` (issue 133) - one that
+    /// may be recalled here (asked as in [`recalled`](Self::recalled)) or
+    /// was remembered earlier in this turn, and is not forgotten - if the
+    /// policy lets the agent (`ActionType::Reclassify`, asked in `context`,
+    /// the agent's): never above the turn's channel. Taken over when the
+    /// turn completes; from then on the entry is recalled where its new
+    /// classification may be read.
+    ///
+    /// # Errors
+    /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
+    /// if the policy refuses.
+    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
+        let origin = turn.classification();
+        let recalled = Self::recalled(turn, security, context).await.into_iter().find(|m| m.id == id).map(|m| m.origin.classification);
+        let staged = turn.staged_agent_changes();
+        let remembered_now = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Remember { id: r, .. }, .. } if *r == id));
+        let forgotten = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Forget { id: f }, .. } if *f == id));
+        // What the turn staged last for the entry is what it is now.
+        let reclassified_now = staged.iter().rev().find_map(|c| match c {
+            AgentStateChange::Memory { change: MemoryChange::Reclassify { id: r, classification }, .. } if *r == id => Some(classification.clone()),
+            _ => None,
+        });
+        let current = reclassified_now.or(recalled).or_else(|| remembered_now.then(|| origin.classification.clone()));
+        let Some(current) = current.filter(|_| !forgotten) else {
+            return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
+        };
+        let action = ActionType::Reclassify {
+            target: Reclassified::Memory { author: ActorId::Agent(turn.agent_id()) },
+            current: &current,
+            new: &classification,
+            channel: &origin,
+        };
+        security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))).await?;
+        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Reclassify { id, classification }, origin });
+        Ok(())
     }
 }

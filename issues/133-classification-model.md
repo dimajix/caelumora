@@ -373,3 +373,15 @@ message rendering, and the prompt notes of
   …/classification` for both; the web UI's `ClassificationDialog`, with a
   warning when a change releases. Open: a turn running while its channel is
   lowered keeps its classification, and its messages are refused.
+- **2026-09-30** — Decided before step 4b: an agent reclassifies only its
+  notes and memory, not messages - a tool calling the channel would go
+  around the actor's transport, and a request over the transport would
+  have no answer. Following the codebase's pattern, each component offers
+  the tool for its state (`reclassify_note`, `reclassify_private_note`,
+  `reclassify_memory`, all with approval) instead of one tool for every
+  target. A memory entry is reclassified only where it may be recalled,
+  never above the channel it is reclassified in.
+- **2026-09-30** — Step 4b done as decided: `NoteChange::Reclassify`,
+  `MemoryChange::Reclassify`, `Reclassified::{Note, Memory}` for the author
+  alone; `AgentNotes::reclassify`, `AgentMemory::reclassify`. Step 4 is
+  done; step 5 (clearances) remains.

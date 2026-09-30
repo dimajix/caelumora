@@ -15,13 +15,14 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::session_reader::{PublishedNotes, SessionReader};
-use crate::tool::{arguments, id_argument, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{arguments, classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
+use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
@@ -33,11 +34,16 @@ pub const NOTES_KIND: &str = "notes";
 pub const NOTE_TOOL_NAME: &str = "note";
 pub const REVOKE_NOTE_TOOL_NAME: &str = "revoke_note";
 pub const READ_NOTES_TOOL_NAME: &str = "read_notes";
+pub const RECLASSIFY_NOTE_TOOL_NAME: &str = "reclassify_note";
 
 #[derive(Debug)]
 pub struct NotesComponent {
     /// What the other agents and channels of the session published.
     reader: Arc<dyn SessionReader>,
+    /// The policy that decides whether a note may be reclassified, asked in
+    /// `security_context` - the agent's (issues 131, 133).
+    security_manager: Arc<dyn SecurityManager>,
+    security_context: SecurityContext,
 }
 
 #[async_trait]
@@ -73,6 +79,16 @@ impl ToolProvider for NotesComponent {
                 classification: None,
             },
             Tool {
+                name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
+                description: "Change how one of your notes in this channel is classified, by its number: \
+                    its level and the compartments it is meant for, never above this channel. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
+                    .to_string(),
+                parameters: reclassify_parameters("your note"),
+                requires_approval: true,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+            },
+            Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
                 description: "Read what the agents of another channel of this session noted. Without \
                     a channel, lists every channel you may read with its notes - also how to find out \
@@ -94,6 +110,7 @@ impl ToolProvider for NotesComponent {
             NOTE_TOOL_NAME => self.execute_note(params, turn),
             REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, turn),
             READ_NOTES_TOOL_NAME => self.execute_read_notes(params, turn).await,
+            RECLASSIFY_NOTE_TOOL_NAME => self.execute_reclassify_note(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }?;
         Ok(value.into())
@@ -115,6 +132,15 @@ impl NotesComponent {
         } else {
             Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be revoked")))
         }
+    }
+
+    /// `reclassify_note(id, level, compartments?)`: reclassifies one of the
+    /// agent's own current notes, as the policy allows.
+    async fn execute_reclassify_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+        let id: NoteId = id_argument(params)?;
+        let classification = classification_argument(params)?;
+        AgentNotes::reclassify(turn, NoteKind::Public, id, classification.clone(), self.security_manager.as_ref(), &self.security_context).await?;
+        Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `read_notes(channel?)`: the notes of the channel named, or of every
@@ -201,7 +227,11 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
-            let component = Arc::new(NotesComponent { reader: context.session_reader.clone() });
+            let component = Arc::new(NotesComponent {
+                reader: context.session_reader.clone(),
+                security_manager: context.security_manager.clone(),
+                security_context: context.security_context.clone(),
+            });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
             facets.insert::<dyn PromptProvider>(component);
@@ -236,9 +266,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_note_is_reclassified_as_the_policy_allows_also_in_the_turn_it_was_noted() {
+        use caelumora_model::confidentiality::{Classification, Confidentiality};
+        let agent = AgentId::new();
+        let mut state = AgentChannelState::default();
+        let tools = NotesComponent {
+            reader: crate::session_reader::detached(),
+            security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()),
+            security_context: SecurityContext::default().next(ActorId::Agent(agent)),
+        };
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        turn.begin();
+        tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
+        let above = serde_json::json!({ "id": 1, "level": "strictly_confidential" });
+        assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &above, &mut turn).await, Err(ToolError::PermissionDenied(_))), "never above the channel");
+        let unknown = serde_json::json!({ "id": 2, "level": "public" });
+        assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &unknown, &mut turn).await, Err(ToolError::InvalidParameter(_))));
+        let public_with_compartments = serde_json::json!({ "id": 1, "level": "public", "compartments": ["hr"] });
+        assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &public_with_compartments, &mut turn).await, Err(ToolError::InvalidParameter(_))));
+        tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), &mut turn).await.expect("released");
+        turn.commit_turn().await;
+        assert_eq!(state.notes.current()[0].classification, Classification::general(Confidentiality::Public));
+    }
+
+    #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { reader: crate::session_reader::detached() };
+        let tools = NotesComponent {
+            reader: crate::session_reader::detached(),
+            security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
+            security_context: Default::default(),
+        };
         {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();

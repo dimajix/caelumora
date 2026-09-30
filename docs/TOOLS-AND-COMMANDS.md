@@ -280,10 +280,13 @@ A command answers the issuer alone (`/help`) or the whole channel
 | `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
 | `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |
 | `read_notes` | `notes` | `channel` (optional) | no | `SHOWN` | Reads the notes of another channel, or of every readable channel. |
+| `reclassify_note` | `notes` | `id`, `level`, `compartments` (optional) | yes | `SHOWN` | Reclassifies one of the agent's notes, never above the channel (issue 133). |
 | `note_private` | `private_notes` | `text` | no | `HIDDEN` | Notes something only the agent (and its owner) sees. |
 | `revoke_private_note` | `private_notes` | `id` | no | `HIDDEN` | Revokes one of the agent's private notes. |
+| `reclassify_private_note` | `private_notes` | `id`, `level`, `compartments` (optional) | yes | `HIDDEN` | Reclassifies one of the agent's private notes, never above the channel (issue 133). |
 | `remember` | `agent_memory` | `text` | no | `HIDDEN` | Remembers something across channels and sessions. |
 | `forget` | `agent_memory` | `id` | no | `HIDDEN` | Forgets something remembered. |
+| `reclassify_memory` | `agent_memory` | `id`, `level`, `compartments` (optional) | yes | `HIDDEN` | Reclassifies something remembered that may be recalled here, never above the channel (issue 133). |
 | `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
 `stop`, `bye` and `silence` end the turn with the current tool step

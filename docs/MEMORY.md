@@ -79,7 +79,8 @@ channel, `AgentChannelState::private_notes`, with its own tools
     (`AccessQuestions::may_channel_read`, the same rule as for
     [reading another channel](#reading-other-channels)). A note carries the
     classification of the channel it was written in, stamped when it is
-    written, and is read note by note.
+    written, and is read note by note; `reclassify_private_note` changes it
+    (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Hidden calls.** Both tools are `ToolVisibility::HIDDEN`, so the
     calls never reach the channel. "Private" means private from other agents
     and other users, not from the agent's owner, who sees them in the
@@ -106,7 +107,9 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     Under the ownership policy an entry is recalled where its channel's
     classification flows into the current one's (the flow rule of issue
     133) - within the session, and from `public` channels beyond it. Only
-    entries recalled in a channel can be forgotten there.
+    entries recalled in a channel can be forgotten there, or reclassified
+    (`reclassify_memory`, see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in
     the channel, as the memory is now.
 *   **Staging.** A change is staged as an `AgentStateChange`

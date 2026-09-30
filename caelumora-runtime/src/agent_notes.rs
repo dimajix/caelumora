@@ -9,7 +9,11 @@
 //! it; anything else that works with an agent's notes in a turn uses it too.
 
 use crate::agent_turn::Turn;
+use crate::tool::{ToolError, ToolResult};
+use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId};
 
@@ -98,5 +102,37 @@ impl AgentNotes {
         }
         turn.stage_channel_change(kind.change(NoteChange::Revoke { id }));
         true
+    }
+
+    /// Reclassifies note `id` as `classification` (issue 133) - one of the
+    /// current notes, or one noted earlier in this turn, and not revoked -
+    /// if the policy lets the agent (`ActionType::Reclassify`, asked in
+    /// `context`, the agent's): never above the channel. Taken over when the
+    /// turn completes.
+    ///
+    /// # Errors
+    /// `InvalidParameter` if there is no such note, `PermissionDenied` if
+    /// the policy refuses.
+    pub async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
+        let staged = turn.staged_channel_changes();
+        let noted_now = staged.iter().rev().find_map(|c| match kind.of(c) {
+            Some(NoteChange::Note { id: noted, classification, .. }) if *noted == id => Some(classification.clone()),
+            _ => None,
+        });
+        let revoked_now = staged.iter().any(|c| matches!(kind.of(c), Some(NoteChange::Revoke { id: revoked }) if *revoked == id));
+        let current = noted_now.or_else(|| kind.chain(turn.agent_channel_state()).current().into_iter().find(|n| n.id == id).map(|n| n.classification));
+        let Some(current) = current.filter(|_| !revoked_now) else {
+            return Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be reclassified")));
+        };
+        let channel = turn.classification();
+        let action = ActionType::Reclassify {
+            target: Reclassified::Note { author: ActorId::Agent(turn.agent_id()) },
+            current: &current,
+            new: &classification,
+            channel: &channel,
+        };
+        security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"))).await?;
+        turn.stage_channel_change(kind.change(NoteChange::Reclassify { id, classification }));
+        Ok(())
     }
 }

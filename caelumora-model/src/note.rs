@@ -36,6 +36,9 @@ pub enum NoteChange {
     /// and a later change of the channel changes none of its notes.
     Note { id: NoteId, text: String, classification: Classification },
     Revoke { id: NoteId },
+    /// The note `id` is classified `classification` from now on (issue
+    /// 133): released, or raised.
+    Reclassify { id: NoteId, classification: Classification },
 }
 
 /// An entry of a [`NoteChain`]: a change, where in the conversation it was
@@ -114,6 +117,11 @@ impl NoteChain {
                     written_at: entry.written_at,
                 }),
                 NoteChange::Revoke { id } => notes.retain(|n| n.id != *id),
+                NoteChange::Reclassify { id, classification } => {
+                    if let Some(note) = notes.iter_mut().find(|n| n.id == *id) {
+                        note.classification = classification.clone();
+                    }
+                }
             }
         }
         notes
@@ -125,7 +133,7 @@ impl NoteChain {
         let highest = self.changes.entries().iter()
             .filter_map(|e| match &e.change {
                 NoteChange::Note { id, .. } => Some(id.0),
-                NoteChange::Revoke { .. } => None,
+                NoteChange::Revoke { .. } | NoteChange::Reclassify { .. } => None,
             })
             .max()
             .unwrap_or(0);
@@ -153,6 +161,18 @@ mod tests {
         let texts: Vec<String> = chain.current().into_iter().map(|n| n.text).collect();
         assert_eq!(texts, ["The user lives in Berlin.", "The user likes coffee."]);
         assert_eq!(chain.next_id(), NoteId(4));
+    }
+
+    #[test]
+    fn a_reclassified_note_keeps_its_number_and_text() {
+        use crate::confidentiality::Confidentiality;
+        let mut chain = NoteChain::new();
+        chain.push(note(1, "a"), MessageId::new(), None);
+        let released = Classification::general(Confidentiality::Public);
+        chain.push(NoteChange::Reclassify { id: NoteId(1), classification: released.clone() }, MessageId::new(), None);
+        let current = chain.current();
+        assert_eq!((current[0].id, current[0].text.as_str(), &current[0].classification), (NoteId(1), "a", &released));
+        assert_eq!(chain.next_id(), NoteId(2));
     }
 
     #[test]

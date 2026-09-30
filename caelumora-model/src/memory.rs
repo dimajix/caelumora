@@ -11,7 +11,7 @@
 //! rule of issue 133, `Classification::flows_to`).
 
 use crate::chain::{Chain, ChainEntry};
-use crate::confidentiality::ChannelClassification;
+use crate::confidentiality::{ChannelClassification, Classification};
 use crate::digest::Digest;
 use crate::message::MessageId;
 use chrono::{DateTime, Utc};
@@ -36,6 +36,9 @@ impl fmt::Display for MemoryId {
 pub enum MemoryChange {
     Remember { id: MemoryId, text: String },
     Forget { id: MemoryId },
+    /// The entry `id` is classified `classification` from now on (issue
+    /// 133): recalled where that may be read, wherever it was written.
+    Reclassify { id: MemoryId, classification: Classification },
 }
 
 /// An entry of a [`MemoryChain`]: a change, the channel it was made in,
@@ -112,6 +115,11 @@ impl MemoryChain {
                     written_at: entry.written_at,
                 }),
                 MemoryChange::Forget { id } => memories.retain(|m| m.id != *id),
+                MemoryChange::Reclassify { id, classification } => {
+                    if let Some(memory) = memories.iter_mut().find(|m| m.id == *id) {
+                        memory.origin.classification = classification.clone();
+                    }
+                }
             }
         }
         memories
@@ -122,7 +130,7 @@ impl MemoryChain {
         let highest = self.changes.entries().iter()
             .filter_map(|e| match &e.change {
                 MemoryChange::Remember { id, .. } => Some(id.0),
-                MemoryChange::Forget { .. } => None,
+                MemoryChange::Forget { .. } | MemoryChange::Reclassify { .. } => None,
             })
             .max()
             .unwrap_or(0);
