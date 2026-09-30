@@ -286,8 +286,9 @@ other crates cannot reach them; within the runtime, the user actor needs the
 channel for commands, and the session reader needs both.
 
 Components are not given their actor's `ActorRuntime`, only what their
-`ComponentContext` holds ([128](../issues/128-actor-runtime-in-components.md));
-see [COMPONENTS.md](COMPONENTS.md).
+`ComponentContext` holds
+([128](../issues/128-actor-runtime-in-components.md)); see
+[COMPONENTS.md](COMPONENTS.md).
 
 ## Moderators
 

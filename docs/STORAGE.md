@@ -14,8 +14,9 @@ entities:
 
 *   **Personalities**: static definitions of agent traits.
 *   **Templates**: `SessionTemplate`s, which sessions are made from.
-*   **Identities**: `Agent`, `Session`, `Channel` and `User` records. A channel
-    is a document of its own, which its session lists by id (issue 70).
+*   **Identities**: `Agent`, `Session`, `Channel` and `User` records. A
+    channel is a document of its own, which its session lists by id (issue
+    70).
 *   **Preconfigured components**: `ComponentDescriptor`s kept by id.
 
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`,

@@ -42,7 +42,8 @@ goes under `## History`), and numbers are never reused.
 
 ## Rules for every change
 
-The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md).
+The reasons and details are in
+[CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md).
 
 *   No `unwrap()` or `expect()` in production code.
 *   Errors in a turn end the turn, not the agent: don't let a turn-time error
@@ -60,13 +61,21 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     [SECURITY.md](docs/SECURITY.md)).
 
 ## Contribution Workflow
-1.  **Analyze**: Understand the requirement and how it fits into the architecture. Check [issues/INDEX.md](issues/INDEX.md) for an existing issue covering it.
-2.  **Plan**: Identify the files that need modification and the tests required.
+1.  **Analyze**: Understand the requirement and how it fits into the
+    architecture. Check [issues/INDEX.md](issues/INDEX.md) for an existing
+    issue covering it.
+2.  **Plan**: Identify the files that need modification and the tests
+    required.
 3.  **Implement**: Apply minimal, focused changes following the coding style.
-4.  **Document**: Update the document in `docs/` on the subject, `docs/ARCHITECTURE.md` and/or `README.md` if your changes introduce new architectural concepts, modules, or significant features.
+4.  **Document**: Update the document in `docs/` on the subject,
+    `docs/ARCHITECTURE.md` and/or `README.md` if your changes introduce new
+    architectural concepts, modules, or significant features.
 5.  **Verify**: Run existing tests and add new ones to cover your changes.
 6.  **Refactor**: Ensure the code is clean and well-documented.
-7.  **Record**: If the change resolves or advances an issue, update its status in *both* `issues/INDEX.md` and the issue file, and append a dated entry under `## History`. If it uncovered something new, open an issue for it rather than leaving it in a comment.
+7.  **Record**: If the change resolves or advances an issue, update its status
+    in *both* `issues/INDEX.md` and the issue file, and append a dated entry
+    under `## History`. If it uncovered something new, open an issue for it
+    rather than leaving it in a comment.
 
 ### Architecture decisions
 Architecture questions are discussed before they are implemented: where a

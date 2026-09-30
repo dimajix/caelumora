@@ -14,9 +14,10 @@ under [Terms](#terms) below.
 All three kinds of memory work alike:
 
 *   **Chains that are only appended to.** Each is a chain of changes on the
-    generic `Chain` type (see [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)):
-    entries "note" or "revoke N", "remember" or "forget N". What is
-    remembered now is the chain read from start to end.
+    generic `Chain` type (see
+    [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)): entries "note"
+    or "revoke N", "remember" or "forget N". What is remembered now is the
+    chain read from start to end.
 *   **Only the author changes them.** An agent notes, revokes, remembers and
     forgets only its own entries.
 *   **Commit, don't write.** A tool stages its change on the turn; the
@@ -171,7 +172,10 @@ private notes or memory has seen private knowledge
 
 ## Terms
 
-The words for what an agent remembers are used in one sense each (issue 19, where the principles behind them are recorded). "Branches" means: follows the branch of the conversation it came from ([08](../issues/08-retry-and-edit-past-answers.md)).
+The words for what an agent remembers are used in one sense each (issue 19,
+where the principles behind them are recorded). "Branches" means: follows the
+branch of the conversation it came from
+([08](../issues/08-retry-and-edit-past-answers.md)).
 
 | Term | Meaning | Scope | Lifetime | Branches |
 |---|---|---|---|---|
@@ -189,4 +193,10 @@ The words for what an agent remembers are used in one sense each (issue 19, wher
 | **Shared knowledge** | Knowledge shared by several agents or users ([18](../issues/18-knowledge-sharing.md)). | group / global | permanent | no |
 | **Workspace** | Documents several channels edit together; outside the branches, every change an effect ([20](../issues/20-transactional-effects.md)). | session or beyond | until deleted | no |
 
-Two technical words are not tiers: **state** is the container the `StateStore` keeps (history, context, turn state and notes live *in* state), as opposed to **entities** in the `EntityStore`; and the structs named `…Context` (`SecurityContext`, `EventContext`, `ComponentContext`, `CommandContext`, `Turn`) are *operation contexts*, the circumstances an operation runs in, unrelated to the model's context. In prose, "context" alone always means the model's context; the others are named in full.
+Two technical words are not tiers: **state** is the container the `StateStore`
+keeps (history, context, turn state and notes live *in* state), as opposed to
+**entities** in the `EntityStore`; and the structs named `…Context`
+(`SecurityContext`, `EventContext`, `ComponentContext`, `CommandContext`,
+`Turn`) are *operation contexts*, the circumstances an operation runs in,
+unrelated to the model's context. In prose, "context" alone always means the
+model's context; the others are named in full.

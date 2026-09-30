@@ -203,14 +203,25 @@ The design repeats a few decisions; new code follows them.
 
 ## Documents
 
-*   [COMPONENTS.md](COMPONENTS.md) - components, facets, how they are wired, the built-in components.
-*   [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) - tools, their execution and approval, user commands, the built-in tools and commands.
-*   [AGENT-TURN.md](AGENT-TURN.md) - the agent's cognitive cycle, the turn, what an agent saw, prompt parts.
-*   [MEMORY.md](MEMORY.md) - notes, private notes, agent memory, reading other channels, the terms for what an agent remembers.
-*   [CHANNELS.md](CHANNELS.md) - sessions, channels, actors, participants, moderators and mentions.
-*   [EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md) - the event bus and the server-sent event streams.
-*   [STORAGE.md](STORAGE.md) - entity and state store, controllers, several instances.
-*   [SECURITY.md](SECURITY.md) - the security manager, ownership, views, users, authentication, secrets.
-*   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - confidentiality levels and labels, and what is still open.
-*   [CONFIGURATION.md](CONFIGURATION.md) - the sections of the configuration file.
-*   [CODING-GUIDELINES.md](CODING-GUIDELINES.md) - coding style, error handling, logging, tests.
+*   [COMPONENTS.md](COMPONENTS.md) - components, facets, how they are wired,
+    the built-in components.
+*   [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) - tools, their execution
+    and approval, user commands, the built-in tools and commands.
+*   [AGENT-TURN.md](AGENT-TURN.md) - the agent's cognitive cycle, the turn,
+    what an agent saw, prompt parts.
+*   [MEMORY.md](MEMORY.md) - notes, private notes, agent memory, reading other
+    channels, the terms for what an agent remembers.
+*   [CHANNELS.md](CHANNELS.md) - sessions, channels, actors, participants,
+    moderators and mentions.
+*   [EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md) - the event bus and the
+    server-sent event streams.
+*   [STORAGE.md](STORAGE.md) - entity and state store, controllers, several
+    instances.
+*   [SECURITY.md](SECURITY.md) - the security manager, ownership, views,
+    users, authentication, secrets.
+*   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - confidentiality levels and
+    labels, and what is still open.
+*   [CONFIGURATION.md](CONFIGURATION.md) - the sections of the configuration
+    file.
+*   [CODING-GUIDELINES.md](CODING-GUIDELINES.md) - coding style, error
+    handling, logging, tests.
