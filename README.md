@@ -23,7 +23,7 @@ The project is organized as a Rust workspace with the following crates:
 
 ## Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Detailed design of the system, modules, and data flow.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: The design of the system, modules, and data flow, with the detailed documents in [docs/](docs/).
 - **[AGENTS.md](AGENTS.md)**: Guidelines for AI coding agents and contributors.
 - **[issues/INDEX.md](issues/INDEX.md)**: Open issues — one line per issue, with the reasoning in `issues/<number>-<slug>.md`.
 

@@ -1,5 +1,5 @@
 //! The turn of an agent: what one cognitive cycle of an `AgentActor` works
-//! with (see *Agent Cognitive Cycle* in `ARCHITECTURE.md`).
+//! with (see `docs/AGENT-TURN.md`).
 //!
 //! A [`Turn`] is the handle an agent's actor and its components work through:
 //! on the agent's state in its channel, and while a turn runs on that turn's

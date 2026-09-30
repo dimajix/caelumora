@@ -31,6 +31,20 @@ against it, and what came out of the last attempt.
 - **Status:** `open` · `in progress` · `done` · `rejected`. `rejected` means:
   looked at and deliberately not done, with the reason attached — because that
   reason is otherwise worked out again from scratch six months later.
+- **The index line is one sentence.** It says what is wrong, not how it will
+  be fixed. Everything longer belongs in the issue file.
+
+### Creating a new issue
+
+1. Check this index first — an issue for it may already exist, in which case
+   add to that file's `## History` rather than opening a second one.
+2. Take the next free number and create `issues/<number>-<slug>.md` with the
+   status header, the problem, why it matters, the considerations (options
+   and their trade-offs), a "done when", and a first `## History` entry.
+3. Add one line to the matching section below. If no section fits, add one.
+4. Cross-reference related issues by number, e.g.
+   `[19](19-memory-tiers.md)`, where one genuinely blocks or overlaps
+   another.
 
 ---
 
@@ -41,6 +55,7 @@ against it, and what came out of the last attempt.
 | [01](01-improve-logging.md) | done | Two logging frontends (`log` and `tracing`) are used side by side, and the REST handlers, session loop and event bus are nearly silent. |
 | [02](02-better-error-messages.md) | done | Failures lose the context that would make them actionable — which component, which endpoint, which parameter. |
 | [122](122-several-instances.md) | open | The server cannot run in several instances: everything live is in one process, and nothing keeps agents and users in step between processes. |
+| [130](130-llm-configuration.md) | open | The language model is configured through environment variables, not in the configuration file like everything else. |
 
 ## Persistence
 
@@ -186,6 +201,7 @@ against it, and what came out of the last attempt.
 | [105](105-seed-data-twice.md) | done | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
 | [109](109-code-hygiene.md) | done | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
 | [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
+| [129](129-documentation-structure.md) | in progress | AGENTS.md and ARCHITECTURE.md hold everything in two long files, so the architecture draws no overall picture and the details of one subject are hard to find. |
 
 ## Code structure
 
