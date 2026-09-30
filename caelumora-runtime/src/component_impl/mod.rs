@@ -15,6 +15,7 @@ pub mod echo_tool;
 pub mod help_command;
 pub mod mcp_tool;
 pub mod notes;
+pub mod ollama_client;
 pub mod private_notes;
 pub mod transcript_appender;
 pub mod state_context_provider;
@@ -28,6 +29,7 @@ pub mod wakeup_command;
 pub fn register_all(registry: &mut ComponentRegistry) {
     registry.single::<dyn crate::context::ContextProvider>(state_context_provider::STATE_CONTEXT_PROVIDER_KIND);
     registry.single::<dyn crate::tool::ToolExecutor>(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND);
+    registry.single::<dyn crate::llm::LLMClient>(ollama_client::OLLAMA_CLIENT_KIND);
 
     agent_memory::register(registry);
     calculator_tool::register(registry);
@@ -38,6 +40,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     help_command::register(registry);
     mcp_tool::register(registry);
     notes::register(registry);
+    ollama_client::register(registry);
     private_notes::register(registry);
     transcript_appender::register(registry);
     state_context_provider::register(registry);

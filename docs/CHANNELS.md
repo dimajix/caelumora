@@ -269,8 +269,9 @@ An `ActorRuntime` is made for one actor
 (`ChannelRuntime::new_actor_runtime(actor, session, channel)`) and hands out
 only what concerns that actor (issue 69):
 
-*   the services every actor needs: `security_manager`, `llm_client`,
-    `secret_manager`, `component_registry`, `command_executor`;
+*   the services every actor needs: `security_manager`, `secret_manager`,
+    `component_registry`, `command_executor` - the model is not among them,
+    an agent has it as a component (issue 130);
 *   its personality (`personality`);
 *   its own agent state (`agent_state`) and its state in the channel
     (`load_channel_state` / `store_channel_state`);

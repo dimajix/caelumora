@@ -3,7 +3,6 @@ use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
-use crate::llm::LLMClient;
 use crate::moderator::Moderator;
 use crate::moderator_impl::broadcast::BroadcastPolicy;
 use crate::moderator_impl::mentions_only::MentionsOnlyPolicy;
@@ -36,7 +35,6 @@ pub struct RuntimeManager {
     state_store: Arc<dyn StateStore>,
     entity_store: Arc<dyn EntityStore>,
     secret_manager: Arc<SecretManager>,
-    llm_client: Arc<dyn LLMClient>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
@@ -116,10 +114,6 @@ impl ActorRuntime {
     }
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
-
-    pub fn llm_client(&self) -> Arc<dyn LLMClient> {
-        self.runtime.runtime_manager.llm_client.clone()
-    }
 
     pub fn secret_manager(&self) -> Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
@@ -222,13 +216,16 @@ impl RuntimeManager {
     /// argument, so that a binary cannot drop the configured ones for a
     /// default. `component_defaults` replace built-in defaults of facets of
     /// which an agent has one (`AppConfig::component_defaults`, issue 99),
-    /// an argument for the same reason. `llm_client` is the model every
-    /// agent talks to, for the same reason again: the binary configures it,
-    /// and a test passes a stand-in.
+    /// an argument for the same reason. `component_registry` holds the
+    /// component kinds agents and sessions are built from -
+    /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
+    /// such as a model of its own (issue 130); it is checked here.
     ///
     /// # Errors
-    /// A `ComponentError` if `component_defaults` cannot replace a default
-    /// (see `ComponentRegistry::set_defaults`) - the process does not start
+    /// A `ComponentError` if a default kind of the registry is missing or
+    /// does not provide its facet (`ComponentRegistry::verify`), or if
+    /// `component_defaults` cannot replace a default (see
+    /// `ComponentRegistry::set_defaults`) - the process does not start
     /// then.
     pub fn new(
         state_store: Arc<dyn StateStore>,
@@ -237,10 +234,8 @@ impl RuntimeManager {
         security_manager: Arc<dyn SecurityManager>,
         commands: ComponentConfig,
         component_defaults: ComponentConfig,
-        llm_client: Arc<dyn LLMClient>,
+        mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
-        let mut component_registry = ComponentRegistry::new(entity_store.clone());
-        crate::component_impl::register_all(&mut component_registry);
         component_registry.verify()?;
         component_registry.set_defaults(&component_defaults)?;
 
@@ -253,7 +248,6 @@ impl RuntimeManager {
             state_store,
             entity_store,
             secret_manager,
-            llm_client,
             component_registry: Arc::new(component_registry),
             event_bus,
             controller_manager,
@@ -327,7 +321,6 @@ impl RuntimeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm_impl::ollama::OllamaClient;
     use caelumora_model::agent::AgentId;
     use caelumora_model::command::default_commands;
     use caelumora_model::security::DummySecurityManager;
@@ -337,7 +330,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
+        let manager = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let commands = Arc::new(CommandExecutor::empty(manager.security_manager()));
         ChannelRuntime::new(manager, commands)
     }
@@ -361,7 +354,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(store.clone(), store, secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, Arc::new(OllamaClient::default()))
+            RuntimeManager::new(store.clone(), store.clone(), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, crate::component::ComponentRegistry::built_in(store.clone()))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!({"component_nodes": [{"id": "context", "kind": "state_context_provider"}]})).is_ok());

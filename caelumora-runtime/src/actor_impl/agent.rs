@@ -2,6 +2,7 @@ use crate::actor::{Actor, MessageContextError};
 use crate::agent_turn::{CommittedTurn, Turn};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
+use crate::llm::LLMClient;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{GuardedToolExecutor, ToolError, ToolExecutor};
@@ -40,6 +41,8 @@ pub struct AgentActor {
     // Components
     /// Assembles the model's context: exactly one (issue 98).
     context_provider: ComponentImpl<dyn ContextProvider>,
+    /// The model it talks to: exactly one (issue 130).
+    llm_client: ComponentImpl<dyn LLMClient>,
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     /// Runs the agent's tool calls: its `ToolExecutor` component, behind
@@ -108,6 +111,7 @@ impl AgentActor {
         )
         .await?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
+        let llm_client = components.one::<dyn LLMClient>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
         let tool_executor = GuardedToolExecutor::new(actor_runtime.security_manager(), components.one::<dyn ToolExecutor>().await?);
@@ -133,6 +137,7 @@ impl AgentActor {
             agent_controller,
             actor_runtime,
             context_provider,
+            llm_client,
             perceive_in_processors,
             emit_out_processors,
             tool_executor,
@@ -238,10 +243,9 @@ impl AgentActor {
         &self,
         turn: &mut Turn<'a>,
     ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
-        let llm_client = self.actor_runtime.llm_client();
         let context = turn.full_context();
         let tools = self.tool_executor.tools();
-        llm_client
+        self.llm_client.facet
             .chat_completion(context.as_slice(), tools.as_slice())
             .await
     }

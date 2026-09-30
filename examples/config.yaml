@@ -56,12 +56,20 @@ users:
 
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
-# `ContextProvider`, what assembles the model's context, say - and a
-# personality without a component for it gets the default. A component here
-# must provide exactly one such facet. Without this section the built-in
-# defaults are used.
+# the language model it talks to (`LLMClient`, issue 130), or what assembles
+# the model's context (`ContextProvider`) - and a personality without a
+# component for it gets the default. A component here must provide exactly
+# one such facet. Without this section the built-in defaults are used: for
+# the model, `ollama_client` with the Ollama server at 127.0.0.1:11434 and
+# the model gemma4:26b.
 #component_defaults:
 #  component_nodes:
+#    - id: model
+#      kind: ollama_client
+#      params:
+#        base_url: "http://127.0.0.1:11434"
+#        model: "gemma4:26b"
+#        think: true
 #    - id: context
 #      kind: state_context_provider
 

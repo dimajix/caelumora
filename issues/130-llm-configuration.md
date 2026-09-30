@@ -1,6 +1,6 @@
 # 130 — The language model is configured through the environment, not the configuration
 
-**Status:** open
+**Status:** done
 **Area:** Observability and operations
 
 ## The problem
@@ -38,3 +38,17 @@ writing `docs/CONFIGURATION.md` ([129](129-documentation-structure.md)).
 ## History
 
 - **2026-09-30** — Opened, found while documenting the configuration (129).
+- **2026-09-30** — Decided with the maintainer: neither an `llm` section nor
+  named models, but the model as a component of the agent. Done:
+  `LLMClient` is a facet of which an agent has exactly one
+  (`ComponentRegistry::single`), like the `ContextProvider` and the
+  `ToolExecutor`; the agent takes it with `components.one`, so a
+  personality may configure its own and `component_defaults` sets it for
+  every other agent. The default kind is `ollama_client`
+  (`component_impl/ollama_client.rs`, formerly `llm_impl/ollama.rs`) with
+  the parameters `base_url`, `model` and `think`, whose defaults are the
+  former ones; unknown parameters are refused. The environment variables
+  are gone. The `RuntimeManager` no longer holds a model and hands none to
+  its actors (`ActorRuntime::llm_client` is gone); instead it is given the
+  `ComponentRegistry` (`ComponentRegistry::built_in`), in which a test
+  registers a stand-in for the model as a kind of its own.

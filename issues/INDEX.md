@@ -55,7 +55,7 @@ against it, and what came out of the last attempt.
 | [01](01-improve-logging.md) | done | Two logging frontends (`log` and `tracing`) are used side by side, and the REST handlers, session loop and event bus are nearly silent. |
 | [02](02-better-error-messages.md) | done | Failures lose the context that would make them actionable — which component, which endpoint, which parameter. |
 | [122](122-several-instances.md) | open | The server cannot run in several instances: everything live is in one process, and nothing keeps agents and users in step between processes. |
-| [130](130-llm-configuration.md) | open | The language model is configured through environment variables, not in the configuration file like everything else. |
+| [130](130-llm-configuration.md) | done | The language model is configured through environment variables, not in the configuration file like everything else. |
 
 ## Persistence
 

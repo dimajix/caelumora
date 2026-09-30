@@ -206,8 +206,9 @@ pub struct AppConfig {
     /// and `/wakeup`; an empty `component_nodes` list switches them off.
     pub commands: ComponentConfig,
     /// Components that replace the built-in default of a facet of which an
-    /// agent has exactly one (issue 99) - how it assembles the model's
-    /// context, say - for every personality that does not configure its own.
+    /// agent has exactly one (issue 99) - the model it talks to (issue 130)
+    /// or how it assembles the model's context, say - for every personality
+    /// that does not configure its own.
     /// Empty unless configured: the built-in defaults apply.
     pub component_defaults: ComponentConfig,
     /// The access policy; `ownership` unless configured otherwise.

@@ -20,15 +20,31 @@ misspelt section doesn't silently fall back to its default (issue 96).
 | `server` | Where the REST server listens (`address`). | `127.0.0.1:3000` - this machine only, as long as `accept_any` may be enabled |
 | `logging` | The log `format` (`text` or `json`) and an optional `file`. What is logged is selected with `RUST_LOG`. See [CODING-GUIDELINES.md](CODING-GUIDELINES.md). | `text`; stderr (REST server) or `local/tui.log` (TUI) |
 | `commands` | The user commands every session has, as components (`component_nodes`); a session template can add its own. An empty list switches them off. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md). | `help_command` and `wakeup_command` |
-| `component_defaults` | Components that replace the built-in default of a facet of which an agent has exactly one (`ContextProvider`, `ToolExecutor`), for every personality that does not configure its own. One component per such facet, checked when the `RuntimeManager` is made. See [COMPONENTS.md](COMPONENTS.md). | the built-in defaults |
+| `component_defaults` | Components that replace the built-in default of a facet of which an agent has exactly one (`LLMClient`, `ContextProvider`, `ToolExecutor`), for every personality that does not configure its own. One component per such facet, checked when the `RuntimeManager` is made. See [COMPONENTS.md](COMPONENTS.md). | the built-in defaults |
 
 ## The model
 
-The language model is not part of `AppConfig` yet. The only client,
-`OllamaClient`, reads the environment when it is made:
+The language model an agent talks to is a component (issue 130): the
+`LLMClient` facet, of which an agent has exactly one. A personality may
+configure its own; every other agent gets the one `component_defaults`
+names, or else `ollama_client` with its defaults. There is no separate
+section for it, and no environment variable.
 
-| Variable | Meaning | Default |
+```yaml
+component_defaults:
+  component_nodes:
+    - id: model
+      kind: ollama_client
+      params:
+        base_url: "http://127.0.0.1:11434"
+        model: "gemma4:26b"
+        think: true
+```
+
+| Parameter of `ollama_client` | Meaning | Default |
 |---|---|---|
-| `OLLAMA_BASE_URL` | The Ollama server | `http://127.0.0.1:11434` |
-| `OLLAMA_MODEL` | The model every agent uses | `gemma4:26b` |
-| `OLLAMA_THINK` | Whether the model is asked to reason (`true`/`false`); unset leaves it to the model | unset |
+| `base_url` | The Ollama server | `http://127.0.0.1:11434` |
+| `model` | The model | `gemma4:26b` |
+| `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
+
+An unknown parameter is refused, and the agent does not start.

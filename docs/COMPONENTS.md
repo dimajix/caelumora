@@ -18,7 +18,11 @@ how the agent uses its components during a turn is in
     default, or `FailClosed`), which decides whether a failure of the
     component is skipped or fails the turn.
 *   **`ComponentRegistry`** holds a factory per kind, together with the
-    facets that kind provides.
+    facets that kind provides. `ComponentRegistry::built_in` registers
+    every built-in kind; the binaries hand it to the `RuntimeManager` as it
+    is, which checks it (`verify`) and applies `component_defaults`. A test
+    registers kinds of its own in it first - a stand-in for the model, say
+    (issue 130).
 *   **`ComponentContainer`** builds the components of a `ComponentConfig`
     and hands out their facets.
 
@@ -42,6 +46,7 @@ in the agent loop.
 | `CommandProvider` | user commands | `crate::command` |
 | `PromptProvider` | prompt parts | `crate::context` |
 | `ContextProvider` | what the model is given | `crate::context` |
+| `LLMClient` | the language model the agent talks to | `crate::llm` |
 | `PerceiveInProcessor` | handling of incoming messages | `crate::message` |
 | `EmitOutProcessor` | handling of outgoing messages | `crate::message` |
 
@@ -73,8 +78,9 @@ Components are wired the way Spring Boot wires beans (issue 99).
 
 ### Facets of which there is exactly one
 
-Of some facets an agent has exactly one: the `ContextProvider` (issue 98)
-and the `ToolExecutor` (issue 127). They are registered with
+Of some facets an agent has exactly one: the `ContextProvider` (issue 98),
+the `ToolExecutor` (issue 127) and the `LLMClient` (issue 130). They are
+registered with
 `ComponentRegistry::single::<T>(default_kind)` in
 `component_impl::register_all`.
 
@@ -168,6 +174,7 @@ passes on with `?`.
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `position` (`start` or `before_turn_input`, default `start`) | A fixed prompt part. |
 | `state_context_provider` | `ContextProvider` | - | The default context provider: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
+| `ollama_client` | `LLMClient` | `base_url` (`http://127.0.0.1:11434`), `model` (`gemma4:26b`), `think` | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). |
 | `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |
 | `transcript_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's transcript. |
 | `state_history_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's history. |

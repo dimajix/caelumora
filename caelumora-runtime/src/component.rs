@@ -239,6 +239,17 @@ impl ComponentRegistry {
         }
     }
 
+    /// A registry with every built-in component kind
+    /// (`component_impl::register_all`), resolving references to
+    /// preconfigured components in `entity_store`. A binary passes it to
+    /// the `RuntimeManager` as it is; a test may register kinds of its own
+    /// first, such as a stand-in for the model.
+    pub fn built_in(entity_store: Arc<dyn EntityStore>) -> Self {
+        let mut registry = Self::new(entity_store);
+        crate::component_impl::register_all(&mut registry);
+        registry
+    }
+
     /// Registers `kind` with a factory that builds without waiting.
     pub fn register<F>(&mut self, kind: ComponentKind, factory: F)
     where

@@ -1,3 +1,15 @@
+//! The `ollama_client` component: the language model an agent talks to,
+//! served by Ollama (issue 130). It provides the `LLMClient` facet, of
+//! which an agent has exactly one: its personality's, the one
+//! `AppConfig::component_defaults` names, or this kind with its defaults -
+//! a local Ollama and the model `DEFAULT_MODEL`.
+//!
+//! Parameters: `base_url` (the Ollama server), `model`, and `think` -
+//! whether the model is asked to reason; left out, Ollama's default for the
+//! model applies. An unknown parameter is refused, so that a misspelt one
+//! does not silently fall back to its default.
+
+use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{LLMClient, LLMError, LLMResult};
 use async_stream::stream;
 use async_trait::async_trait;
@@ -9,7 +21,6 @@ use futures::stream::{BoxStream, StreamExt};
 use tracing::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
@@ -198,118 +209,6 @@ impl OllamaChatMessage {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::ToolCall;
-    use serde_json::json;
-
-    #[test]
-    fn test_ollama_chat_message_from_with_tool_calls() {
-        let tool_calls = vec![
-            ToolCall {
-                id: Some("1".to_string()),
-                function_name: "test_func_1".to_string(),
-                arguments: json!("{}".to_string()),
-                confidentiality: Default::default(),
-            },
-            ToolCall {
-                id: Some("2".to_string()),
-                function_name: "test_func_2".to_string(),
-                arguments: json!("{\"a\": 1}".to_string()),
-                confidentiality: Default::default(),
-            },
-        ];
-
-        let message = Message {
-            role: MessageRole::Assistant,
-            tool_calls,
-            ..Message::default()
-        };
-
-        let ollama_messages = OllamaChatMessage::from(&message);
-        assert_eq!(ollama_messages.len(), 1);
-
-        let ollama_msg = &ollama_messages[0];
-        assert!(ollama_msg.tool_calls.is_some());
-
-        let ollama_tool_calls = ollama_msg.tool_calls.as_ref().unwrap();
-        assert_eq!(ollama_tool_calls.len(), 2);
-
-        assert_eq!(ollama_tool_calls[0].function.name, "test_func_1");
-        assert_eq!(ollama_tool_calls[0].function.index, 0);
-
-        assert_eq!(ollama_tool_calls[1].function.name, "test_func_2");
-        assert_eq!(ollama_tool_calls[1].function.index, 1);
-    }
-
-    #[test]
-    fn test_ollama_chat_message_from_with_reasoning() {
-        let message = Message {
-            role: MessageRole::Assistant,
-            content: Some("the answer".to_string()),
-            reasoning: Some("let me think".to_string()),
-            ..Message::default()
-        };
-
-        let ollama_messages = OllamaChatMessage::from(&message);
-        assert_eq!(ollama_messages.len(), 1);
-        assert_eq!(ollama_messages[0].thinking, Some("let me think".to_string()));
-    }
-
-    #[test]
-    fn test_ollama_chat_request_omits_think_when_none() {
-        let request = OllamaChatRequest {
-            model: "test-model".to_string(),
-            messages: Vec::new(),
-            tools: Vec::new(),
-            think: None,
-            stream: true,
-        };
-        let json = serde_json::to_value(&request).unwrap();
-        assert!(json.get("think").is_none());
-    }
-
-    #[test]
-    fn test_ollama_chat_request_includes_think_when_set() {
-        let request = OllamaChatRequest {
-            model: "test-model".to_string(),
-            messages: Vec::new(),
-            tools: Vec::new(),
-            think: Some(true),
-            stream: true,
-        };
-        let json = serde_json::to_value(&request).unwrap();
-        assert_eq!(json.get("think"), Some(&json!(true)));
-    }
-
-    #[test]
-    fn test_ollama_chat_message_deserializes_thinking() {
-        let raw = r#"{"role":"assistant","content":"","thinking":"pondering..."}"#;
-        let msg: OllamaChatMessage = serde_json::from_str(raw).unwrap();
-        assert_eq!(msg.thinking, Some("pondering...".to_string()));
-
-        let raw_without_thinking = r#"{"role":"assistant","content":"hi"}"#;
-        let msg: OllamaChatMessage = serde_json::from_str(raw_without_thinking).unwrap();
-        assert_eq!(msg.thinking, None);
-    }
-
-    #[test]
-    fn test_from_env_parses_think_flag() {
-        unsafe {
-            env::set_var("OLLAMA_THINK", "true");
-        }
-        let client = OllamaClient::from_env();
-        assert_eq!(client.think, Some(true));
-        unsafe {
-            env::remove_var("OLLAMA_THINK");
-        }
-
-        let client = OllamaClient::from_env();
-        assert_eq!(client.think, None);
-    }
-}
 
 
 /// The body of an error Ollama sends, as a whole response or as one line of
@@ -329,6 +228,33 @@ fn backend_error_message(body: &str) -> String {
     }
 }
 
+pub const OLLAMA_CLIENT_KIND: &str = "ollama_client";
+
+/// The Ollama server asked unless `base_url` names another.
+pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
+/// The model asked unless `model` names another.
+pub const DEFAULT_MODEL: &str = "gemma4:26b";
+
+/// The parameters of an `ollama_client` component.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OllamaClientConfig {
+    #[serde(default = "default_base_url")]
+    base_url: String,
+    #[serde(default = "default_model")]
+    model: String,
+    #[serde(default)]
+    think: Option<bool>,
+}
+
+fn default_base_url() -> String {
+    DEFAULT_BASE_URL.to_string()
+}
+
+fn default_model() -> String {
+    DEFAULT_MODEL.to_string()
+}
+
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     http: reqwest::Client,
@@ -339,23 +265,9 @@ pub struct OllamaClient {
     think: Option<bool>,
 }
 
-impl Default for OllamaClient {
-    fn default() -> Self {
-        Self::from_env()
-    }
-}
-
 impl OllamaClient {
-    fn from_env() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            base_url: env::var("OLLAMA_BASE_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
-            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "gemma4:26b".to_string()),
-            think: env::var("OLLAMA_THINK")
-                .ok()
-                .and_then(|v| v.parse::<bool>().ok()),
-        }
+    fn new(config: OllamaClientConfig) -> Self {
+        Self { http: reqwest::Client::new(), base_url: config.base_url, model: config.model, think: config.think }
     }
 }
 
@@ -523,5 +435,135 @@ impl LLMClient for OllamaClient {
         };
 
         Box::pin(output)
+    }
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>(),
+        |descriptor, _context| {
+            // Built as the default, or configured without parameters: all
+            // parameters take their defaults.
+            let params = if descriptor.params.is_null() { serde_json::json!({}) } else { descriptor.params.clone() };
+            let config: OllamaClientConfig = serde_json::from_value(params)
+                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn LLMClient>(std::sync::Arc::new(OllamaClient::new(config)));
+            Ok(facets)
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::tool::ToolCall;
+    use serde_json::json;
+
+    #[test]
+    fn test_ollama_chat_message_from_with_tool_calls() {
+        let tool_calls = vec![
+            ToolCall {
+                id: Some("1".to_string()),
+                function_name: "test_func_1".to_string(),
+                arguments: json!("{}".to_string()),
+                confidentiality: Default::default(),
+            },
+            ToolCall {
+                id: Some("2".to_string()),
+                function_name: "test_func_2".to_string(),
+                arguments: json!("{\"a\": 1}".to_string()),
+                confidentiality: Default::default(),
+            },
+        ];
+
+        let message = Message {
+            role: MessageRole::Assistant,
+            tool_calls,
+            ..Message::default()
+        };
+
+        let ollama_messages = OllamaChatMessage::from(&message);
+        assert_eq!(ollama_messages.len(), 1);
+
+        let ollama_msg = &ollama_messages[0];
+        assert!(ollama_msg.tool_calls.is_some());
+
+        let ollama_tool_calls = ollama_msg.tool_calls.as_ref().unwrap();
+        assert_eq!(ollama_tool_calls.len(), 2);
+
+        assert_eq!(ollama_tool_calls[0].function.name, "test_func_1");
+        assert_eq!(ollama_tool_calls[0].function.index, 0);
+
+        assert_eq!(ollama_tool_calls[1].function.name, "test_func_2");
+        assert_eq!(ollama_tool_calls[1].function.index, 1);
+    }
+
+    #[test]
+    fn test_ollama_chat_message_from_with_reasoning() {
+        let message = Message {
+            role: MessageRole::Assistant,
+            content: Some("the answer".to_string()),
+            reasoning: Some("let me think".to_string()),
+            ..Message::default()
+        };
+
+        let ollama_messages = OllamaChatMessage::from(&message);
+        assert_eq!(ollama_messages.len(), 1);
+        assert_eq!(ollama_messages[0].thinking, Some("let me think".to_string()));
+    }
+
+    #[test]
+    fn test_ollama_chat_request_omits_think_when_none() {
+        let request = OllamaChatRequest {
+            model: "test-model".to_string(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            think: None,
+            stream: true,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(json.get("think").is_none());
+    }
+
+    #[test]
+    fn test_ollama_chat_request_includes_think_when_set() {
+        let request = OllamaChatRequest {
+            model: "test-model".to_string(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            think: Some(true),
+            stream: true,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json.get("think"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn test_ollama_chat_message_deserializes_thinking() {
+        let raw = r#"{"role":"assistant","content":"","thinking":"pondering..."}"#;
+        let msg: OllamaChatMessage = serde_json::from_str(raw).unwrap();
+        assert_eq!(msg.thinking, Some("pondering...".to_string()));
+
+        let raw_without_thinking = r#"{"role":"assistant","content":"hi"}"#;
+        let msg: OllamaChatMessage = serde_json::from_str(raw_without_thinking).unwrap();
+        assert_eq!(msg.thinking, None);
+    }
+
+    #[test]
+    fn parameters_default_to_a_local_ollama() {
+        let config: OllamaClientConfig = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(config.base_url, DEFAULT_BASE_URL);
+        assert_eq!(config.model, DEFAULT_MODEL);
+        assert_eq!(config.think, None);
+
+        let config: OllamaClientConfig = serde_json::from_value(json!({ "model": "qwen3:8b", "think": true })).unwrap();
+        assert_eq!((config.model.as_str(), config.think), ("qwen3:8b", Some(true)));
+    }
+
+    #[test]
+    fn a_misspelt_parameter_is_refused() {
+        assert!(serde_json::from_value::<OllamaClientConfig>(json!({ "modle": "qwen3:8b" })).is_err());
     }
 }

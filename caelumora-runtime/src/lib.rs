@@ -3,7 +3,6 @@ pub mod session;
 pub mod moderator;
 pub mod runtime;
 pub mod llm;
-pub mod llm_impl;
 pub mod logging;
 pub mod recorder;
 pub mod error;

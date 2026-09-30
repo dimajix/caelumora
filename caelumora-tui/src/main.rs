@@ -7,9 +7,9 @@ use caelumora_model::mention::mention_spans;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::user::{User, UserId};
+use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::llm_impl::ollama::OllamaClient;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use caelumora_runtime::logging::{self, LogTarget};
@@ -229,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
         security_manager.clone(),
         config.commands.clone(),
         config.component_defaults.clone(),
-        Arc::new(OllamaClient::default()),
+        ComponentRegistry::built_in(entity_store.clone()),
     )?);
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
 

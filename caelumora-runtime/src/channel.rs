@@ -907,7 +907,6 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::store::EntityStore;
-    use crate::llm_impl::ollama::OllamaClient;
     use crate::command::CommandExecutor;
     use crate::component::ComponentImpl;
     use crate::component_impl::help_command::HelpCommandProvider;
@@ -967,7 +966,7 @@ mod tests {
     /// A channel of `participants`, whose actors are read from `store`.
     async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), Arc::new(OllamaClient::default())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, security, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
@@ -1326,7 +1325,28 @@ mod tests {
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), model).unwrap());
+        // The model is a component (issue 130): the stand-in is registered as
+        // a kind of its own and made every agent's default.
+        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        registry.register(
+            crate::component::ComponentKind::new("test_model").provides::<dyn crate::llm::LLMClient>(),
+            move |_descriptor, _context| {
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::llm::LLMClient>(model.clone());
+                Ok(facets)
+            },
+        );
+        let defaults = caelumora_model::component::ComponentConfig {
+            component_nodes: vec![caelumora_model::component::ComponentDescriptor {
+                id: "model".to_string(),
+                kind: "test_model".to_string(),
+                params: serde_json::Value::Null,
+                tags: Vec::new(),
+                fail_policy: Default::default(),
+                security_attributes: Default::default(),
+            }],
+        };
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), defaults, registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
