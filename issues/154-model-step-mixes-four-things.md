@@ -1,6 +1,6 @@
 # 154 — The model step mixes stamping, plan mode, streaming and plan progress
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -47,3 +47,22 @@ bookkeeping is turn state and belongs on `Turn`, as
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, A2), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-09-30** — Done.
+  - `AgentActor::stamp(message, turn, complete)` sets sender, labels and
+    `internal` for partial and complete messages alike; the third
+    `internal` assignment is gone.
+  - `Turn::plan_progress()` replaces `has_plan` and every
+    `plan().map(|p| p.progress)`; `Turn::in_plan_step()` says whether what
+    the model produces now is internal - a step under way, not the final
+    answer.
+  - `Turn::plan_converged()` moves the plan on after an answer without tool
+    calls and returns the events to announce: `PlanStepFinished` and the
+    next `PlanStepStarted`, or nothing once the final answer ends the plan.
+    `handle_llm_turn` sends the answer with `event_for`, then those events,
+    and asks the model again while a plan runs. The `match` with
+    `unreachable!` and the two fixed events are gone; a step index outside
+    the plan no longer panics.
+  - Tests: `plan_converged` on the turn, and - new, the actor's plan flow
+    had none - a channel test that runs a two-step plan through approval,
+    both steps and the final answer. It passes against the code before
+    this change too: the flow is unchanged.

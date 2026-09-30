@@ -251,6 +251,17 @@ impl AgentActor {
             .await)
     }
 
+    /// Makes `message` of the model the agent's: its sender, its labels
+    /// (`label`), and whether it is internal - part of executing a plan
+    /// (`Turn::in_plan_step`); the final answer after the last step is
+    /// not, and must reach the user live. `complete` as for `label`.
+    fn stamp(&self, message: &mut Message, turn: &Turn, complete: bool) {
+        message.sender_name = self.agent_controller.name();
+        message.sender_id = self.id();
+        self.label(message, turn, complete);
+        message.internal = turn.in_plan_step();
+    }
+
     /// Labels `message` and its parts (issues 54, 61, 133). The message is
     /// classified as the turn's channel - every message of the agent's
     /// model passes here, partial and complete, before it goes anywhere.
@@ -378,7 +389,7 @@ impl AgentActor {
         // must be classified against the state that produced the call (same
         // as the assistant message that triggered it), not the state that
         // call itself just brought about.
-        let had_plan_before = turn.has_plan();
+        let had_plan_before = turn.plan_progress().is_some();
         for (id, call) in turn.tool_calls().to_run() {
             let result = self.tool_executor.execute(&call, turn).await;
             turn.tool_calls().record(id, result);
@@ -693,8 +704,8 @@ impl AgentActor {
     /// `max_iterations`.
     ///
     /// A message is "final" (shown to the user, kept in `history`) exactly
-    /// when it isn't part of executing an in-progress plan (`executing_plan`,
-    /// and not yet at the last, synthesizing step) - ordinary tool calls,
+    /// when it isn't part of executing an in-progress plan
+    /// (`Turn::in_plan_step`: not yet at the final answer) - ordinary tool calls,
     /// pre-plan research, and the `create_plan` call itself are all shown
     /// like any other message, same as a personality with no planning
     /// capability at all. Anything internal instead gets
@@ -714,22 +725,6 @@ impl AgentActor {
         }
         self.loop_count.fetch_add(1, Ordering::SeqCst);
 
-        // A plan can only ever exist here because its create_plan tool call
-        // already went through the generic tool-call approval gate (see
-        // CreatePlanToolProvider::execute) - once one is in play, its
-        // messages must be distinguishable from a genuine final response
-        // until the model stops calling tools.
-        let executing_plan = turn.has_plan();
-        // The dedicated synthesis call (after the last step converged) is
-        // still `executing_plan`, but its streamed text *is* the final
-        // answer and must reach the user live, not be swallowed as internal
-        // plan scaffolding.
-        let finalizing_plan = matches!(
-            turn.plan().map(|p| p.progress),
-            Some(PlanProgress::Finalizing)
-        );
-        let internal_message = executing_plan && !finalizing_plan;
-
         let cancelled = self.turn_token();
         let mut response = self.call_llm(turn).await?;
         use futures::stream::TryStreamExt;
@@ -748,66 +743,29 @@ impl AgentActor {
 
             match event {
                 MessageEvent::Partial(mut message) => {
-                    message.sender_name = agent_name.clone();
-                    message.sender_id = self.id();
-                    self.label(&mut message, turn, false);
-                    message.internal = internal_message;
+                    self.stamp(&mut message, turn, false);
                     if let Some(msg) = self.respond_partial(message, turn).await {
                         turn.send_event(Self::event_for(msg, true), output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
-                    message.sender_name = agent_name.clone();
-                    message.sender_id = self.id();
-                    self.label(&mut message, turn, true);
-                    message.internal = internal_message;
-
+                    self.stamp(&mut message, turn, true);
                     self.request_approvals(&message.tool_calls, turn, output).await?;
-                    let has_tool_calls = !message.tool_calls.is_empty();
-
-                    if executing_plan && !has_tool_calls {
-                        match turn.plan().map(|p| p.progress) {
-                            Some(PlanProgress::Finalizing) => {
-                                // The dedicated synthesis call converged -
-                                // this is the real, final response.
-                                turn.take_plan();
-                                if let Some(msg) = self.respond_complete(message, turn).await {
-                                    turn.send_event(ActorEvent::CompleteMessageGenerated(msg), output).await?;
-                                }
-                            }
-                            Some(PlanProgress::Step(idx)) => {
-                                // This step converged - not final. Its result
-                                // is already part of context (respond_complete
-                                // pushes it); move on to the next step, or to
-                                // finalization if this was the last one.
-                                if let Some(msg) = self.respond_complete(message, turn).await {
-                                    turn.send_event(ActorEvent::IntermediateMessageGenerated(msg), output).await?;
-                                }
-                                let finished_step = turn.plan()
-                                    .map(|p| (p.plan.steps[idx].description.clone(), p.plan.steps.len()));
-                                if let Some((description, total_steps)) = finished_step {
-                                    turn.send_event(
-                                        ActorEvent::PlanStepFinished { step_index: idx, total_steps, description },
-                                        output,
-                                    ).await?;
-                                }
-                                if let Some(started) = turn.advance_plan(idx + 1) {
-                                    turn.send_event(started, output).await?;
-                                }
-                                return Ok(ActorState::Planning);
-                            }
-                            None => unreachable!("executing_plan implies a plan is present"),
+                    let converged = message.tool_calls.is_empty();
+                    if let Some(msg) = self.respond_complete(message, turn).await {
+                        turn.send_event(Self::event_for(msg, false), output).await?;
+                    }
+                    // An answer without tool calls ends a step of a plan -
+                    // the next one begins with another model call - or the
+                    // plan itself.
+                    if converged {
+                        for event in turn.plan_converged() {
+                            turn.send_event(event, output).await?;
                         }
-                    } else {
-                        // Covers: the ordinary single-shot tool loop, pre-plan
-                        // research/create_plan calls, and a direct answer
-                        // before committing to a plan - all final/visible;
-                        // mid-plan research/extension tool calls stay internal.
-                        if let Some(msg) = self.respond_complete(message, turn).await {
-                            turn.send_event(Self::event_for(msg, false), output).await?;
+                        if turn.plan_progress().is_some() {
+                            return Ok(ActorState::Planning);
                         }
                     }
-
                     if !turn.tool_calls().is_empty() {
                         return Ok(ActorState::ExecutingTools);
                     }
@@ -828,7 +786,7 @@ impl AgentActor {
         turn: &mut Turn<'a>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        let progress_before = turn.plan().map(|p| p.progress);
+        let progress_before = turn.plan_progress();
         if let Some(tool_message) = self.execute_tools(turn).await {
             turn.send_event(Self::event_for(tool_message, false), output).await?;
 
@@ -842,7 +800,7 @@ impl AgentActor {
             // inside CreatePlanToolProvider::execute itself, since that
             // would land a message between the assistant's tool-call message
             // and its own tool result.
-            let progress_after = turn.plan().map(|p| p.progress);
+            let progress_after = turn.plan_progress();
             if progress_after != progress_before {
                 if let Some(PlanProgress::Step(idx)) = progress_after {
                     if let Some(started) = turn.advance_plan(idx) {

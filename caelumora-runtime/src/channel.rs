@@ -1617,6 +1617,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_answer() {
+        use caelumora_model::approval::ApprovalResponse;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let said = |content: &str| Message { role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let plan = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall {
+                id: Some("1".to_string()),
+                function_name: "create_plan".to_string(),
+                arguments: serde_json::json!({ "summary": "two steps", "steps": [{ "description": "first" }, { "description": "second" }] }),
+                visibility: ToolVisibility::SHOWN,
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let script = [plan, said("first done"), said("second done"), said("all done")];
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "plan".to_string(),
+            kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
+
+        // The plan needs approval; alice gives it.
+        let mut seen = Vec::new();
+        let request = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
+                    break request;
+                }
+            }
+        }).await.expect("the plan is put up for approval");
+        let ActorId::User(alice) = context.initiator_id else { panic!("alice acts") };
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+
+        let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    ActorEvent::FullResponseGenerated(messages) => break messages,
+                    ActorEvent::IntermediateMessageGenerated(m) => seen.push(format!("intermediate:{}", m.content.unwrap_or_default())),
+                    // Not the plan's call nor the tool's result: they say nothing.
+                    ActorEvent::CompleteMessageGenerated(m) => seen.extend(m.content.map(|c| format!("complete:{c}"))),
+                    ActorEvent::PlanStepStarted { step_index, .. } => seen.push(format!("started:{step_index}")),
+                    ActorEvent::PlanStepFinished { step_index, .. } => seen.push(format!("finished:{step_index}")),
+                    _ => {}
+                }
+            }
+        }).await.expect("the turn ends");
+        assert_eq!(seen, [
+            "started:0", "intermediate:first done", "finished:0",
+            "started:1", "intermediate:second done", "finished:1",
+            "complete:all done",
+        ]);
+        let contents: Vec<_> = final_messages.iter().filter_map(|m| m.content.as_deref()).collect();
+        assert_eq!(contents, ["all done"], "the steps are not part of the answer");
+        settled(&helper, ActorState::Idle).await;
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn a_turn_is_stored_with_the_step_that_comes_next() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;

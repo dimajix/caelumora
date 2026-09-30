@@ -412,12 +412,20 @@ impl<'a> Turn<'a> {
     pub fn take_plan(&mut self) -> Option<PlanState> {
         self.current_mut().plan.take()
     }
-    /// Whether a plan is currently in play. A `PlanState` is only ever
-    /// constructed after its `create_plan` tool call has already been
-    /// through the generic tool-call approval gate, so its mere presence
-    /// implies "approved and executing".
-    pub(crate) fn has_plan(&self) -> bool {
-        self.current().plan.is_some()
+    /// Where the plan in play stands, `None` without one. A `PlanState` is
+    /// only ever constructed after its `create_plan` tool call has already
+    /// been through the generic tool-call approval gate, so its mere
+    /// presence implies "approved and executing".
+    pub(crate) fn plan_progress(&self) -> Option<PlanProgress> {
+        self.current().plan.as_ref().map(|p| p.progress)
+    }
+
+    /// Whether what the model produces now is part of executing a plan -
+    /// a step under way, not the final answer after the last one - and so
+    /// internal: kept in the transcript, not in the history, and published
+    /// as intermediate.
+    pub(crate) fn in_plan_step(&self) -> bool {
+        matches!(self.plan_progress(), Some(PlanProgress::Step(_)))
     }
     fn set_plan_progress(&mut self, progress: PlanProgress) {
         if let Some(plan) = self.current_mut().plan.as_mut() {
@@ -449,6 +457,28 @@ impl<'a> Turn<'a> {
                 self.place_turn_prompt(MessageRole::System, plan_finalize_instruction(&plan));
                 self.set_plan_progress(PlanProgress::Finalizing);
                 None
+            }
+        }
+    }
+
+    /// Moves the plan on after the model answered without calling a tool:
+    /// the step under way is finished - announced as `PlanStepFinished` -
+    /// and the next one begins, or the final answer is asked for
+    /// (`advance_plan`); after the final answer the plan is over. Returns
+    /// the events to announce, in order; none without a plan.
+    pub(crate) fn plan_converged(&mut self) -> Vec<ActorEvent> {
+        let Some(plan) = self.plan() else { return Vec::new() };
+        match plan.progress {
+            PlanProgress::Step(step_index) => {
+                let total_steps = plan.plan.steps.len();
+                let description = plan.plan.steps.get(step_index).map(|s| s.description.clone()).unwrap_or_default();
+                let mut events = vec![ActorEvent::PlanStepFinished { step_index, total_steps, description }];
+                events.extend(self.advance_plan(step_index + 1));
+                events
+            }
+            PlanProgress::Finalizing => {
+                self.take_plan();
+                Vec::new()
             }
         }
     }
@@ -802,17 +832,33 @@ mod tests {
         let mut ctx = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         ctx.begin();
 
-        assert!(ctx.plan().is_none());
-        assert!(!ctx.has_plan());
+        assert!(ctx.plan_progress().is_none());
 
         ctx.set_plan(make_plan_state());
-        assert!(ctx.plan().is_some());
-        assert!(ctx.has_plan());
+        assert!(ctx.plan_progress().is_some());
 
         let taken = ctx.take_plan();
         assert!(taken.is_some());
-        assert!(ctx.plan().is_none());
-        assert!(!ctx.has_plan());
+        assert!(ctx.plan_progress().is_none());
+    }
+
+    #[test]
+    fn a_converged_answer_finishes_its_step_and_the_last_one_asks_for_the_final_answer() {
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        turn.begin();
+        assert!(turn.plan_converged().is_empty(), "no plan, nothing to move on");
+        turn.set_plan(plan_of(&["first", "second"]));
+        assert!(turn.in_plan_step());
+
+        let kinds = |events: Vec<ActorEvent>| events.iter().map(ActorEvent::kind).collect::<Vec<_>>();
+        assert_eq!(kinds(turn.plan_converged()), ["PlanStepFinished", "PlanStepStarted"]);
+        assert_eq!(turn.plan_progress(), Some(PlanProgress::Step(1)));
+        assert_eq!(kinds(turn.plan_converged()), ["PlanStepFinished"], "the final answer is no step");
+        assert_eq!(turn.plan_progress(), Some(PlanProgress::Finalizing));
+        assert!(!turn.in_plan_step(), "the final answer is not internal");
+        assert!(turn.plan_converged().is_empty());
+        assert!(turn.plan_progress().is_none(), "the plan is over");
     }
 
     #[test]
