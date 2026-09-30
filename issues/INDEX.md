@@ -141,6 +141,7 @@ against it, and what came out of the last attempt.
 | [126](126-mcp-tools-discovered-once.md) | open | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
 | [127](127-tool-executor-not-replaceable.md) | done | The tool executor is fixed in the runtime, so how tools are executed cannot be tried out by configuring a different component. |
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
+| [145](145-ended-turns-leave-a-record.md) | open | A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain. |
 
 ## User interaction
 

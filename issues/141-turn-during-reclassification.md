@@ -47,3 +47,11 @@ messages are classified below the channel and admitted.
 - **2026-09-30** — Found while implementing step 4a of
   [133](133-classification-model.md) and noted there; opened at the
   maintainer's request.
+- **2026-09-30** — Discussed. Fitting at the gate and re-reading per
+  message are ruled out: both would publish, below the channel's former
+  classification, what the turn read under it - including content of
+  other channels the owner never saw. Leaning towards cancelling running
+  turns on a lowering. Such a turn must not be taken over as `/cancel`
+  does - its messages are classified above the channel now - but given up
+  as a dead branch of the agent's transcript, which depends on
+  [145](145-ended-turns-leave-a-record.md).

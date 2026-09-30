@@ -203,3 +203,7 @@ and comes later.
 - **2026-09-30** — [117](117-message-prev-id.md) is done: `Message` has no
   predecessor field anymore. The notes above on `prev_id` describe the state
   before; the parent pointer of a branch is `prev_digest` on the entry.
+- **2026-09-30** — Turns that are given up - failed, stopped, cancelled on
+  a lowering of the channel - are to become dead branches of the agent's
+  transcript ([145](145-ended-turns-leave-a-record.md)), which needs step 1
+  of the plan above (trees) before regenerating does.
