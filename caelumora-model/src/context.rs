@@ -21,7 +21,8 @@
 use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, TurnEntry};
 use crate::digest::Digest;
-use crate::message::{Message, MessageRole, Transcript, TranscriptEntry};
+use crate::message::{Message, MessageRole};
+use crate::transcript::{Transcript, TranscriptEntry};
 use crate::tool::ToolDefinition;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

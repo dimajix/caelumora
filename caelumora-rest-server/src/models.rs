@@ -313,13 +313,13 @@ pub struct CommandReplyResponse {
 /// message of the agent.
 #[derive(Debug, Serialize)]
 pub struct GivenUpTurnResponse {
-    pub reason: caelumora_model::message::GivenUpReason,
+    pub reason: caelumora_model::transcript::GivenUpReason,
     pub at: chrono::DateTime<chrono::Utc>,
     pub messages: Vec<Message>,
 }
 
-impl From<caelumora_model::message::GivenUpTurn> for GivenUpTurnResponse {
-    fn from(turn: caelumora_model::message::GivenUpTurn) -> Self {
+impl From<caelumora_model::transcript::GivenUpTurn> for GivenUpTurnResponse {
+    fn from(turn: caelumora_model::transcript::GivenUpTurn) -> Self {
         Self { reason: turn.given_up.reason, at: turn.given_up.at, messages: turn.messages }
     }
 }
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn a_turn_given_up_is_answered_with_its_reason_and_messages() {
-        use caelumora_model::message::{GivenUp, GivenUpReason, GivenUpTurn};
+        use caelumora_model::transcript::{GivenUp, GivenUpReason, GivenUpTurn};
         let turn = GivenUpTurn {
             given_up: GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: chrono::Utc::now(), turn_entries: 1 },
             messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],

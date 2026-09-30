@@ -1659,7 +1659,8 @@ mod tests {
     #[tokio::test]
     async fn a_turn_that_fails_after_a_tool_ran_stays_as_a_branch_and_the_agent_is_told() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::message::{GivenUpReason, MessageRole};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::transcript::GivenUpReason;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         // The model calls a tool that needs no approval, and fails when
@@ -1714,7 +1715,8 @@ mod tests {
     #[tokio::test]
     async fn an_agent_removed_during_a_turn_gives_it_up_naming_who_removed_it() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        use caelumora_model::message::{GivenUpReason, MessageRole};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::transcript::GivenUpReason;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         // The model calls a tool, and never answers again.

@@ -6,7 +6,8 @@ use std::fmt::Debug;
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorId, ActorState, Envelope};
 use caelumora_model::context::ResolvedContext;
-use caelumora_model::message::{GivenUpTurn, MessageId};
+use caelumora_model::message::MessageId;
+use caelumora_model::transcript::GivenUpTurn;
 use caelumora_model::security::SecurityContext;
 
 #[async_trait]

@@ -11,6 +11,8 @@ pub mod context;
 pub mod digest;
 pub mod tool;
 pub mod message;
+pub mod message_history;
+pub mod transcript;
 pub mod mention;
 pub mod note;
 pub mod memory;
