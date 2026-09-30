@@ -17,7 +17,9 @@ All three kinds of memory work alike:
     generic `Chain` type (see
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)): entries "note"
     or "revoke N", "remember" or "forget N". What is remembered now is the
-    chain read from start to end.
+    chain's active branch read from start to end; a number, once given, is
+    not given again on any branch. Notes branch with the conversation,
+    agent memory does not (issue 19, point 7).
 *   **Only the author changes them.** An agent notes, revokes, remembers and
     forgets only its own entries.
 *   **Commit, don't write.** A tool stages its change on the turn; the

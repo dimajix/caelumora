@@ -177,9 +177,7 @@ impl MessageEntry for TranscriptEntry {
 ///
 /// A message's predecessor is not a property of the message: the same
 /// message is in several chains, with a different predecessor in each
-/// (issue 117). The chain holds it - today as the order of its entries,
-/// once entries are stored one by one or chains branch (03/04, 08) as the
-/// predecessor's digest on the entry.
+/// (issue 117). The chain holds it, as the digest of the entry before.
 fn push_message<E: MessageEntry>(chain: &mut Chain<E>, msg: Message, make: impl FnOnce(Message, Digest) -> E) -> Option<Digest> {
     chain.push_with(|previous| {
         let digest = crate::digest::message_chain(previous, &msg);
@@ -188,7 +186,7 @@ fn push_message<E: MessageEntry>(chain: &mut Chain<E>, msg: Message, make: impl 
 }
 
 fn messages_of<E: MessageEntry>(chain: &Chain<E>) -> Vec<Message> {
-    chain.entries().iter().map(|e| e.message().clone()).collect()
+    chain.entries().map(|e| e.message().clone()).collect()
 }
 
 fn last_message_id_of<E: MessageEntry>(chain: &Chain<E>) -> MessageId {
@@ -203,8 +201,9 @@ fn last_message_id_of<E: MessageEntry>(chain: &Chain<E>) -> MessageId {
 ///
 /// A chain: every entry's digest covers its message and the digest before
 /// it, so one digest names the whole transcript up to that point by content
-/// (see `crate::chain`). It is only ever appended to, so every earlier digest
-/// names a prefix of it and that prefix can be recovered (`prefix`).
+/// (see `crate::chain`). Nothing is ever removed from it - also not from a
+/// branch no longer active (issue 08) - so every digest it had names a
+/// prefix of one of its branches, which can be recovered (`prefix`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Transcript {
     messages: Chain<TranscriptEntry>,
@@ -239,14 +238,15 @@ impl Transcript {
         push_message(&mut self.messages, msg, |message, digest| TranscriptEntry { message, digest })
     }
 
-    pub fn entries(&self) -> &[TranscriptEntry] {
+    /// The entries of the active branch.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &TranscriptEntry> + ExactSizeIterator {
         self.messages.entries()
     }
 
     /// The entries of the transcript `digest` names: this transcript up to
-    /// and including the entry with that digest, or `None` if it is not a
-    /// prefix of this transcript.
-    pub fn prefix(&self, digest: &Digest) -> Option<&[TranscriptEntry]> {
+    /// and including the entry with that digest, on whichever branch, or
+    /// `None` if it is not a prefix of this transcript.
+    pub fn prefix(&self, digest: &Digest) -> Option<Vec<&TranscriptEntry>> {
         self.messages.prefix(digest)
     }
 }
@@ -293,8 +293,14 @@ impl MessageHistory {
         messages_of(&self.messages)
     }
 
-    pub fn entries(&self) -> &[HistoryEntry] {
+    /// The entries of the active branch.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &HistoryEntry> + ExactSizeIterator {
         self.messages.entries()
+    }
+
+    /// The entries of every branch, in the order they were added.
+    pub fn all_entries(&self) -> impl DoubleEndedIterator<Item = &HistoryEntry> + ExactSizeIterator {
+        self.messages.all_entries()
     }
 
     pub fn last_message_id(&self) -> MessageId {
@@ -314,11 +320,12 @@ impl MessageHistory {
         push_message(&mut self.messages, msg, |message, digest| HistoryEntry { message, context, digest });
     }
 
-    /// Reclassifies message `id` as `classification` (issue 133), in place:
+    /// Reclassifies message `id` - on whichever branch - as
+    /// `classification` (issue 133), in place:
     /// a message's digest does not cover its classification, so the record
     /// stays what it was. `false` if there is no such message.
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        match self.messages.entries_mut().iter_mut().find(|e| e.message.id == id) {
+        match self.messages.entries_mut().find(|e| e.message.id == id) {
             Some(entry) => {
                 entry.message.classification = classification;
                 true
@@ -329,7 +336,8 @@ impl MessageHistory {
 
     /// Fits every message into a channel now classified `channel`
     /// (`Classification::fitted_into`) - what lowering a channel's
-    /// classification does to what is in it. Returns how many changed.
+    /// classification does to what is in it, on every branch: all of them
+    /// were said in the channel. Returns how many changed.
     pub fn fit_into(&mut self, channel: &Classification) -> usize {
         let mut changed = 0;
         for entry in self.messages.entries_mut() {
@@ -427,7 +435,9 @@ mod tests {
         // earlier version of it.
         let recorded = crate::digest::prompt("recorded under another scheme");
         let mut stored = serde_json::to_value(&context).unwrap();
-        stored["messages"][1]["digest"] = serde_json::Value::String(recorded.to_string());
+        stored["messages"]["entries"][1]["digest"] = serde_json::Value::String(recorded.to_string());
+        stored["messages"]["entries"][0]["active_child"] = serde_json::Value::String(recorded.to_string());
+        stored["messages"]["head"] = serde_json::Value::String(recorded.to_string());
         let loaded: Transcript = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.digest(), Some(recorded));
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
@@ -441,8 +451,9 @@ mod tests {
         history.push(make_message(id(2)), Some(reference.clone()));
 
         let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
-        assert_eq!(loaded.entries()[0].context, None, "said by someone else");
-        assert_eq!(loaded.entries()[1].context, Some(reference));
+        let entries: Vec<_> = loaded.entries().collect();
+        assert_eq!(entries[0].context, None, "said by someone else");
+        assert_eq!(entries[1].context, Some(reference));
         assert_eq!(loaded.digest(), history.digest());
     }
 

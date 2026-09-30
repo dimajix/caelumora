@@ -108,7 +108,9 @@ impl MemoryChain {
         self.changes.digest()
     }
 
-    pub fn entries(&self) -> &[MemoryEntry] {
+    /// The changes of the active branch - the only one: memory outlives
+    /// the conversation and does not branch with it (issue 19, point 7).
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &MemoryEntry> + ExactSizeIterator {
         self.changes.entries()
     }
 
@@ -148,7 +150,7 @@ impl MemoryChain {
 
     /// The number the next entry gets: one more than any ever remembered.
     pub fn next_id(&self) -> MemoryId {
-        let highest = self.changes.entries().iter()
+        let highest = self.changes.all_entries()
             .filter_map(|e| match &e.change {
                 MemoryChange::Remember { id, .. } => Some(id.0),
                 MemoryChange::Forget { .. } | MemoryChange::Reclassify { .. } => None,

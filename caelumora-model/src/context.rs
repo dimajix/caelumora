@@ -253,10 +253,10 @@ impl<'a> TranscriptView<'a> {
     pub fn prefix(&self, digest: Option<&Digest>) -> Option<Vec<&'a TranscriptEntry>> {
         let Some(digest) = digest else { return Some(Vec::new()) };
         if let Some(entries) = self.stored.prefix(digest) {
-            return Some(entries.iter().collect());
+            return Some(entries);
         }
         let end = self.pending.iter().position(|e| &e.entry.digest == digest)?;
-        Some(self.stored.entries().iter().chain(self.pending[..=end].iter().map(|e| &e.entry)).collect())
+        Some(self.stored.entries().chain(self.pending[..=end].iter().map(|e| &e.entry)).collect())
     }
 }
 

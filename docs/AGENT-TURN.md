@@ -176,11 +176,32 @@ prefix an earlier digest names. `Transcript` and `MessageHistory` are
 chains of messages and share the message-specific part, the
 `message_chain` digest. A message does not name its predecessor: the same
 message is in several chains with a different predecessor in each, so the
-predecessor belongs to the chain - today the order of its entries, and the
-predecessor's digest on the entry once entries are stored one by one or
-chains branch ([117](../issues/117-message-prev-id.md)). Notes and memory are chains too (see [MEMORY.md](MEMORY.md)), and
-branching ([08](../issues/08-retry-and-edit-past-answers.md)) will turn the
-type into a tree.
+predecessor belongs to the chain, stored as `parent`, the predecessor's
+digest, beside the entry ([117](../issues/117-message-prev-id.md)). Notes
+and memory are chains too (see [MEMORY.md](MEMORY.md)).
+
+A chain is a tree with a head
+([08](../issues/08-retry-and-edit-past-answers.md)):
+
+*   `push_with` appends after the head and makes the new entry the head.
+    `move_head` sets the head back to any entry, or to the root; what
+    follows it stays, as a branch no longer active. Nothing is removed.
+*   What the chain says - `digest`, `entries`, `last`, `len` - is the
+    *active path*, from the root up to the head: the conversation as it
+    stands. `all_entries` are those of every branch, for what has to
+    consider all of them: looking up a message by id, fitting the history
+    into a lowered classification, the next number of a note.
+*   `prefix` finds an entry on any branch, so a `ContextRef` into a branch
+    no longer active still resolves.
+*   `children` are the siblings among which a branch is chosen, and every
+    entry remembers the child last on the active path, so that `leaf_from`
+    finds where a switch to a branch goes on.
+*   An entry pushed with the digest of one already there - the same
+    predecessor, the same content - is that entry: the head moves to it.
+
+Nothing moves a head yet; giving up a turn
+([145](../issues/145-ended-turns-leave-a-record.md)) and regenerating an
+answer (08) will.
 
 ### What is recorded
 

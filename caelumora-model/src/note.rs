@@ -6,7 +6,7 @@
 //! agent keeps them per channel as a [`NoteChain`], a chain of changes that
 //! is only appended to: a note, or the revocation of an earlier one. A new
 //! version of a note is a revocation and a new note. What is noted now is
-//! the chain read from start to end.
+//! the chain's active branch read from start to end (issue 08).
 
 use crate::chain::{Chain, ChainEntry};
 use crate::confidentiality::Classification;
@@ -90,7 +90,8 @@ impl NoteChain {
         self.changes.digest()
     }
 
-    pub fn entries(&self) -> &[NoteEntry] {
+    /// The changes of the active branch.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &NoteEntry> + ExactSizeIterator {
         self.changes.entries()
     }
 
@@ -103,8 +104,8 @@ impl NoteChain {
         });
     }
 
-    /// The notes as they stand: every note that was not revoked, oldest
-    /// first.
+    /// The notes as they stand on the active branch: every note that was
+    /// not revoked, oldest first.
     pub fn current(&self) -> Vec<Note> {
         let mut notes: Vec<Note> = Vec::new();
         for entry in self.changes.entries() {
@@ -128,9 +129,10 @@ impl NoteChain {
     }
 
     /// The number the next note gets: one more than any note ever written,
-    /// so that a revoked number is never given again.
+    /// on any branch, so that a number is never given again - a reader may
+    /// have read it before it was revoked, or on a branch no longer active.
     pub fn next_id(&self) -> NoteId {
-        let highest = self.changes.entries().iter()
+        let highest = self.changes.all_entries()
             .filter_map(|e| match &e.change {
                 NoteChange::Note { id, .. } => Some(id.0),
                 NoteChange::Revoke { .. } | NoteChange::Reclassify { .. } => None,
@@ -182,6 +184,20 @@ mod tests {
         chain.push(NoteChange::Revoke { id: NoteId(1) }, MessageId::new(), None);
         assert!(chain.current().is_empty());
         assert_eq!(chain.next_id(), NoteId(2));
+    }
+
+    #[test]
+    fn a_branch_no_longer_active_is_not_noted_but_its_numbers_are_not_given_again() {
+        let mut chain = NoteChain::new();
+        chain.push(note(1, "a"), MessageId::new(), None);
+        let fork = chain.digest();
+        chain.push(note(2, "b"), MessageId::new(), None);
+        chain.push(NoteChange::Revoke { id: NoteId(1) }, MessageId::new(), None);
+        chain.changes.move_head(fork.as_ref());
+
+        let texts: Vec<String> = chain.current().into_iter().map(|n| n.text).collect();
+        assert_eq!(texts, ["a"], "the revocation was on the other branch too");
+        assert_eq!(chain.next_id(), NoteId(3), "2 was given on the other branch");
     }
 
     #[test]

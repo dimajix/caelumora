@@ -358,7 +358,7 @@ impl ChannelLoop {
         let attributes = self.security_attributes();
         let mut state = self.state.lock().await;
         let not_found = || ChannelError::MessageNotFound { message, channel: self.id };
-        let (author, current) = state.history.entries().iter()
+        let (author, current) = state.history.all_entries()
             .find(|e| e.message.id == message)
             .map(|e| (e.message.sender_id, e.message.classification.clone()))
             .ok_or_else(not_found)?;

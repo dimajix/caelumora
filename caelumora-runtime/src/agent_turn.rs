@@ -754,7 +754,7 @@ mod tests {
         }).collect::<Vec<_>>();
         assert_eq!(reasoning_seen(&state, first.id), [false, false]);
         assert_eq!(reasoning_seen(&state, second.id), [false, false, true], "the first answer's reasoning, from the same turn");
-        assert!(state.transcript.entries().iter().all(|e| e.message.reasoning.is_some()), "stored reasoning is untouched");
+        assert!(state.transcript.entries().all(|e| e.message.reasoning.is_some()), "stored reasoning is untouched");
 
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.

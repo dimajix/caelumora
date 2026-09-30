@@ -1,6 +1,6 @@
 # 08 — "Retry" and changing past answers
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions & channels
 
 ## The problem
@@ -207,3 +207,18 @@ and comes later.
   a lowering of the channel - are to become dead branches of the agent's
   transcript ([145](145-ended-turns-leave-a-record.md)), which needs step 1
   of the plan above (trees) before regenerating does.
+- **2026-09-30** — Step 1 of the plan is done, for all chains at once:
+  `Chain<E>` is a tree with a head. Every entry is stored with the digest
+  of the one it follows (`parent`, beside the entry, not a field of the
+  entry types) and the child last on the active path (`active_child`),
+  and the chain with its head; the former format, a plain list, is not
+  read any more. `entries`, `digest`, `last` and `len` are the active path;
+  `all_entries` every branch - used for looking up a message by id
+  (`recorded_context_of`, `reclassify_message`, `MessageHistory::reclassify`),
+  for `fit_into`, and for the next number of a note or memory, which is
+  never given twice on any branch. `prefix` finds an entry on any branch.
+  Instead of `fork_at` and `switch_to`, the chain has one `move_head`;
+  `children` and `leaf_from` (following `active_child`, as Open WebUI and
+  Claude do when switching back to a branch) are what the `< n/m >`
+  switch of step 4 needs. The wrappers get their branching methods with
+  their first caller ([145](145-ended-turns-leave-a-record.md), step 2).
