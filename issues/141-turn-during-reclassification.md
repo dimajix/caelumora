@@ -1,6 +1,6 @@
 # 141 — A turn running while its channel is lowered loses its answer
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -59,3 +59,21 @@ messages are classified below the channel and admitted.
   `Turn::give_up_turn` keeps a turn as a dead branch and tells the agent,
   by name only, which tools ran once the turn no longer flows into the
   channel. Cancelling on a lowering needs a reason of its own for it.
+- **2026-09-30** — Decided and done. A new control method that only
+  interrupts (`recheck_turn`) was weighed and not taken: the existing
+  `cancel` suffices, since the channel cancels only when it is lowered,
+  when practically every running turn is affected. `ChannelLoop::reclassify`
+  cancels the channel's turns and keeps it quiet once the new
+  classification is stored, if what the channel held may not be put into
+  it as it is now (`ActionType::Publish`, in the reclassifier's name);
+  `cancel_actors` is shared with `ChannelLoop::cancel`. Every agent asks
+  before each step of a turn whether the turn still flows into the
+  channel, and gives it up as `GivenUpReason::Lowered { channel }` if not -
+  also after a cancel, instead of taking it over, and also a turn begun
+  just before the change or resumed after a restart - telling the users
+  with `TurnFailed`. Waiting for an approval now waits on the turn's
+  cancellation token too, so `cancel` and `stop` end it at once (before,
+  both waited for a decision, and a stopped agent was aborted with its
+  turn left in its state). The web UI's release warning for a channel
+  says that answers being written are discarded. Refusing a lowering while
+  a turn runs is not needed any more.

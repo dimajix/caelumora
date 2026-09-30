@@ -120,9 +120,9 @@ the transcript and the history.
         So the agent's model does not see them, nor does the channel,
         while what they were produced from can still be asked for;
     *   the transcript's last message of the turn is marked `given_up`,
-        with the reason (failed, with what its users were told; stopped),
-        the
-        time and how many messages were the turn's;
+        with the reason (failed, with what its users were told; lowered,
+        with the channel's new classification; stopped), the time and how
+        many messages were the turn's;
     *   nothing it staged is applied - no note, nothing remembered;
     *   what its tools did stays done. If a call ran (its result has a
         start), the agent is told on the active branch, in an internal
@@ -134,7 +134,15 @@ the transcript and the history.
         denied, or given up while waiting for approval - is not told.
 
     A turn that produced no message leaves nothing: there is nothing to
-    keep. `cancel` does not give a turn up; it takes it over.
+    keep. `cancel` does not give a turn up; it takes it over - unless the
+    turn no longer flows into its channel.
+
+Before every step of a turn, the agent asks whether the turn still flows
+into its channel as it is now (`ActionType::Publish` of the turn's
+classification, in the agent's name). Once the channel was lowered below
+it, the turn is given up as `Lowered`, whatever it was about to do - run a
+tool, take the turn over after a cancel - and the users are told with
+`TurnFailed` (issue 141, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 Both end the turn as an `EndedTurn`, which sends the turn's last event -
 `FullResponseGenerated` or `TurnFailed` - with the contexts and the

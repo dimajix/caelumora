@@ -55,3 +55,6 @@ structure.
   [145](145-ended-turns-leave-a-record.md): the maintainer asked why
   stopping needs no permission. It needs none as the consequence of an act
   that was checked, but `actor_by_id` lets a frontend call it directly.
+- **2026-09-30** — [141](141-turn-during-reclassification.md) added no
+  control method: lowering a channel uses `cancel`, as a consequence of
+  the reclassification (`ChannelLoop::cancel_actors`).

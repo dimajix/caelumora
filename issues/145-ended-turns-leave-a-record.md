@@ -166,3 +166,8 @@ conversation.
   `HistoryEntry` is `crate::message_history`; `message.rs` keeps `Message`
   and the parts both chains of messages share (`MessageEntry`,
   `push_message`, `messages_of`, `last_message_id_of`, crate-internal).
+- **2026-09-30** — A gap found with [141](141-turn-during-reclassification.md):
+  an agent stopped while waiting for an approval did not see the stop
+  until a decision came, and was aborted by its channel before, with its
+  turn left in its state instead of given up. Waiting now ends on the
+  turn's cancellation token too, so the turn is given up at once.

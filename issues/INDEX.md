@@ -94,7 +94,7 @@ against it, and what came out of the last attempt.
 | [120](120-participant-copies.md) | done | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
 | [121](121-agent-controller-per-process.md) | done | An agent that takes part in several running sessions has one controller in each, so its document has more than one writer. |
 | [124](124-observer-participants.md) | open | Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live. |
-| [141](141-turn-during-reclassification.md) | open | A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it. |
+| [141](141-turn-during-reclassification.md) | done | A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Identity and access management
@@ -142,6 +142,7 @@ against it, and what came out of the last attempt.
 | [127](127-tool-executor-not-replaceable.md) | done | The tool executor is fixed in the runtime, so how tools are executed cannot be tried out by configuring a different component. |
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
 | [145](145-ended-turns-leave-a-record.md) | done | A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain. |
+| [148](148-cancelled-call-without-result.md) | open | A turn cancelled while tool calls are pending is taken over with the calls but without results, so the transcript holds calls never answered. |
 
 ## User interaction
 

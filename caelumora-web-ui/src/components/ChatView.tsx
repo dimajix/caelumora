@@ -753,7 +753,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           current={channel.classification}
           levels={CONFIDENTIALITY_LEVELS}
           compartments={compartments}
-          releaseWarning="This releases the channel: everything in it - its history, and what its agents know - becomes readable by the wider circle. What was read under the old classification is not retracted by raising it again."
+          releaseWarning="This releases the channel: everything in it - its history, and what its agents know - becomes readable by the wider circle. What was read under the old classification is not retracted by raising it again. Answers the agents are writing right now are discarded."
           onSubmit={async (c) => setChannel(await api.reclassifyChannel(sessionId, channelId, c))}
           onClose={() => setReclassifying(null)}
         />

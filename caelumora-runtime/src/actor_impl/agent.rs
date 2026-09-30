@@ -17,7 +17,7 @@ use crate::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
-use caelumora_model::confidentiality::Visibility;
+use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::transcript::{GivenUpReason, GivenUpTurn};
 use caelumora_model::plan::PlanProgress;
@@ -494,22 +494,46 @@ impl AgentActor {
         }
     }
 
-    /// How the tool calls that ran in `turn` are told when it is given up
-    /// (issue 145): in full while what the turn saw may still flow into
-    /// the channel (`ActionType::Publish`, in the agent's name, as its
-    /// tools' results are admitted), else - the channel was lowered
-    /// meanwhile, or is gone - only which tools ran.
-    async fn carried_calls(&self, turn: &Turn<'_>) -> CarriedCalls {
-        let turn_classification = turn.classification();
+    /// Whether what `turn` saw may still flow into the channel as it is
+    /// now (`ActionType::Publish`, in the agent's name, as its tools'
+    /// results are admitted) - which it may not once the channel was
+    /// lowered below the classification the turn began with (issue 141).
+    async fn turn_flow(&self, turn: &Turn<'_>) -> TurnFlow {
         let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else {
-            return CarriedCalls::NamesOnly { classification: turn_classification };
+            return TurnFlow::NoChannel;
         };
         let context = turn.security_context();
-        let action = ActionType::Publish { classification: &turn_classification, actor: context.caller_id, channel: &channel };
+        let action = ActionType::Publish { classification: &turn.classification(), actor: context.caller_id, channel: &channel };
         if self.actor_runtime.security_manager().check(context, action).await {
-            CarriedCalls::InFull
+            TurnFlow::Flows
         } else {
-            CarriedCalls::NamesOnly { classification: channel }
+            TurnFlow::Lowered(channel)
+        }
+    }
+
+    /// How the tool calls that ran in `turn` are told when it is given up
+    /// (issue 145): in full while the turn still flows into the channel,
+    /// else - the channel was lowered meanwhile, or is gone - only which
+    /// tools ran.
+    async fn carried_calls(&self, turn: &Turn<'_>) -> CarriedCalls {
+        match self.turn_flow(turn).await {
+            TurnFlow::Flows => CarriedCalls::InFull,
+            TurnFlow::Lowered(channel) => CarriedCalls::NamesOnly { classification: channel },
+            TurnFlow::NoChannel => CarriedCalls::NamesOnly { classification: turn.classification() },
+        }
+    }
+
+    /// Gives `turn` up because its channel was lowered to `channel` (issue
+    /// 141) - nothing of it may be taken over - and tells the channel's
+    /// users with `TurnFailed`.
+    async fn give_up_lowered<'a>(&self, turn: &mut Turn<'a>, channel: Classification, output: &dyn EventSender) {
+        let agent_name = self.agent_controller.name();
+        info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id, agent_name, channel);
+        let carried = CarriedCalls::NamesOnly { classification: channel.clone() };
+        let ended = turn.give_up_turn(GivenUpReason::Lowered { channel: channel.clone() }, carried);
+        let message = format!("The channel's classification was lowered to {channel} while {agent_name} was answering; the answer was discarded.");
+        if let Err(e) = ended.send_event(ActorEvent::TurnFailed { message }, output).await {
+            warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id, agent_name, e);
         }
     }
 
@@ -574,7 +598,14 @@ impl AgentActor {
             )
         };
 
-        match rx.recv_matching(is_approval_event).await {
+        // A cancel or a stop ends the waiting, not only an approval: the run
+        // loop then finds what it was told to do.
+        let cancelled = self.turn_token();
+        let received = tokio::select! {
+            received = rx.recv_matching(is_approval_event) => received,
+            _ = cancelled.cancelled() => return Ok(Some(ActorState::WaitingForApproval)),
+        };
+        match received {
             Some(event) => {
                 let (req, status) = match &event.event {
                     ActorEvent::ApprovalGranted(r) => (r, ApprovalStatus::Approved),
@@ -858,6 +889,15 @@ impl AgentActor {
 }
 
 
+/// Whether a turn may still flow into its channel (`AgentActor::turn_flow`).
+enum TurnFlow {
+    Flows,
+    /// It may not: the channel is classified so now.
+    Lowered(Classification),
+    /// The channel is gone.
+    NoChannel,
+}
+
 /// What `state` says the agent saw when it produced `message`.
 fn context_of(state: &AgentChannelState, actor: ActorId, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
     let reference = state.recorded_context_of(message)
@@ -921,6 +961,19 @@ impl Actor for AgentActor {
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
             let span = self.state_span(current_state, &turn);
+
+            // Before every step of a turn: a turn that no longer flows into
+            // its channel - lowered meanwhile - is given up, whatever it was
+            // about to do; nothing of it is run or taken over (issue 141).
+            if Self::is_turn_state(current_state) {
+                if let TurnFlow::Lowered(channel) = self.turn_flow(&turn).await {
+                    self.give_up_lowered(&mut turn, channel, &*output).instrument(span).await;
+                    self.processing_state.store(ActorState::Idle);
+                    self.store_channel_state(&mut turn).await;
+                    continue;
+                }
+            }
+
             let result = async { Ok::<_, anyhow::Error>(match current_state {
                 ActorState::Idle => {
                     self.handle_waiting(false, &mut turn, &mut rx, &*output).await?

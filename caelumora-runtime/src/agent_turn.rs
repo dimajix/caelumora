@@ -112,6 +112,7 @@ fn executed_calls(entries: &[TurnEntry]) -> Vec<(Option<&caelumora_model::tool::
 fn given_up_because(reason: &GivenUpReason) -> &'static str {
     match reason {
         GivenUpReason::Failed { .. } => "it failed",
+        GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
         GivenUpReason::Stopped => "you were stopped",
     }
 }

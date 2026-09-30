@@ -219,7 +219,13 @@ dropped rather than awaited: `Actor::cancel` is synchronous, flips the
 agent's `ProcessingStateHolder` to `Cancelling` and cancels the turn's
 `CancellationToken`. The streaming loop waits on that token next to the
 model's stream, so the request is abandoned at once, wherever it stands
-(issue 76).
+(issue 76). Waiting for an approval waits on it too: a turn waiting for a
+decision ends at once, without one.
+
+Lowering a channel's classification cancels its turns in the same way,
+as a consequence of the reclassification; each agent then gives its turn
+up instead of taking it over (issue 141, see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 Afterwards the channel is *quiet* until it is woken. What is said is still
 delivered, so that every agent's transcript keeps up with the history, but

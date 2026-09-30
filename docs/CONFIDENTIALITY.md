@@ -127,8 +127,29 @@ channel, and only with configured compartments.
     channel's compartments added to its audience, none if the channel is
     general), since the agents in the channel carry what they know into
     what they write next. Messages released further before keep their
-    wider audience. A turn that is running keeps the classification it
-    began with until it ends.
+    wider audience.
+
+    A turn that is running keeps the classification it began with, and
+    what it saw is released by nobody: the owner decided on what the
+    channel held, not on what the turn read elsewhere. So lowering a
+    channel ends its turns (issue 141):
+    *   once stored, the channel cancels its turns and stays quiet, as
+        `ChannelLoop::cancel` does. Lowered means that what the channel
+        held, classified as it was, may not be put into it as it is now
+        (`ActionType::Publish`, in the name of whoever reclassifies);
+        raising it ends nothing;
+    *   every agent asks before each step of a turn whether the turn still
+        flows into the channel as it is now. One that does not is given up
+        (`GivenUpReason::Lowered`, with the new classification) rather than
+        taken over - also when it was cancelled, also when it began just
+        before the change or is resumed after a restart: no tool runs any
+        more, and nothing of it reaches the channel or the conversation.
+        Its messages stay as a branch no longer active; the agent is told
+        which tools ran, not with what (see
+        [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)); the
+        users get a `TurnFailed` saying why.
+
+    The web UI says so when a change releases the channel.
 *   **A message** (`ChannelLoop::reclassify_message`, REST `PUT
     …/messages/{mid}/classification`) is changed in place in the history -
     its digest does not cover its classification, so the record stays what
@@ -387,10 +408,6 @@ still open:
     configured with one classification for all of them
     ([139](../issues/139-mcp-result-classification.md)). Configuring a tool
     with a classification is trusted: it is not asked as `Classify`.
-*   **A turn during a reclassification.** A turn keeps the classification
-    it began with: its messages, after the channel was lowered, are
-    classified above the channel and refused by it
-    ([141](../issues/141-turn-during-reclassification.md)).
 *   **Roles from directories.** Roles come from the configuration of the
     user provider; mapping directory groups to roles, and roles of real
     user providers, is [142](../issues/142-roles.md). Events about a

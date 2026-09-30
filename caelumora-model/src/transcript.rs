@@ -37,6 +37,10 @@ pub struct GivenUp {
 pub enum GivenUpReason {
     /// It failed; `message` is what its users were told.
     Failed { message: String },
+    /// The channel's classification was lowered to `channel` while the
+    /// turn ran (issue 141): what the turn saw may not flow into it any
+    /// more.
+    Lowered { channel: crate::confidentiality::Classification },
     /// The agent was stopped, leaving the channel: removed from it, or the
     /// channel deleted. Who did that is a matter of that act, not of its
     /// consequence - the audit log's (issue 140).
