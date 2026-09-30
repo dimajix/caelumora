@@ -1134,7 +1134,6 @@ mod tests {
         let mut turn = Turn::new(
             AgentId::default(),
             String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
         let appender = TranscriptAppender {};
         let provider = StateContextProvider {
             prompt_providers: vec![],
@@ -1149,6 +1148,8 @@ mod tests {
         assert_eq!(output.len(), input.len());
         assert_eq!(output[0].id, input[0].id);
 
+        // Perceived between turns, given in the next.
+        turn.begin();
         provider
             .current_context(&mut turn)
             .await
@@ -1205,12 +1206,12 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut turn = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
         let mut earlier = make_message("earlier");
         earlier.role = MessageRole::User;
         let mut question = make_message("question");
         question.role = MessageRole::User;
         turn.extend_transcript(vec![earlier, question]);
+        turn.begin();
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
             "the system prompt first, the notes before the turn's input");
@@ -1220,6 +1221,7 @@ mod tests {
         let mut own = make_message("my answer");
         own.sender_id = ActorId::Agent(agent_id);
         turn.extend_transcript(vec![own]);
+        turn.begin();
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
     }

@@ -187,7 +187,7 @@ against it, and what came out of the last attempt.
 | [117](117-message-prev-id.md) | open | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
 | [119](119-seen-item-and-context-item.md) | done | What a model saw when it produced a message and what its turn gave it are two types of the same thing. |
 | [135](135-sender-names-in-model-input.md) | open | In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what. |
-| [136](136-virtual-transcript.md) | open | A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet. |
+| [136](136-virtual-transcript.md) | done | A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet. |
 
 ## Maintenance
 

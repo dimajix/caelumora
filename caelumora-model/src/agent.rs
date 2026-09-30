@@ -1,8 +1,8 @@
 use crate::actor::{ActorId, ActorState, EventContext};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
-use crate::context::{ContextFrame, ContextRef};
-use crate::message::{Message, Transcript, MessageHistory, MessageId};
+use crate::context::{ContextRef, KnowledgeRef};
+use crate::message::{Message, Transcript, TranscriptEntry, MessageHistory, MessageId};
 use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
@@ -138,17 +138,16 @@ pub struct TurnState {
     /// Which labels the agent may publish to the channel in this turn, as
     /// the `SecurityManager` decided when it began (issue 61).
     pub publication: crate::confidentiality::Publication,
-    /// What the model is given, as references: the transcript the turn
-    /// began with, the prompt parts its `ContextProvider` placed, the rules
-    /// of the model (issues 47, 49). Resolved by
-    /// `crate::context::ContextResolver`.
-    pub frame: ContextFrame,
-    /// The messages the turn produced so far.
-    pub messages: Vec<Message>,
-    /// Knowledge read in the turn, each with the number of messages the
-    /// turn had produced by then: it counts for the messages after it
-    /// (issue 17).
-    pub knowledge: Vec<TurnKnowledge>,
+    /// What the next message of the turn is produced from, as references
+    /// (issues 47, 49, 136): the transcript so far - the agent's, continued
+    /// by the turn's own messages - the prompt parts placed in it, the
+    /// knowledge read, the rules of the model. Resolved by
+    /// `crate::context::ContextResolver`; what is recorded with each
+    /// message.
+    pub context: ContextRef,
+    /// The messages the turn produced so far, each with the digest it will
+    /// have in the transcript and what it was produced from.
+    pub entries: Vec<TurnEntry>,
     /// Changes to the agent's `AgentState`, applied to the current state
     /// when the turn completes (issue 62).
     pub agent_changes: Vec<AgentStateChange>,
@@ -164,12 +163,41 @@ pub struct TurnState {
     pub requested_state: Option<ActorState>,
 }
 
-/// Knowledge read in a turn, and how many messages the turn had produced
-/// before it was read.
+impl TurnState {
+    /// Appends `message`, produced by the turn from its context as it
+    /// stands, and moves the context on past it (issue 136). The message
+    /// gets the digest it will have in the transcript, computed as the
+    /// transcript's chain would: the turn's messages continue the agent's
+    /// transcript, which does not change while a turn runs.
+    pub fn push(&mut self, message: Message) {
+        let context = self.context.clone();
+        let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
+        self.context.transcript = Some(digest);
+        self.context.turn_entries += 1;
+        self.entries.push(TurnEntry { entry: TranscriptEntry { message, digest }, context });
+    }
+
+    /// The messages the turn produced so far.
+    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+        self.entries.iter().map(|e| &e.entry.message)
+    }
+
+    /// Records that the turn read `reference` (issue 17): it counts for the
+    /// messages produced from now on. Recorded once.
+    pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
+        if !self.context.knowledge.contains(&reference) {
+            self.context.knowledge.push(reference);
+        }
+    }
+}
+
+/// A message a turn produced, not yet taken over (issue 136): as it will be
+/// in the transcript, and what it was produced from - what is recorded with
+/// it in the history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnKnowledge {
-    pub reference: crate::context::KnowledgeRef,
-    pub before: usize,
+pub struct TurnEntry {
+    pub entry: TranscriptEntry,
+    pub context: ContextRef,
 }
 
 /// A change to an [`AgentChannelState`], staged by a turn and applied when
@@ -244,14 +272,18 @@ mod tests {
 
         let waiting = AgentChannelState {
             processing_state: ActorState::WaitingForApproval,
-            turn: Some(TurnState { messages: vec![Message::default()], ..TurnState::default() }),
+            turn: Some({
+                let mut turn = TurnState::default();
+                turn.push(Message::default());
+                turn
+            }),
             ..AgentChannelState::default()
         };
         let json = serde_json::to_string(&waiting).unwrap();
         assert!(json.contains("\"WaitingForApproval\""));
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.processing_state, ActorState::WaitingForApproval);
-        assert_eq!(decoded.turn.map(|t| t.messages.len()), Some(1), "the turn is resumed from what was stored");
+        assert_eq!(decoded.turn.map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
     }
 
     #[test]

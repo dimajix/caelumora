@@ -58,7 +58,7 @@ impl ContextProvider for StateContextProvider {
             }
         }
 
-        // The whole transcript, the system prompt before everything.
+        // The system prompt before everything.
         let transcript = &state.agent_channel_state().transcript;
         let mut parts = Vec::with_capacity(2);
         if !start.is_empty() {
@@ -77,8 +77,7 @@ impl ContextProvider for StateContextProvider {
             };
             parts.push(PromptPart { role: MessageRole::User, text: before_input.join("\n\n"), after });
         }
-        let digest = transcript.digest();
-        state.set_context(digest, parts);
+        state.set_context(parts);
 
         Ok(())
     }

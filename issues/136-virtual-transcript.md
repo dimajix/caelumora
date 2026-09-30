@@ -1,6 +1,6 @@
 # 136 — A turn under way is resolved differently from a recorded message
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -91,3 +91,30 @@ further kind of part placed within a turn has to be taught both.
   `ContextRef` and `ContextFrame`, are two. Appending the turn's messages
   to the transcript at once was weighed first; the virtual transcript was
   chosen instead, because it keeps the stored transcript growing only.
+- **2026-09-30** — Done as chosen.
+  - `TurnState` holds `context: ContextRef` - the reference of its next
+    message - and `entries: Vec<TurnEntry>`: each message as it will be in
+    the transcript (`TranscriptEntry`, with its digest) and the context it
+    was produced from. `TurnState::push` computes the digest from
+    `context.transcript` - always the end of the view - and moves the
+    context on; `Turn::push_message` and `ToolCalls::collect` both use it.
+    `TurnState::record_knowledge` adds to `context.knowledge`.
+  - `TranscriptView` (`caelumora_model::context`) continues the stored
+    transcript with the turn's entries; `prefix` returns the entries a
+    digest names across both. `ContextResolver` holds one and has one
+    method, `resolve`.
+  - `commit_turn` appends the messages to the transcript and records each
+    with its `TurnEntry::context`; if the transcript's digest then differs
+    from the last entry's, it logs that the transcript changed during the
+    turn.
+  - Gone: `ContextFrame`, `ContextFrame::reference`, `TurnPromptRef`,
+    `TurnKnowledge`, `TurnState::knowledge`, `ContextResolver::current`.
+    `Turn::messages` returns copies.
+  - **`Turn::set_context` no longer takes the transcript's digest**, only
+    the parts: the turn's context begins on the transcript as it stands in
+    `next_turn`, and the turn's own messages continue exactly that - a
+    provider naming another transcript would be ignored from the first
+    message on. Which transcript a model is given becomes a question again
+    with compression ([16](16-context-compression.md)), which produces
+    another context altogether. Two tests that appended to the transcript
+    within a turn now perceive between turns, as the runtime does.

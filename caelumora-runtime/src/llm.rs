@@ -66,7 +66,7 @@ pub trait LLMClient: Send + Sync + Debug {
 
     /// How the model is to be given its context - which reasoning of
     /// earlier messages, say (issue 63). A property of the model, fixed in
-    /// the frame of every turn and applied where the model's input is
+    /// the context of every turn and applied where the model's input is
     /// resolved (`ContextResolver`), so that `context` holds only what the
     /// model is to see.
     fn profile(&self) -> ModelProfile;

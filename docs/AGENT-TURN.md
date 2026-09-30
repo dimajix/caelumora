@@ -83,9 +83,9 @@ the turn is and what it has done so far:
 *   the channel as the confidentiality rules see it
     (`ChannelClassification`),
 *   what the `SecurityManager` lets it publish there (`Publication`),
-*   the frame of the model's context (see [The frame and the
-    resolver](#the-frame-and-the-resolver)), the messages produced, the
-    knowledge read,
+*   what its next message is produced from (see [The turn's context and
+    the resolver](#the-turns-context-and-the-resolver)), the messages
+    produced, each with what it was produced from,
 *   the changes staged to the agent's states,
 *   the tool calls, the plan and the state a tool requested.
 
@@ -197,8 +197,8 @@ history:
     back](#reasoning-given-back).
 
 `AgentChannelState::recorded_context_of(message)` finds such a reference,
-and the `ContextResolver` resolves it (see [The frame and the
-resolver](#the-frame-and-the-resolver)) to a `ResolvedContext`: the
+and the `ContextResolver` resolves it (see [The turn's context and the
+resolver](#the-turns-context-and-the-resolver)) to a `ResolvedContext`: the
 messages and prompt parts the model saw, in the order it was given them,
 each message with its reasoning only where the model was given it. The
 channel's history identifies the agent by the message's sender.
@@ -220,10 +220,10 @@ reasoning that led to a tool call within the same turn. The agent's
 Whatever the rule, a model is never given another actor's reasoning.
 
 The profile is handed to every `Turn` in `Turn::new`, from the agent's
-model, fixed in the frame of a turn when it begins (`Turn::next_turn`) -
+model, fixed in the context of a turn when it begins (`Turn::next_turn`) -
 so that a resumed turn keeps the profile it began with - and applied in
 one place: the `ContextResolver`, which resolves what the model is given -
-the context the turn began with, then the messages the turn produced
+the transcript before the turn, then the messages the turn produced
 (`ReasoningHistory::given`). A backend therefore gets only what its model
 may see and implements no rule of its own. The stored transcript keeps all
 reasoning; only the model's input leaves it out.
@@ -244,9 +244,13 @@ scheme's.
 ### The context only grows
 
 This relies on the context only ever growing, so that an earlier digest
-names a prefix of it. Compressing the context
-([16](../issues/16-context-compression.md)) produces a new context that
-came from the old one but does not continue it. Entries written before keep
+names a prefix of it. A turn under way does not change it either: its
+messages are appended only when it is taken over (see [The turn's context
+and the resolver](#the-turns-context-and-the-resolver)).
+
+Compressing the context ([16](../issues/16-context-compression.md))
+produces a new context that came from the old one but does not continue
+it. Entries written before keep
 referring to the old context, which therefore has to remain resolvable;
 only new entries refer to the new one. The link from the new context to the
 one it came from is a relation of its own, not the predecessor link of the
@@ -329,36 +333,46 @@ The rule is applied when the context is resolved, to prompt parts and to
 messages of the transcript alike, and recorded with the profile; the
 system prompt at the front is a system message under either rule.
 
-### The frame and the resolver
+### The turn's context and the resolver
 
-What the model is given is not stored; it is resolved from what is (issue
-49, `caelumora_model::context`):
+What the model is given is not stored; it is resolved from what is (issues
+49, 136, `caelumora_model::context`):
 
-*   **The frame.** A turn holds a `ContextFrame` (`TurnState::frame`): the
-    digest of the transcript its model is given, a `PromptRef` for every
-    prompt part, a `TurnPromptRef` for every instruction placed among the
-    turn's messages - by the number of messages it follows, since they are
-    not in the transcript yet - and the model's profile. References only -
-    the turn keeps no copy of the transcript.
+*   **The turn's context.** A turn holds the `ContextRef` of its next
+    message (`TurnState::context`): the digest of the transcript so far,
+    a `PromptRef` for every prompt part, the knowledge read, the model's
+    profile, and how many of the transcript's last entries are the turn's
+    own. References only - the turn keeps no copy of the transcript.
+    `Turn::next_turn` begins it on the transcript as it stands.
+*   **The turn's messages.** `Turn::push_message` gives a message the
+    digest it will have in the transcript - computed as the chain would,
+    continuing the transcript - keeps it with a copy of the context it was
+    produced from (`TurnEntry`), and moves the context on past it. The
+    messages go into the transcript only when the turn is taken over; a
+    discarded turn leaves it untouched. Until then a `TranscriptView`
+    continues the stored transcript with them. This relies on the
+    transcript not changing while a turn runs - nothing is perceived
+    during one - and `commit_turn` logs it if it did.
 *   **Placing the parts.** The `ContextProvider` calls `Turn::set_context`
-    with the transcript's digest and every part as a `PromptPart`: its
-    text, its role and the transcript entry it follows. `set_context` keeps
-    every part's text in `AgentChannelState::prompts`, once per digest,
-    and puts its reference into the frame.
-*   **Resolving.** The `ContextResolver` resolves a frame against the
-    agent's transcript and prompt texts: the transcript it names, every
-    part after its entry, then the turn's own messages with the
-    instructions among them, each as the profile gives it.
-    `Turn::full_context` gives the model the result, a prompt part as a
+    with every part as a `PromptPart`: its text, its role and the
+    transcript entry it follows. An instruction within the turn is placed
+    after its last message (`Turn::place_turn_prompt`). Either way the text
+    is kept in `AgentChannelState::prompts`, once per digest, and the
+    reference goes into the turn's context, where it counts for the
+    messages produced from then on - like knowledge read.
+*   **Resolving.** The `ContextResolver` resolves a `ContextRef` against
+    the view and the prompt texts: the transcript it names, of which the
+    last `turn_entries` are the turn's own, with every part after its
+    entry, each as the profile gives it. `Turn::full_context` resolves the
+    turn's context and gives the model the result, a prompt part as a
     message in its role.
-*   **Recording.** `commit_turn` records with every message the frame as it
-    stood for that message (`ContextFrame::reference`): the instructions
-    placed before it become `PromptRef`s after the entries they followed,
-    now that those are in the transcript. The same resolver resolves that
-    `ContextRef` when what the agent saw is asked for.
+*   **Recording.** `commit_turn` appends the turn's messages to the
+    transcript and records with each the context it was produced from.
+    The same resolver resolves that `ContextRef` when what the agent saw is
+    asked for.
 
-What the model was given and what is recorded as given are resolved by one
-implementation, and therefore cannot diverge.
+What the model was given and what is recorded as given are the same
+reference, resolved by one implementation, and therefore cannot diverge.
 
 ## Asking what an agent saw
 

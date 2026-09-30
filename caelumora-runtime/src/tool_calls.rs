@@ -103,7 +103,7 @@ impl<'t> ToolCalls<'t> {
         if self.turn.tool_calls.iter().any(|c| c.result.is_none()) {
             return None;
         }
-        let prev_id = self.turn.messages.last().map(|m| m.id).unwrap_or_default();
+        let prev_id = self.turn.messages().last().map(|m| m.id).unwrap_or_default();
         let tool_results = mem::take(&mut self.turn.tool_calls).into_iter()
             .filter_map(|c| c.result)
             .collect();
@@ -119,7 +119,7 @@ impl<'t> ToolCalls<'t> {
             internal,
             ..Message::default()
         };
-        self.turn.messages.push(message.clone());
+        self.turn.push(message.clone());
         Some(message)
     }
 }
@@ -165,6 +165,6 @@ mod tests {
         assert_eq!(results, [("run", ToolResultStatus::Ok), ("ask", ToolResultStatus::Denied)]);
         assert_eq!(message.role, MessageRole::Tool);
         assert!(view(&mut turn).is_empty(), "the step's calls are done");
-        assert_eq!(turn.messages.last().map(|m| m.id), Some(message.id), "the turn keeps it for the model");
+        assert_eq!(turn.messages().last().map(|m| m.id), Some(message.id), "the turn keeps it for the model");
     }
 }

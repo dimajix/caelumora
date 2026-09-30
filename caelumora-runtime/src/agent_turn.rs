@@ -33,9 +33,8 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelClassification, Publication};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::agent::TurnKnowledge;
-use caelumora_model::context::{ContextFrame, ContextItem, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef, TurnPromptRef};
-use caelumora_model::digest::Digest;
+use caelumora_model::agent::TurnEntry;
+use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
@@ -94,8 +93,8 @@ pub struct Turn<'a> {
     /// reads it and stages changes, never holds it.
     agent_state: Arc<AgentStateHandle>,
     /// How the agent's model is given its context (issues 49, 63): a
-    /// property of that model (`LLMClient::profile`), fixed in the frame of
-    /// every turn that begins (`next_turn`).
+    /// property of that model (`LLMClient::profile`), fixed in the context
+    /// of every turn that begins (`next_turn`).
     profile: ModelProfile,
 }
 
@@ -170,8 +169,8 @@ impl<'a> Turn<'a> {
     ///
     /// - appends the messages the agent produced (`push_message`) to its
     ///   transcript, and those that are not internal to its history, each
-    ///   with what it was produced from - the transcript before it, the
-    ///   turn's prompt parts and what it had read;
+    ///   with what it was produced from (issue 136) - the transcript before
+    ///   it, the prompt parts placed before it and what it had read;
     /// - applies the changes staged to its state in this channel, anchored at
     ///   the turn's last message in the history;
     /// - applies the changes staged to its own state to that state as it is
@@ -184,9 +183,9 @@ impl<'a> Turn<'a> {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
         // Every part is used up exactly once.
-        let TurnState { frame, messages, knowledge, agent_changes, channel_changes, .. } = turn;
-        let final_messages = messages.iter().filter(|m| !m.internal).cloned().collect();
-        let channel_state_changed = self.record_turn(&frame, messages, knowledge, channel_changes);
+        let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
+        let TurnState { entries, agent_changes, channel_changes, .. } = turn;
+        let channel_state_changed = self.record_turn(entries, channel_changes);
         if let Err(e) = self.agent_state.apply(agent_changes, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
@@ -220,7 +219,11 @@ impl<'a> Turn<'a> {
             security_context,
             classification,
             publication,
-            frame: ContextFrame { profile: self.profile, ..ContextFrame::default() },
+            context: ContextRef {
+                transcript: self.agent_channel_state.transcript.digest(),
+                profile: self.profile,
+                ..ContextRef::default()
+            },
             ..TurnState::default()
         });
     }
@@ -238,17 +241,17 @@ impl<'a> Turn<'a> {
         &self.current().event_context
     }
 
-    /// What the model is given for the next step: the transcript and the
-    /// prompt parts the turn's `ContextProvider` gave it, then the messages
-    /// the turn produced so far - each as the model's profile gives it
-    /// (issue 63), every prompt part as a message of the agent in its role.
-    /// Resolved from the turn's frame the way a recorded message's context
-    /// is (`ContextResolver`), so the two cannot diverge.
+    /// What the model is given for the next step: the transcript, continued
+    /// by the messages the turn produced so far, with the prompt parts where
+    /// they were placed - each as the model's profile gives it (issue 63),
+    /// every prompt part as a message of the agent in its role. Resolved
+    /// from the turn's context the way a recorded message's context is
+    /// (`ContextResolver`, issue 136), so the two cannot diverge.
     pub(crate) fn full_context(&self) -> Result<Vec<Message>> {
-        let items = ContextResolver::of(self.agent_channel_state)
-            .current(self.current(), ActorId::Agent(self.agent_id))
+        let resolved = ContextResolver::of(self.agent_channel_state)
+            .resolve(&self.current().context, ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
-        Ok(items.into_iter()
+        Ok(resolved.items.into_iter()
             .map(|item| match item {
                 ContextItem::Conversation { message } => message,
                 ContextItem::Prompt { role, text, .. } => Message {
@@ -262,20 +265,22 @@ impl<'a> Turn<'a> {
             .collect())
     }
 
-    /// Sets what the model of the turn is given: the transcript up to
-    /// `transcript`, with `parts` where the `ContextProvider` placed them.
-    /// Every part's text is kept once by digest, so that what the agent saw
-    /// can be told later (issues 06, 47).
-    pub fn set_context(&mut self, transcript: Option<Digest>, parts: Vec<PromptPart>) {
-        let mut prompts = Vec::with_capacity(parts.len());
-        for PromptPart { role, text, after } in parts {
-            let digest = caelumora_model::digest::prompt(&text);
-            self.agent_channel_state.prompts.entry(digest).or_insert(text);
-            prompts.push(PromptRef { text: digest, role, after });
-        }
-        let frame = &mut self.current_mut().frame;
-        frame.transcript = transcript;
-        frame.prompts = prompts;
+    /// Sets the prompt parts the model of the turn is given besides the
+    /// transcript, where the `ContextProvider` placed them - once, at the
+    /// start of the turn; what was placed before is replaced. Every part's
+    /// text is kept once by digest, so that what the agent saw can be told
+    /// later (issues 06, 47).
+    pub fn set_context(&mut self, parts: Vec<PromptPart>) {
+        let prompts = parts.into_iter().map(|PromptPart { role, text, after }| self.keep_prompt(role, text, after)).collect();
+        self.current_mut().context.prompts = prompts;
+    }
+
+    /// Keeps the text of a prompt part once by digest, and returns the
+    /// reference to it, given in `role` after the entry `after`.
+    fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>) -> PromptRef {
+        let digest = caelumora_model::digest::prompt(&text);
+        self.agent_channel_state.prompts.entry(digest).or_insert(text);
+        PromptRef { text: digest, role, after }
     }
 
     /// Places `text`, given in `role`, after the messages the turn has
@@ -283,20 +288,20 @@ impl<'a> Turn<'a> {
     /// model, such as the next step of a plan. A prompt part, not a message:
     /// it is kept once by digest like the others, never goes into the
     /// transcript, and is given as the model's profile says a message in
-    /// `role` there is to be given.
+    /// `role` there is to be given. It counts for the messages produced
+    /// from now on.
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
-        let digest = caelumora_model::digest::prompt(&text);
-        self.agent_channel_state.prompts.entry(digest).or_insert(text);
-        let turn = self.current_mut();
-        let after = turn.messages.len();
-        turn.frame.turn_prompts.push(TurnPromptRef { text: digest, role, after });
+        let after = self.current().context.transcript;
+        let prompt = self.keep_prompt(role, text, after);
+        self.current_mut().context.prompts.push(prompt);
     }
 
-    pub fn messages(&self) -> &Vec<Message> {
-        &self.current().messages
+    /// The messages the turn produced so far.
+    pub fn messages(&self) -> Vec<Message> {
+        self.current().messages().cloned().collect()
     }
     pub(crate) fn push_message(&mut self, message: Message) {
-        self.current_mut().messages.push(message);
+        self.current_mut().push(message);
     }
 
     /// The tool calls of the current step (issue 83): a view that keeps
@@ -376,19 +381,15 @@ impl<'a> Turn<'a> {
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
     pub(crate) fn saw_private_knowledge(&self) -> bool {
-        self.current().knowledge.iter()
-            .any(|k| matches!(k.reference.source,
+        self.current().context.knowledge.iter()
+            .any(|k| matches!(k.source,
                 caelumora_model::context::KnowledgeSource::PrivateNotes { .. } | caelumora_model::context::KnowledgeSource::Memory { .. }))
     }
 
     /// Records that the turn read `reference` (issue 17): it is recorded
     /// with every message the turn produces from now on.
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
-        let turn = self.current_mut();
-        let before = turn.messages.len();
-        if !turn.knowledge.iter().any(|k| k.reference == reference) {
-            turn.knowledge.push(TurnKnowledge { reference, before });
-        }
+        self.current_mut().record_knowledge(reference);
     }
 
     /// The agent's state in this channel as it stands: what components read
@@ -417,20 +418,22 @@ impl<'a> Turn<'a> {
     }
 
     /// The part of `commit_turn` that concerns the agent's state in this
-    /// channel: the turn's `messages`, produced in `frame` after reading
-    /// `knowledge`, and its `changes` to this state. Returns whether there
-    /// were changes.
-    fn record_turn(&mut self, frame: &ContextFrame, messages: Vec<Message>, knowledge: Vec<TurnKnowledge>, changes: Vec<AgentChannelChange>) -> bool {
-        let before = self.agent_channel_state.transcript.extend(messages.clone());
-        for (index, message) in messages.into_iter().enumerate() {
-            if !message.internal {
-                // What was read before the message was produced; the turn
-                // had produced `index` messages by then, which are the last
-                // entries of the transcript before it.
-                let knowledge = knowledge.iter().filter(|k| k.before <= index).map(|k| k.reference).collect();
-                let reference = frame.reference(&before, index, knowledge);
-                self.agent_channel_state.history.push(message, Some(reference));
+    /// channel: the turn's `entries` - its messages, each with what it was
+    /// produced from - and its `changes` to this state. Returns whether
+    /// there were changes.
+    fn record_turn(&mut self, entries: Vec<TurnEntry>, changes: Vec<AgentChannelChange>) -> bool {
+        let expected = entries.last().map(|e| e.entry.digest);
+        for TurnEntry { entry, context } in entries {
+            self.agent_channel_state.transcript.push(entry.message.clone());
+            if !entry.message.internal {
+                self.agent_channel_state.history.push(entry.message, Some(context));
             }
+        }
+        // The turn's messages got their digests continuing the transcript
+        // as it was when the turn began (issue 136); had it changed
+        // meanwhile, what they were produced from could not be told.
+        if expected.is_some() && self.agent_channel_state.transcript.digest() != expected {
+            warn!("Agent {}: its transcript changed during a turn; the contexts recorded for the turn's messages cannot be resolved", self.agent_id);
         }
 
         // A message of the history, not an internal step of the transcript:
@@ -558,8 +561,7 @@ mod tests {
         state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::default() });
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
-        let digest = turn.agent_channel_state().transcript.digest();
-        turn.set_context(digest, Vec::new());
+        turn.set_context(Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
 
         let started = turn.advance_plan(1);
@@ -604,8 +606,7 @@ mod tests {
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), keeps_system);
             turn.begin();
-            let digest = turn.agent_channel_state().transcript.digest();
-            turn.set_context(digest, vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None }]);
+            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None }]);
             turn.set_plan(plan_of(&["only"]));
             turn.advance_plan(0);
             let mut internal = step.clone();
@@ -630,8 +631,7 @@ mod tests {
 
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), keeps_system);
         turn.begin();
-        let digest = turn.agent_channel_state().transcript.digest();
-        turn.set_context(digest, Vec::new());
+        turn.set_context(Vec::new());
         assert_eq!(given(&turn).len(), 3, "a later turn is not given them");
     }
 
@@ -710,8 +710,7 @@ mod tests {
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), profile(ReasoningHistory::CurrentTurn));
             turn.begin();
-            let digest = turn.agent_channel_state().transcript.digest();
-            turn.set_context(digest, Vec::new());
+            turn.set_context(Vec::new());
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap()), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
@@ -733,8 +732,7 @@ mod tests {
         let third = thought(ActorId::Agent(agent), "third");
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), profile(ReasoningHistory::Always));
         turn.begin();
-        let digest = turn.agent_channel_state().transcript.digest();
-        turn.set_context(digest, Vec::new());
+        turn.set_context(Vec::new());
         turn.push_message(third);
         assert_eq!(reasoning_of(&turn.full_context().unwrap()), [true, false, true, true, true]);
     }
@@ -756,8 +754,7 @@ mod tests {
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
-            let digest = turn.agent_channel_state().transcript.digest();
-            turn.set_context(digest, vec![system()]);
+            turn.set_context(vec![system()]);
             let given = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
@@ -795,7 +792,7 @@ mod tests {
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
-            turn.set_context(None, vec![system()]);
+            turn.set_context(vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
     }

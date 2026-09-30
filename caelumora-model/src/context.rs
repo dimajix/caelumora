@@ -5,18 +5,21 @@
 //! prompt part once by digest. What the model is given is not stored but
 //! resolved from them:
 //!
-//! - A turn holds a [`ContextFrame`]: the transcript it began with, the
-//!   prompt parts its `ContextProvider` placed in it, and the rules of the
-//!   agent's model ([`ModelProfile`]).
-//! - With every message of the turn a [`ContextRef`] is recorded, which is
-//!   the frame as it stood for that message.
-//! - The [`ContextResolver`] resolves both against the stored data, in one
-//!   implementation: a frame for the next model call of the turn under way,
-//!   a reference for a message produced earlier. What the model was given
-//!   and what is told as given therefore cannot diverge.
+//! - A turn holds a [`ContextRef`] for its next message: the transcript so
+//!   far, the prompt parts placed in it, the knowledge read and the rules of
+//!   the agent's model ([`ModelProfile`]). With every message it produces,
+//!   the reference as it stood for that message is kept and, when the turn
+//!   is taken over, recorded in the history.
+//! - The messages of a turn under way are not in the transcript yet, but
+//!   have the digests they will have there: a [`TranscriptView`] continues
+//!   the stored transcript with them (issue 136).
+//! - The [`ContextResolver`] resolves a reference against that view and the
+//!   prompt texts - for the next model call as for a message produced
+//!   earlier. What the model was given and what is told as given therefore
+//!   cannot diverge.
 
 use crate::actor::ActorId;
-use crate::agent::{AgentChannelState, TurnState};
+use crate::agent::{AgentChannelState, TurnEntry};
 use crate::digest::Digest;
 use crate::message::{Message, MessageRole, Transcript, TranscriptEntry};
 use serde::{Deserialize, Serialize};
@@ -188,57 +191,14 @@ pub struct PromptPart {
     pub after: Option<Digest>,
 }
 
-/// A prompt part placed among the messages of the turn under way (issue
-/// 49) - an instruction of the runtime, such as the next step of a plan:
-/// the digest of its text, the role it is given in, and how many of the
-/// turn's messages precede it. Those messages are not in the transcript
-/// yet; when the turn is taken over, it becomes a [`PromptRef`] after the
-/// entry of the last of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TurnPromptRef {
-    pub text: Digest,
-    pub role: MessageRole,
-    pub after: usize,
-}
-
-/// What the model of a turn is given, as references (issue 49): the
-/// transcript and the prompt parts its `ContextProvider` gave it, the parts
-/// placed among the turn's own messages, and the rules of the model, fixed
-/// when the turn begins. The messages the turn produces follow the
-/// transcript. Resolved by the [`ContextResolver`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextFrame {
-    /// The digest of the agent's transcript the model is given.
-    pub transcript: Option<Digest>,
-    pub prompts: Vec<PromptRef>,
-    pub turn_prompts: Vec<TurnPromptRef>,
-    pub profile: ModelProfile,
-}
-
-impl ContextFrame {
-    /// The reference recorded for the turn's message `index`, once the
-    /// turn's messages are in the transcript - `before[i]` the digest of
-    /// the transcript before message `i` - and after `knowledge` had been
-    /// read. It names the parts placed among the turn's messages that came
-    /// before it, each after the entry it followed.
-    pub fn reference(&self, before: &[Option<Digest>], index: usize, knowledge: Vec<KnowledgeRef>) -> ContextRef {
-        let mut prompts = self.prompts.clone();
-        prompts.extend(self.turn_prompts.iter()
-            .filter(|p| p.after <= index)
-            .map(|p| PromptRef { text: p.text, role: p.role, after: before.get(p.after).copied().flatten() }));
-        let transcript = before.get(index).copied().flatten();
-        ContextRef { transcript, prompts, knowledge, profile: self.profile, turn_entries: index }
-    }
-}
-
 /// What an agent's model saw when it produced a message (issue 06): the
 /// digest of its `Transcript` before the message - `None` if it was
 /// empty - the prompt parts of that turn, each where it was placed (issue
 /// 47), the knowledge from other places read before the message was
-/// produced (issue 17), and the rules of the model (issue 63). The frame of
-/// the turn as it stood for that message; resolved by the
+/// produced (issue 17), and the rules of the model (issue 63). A turn keeps
+/// one for its next message (`TurnState::context`); resolved by the
 /// [`ContextResolver`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
     /// The digest of the agent's transcript before the message.
     pub transcript: Option<Digest>,
@@ -262,106 +222,105 @@ pub struct ResolvedContext {
     pub items: Vec<ContextItem>,
 }
 
-/// Resolves frames and references against an agent's stored data in a
-/// channel - its transcript and the texts of its prompt parts - into what
-/// its model is given. One implementation for the model call and for
-/// telling afterwards what the model saw.
+/// An agent's transcript continued by the messages of its turn under way
+/// (issue 136), which have the digests they will have once the turn is
+/// taken over. Only the stored part is stored; the view is what references
+/// are resolved against while a turn runs.
+#[derive(Debug, Clone, Copy)]
+pub struct TranscriptView<'a> {
+    stored: &'a Transcript,
+    pending: &'a [TurnEntry],
+}
+
+impl<'a> TranscriptView<'a> {
+    /// The transcript of `state`, continued by its turn under way, if any.
+    pub fn of(state: &'a AgentChannelState) -> Self {
+        let pending = state.turn.as_ref().map(|turn| turn.entries.as_slice()).unwrap_or_default();
+        Self { stored: &state.transcript, pending }
+    }
+
+    /// The entries of the transcript `digest` names - `None`: the empty
+    /// one - or `None` if it is not a prefix of this one.
+    pub fn prefix(&self, digest: Option<&Digest>) -> Option<Vec<&'a TranscriptEntry>> {
+        let Some(digest) = digest else { return Some(Vec::new()) };
+        if let Some(entries) = self.stored.prefix(digest) {
+            return Some(entries.iter().collect());
+        }
+        let end = self.pending.iter().position(|e| &e.entry.digest == digest)?;
+        Some(self.stored.entries().iter().chain(self.pending[..=end].iter().map(|e| &e.entry)).collect())
+    }
+}
+
+/// Resolves references against an agent's data in a channel - its
+/// transcript, continued by its turn under way, and the texts of its prompt
+/// parts - into what its model is given. One implementation for the model
+/// call and for telling afterwards what the model saw.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
-    transcript: &'a Transcript,
+    transcript: TranscriptView<'a>,
     prompts: &'a BTreeMap<Digest, String>,
 }
 
 impl<'a> ContextResolver<'a> {
-    /// The resolver over the stored data of `state`.
+    /// The resolver over the data of `state`.
     pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: &state.transcript, prompts: &state.prompts }
+        Self { transcript: TranscriptView::of(state), prompts: &state.prompts }
     }
 
-    /// What the model of `agent` is given for the next step of `turn`: the
-    /// frame the turn began with, then the messages the turn produced so
-    /// far. `None` if the frame names what is not here.
-    pub fn current(&self, turn: &TurnState, agent: ActorId) -> Option<Vec<ContextItem>> {
-        let frame = &turn.frame;
-        let before = self.entries(frame.transcript.as_ref())?;
-        let during = turn.messages.iter().map(|m| (m, None));
-        self.assemble(&frame.prompts, &frame.turn_prompts, &frame.profile, agent, before, during)
-    }
-
-    /// What the model of `agent` was given for the message `reference` was
-    /// recorded for: the transcript before the message, of which the last
-    /// `turn_entries` are the turn's own, with the prompt parts where they
-    /// were placed. `None` if what it names is not here - a transcript that
-    /// is not a prefix of this one, a prompt that was never recorded, or
-    /// one whose entry is not in the prefix.
+    /// What the model of `agent` is given, or was given, for the message
+    /// `reference` is for - the next one of the turn under way
+    /// (`TurnState::context`) or one recorded in the history: the
+    /// transcript it names, of which the last `turn_entries` are the turn's
+    /// own, with the prompt parts where they were placed. `None` if what it
+    /// names is not here - a transcript that is not a prefix of this one, a
+    /// prompt that was never recorded, or one whose entry is not in the
+    /// prefix.
     pub fn resolve(&self, reference: &ContextRef, agent: ActorId) -> Option<ResolvedContext> {
-        let entries = self.entries(reference.transcript.as_ref())?;
+        let entries = self.transcript.prefix(reference.transcript.as_ref())?;
         let turn_start = entries.len().checked_sub(reference.turn_entries)?;
         let (before, during) = entries.split_at(turn_start);
-        let during = during.iter().map(|e| (&e.message, Some(e.digest)));
-        let items = self.assemble(&reference.prompts, &[], &reference.profile, agent, before, during)?;
+        let items = self.assemble(&reference.prompts, &reference.profile, agent, before, during)?;
         Some(ResolvedContext { reference: reference.clone(), items })
     }
 
-    /// The transcript `digest` names; `None` for the empty transcript.
-    fn entries(&self, digest: Option<&Digest>) -> Option<&'a [TranscriptEntry]> {
-        match digest {
-            Some(digest) => self.transcript.prefix(digest),
-            None => Some(&[]),
-        }
-    }
-
     /// The items the model of `agent` is given: the entries `before` the
-    /// turn, then the turn's messages `during` - each with its digest once
-    /// it is in the transcript - as `profile` gives them, with every part of
-    /// `prompts` after the entry it follows and every part of
-    /// `turn_prompts` after the number of the turn's messages it follows.
-    /// `None` if a part's text is not kept or its place is not there.
-    fn assemble<'m>(
+    /// turn, then those `during` it, as `profile` gives them, with every
+    /// part of `prompts` after the entry it follows. `None` if a part's text
+    /// is not kept or its entry is not there.
+    fn assemble(
         &self,
         prompts: &[PromptRef],
-        turn_prompts: &[TurnPromptRef],
         profile: &ModelProfile,
         agent: ActorId,
-        before: &[TranscriptEntry],
-        during: impl Iterator<Item = (&'m Message, Option<Digest>)>,
+        before: &[&TranscriptEntry],
+        during: &[&TranscriptEntry],
     ) -> Option<Vec<ContextItem>> {
-        let part = |digest: Digest, role: MessageRole| -> Option<ContextItem> {
-            Some(ContextItem::Prompt { digest, role, text: self.prompts.get(&digest)?.clone() })
-        };
         // The parts after the transcript entry `after` - `None`: before
-        // everything - and those after `n` of the turn's messages.
+        // everything.
         let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
-            prompts.iter().filter(|p| p.after == after).map(|p| part(p.text, p.role)).collect()
-        };
-        let after_turn = |n: usize| -> Option<Vec<ContextItem>> {
-            turn_prompts.iter().filter(|p| p.after == n).map(|p| part(p.text, p.role)).collect()
+            prompts.iter()
+                .filter(|p| p.after == after)
+                .map(|p| Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone() }))
+                .collect()
         };
 
         let mut items = after_entry(None)?;
-        for entry in before {
-            items.push(ContextItem::Conversation { message: profile.given(entry.message.clone(), agent, false) });
+        let entries = before.iter().map(|e| (e, false)).chain(during.iter().map(|e| (e, true)));
+        for (entry, in_turn) in entries {
+            items.push(ContextItem::Conversation { message: profile.given(entry.message.clone(), agent, in_turn) });
             items.extend(after_entry(Some(entry.digest))?);
-        }
-        items.extend(after_turn(0)?);
-        for (index, (message, digest)) in during.enumerate() {
-            items.push(ContextItem::Conversation { message: profile.given(message.clone(), agent, true) });
-            if digest.is_some() {
-                items.extend(after_entry(digest)?);
-            }
-            items.extend(after_turn(index + 1)?);
         }
         profile.place_system_messages(&mut items);
         // Every part was placed, none after what is not there.
         let placed = items.iter().filter(|item| matches!(item, ContextItem::Prompt { .. })).count();
-        (placed == prompts.len() + turn_prompts.len()).then_some(items)
+        (placed == prompts.len()).then_some(items)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentId;
+    use crate::agent::{AgentId, TurnState};
     use crate::digest::prompt;
     use crate::message::MessageId;
 
@@ -428,57 +387,71 @@ mod tests {
         assert!(resolver.resolve(&forgotten, ActorId::None).is_none(), "a part whose text was not kept");
     }
 
+    /// A turn of `state` begun on its transcript as it stands.
+    fn begin(state: &mut AgentChannelState, profile: ModelProfile) {
+        let context = ContextRef { transcript: state.transcript.digest(), profile, ..ContextRef::default() };
+        state.turn = Some(TurnState { context, ..TurnState::default() });
+    }
+
+    /// A prompt part `text` in `role` after the end of `state`'s turn so
+    /// far, its text kept.
+    fn place(state: &mut AgentChannelState, role: MessageRole, text: &str) {
+        state.prompts.insert(prompt(text), text.to_string());
+        let turn = state.turn.as_mut().unwrap();
+        turn.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.context.transcript });
+    }
+
     #[test]
-    fn a_turn_under_way_is_resolved_as_its_messages_will_be_recorded() {
+    fn a_turn_under_way_is_resolved_as_its_messages_are_recorded() {
         let agent = ActorId::Agent(AgentId::new());
         let own = |content: &str| Message { sender_id: agent, reasoning: Some(format!("why {content}")), ..text(content) };
         let mut state = AgentChannelState::default();
         state.transcript.push(own("earlier"));
-        let before_question = state.transcript.push(text("question"));
-        for part in ["notes", "step 1", "step 2"] {
-            state.prompts.insert(prompt(part), part.to_string());
-        }
+        state.transcript.push(text("question"));
 
-        let mut frame = ContextFrame { transcript: state.transcript.digest(), ..ContextFrame::default() };
-        frame.prompts.push(PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question });
+        begin(&mut state, ModelProfile::default());
         // Instructions of the runtime among the turn's messages: one before
         // them, one after the first.
-        frame.turn_prompts.push(TurnPromptRef { text: prompt("step 1"), role: MessageRole::User, after: 0 });
-        frame.turn_prompts.push(TurnPromptRef { text: prompt("step 2"), role: MessageRole::User, after: 1 });
-        let turn = TurnState { frame: frame.clone(), messages: vec![own("first"), own("second")], ..TurnState::default() };
-        let current = ContextResolver::of(&state).current(&turn, agent).expect("everything it names is here");
-        assert_eq!(contents(&current), ["earlier", "prompt:notes", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
-        let reasoning = current.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
-        assert_eq!(reasoning, [false, false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
+        place(&mut state, MessageRole::User, "step 1");
+        state.turn.as_mut().unwrap().push(own("first"));
+        place(&mut state, MessageRole::User, "step 2");
+        state.turn.as_mut().unwrap().push(own("second"));
 
-        // Once taken over, each message's reference resolves to what the
-        // turn gave the model for it - the instructions before it included.
-        let before = state.transcript.extend(turn.messages.clone());
-        let resolver = ContextResolver::of(&state);
-        let seen = |index| contents(&resolver.resolve(&frame.reference(&before, index, Vec::new()), agent).expect("everything it names is here").items);
-        assert_eq!(seen(0), ["earlier", "prompt:notes", "question", "prompt:step 1"]);
-        assert_eq!(seen(1), ["earlier", "prompt:notes", "question", "prompt:step 1", "first", "prompt:step 2"]);
+        let next = state.turn.as_ref().unwrap().context.clone();
+        let current = ContextResolver::of(&state).resolve(&next, agent).expect("the view holds the turn's messages");
+        assert_eq!(contents(&current.items), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
+        let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
+        assert_eq!(reasoning, [false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
+
+        // What each message was produced from, kept with it, resolves - now
+        // and once the turn is in the transcript - to what the model was
+        // given for it.
+        let turn = state.turn.take().unwrap();
+        let seen = |state: &AgentChannelState, index: usize| contents(&ContextResolver::of(state).resolve(&turn.entries[index].context, agent).expect("everything it names is here").items);
+        let mut under_way = state.clone();
+        under_way.turn = Some(turn.clone());
+        assert_eq!(seen(&under_way, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
+        state.transcript.extend(turn.messages().cloned().collect());
+        assert_eq!(state.transcript.digest(), turn.context.transcript, "the turn's digests are those of the transcript");
+        assert_eq!(seen(&state, 0), ["earlier", "question", "prompt:step 1"]);
+        assert_eq!(seen(&state, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
     }
 
     #[test]
     fn a_system_message_stays_where_it_is_only_where_the_model_keeps_it() {
         let mut state = AgentChannelState::default();
-        let system = Message { role: MessageRole::System, ..text("an old instruction") };
         state.transcript.push(Message { role: MessageRole::User, ..text("question") });
-        state.transcript.push(system);
-        state.prompts.insert(prompt("system prompt"), "system prompt".to_string());
-        state.prompts.insert(prompt("instruction"), "instruction".to_string());
+        state.transcript.push(Message { role: MessageRole::System, ..text("an old instruction") });
 
-        let frame = |system_messages| ContextFrame {
-            transcript: state.transcript.digest(),
-            prompts: vec![PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None }],
-            turn_prompts: vec![TurnPromptRef { text: prompt("instruction"), role: MessageRole::System, after: 0 }],
-            profile: ModelProfile { system_messages, ..ModelProfile::default() },
-        };
         let roles = |system_messages| {
-            let turn = TurnState { frame: frame(system_messages), ..TurnState::default() };
-            ContextResolver::of(&state).current(&turn, ActorId::None).expect("everything it names is here")
-                .iter().map(ContextItem::role).collect::<Vec<_>>()
+            let mut state = state.clone();
+            state.prompts.insert(prompt("system prompt"), "system prompt".to_string());
+            begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
+            state.turn.as_mut().unwrap().context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None });
+            place(&mut state, MessageRole::System, "instruction");
+            let next = state.turn.as_ref().unwrap().context.clone();
+            ContextResolver::of(&state).resolve(&next, ActorId::None).expect("everything it names is here")
+                .items.iter().map(ContextItem::role).collect::<Vec<_>>()
         };
         use MessageRole::{System, User};
         assert_eq!(roles(SystemMessages::OnlyAtStart), [System, User, User, User], "only the system prompt stays one");
