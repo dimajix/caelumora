@@ -74,7 +74,7 @@ logged-in user.
 | `POST …/approvals` | Approve or deny a tool call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `GET …/notes` | The notes the channel's agents published |
-| `POST …/participants`, `DELETE …/participants/{aid}` | Add a participant (with `history`), remove one |
+| `POST …/participants`, `DELETE …/participants/{aid}` | Add a participant (with `history`), remove one; `not_cleared` if they are not cleared for the channel (issue 133) |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
 | `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
 | `GET …/channels/{cid}/events` | The channel's stream |

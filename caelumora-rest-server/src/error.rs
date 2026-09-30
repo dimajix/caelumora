@@ -185,6 +185,7 @@ impl ApiError {
                 SessionError::DuplicateChannelName { .. } => return Self::conflict("channel_exists", detail),
                 SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
+                SessionError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
                 // A caller that is no user: not the client's request.
                 SessionError::OwnerNotAUser(_) => {}
             }
@@ -196,6 +197,7 @@ impl ApiError {
                 ChannelError::NotInSession { .. } | ChannelError::ApproverStays { .. } => return bad_request("invalid_participant"),
                 ChannelError::ClassificationRefused { .. } => return bad_request("invalid_classification"),
                 ChannelError::MessageNotFound { .. } => return Self::not_found("message_not_found", detail),
+                ChannelError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
                 ChannelError::Forbidden { .. } => {}
             }
         }
@@ -372,6 +374,7 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(ChannelError::ClassificationRefused { classification, channel }), Subject::Session), (400, "invalid_classification"));
         let message = caelumora_model::message::MessageId::new();
         assert_eq!(answer(anyhow::Error::new(ChannelError::MessageNotFound { message, channel }), Subject::Session), (404, "message_not_found"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::NotCleared { participant: someone, channel }), Subject::Participant), (403, "not_cleared"));
         assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
 
         // A refusal is named after what was refused, whichever layer refused it.

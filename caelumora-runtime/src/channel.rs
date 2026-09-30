@@ -88,6 +88,11 @@ pub enum ChannelError {
     ClassificationRefused { classification: Classification, channel: ChannelId },
     #[error("channel {channel} has no message {message}")]
     MessageNotFound { message: MessageId, channel: ChannelId },
+    /// A participant not cleared for the channel's classification - to
+    /// join it, or for the classification it would be raised to (issue
+    /// 133).
+    #[error("{participant} is not cleared for channel {channel} as it is, or would be, classified")]
+    NotCleared { participant: ActorId, channel: ChannelId },
 }
 
 /// A participant with what its actor is built from: the instance's
@@ -322,6 +327,14 @@ impl ChannelLoop {
             channel: &channel,
         };
         self.require(context, action, "reclassifying").await?;
+        // Raised above a participant, the channel would show them what they
+        // may not see: refused rather than anyone removed.
+        let reclassified = ChannelClassification { classification: classification.clone(), ..channel };
+        for participant in self.channel.load().participants.iter().map(|p| p.actor_id()) {
+            if !matches!(participant, ActorId::Approver(_)) {
+                self.require_cleared(context, participant, &reclassified).await?;
+            }
+        }
         self.channel.update_classification(context, classification.clone()).await?;
         let mut state = self.state.lock().await;
         let fitted = state.history.fit_into(&classification);
@@ -403,8 +416,7 @@ impl ChannelLoop {
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
         let member = Member::of(&found, &self.runtime).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        let classification = self.classification();
-        self.require(context, ActionType::JoinChannel { participant, channel: &classification }, "adding a participant to").await?;
+        self.require_cleared(context, participant, &self.classification()).await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -565,6 +577,16 @@ impl ChannelLoop {
         for actor in self.actors.load().values() {
             actor.wakeup();
         }
+    }
+
+    /// Nothing if `participant` is cleared for the channel classified as
+    /// `classification` (`JoinChannel`, issue 133), by their roles - an
+    /// agent's owner's.
+    async fn require_cleared(&self, context: &SecurityContext, participant: ActorId, classification: &ChannelClassification) -> Result<()> {
+        let roles = self.runtime.roles_of(participant).await?;
+        let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
+        let channel = self.id;
+        Ok(self.runtime.security_manager().require(context, action, || ChannelError::NotCleared { participant, channel }).await?)
     }
 
     /// `action`, refused as a `ChannelError::Forbidden` that names what was

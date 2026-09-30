@@ -1,5 +1,6 @@
 use crate::command::default_commands;
-use crate::confidentiality::Compartments;
+use crate::confidentiality::{Compartments, Roles};
+use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
@@ -23,6 +24,10 @@ pub enum ConfigError {
     Parse(#[from] serde_saphyr::Error),
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// Sections that do not fit together - a role naming a compartment that
+    /// is not configured, say.
+    #[error("invalid configuration: {0}")]
+    Invalid(String),
 }
 
 pub type ConfigResult<T> = Result<T, ConfigError>;
@@ -106,8 +111,15 @@ pub enum SecurityConfig {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UserProviderConfig {
     /// Development only: accepts any username and password (see
-    /// `AcceptAnyUserProvider`). Never part of the default chain.
-    AcceptAny,
+    /// `AcceptAnyUserProvider`). Never part of the default chain. Gives the
+    /// users named in `roles` their roles, and everybody else
+    /// `default_roles` (issue 142).
+    AcceptAny {
+        #[serde(default)]
+        roles: BTreeMap<String, Vec<String>>,
+        #[serde(default)]
+        default_roles: Vec<String>,
+    },
 }
 
 /// Without a `users` section the chain is empty and nobody can
@@ -218,6 +230,10 @@ pub struct AppConfig {
     /// read which. Checked when the configuration is read. None unless
     /// configured: every classification is general.
     pub compartments: Compartments,
+    /// The roles and the clearances each grants (issues 133, 142). Checked
+    /// when the configuration is read. `None` unless configured: then
+    /// clearances are not checked at all.
+    pub roles: Option<Roles>,
     /// Files of demo data - personalities and session templates - put into
     /// the entity store at startup (issue 105, see `examples/seed.yaml`).
     /// None unless configured.
@@ -239,6 +255,7 @@ impl Default for AppConfig {
             component_defaults: ComponentConfig::default(),
             security: SecurityConfig::default(),
             compartments: Compartments::default(),
+            roles: None,
             seed: Vec::new(),
             server: ServerConfig::default(),
         }
@@ -277,14 +294,42 @@ impl AppConfig {
     /// `ConfigError::Parse` if `yaml` is not a valid configuration; the error
     /// names the line and column.
     pub fn from_yaml(yaml: &str) -> ConfigResult<Self> {
-        parse_yaml(yaml)
+        let config: Self = parse_yaml(yaml)?;
+        config.check()?;
+        Ok(config)
+    }
+
+    /// Nothing if the sections fit together: the roles grant only
+    /// configured compartments, and the user providers give only
+    /// configured roles - and none without a `roles` section.
+    fn check(&self) -> ConfigResult<()> {
+        let invalid = |e: crate::confidentiality::RoleError| ConfigError::Invalid(e.to_string());
+        if let Some(roles) = &self.roles {
+            roles.check(&self.compartments).map_err(invalid)?;
+        }
+        for provider in &self.users.providers {
+            let UserProviderConfig::AcceptAny { roles: assigned, default_roles } = provider;
+            for role in assigned.values().flatten().chain(default_roles) {
+                match &self.roles {
+                    Some(roles) => roles.check_role(role).map_err(invalid)?,
+                    None => return Err(ConfigError::Invalid(format!("role '{role}' is given to users, but no roles are configured"))),
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The one `SecurityManager` of the process, as configured, with the
     /// configured compartments.
     pub fn create_security_manager(&self) -> Arc<dyn SecurityManager> {
         match self.security {
-            SecurityConfig::Ownership => Arc::new(OwnershipSecurityManager::with_compartments(self.compartments.clone())),
+            SecurityConfig::Ownership => {
+                let policy = OwnershipSecurityManager::with_compartments(self.compartments.clone());
+                Arc::new(match &self.roles {
+                    Some(roles) => policy.with_roles(roles.clone()),
+                    None => policy,
+                })
+            }
             SecurityConfig::AllowAll => {
                 tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
                 Arc::new(DummySecurityManager::new())
@@ -324,10 +369,10 @@ impl AppConfig {
     pub fn create_user_manager(&self, entity_store: Arc<dyn EntityStore>) -> ConfigResult<Arc<UserManager>> {
         let providers = self.users.providers.iter()
             .map(|config| match config {
-                UserProviderConfig::AcceptAny => {
+                UserProviderConfig::AcceptAny { roles, default_roles } => {
                     tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
                         Development only - never expose this server to a network.");
-                    Arc::new(AcceptAnyUserProvider::new(entity_store.clone())) as Arc<dyn UserProvider>
+                    Arc::new(AcceptAnyUserProvider::with_roles(entity_store.clone(), roles.clone(), default_roles.clone())) as Arc<dyn UserProvider>
                 }
             })
             .collect();
@@ -413,7 +458,7 @@ users:
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.users.providers.len(), 1);
-        assert!(matches!(config.users.providers[0], UserProviderConfig::AcceptAny));
+        assert!(matches!(config.users.providers[0], UserProviderConfig::AcceptAny { .. }));
     }
 
     #[test]
@@ -529,6 +574,22 @@ users:
         assert_eq!(AppConfig::default().compartments.names().count(), 0, "none unless configured");
         assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [payroll]\n").is_err(), "reads what is not configured");
         assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    read: [finance]\n").is_err(), "a misspelt key");
+    }
+
+    #[test]
+    fn roles_are_checked_against_the_compartments_and_the_providers() {
+        let compartments = "compartments:\n  - name: hr\n";
+        let roles = "roles:\n  - name: hr\n    clearances:\n      - { level: confidential, compartment: hr }\n";
+        let config = AppConfig::from_yaml(&format!("{compartments}{roles}users:\n  providers:\n    - type: accept_any\n      roles: {{ alice: [hr] }}\n")).unwrap();
+        assert!(config.roles.is_some());
+        assert!(AppConfig::default().roles.is_none(), "none unless configured: clearances are not checked");
+
+        let typo = "roles:\n  - name: hr\n    clearances:\n      - { level: confidential, compartment: hrr }\n";
+        assert!(matches!(AppConfig::from_yaml(&format!("{compartments}{typo}")), Err(ConfigError::Invalid(_))), "a compartment not configured");
+        let unknown = format!("{compartments}{roles}users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n");
+        assert!(matches!(AppConfig::from_yaml(&unknown), Err(ConfigError::Invalid(_))), "a role not configured");
+        let without = "users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n";
+        assert!(matches!(AppConfig::from_yaml(without), Err(ConfigError::Invalid(_))), "roles given, but none configured");
     }
 
     #[test]

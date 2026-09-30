@@ -1,6 +1,6 @@
 # 133 — Confidentiality levels mix sensitivity with topology
 
-**Status:** in progress
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -385,3 +385,27 @@ message rendering, and the prompt notes of
   `MemoryChange::Reclassify`, `Reclassified::{Note, Memory}` for the author
   alone; `AgentNotes::reclassify`, `AgentMemory::reclassify`. Step 4 is
   done; step 5 (clearances) remains.
+- **2026-09-30** — Decided before step 5: a clearance is on the user side
+  and follows from roles ([142](142-roles.md)): `AppConfig` configures the
+  roles, each granting a list of clearances - a level, and at most one
+  compartment (none: for what is general) - and the user provider gives
+  users their roles (for now by its configuration). A user's clearance is
+  every clearance of their roles; an agent's is its owner's. What is
+  classified is seen by a clearance of at least its level, for what is
+  general without a compartment, otherwise with a compartment that reads one
+  of its compartments - a person *belongs* to compartments, while a channel
+  is *published* to them, so this is not the flow rule. Without roles
+  configured nothing is checked, as before; with them, a user without a
+  clearance sees only what is public. `JoinChannel` carries the
+  participant's roles, looked up by the runtime, and the policy maps them.
+  Checked when joining, when a channel is created (from a template too),
+  when a channel is raised above a participant, and when a user reads a
+  channel over REST.
+- **2026-09-30** — Step 5 done, and with it the issue: `Clearance`,
+  `Clearances::admits` and `Roles` in `caelumora_model::confidentiality`;
+  the `roles` section of `AppConfig`, checked against the compartments and
+  the roles the user providers give; `accept_any` gives roles by its
+  configuration. `JoinChannel` carries the participant's roles
+  (`RuntimeManager::roles_of`), checked when joining, creating, raising a
+  channel and reading it over REST (`may_see_channel`). Roles from
+  directories remain [142](142-roles.md).

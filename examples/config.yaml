@@ -29,9 +29,15 @@ seed:
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY
 # username and password - never enable it on a server reachable from a network.
+# It gives the users named under `roles` their roles, everybody else
+# `default_roles` (issue 142); the roles must be configured below.
 users:
   providers:
     - type: accept_any
+      default_roles: [staff]
+      roles:
+        alice: [staff, hr]
+        bob: [staff, management]
 
 # Where the REST server listens. Default: 127.0.0.1:3000 - this machine
 # only, which `accept_any` above requires.
@@ -96,3 +102,21 @@ compartments:
   - name: hr
     reads: [finance]
   - name: finance
+
+# The roles and the clearances each grants (issues 133, 142): a level, and at
+# most one compartment - none for what is general. A user's clearance is every
+# clearance of their roles, an agent's its owner's; who is not cleared for a
+# channel's classification cannot join or read it. A user without a
+# clearance sees only what is public. Without this section clearances are
+# not checked.
+roles:
+  - name: staff
+    clearances:
+      - { level: internal }
+  - name: hr
+    clearances:
+      - { level: confidential, compartment: hr }
+  - name: management
+    clearances:
+      - { level: confidential, compartment: management }
+      - { level: confidential }

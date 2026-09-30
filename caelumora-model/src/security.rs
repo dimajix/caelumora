@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
-use crate::confidentiality::{ChannelClassification, Classification, Compartments, Confidentiality};
+use crate::confidentiality::{ChannelClassification, Classification, Compartments, Confidentiality, Roles};
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -55,11 +55,13 @@ pub enum ActionType<'a> {
     UpdateChannel(&'a SecurityAttributes),
     /// Deleting a channel, with its attributes as stored.
     DeleteChannel(&'a SecurityAttributes),
-    /// `participant` joining `channel` (issue 46) - besides `UpdateChannel`,
-    /// which decides who may add participants. Where a policy compares what
-    /// a participant is cleared for with the channel's classification
-    /// (issue 133).
-    JoinChannel { participant: ActorId, channel: &'a ChannelClassification },
+    /// `participant` joining `channel` (issue 46), or - as a user - reading
+    /// it: whether they are cleared for its classification (issue 133). The
+    /// runtime looks up `roles` - a user's, an agent's owner's - and the
+    /// policy maps them to clearances. Besides `UpdateChannel`, which
+    /// decides who may add participants, and `GetChannel`, which decides who
+    /// may read the channel at all.
+    JoinChannel { participant: ActorId, roles: &'a [String], channel: &'a ChannelClassification },
     /// Reading a user, e.g. receiving the events about them. A stored user
     /// belongs to the system (issue 94): see `User`'s `Secured`.
     GetUser(&'a SecurityAttributes),
@@ -144,7 +146,7 @@ impl ActionType<'_> {
             ActionType::CreateChannel(_) => "CreateChannel".into(),
             ActionType::UpdateChannel(_) => "UpdateChannel".into(),
             ActionType::DeleteChannel(_) => "DeleteChannel".into(),
-            ActionType::JoinChannel { participant, channel } => format!("JoinChannel({participant} to {})", channel.channel_id),
+            ActionType::JoinChannel { participant, channel, .. } => format!("JoinChannel({participant} to {})", channel.channel_id),
             ActionType::GetUser(_) => "GetUser".into(),
             ActionType::ListUsers => "ListUsers".into(),
             ActionType::CreateUser(_) => "CreateUser".into(),
@@ -297,6 +299,11 @@ pub trait AccessQuestions {
     /// Whether `context` may make the tool call `call` (`CallTool`) - asked
     /// before a call is put up for approval.
     async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool;
+
+    /// Whether the user `context` acts for, with `roles`, is cleared for
+    /// `channel` (`JoinChannel`, issue 133) - what decides, besides
+    /// `GetChannel`, which channels they are shown.
+    async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &ChannelClassification) -> bool;
 }
 
 #[async_trait]
@@ -322,6 +329,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool {
         self.check(context, ActionType::CallTool(call)).await
+    }
+
+    async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &ChannelClassification) -> bool {
+        self.check(context, ActionType::JoinChannel { participant: context.initiator_id, roles, channel }).await
     }
 }
 
@@ -394,6 +405,9 @@ impl SecurityManager for DummySecurityManager {
 ///   compartments: what is read must flow into the reading channel. Until
 ///   reading across sessions is a question of consent (issue 134), a channel
 ///   reads only from channels of its own session, and from public ones.
+/// - Joining or reading a channel needs a clearance for its classification,
+///   from the roles of the participant - of an agent's owner - if roles are
+///   configured.
 /// - A classification may be given if its compartments are configured. A
 ///   message may be put into a channel if, moreover, it flows into the
 ///   channel and the actor putting it there is the one acting - its author,
@@ -411,6 +425,8 @@ impl SecurityManager for DummySecurityManager {
 #[derive(Debug, Default)]
 pub struct OwnershipSecurityManager {
     compartments: Compartments,
+    /// `None`: clearances are not checked (issue 133).
+    roles: Option<Roles>,
 }
 
 impl OwnershipSecurityManager {
@@ -421,7 +437,12 @@ impl OwnershipSecurityManager {
 
     /// The policy with the configured `compartments`.
     pub fn with_compartments(compartments: Compartments) -> Self {
-        Self { compartments }
+        Self { compartments, roles: None }
+    }
+
+    /// This policy, checking clearances by the configured `roles`.
+    pub fn with_roles(self, roles: Roles) -> Self {
+        Self { roles: Some(roles), ..self }
     }
 
     /// Whether `reader` may read what `source` holds classified
@@ -475,9 +496,11 @@ impl SecurityManager for OwnershipSecurityManager {
                     && self.compartments.check(classification).is_ok()
                     && classification.flows_to(&channel.classification, &self.compartments)
             }
-            // Clearances are not modelled yet: whoever may change the
-            // channel may add anyone of the session to it.
-            ActionType::JoinChannel { .. } => true,
+            // Without roles configured, clearances are not checked.
+            ActionType::JoinChannel { roles, channel, .. } => match &self.roles {
+                Some(configured) => configured.clearances_of(roles).admits(&channel.classification, &self.compartments),
+                None => true,
+            },
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)

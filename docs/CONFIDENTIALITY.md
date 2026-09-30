@@ -163,6 +163,43 @@ meant for both, since both audiences see it. What is general flows into any
 destination of a sufficient level; what has an audience never flows into a
 general one.
 
+## Clearances
+
+Who may take part in a channel, or read it, is decided by what they are
+cleared for (issue 133). A `Clearance` is a level and at most one
+compartment: it sees what is classified up to that level, in that
+compartment - or, without one, what is general. Alice may be cleared for
+`internal` of finance and `confidential` of HR. A person *belongs* to
+compartments, while a channel is *published* to them; so a clearance is not
+judged by the flow rule, but by its own (`Clearances::admits`):
+
+*   what is public is seen by everybody;
+*   what is general, by a clearance without compartment of at least its
+    level;
+*   what has compartments, by a clearance of at least its level whose
+    compartment reads one of them - the same, or one it may read.
+
+A clearance follows from roles ([142](../issues/142-roles.md)). The
+`roles` section of the configuration names the roles and the clearances
+each grants (`Roles`); the user provider gives users their roles - for now
+by its own configuration. A user's clearances are all their roles';
+an agent's are its owner's, since it must not see more than the person
+responsible for it. A user whose roles grant nothing sees only what is
+public. Without a `roles` section, clearances are not checked.
+
+The question is `ActionType::JoinChannel { participant, roles, channel }`:
+the runtime looks up the roles (`RuntimeManager::roles_of`), the policy maps
+them to clearances. It is asked
+
+*   when a participant is added to a channel (`ChannelError::NotCleared`),
+*   for every participant of a channel created on request or from a
+    template (`SessionError::NotCleared`), before anything is stored,
+*   for every participant when a channel is reclassified - raised above
+    someone in it, it is refused rather than anyone removed,
+*   and for a user reading a channel (`AccessQuestions::may_see_channel`):
+    a channel they are not cleared for is not found, and not listed -
+    even for its owner.
+
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its
@@ -320,8 +357,8 @@ theirs alone (issue 54).
 ## Open questions
 
 The classification model is introduced in steps
-([133](../issues/133-classification-model.md)); steps 1 to 4 are done.
-Still to come:
+([133](../issues/133-classification-model.md)); it is complete. What is
+still open:
 
 *   **Sources that classify.** No built-in tool classifies its results, and
     an MCP server cannot yet say how its results are classified, only be
@@ -332,17 +369,16 @@ Still to come:
     it began with: its messages, after the channel was lowered, are
     classified above the channel and refused by it
     ([141](../issues/141-turn-during-reclassification.md)).
-*   **Clearances.** Who may join a channel is asked as
-    `ActionType::JoinChannel` with the channel's classification
-    ([46](../issues/46-channel-participants.md)). The ownership policy
-    allows every join: clearances of users and agents are not modelled
-    (step 5). Yet the guarantees above are only as good as the control over
-    who joins.
+*   **Roles from directories.** Roles come from the configuration of the
+    user provider; mapping directory groups to roles, and roles of real
+    user providers, is [142](../issues/142-roles.md). Events about a
+    channel without content - a reclassification, say - still reach
+    whoever may read the channel, cleared or not.
 *   **Sessions.** Reading across sessions is refused except for `public`
     channels until it becomes a question of consent
     ([134](../issues/134-session-privacy.md)).
-*   **Where the rules live.** The flow rule is applied by the ownership
-    policy; any other policy would have to apply it too
+*   **Where the rules live.** The flow rule and the clearances are applied
+    by the ownership policy; any other policy would have to apply them too
     ([138](../issues/138-confidentiality-policy-in-ownership.md)).
 *   **The answer text.** It carries no label and is always published; the
     model is only told what not to quote

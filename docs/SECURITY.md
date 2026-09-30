@@ -128,7 +128,8 @@ They are asked:
 *   by an agent, deciding what it may put up for approval.
 
 The questions are `may_read_channel`, `may_change_channel`,
-`may_channel_read`, `may_read_agent_context` and `may_call_tool`.
+`may_channel_read`, `may_read_agent_context`, `may_call_tool` and
+`may_see_channel`.
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket
 implementation. Each question gets a name and one place, but only translates
@@ -209,7 +210,9 @@ The user chain fails differently from the secret chain:
 There is no default provider. The only built-in one so far, `accept_any`, is a
 development stand-in: it accepts any username and password and keeps users in
 the `EntityStore`. It must be enabled explicitly and warns at startup (issues
-10, 25).
+10, 25). It gives users the roles its configuration names for them, updated
+at every login; what roles grant - clearances - is described in
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances) (issue 142).
 
 ## Authentication
 

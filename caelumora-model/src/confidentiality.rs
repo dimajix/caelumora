@@ -282,6 +282,126 @@ impl Compartments {
     }
 }
 
+/// What someone may see (issue 133): what is classified up to `level`, in
+/// `compartment` - or, without one, what is general. A clearance is on the
+/// side of who reads: a person *belongs* to a compartment, while a channel
+/// is *published* to it; so a clearance is judged by its own rule
+/// (`Clearances::admits`), not by the flow rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clearance {
+    pub level: Confidentiality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compartment: Option<Compartment>,
+}
+
+impl Clearance {
+    /// Whether this clearance sees what is classified `classification`: at
+    /// most its level, and - if it has compartments - through a
+    /// compartment of this clearance that reads one of them; if it has
+    /// none, only a clearance without compartment sees it.
+    fn sees(&self, classification: &Classification, compartments: &Compartments) -> bool {
+        if classification.level > self.level {
+            return false;
+        }
+        match &self.compartment {
+            None => classification.compartments.is_empty(),
+            Some(own) => classification.compartments.iter().any(|c| compartments.may_read(own, c)),
+        }
+    }
+}
+
+/// Everything someone is cleared for: the clearances of all their roles
+/// (issue 133). Empty: only what is public.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Clearances(Vec<Clearance>);
+
+impl Clearances {
+    /// Whether what is classified `classification` may be seen - by one of
+    /// the clearances, or because it is public.
+    pub fn admits(&self, classification: &Classification, compartments: &Compartments) -> bool {
+        classification.level == Confidentiality::Public || self.0.iter().any(|c| c.sees(classification, compartments))
+    }
+}
+
+/// The roles the administrator configured, each with the clearances it
+/// grants (issue 133, [142]). Written as a list of definitions, each a
+/// `name` and its `clearances` - the `roles` section of the configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<RoleDefinition>")]
+pub struct Roles {
+    grants: BTreeMap<String, Vec<Clearance>>,
+}
+
+/// One role as the configuration defines it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoleDefinition {
+    name: String,
+    #[serde(default)]
+    clearances: Vec<Clearance>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RoleError {
+    #[error("A role needs a name")]
+    UnnamedRole,
+    #[error("Role '{0}' is configured twice")]
+    DuplicateRole(String),
+    #[error("Role '{0}' is not configured")]
+    UnknownRole(String),
+    #[error("Role '{role}' grants a clearance for compartment '{compartment}', which is not configured")]
+    UnknownCompartment { role: String, compartment: Compartment },
+}
+
+impl TryFrom<Vec<RoleDefinition>> for Roles {
+    type Error = RoleError;
+
+    fn try_from(definitions: Vec<RoleDefinition>) -> Result<Self, Self::Error> {
+        let mut grants = BTreeMap::new();
+        for definition in definitions {
+            if definition.name.is_empty() {
+                return Err(RoleError::UnnamedRole);
+            }
+            if grants.contains_key(&definition.name) {
+                return Err(RoleError::DuplicateRole(definition.name));
+            }
+            grants.insert(definition.name, definition.clearances);
+        }
+        Ok(Self { grants })
+    }
+}
+
+impl Roles {
+    /// The roles `definitions` name, each with the clearances it grants.
+    pub fn new(definitions: impl IntoIterator<Item = (String, Vec<Clearance>)>) -> Result<Self, RoleError> {
+        Self::try_from(definitions.into_iter().map(|(name, clearances)| RoleDefinition { name, clearances }).collect::<Vec<_>>())
+    }
+
+    /// Nothing if every compartment the roles grant is configured.
+    pub fn check(&self, compartments: &Compartments) -> Result<(), RoleError> {
+        for (role, clearances) in &self.grants {
+            for compartment in clearances.iter().filter_map(|c| c.compartment.as_ref()) {
+                if !compartments.reads.contains_key(compartment) {
+                    return Err(RoleError::UnknownCompartment { role: role.clone(), compartment: compartment.clone() });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Nothing if `role` is configured.
+    pub fn check_role(&self, role: &str) -> Result<(), RoleError> {
+        if self.grants.contains_key(role) { Ok(()) } else { Err(RoleError::UnknownRole(role.to_string())) }
+    }
+
+    /// Everything someone with `roles` is cleared for. A role that is not
+    /// configured grants nothing.
+    pub fn clearances_of(&self, roles: &[String]) -> Clearances {
+        Clearances(roles.iter().filter_map(|r| self.grants.get(r)).flatten().cloned().collect())
+    }
+}
+
 /// Who sees a part of what an actor produces - an ownership flag beside the
 /// classification (issue 133). `Owner` is what never reaches a channel: the
 /// actor sees it, and its owner where they may see what the actor saw.
@@ -317,6 +437,10 @@ mod tests {
 
     fn compartment(name: &str) -> Compartment {
         Compartment::new(name)
+    }
+
+    fn compartment_named(name: &str) -> Compartment {
+        compartment(name)
     }
 
     fn classified(level: Confidentiality, compartments: &[&str]) -> Classification {
@@ -372,6 +496,49 @@ mod tests {
         assert_eq!(fitted(hr_confidential.clone(), Classification::general(Public)), Classification::general(Public));
         assert_eq!(fitted(classified(Internal, &["hr"]), classified(StrictlyConfidential, &["hr"])), classified(Internal, &["hr"]), "raising changes nothing");
         assert_eq!(fitted(Classification::general(Internal), classified(Internal, &["hr"])), Classification::general(Internal), "what is general stays general");
+    }
+
+    #[test]
+    fn a_clearance_sees_per_compartment_up_to_its_own_level() {
+        let compartments = organisation();
+        let clearance = |level, compartment: Option<&str>| Clearance { level, compartment: compartment.map(compartment_named) };
+        // Alice: internal of sales, confidential of HR, and what is general up to internal.
+        let alice = Clearances(vec![
+            clearance(Internal, Some("sales")),
+            clearance(Confidential, Some("hr")),
+            clearance(Internal, None),
+        ]);
+        assert!(alice.admits(&classified(Confidential, &["hr"]), &compartments));
+        assert!(!alice.admits(&classified(Confidential, &["sales"]), &compartments), "only internal of sales");
+        assert!(alice.admits(&classified(Internal, &["sales"]), &compartments));
+        assert!(alice.admits(&classified(Confidential, &["finance"]), &compartments), "HR reads finance");
+        assert!(alice.admits(&classified(Confidential, &["hr", "sales"]), &compartments), "published to HR too");
+        assert!(!alice.admits(&classified(Internal, &["hr_management"]), &compartments), "not hers");
+        assert!(alice.admits(&Classification::general(Internal), &compartments));
+        assert!(!alice.admits(&Classification::general(Confidential), &compartments), "a compartment says nothing of what is general");
+        assert!(Clearances::default().admits(&Classification::general(Public), &compartments), "public is public");
+        assert!(!Clearances::default().admits(&Classification::general(Internal), &compartments), "without a clearance only that");
+        let management = Clearances(vec![clearance(Internal, Some("hr_management"))]);
+        assert!(management.admits(&classified(Internal, &["finance"]), &compartments), "through what it reads");
+    }
+
+    #[test]
+    fn roles_grant_clearances_and_name_only_configured_compartments() {
+        let roles = Roles::new([
+            ("hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }]),
+            ("staff".to_string(), vec![Clearance { level: Internal, compartment: None }]),
+        ]).unwrap();
+        let compartments = organisation();
+        assert_eq!(roles.check(&compartments), Ok(()));
+        let both = roles.clearances_of(&["hr".to_string(), "staff".to_string(), "unknown".to_string()]);
+        assert!(both.admits(&classified(Confidential, &["hr"]), &compartments) && both.admits(&Classification::general(Internal), &compartments));
+        assert_eq!(roles.check_role("unknown"), Err(RoleError::UnknownRole("unknown".to_string())));
+        let typo = Roles::new([("x".to_string(), vec![Clearance { level: Internal, compartment: Some(compartment("hrr")) }])]).unwrap();
+        assert!(matches!(typo.check(&compartments), Err(RoleError::UnknownCompartment { .. })));
+        let written: Roles = serde_json::from_value(serde_json::json!([
+            {"name": "hr", "clearances": [{"level": "confidential", "compartment": "hr"}, {"level": "internal"}]}
+        ])).unwrap();
+        assert!(written.clearances_of(&["hr".to_string()]).admits(&Classification::general(Internal), &compartments));
     }
 
     #[test]

@@ -18,7 +18,7 @@ use caelumora_model::confidentiality::ChannelClassification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::StoreResult;
+use caelumora_model::store::{StoreError, StoreResult};
 use crate::agent_state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::session_reader::{ChannelSessionReader, SessionReader};
@@ -83,6 +83,9 @@ impl ChannelRuntime {
 
 
     pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
+
+    /// See `RuntimeManager::roles_of`.
+    pub async fn roles_of(&self, actor: ActorId) -> Result<Vec<String>> { self.runtime_manager.roles_of(actor).await }
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
@@ -287,6 +290,36 @@ impl RuntimeManager {
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
     pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.entity_store.clone() }
+
+    /// The roles `actor` is cleared by (issues 133, 142): a user's own, an
+    /// agent's owner's - it must not see more than the person responsible
+    /// for it. Nobody else has any, and neither has a user or agent that no
+    /// longer exists (issue 120). Read in the runtime's name: what someone
+    /// is cleared for decides, it is not shown.
+    ///
+    /// # Errors
+    /// Whatever else reading the user or agent reports.
+    pub async fn roles_of(&self, actor: ActorId) -> Result<Vec<String>> {
+        let system = SecurityContext::system();
+        let gone = |e: &StoreError| matches!(e, StoreError::NotFound { .. });
+        let user = match actor {
+            ActorId::User(user) => user,
+            ActorId::Agent(agent) => match self.entity_store.get_agent(&system, agent).await {
+                Ok(agent) => match agent.security_attributes.owner_id {
+                    ActorId::User(owner) => owner,
+                    _ => return Ok(Vec::new()),
+                },
+                Err(e) if gone(&e) => return Ok(Vec::new()),
+                Err(e) => return Err(e.into()),
+            },
+            _ => return Ok(Vec::new()),
+        };
+        match self.entity_store.get_user(&system, user).await {
+            Ok(user) => Ok(user.roles),
+            Err(e) if gone(&e) => Ok(Vec::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
 
     pub fn secret_manager(&self) -> Arc<SecretManager> { self.secret_manager.clone() }
 

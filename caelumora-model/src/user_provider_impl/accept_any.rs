@@ -3,6 +3,7 @@ use crate::store::{EntityStore, StoreError};
 use crate::user::{User, UserId};
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
 use async_trait::async_trait;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// **Development only.** Accepts every username with any credential.
@@ -23,11 +24,27 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct AcceptAnyUserProvider {
     store: Arc<dyn EntityStore>,
+    /// The roles of the users named (issue 142).
+    roles: BTreeMap<String, Vec<String>>,
+    /// The roles of everybody else.
+    default_roles: Vec<String>,
 }
 
 impl AcceptAnyUserProvider {
+    /// A provider that gives nobody a role.
     pub fn new(store: Arc<dyn EntityStore>) -> Self {
-        Self { store }
+        Self::with_roles(store, BTreeMap::new(), Vec::new())
+    }
+
+    /// A provider that gives the users named in `roles` theirs, and
+    /// everybody else `default_roles`.
+    pub fn with_roles(store: Arc<dyn EntityStore>, roles: BTreeMap<String, Vec<String>>, default_roles: Vec<String>) -> Self {
+        Self { store, roles, default_roles }
+    }
+
+    /// The roles of `username`, as configured.
+    fn roles_of(&self, username: &str) -> Vec<String> {
+        self.roles.get(username).cloned().unwrap_or_else(|| self.default_roles.clone())
     }
 
     /// The provider keeps its own records: nobody's action, the system's.
@@ -60,7 +77,16 @@ impl UserProvider for AcceptAnyUserProvider {
             return Err(AuthError::InvalidCredentials);
         }
 
+        let roles = self.roles_of(username);
         if let Some(user) = self.find_user(username).await? {
+            // The configuration decides the roles; a changed one takes effect
+            // at the next login.
+            if user.roles == roles {
+                return Ok(Some(user));
+            }
+            let user = User { roles, ..user };
+            self.store.update_user(&Self::context(), &user).await
+                .map_err(|e| AuthError::Backend(e.to_string()))?;
             return Ok(Some(user));
         }
 
@@ -69,7 +95,7 @@ impl UserProvider for AcceptAnyUserProvider {
             id,
             username: username.to_string(),
             email: String::new(),
-            roles: vec!["user".to_string()],
+            roles,
         };
         self.store.create_user(&Self::context(), &user).await
             .map_err(|e| AuthError::Backend(e.to_string()))?;
@@ -109,6 +135,21 @@ mod tests {
         assert_eq!(provider.find_user("alice").await.unwrap().map(|u| u.id), Some(alice.id));
         assert_eq!(provider.get_user(alice.id).await.unwrap().map(|u| u.username), Some("alice".to_string()));
         assert!(provider.get_user(UserId::new()).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn gives_the_configured_roles_and_follows_a_change() {
+        let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
+        let roles = BTreeMap::from([("alice".to_string(), vec!["hr".to_string()])]);
+        let provider = AcceptAnyUserProvider::with_roles(store.clone(), roles, vec!["staff".to_string()]);
+        let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        let bob = provider.authenticate("bob", &Credential::Password("x")).await.unwrap().unwrap();
+        assert_eq!((alice.roles, bob.roles), (vec!["hr".to_string()], vec!["staff".to_string()]));
+
+        let changed = AcceptAnyUserProvider::with_roles(store, BTreeMap::new(), Vec::new());
+        let again = changed.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
+        assert!(again.roles.is_empty(), "the configuration decides, also for a user already stored");
+        assert_eq!(changed.get_user(again.id).await.unwrap().unwrap().roles, Vec::<String>::new(), "and it is stored");
     }
 
     #[tokio::test]

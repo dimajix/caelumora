@@ -151,3 +151,8 @@ they refer to `ActorId`s, not to handles.
   after the last message it has, older ones stay reachable through
   `read_history`. Where access helpers such as `may_be_changed_by` should
   live is [71](71-access-helpers-on-entities.md). Status set to done.
+- **2026-09-30** — `JoinChannel` now decides by clearance (step 5 of
+  [133](133-classification-model.md)): it carries the participant's roles,
+  and the ownership policy refuses whoever is not cleared for the channel's
+  classification - when added, when the channel is created, and when it is
+  raised above them.

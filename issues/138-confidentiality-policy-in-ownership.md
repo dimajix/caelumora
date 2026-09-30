@@ -57,3 +57,7 @@ mixes them.
   section of `AppConfig`, handed to the `OwnershipSecurityManager` because
   it is the policy that applies the confidentiality rules today. Separating
   those rules out was deliberately left for later.
+- **2026-09-30** — The ownership policy now also holds the roles and
+  decides clearances (`JoinChannel`, step 5 of
+  [133](133-classification-model.md)); they belong to the same
+  confidentiality part.
