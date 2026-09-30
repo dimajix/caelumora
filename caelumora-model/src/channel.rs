@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
-use crate::confidentiality::{ChannelClassification, Classification};
+use crate::confidentiality::{ChannelRef, Classification};
 use crate::message::{MessageHistory, MessageId};
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
@@ -76,9 +76,9 @@ impl Secured for Channel {
 }
 
 impl Channel {
-    /// The channel as the confidentiality rules see it.
-    pub fn channel_classification(&self) -> ChannelClassification {
-        ChannelClassification { session_id: self.session_id, channel_id: self.id, classification: self.classification.clone() }
+    /// Where the channel is.
+    pub fn channel_ref(&self) -> ChannelRef {
+        ChannelRef { session_id: self.session_id, channel_id: self.id }
     }
 
     /// A new channel of `participants`, owned by `owner`, as every channel is

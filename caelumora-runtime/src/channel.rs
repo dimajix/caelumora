@@ -14,7 +14,7 @@ use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, 
 use crate::controller::{AgentController, ChannelController, UserController};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::confidentiality::{ChannelClassification, Classification};
+use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
@@ -322,17 +322,16 @@ impl ChannelLoop {
         let attributes = self.security_attributes();
         let action = ActionType::Reclassify {
             target: Reclassified::Channel { attributes: &attributes },
-            current: &channel.classification,
+            current: &channel,
             new: &classification,
             channel: &channel,
         };
         self.require(context, action, "reclassifying").await?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
-        let reclassified = ChannelClassification { classification: classification.clone(), ..channel };
         for participant in self.channel.load().participants.iter().map(|p| p.actor_id()) {
             if !matches!(participant, ActorId::Approver(_)) {
-                self.require_cleared(context, participant, &reclassified).await?;
+                self.runtime.require_cleared(context, participant, &classification, self.id).await?;
             }
         }
         self.channel.update_classification(context, classification.clone()).await?;
@@ -416,7 +415,7 @@ impl ChannelLoop {
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
         let member = Member::of(&found, &self.runtime).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        self.require_cleared(context, participant, &self.classification()).await?;
+        self.runtime.require_cleared(context, participant, &self.classification(), self.id).await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -579,16 +578,6 @@ impl ChannelLoop {
         }
     }
 
-    /// Nothing if `participant` is cleared for the channel classified as
-    /// `classification` (`JoinChannel`, issue 133), by their roles - an
-    /// agent's owner's.
-    async fn require_cleared(&self, context: &SecurityContext, participant: ActorId, classification: &ChannelClassification) -> Result<()> {
-        let roles = self.runtime.roles_of(participant).await?;
-        let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
-        let channel = self.id;
-        Ok(self.runtime.security_manager().require(context, action, || ChannelError::NotCleared { participant, channel }).await?)
-    }
-
     /// `action`, refused as a `ChannelError::Forbidden` that names what was
     /// refused, not why.
     async fn require(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
@@ -612,9 +601,14 @@ impl ChannelLoop {
             .collect()
     }
 
-    /// The channel as the confidentiality rules see it (issue 61).
-    pub fn classification(&self) -> ChannelClassification {
-        self.channel.load().channel_classification()
+    /// The classification of the channel's contents (issue 133).
+    pub fn classification(&self) -> Classification {
+        self.channel.load().classification.clone()
+    }
+
+    /// Where the channel is.
+    pub fn channel_ref(&self) -> ChannelRef {
+        self.channel.load().channel_ref()
     }
 
     /// The notes every agent of the channel published (issue 17), read from

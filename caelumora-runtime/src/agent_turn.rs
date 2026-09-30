@@ -31,7 +31,7 @@ use tracing::warn;
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::ChannelClassification;
+use caelumora_model::confidentiality::{ChannelRef, Classification};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnEntry;
 use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
@@ -146,18 +146,25 @@ impl<'a> Turn<'a> {
         &self.agent_state
     }
 
-    /// The agent's channel as the confidentiality rules see it, as it was
-    /// when the turn began (`next_turn`).
-    pub fn classification(&self) -> ChannelClassification {
+    /// The classification of the agent's channel as it was when the turn
+    /// began (`next_turn`).
+    pub fn classification(&self) -> Classification {
         self.current().classification.clone()
     }
 
+    /// The agent's channel: where the envelope the turn answers was routed
+    /// - the `ChannelLoop` stamps it on every envelope it routes.
+    pub fn channel(&self) -> ChannelRef {
+        let event = &self.current().event_context;
+        ChannelRef { session_id: event.session_id, channel_id: event.channel_id }
+    }
+
     pub fn channel_id(&self) -> ChannelId {
-        self.current().classification.channel_id
+        self.current().event_context.channel_id
     }
 
     pub fn session_id(&self) -> SessionId {
-        self.current().classification.session_id
+        self.current().event_context.session_id
     }
 
     /// Stages `change` to the agent's own state, applied when the turn
@@ -206,8 +213,7 @@ impl<'a> Turn<'a> {
     }
 
     /// Begins a turn: fixes what it is - the envelope it answers, whose
-    /// authority it acts with, the channel as the confidentiality rules see
-    /// it now, what the `SecurityManager` lets it publish there (issue 61),
+    /// authority it acts with, the channel and its classification now,
     /// how the agent's model is given its context (the profile, issues 49,
     /// 63), and the agent's `tools` (issue 137). All but the first two hold
     /// for the whole turn - also one resumed after the model's configuration
@@ -218,7 +224,7 @@ impl<'a> Turn<'a> {
         &mut self,
         event_context: EventContext,
         security_context: SecurityContext,
-        classification: ChannelClassification,
+        classification: Classification,
         tools: Vec<Tool>,
     ) {
         let offered = self.keep_tools(&tools);
@@ -253,7 +259,7 @@ impl<'a> Turn<'a> {
     /// to work in one.
     #[cfg(test)]
     pub(crate) fn begin(&mut self) {
-        self.next_turn(EventContext::default(), SecurityContext::default(), ChannelClassification::default(), Vec::new());
+        self.next_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new());
     }
 
     /// The agent's tools as they were when the turn began: what its model
@@ -288,7 +294,7 @@ impl<'a> Turn<'a> {
                     content: Some(text),
                     sender_id: ActorId::Agent(self.agent_id),
                     sender_name: self.agent_name.clone(),
-                    ..Message::new(self.current().classification.classification.clone())
+                    ..Message::new(self.current().classification.clone())
                 },
             })
             .collect();

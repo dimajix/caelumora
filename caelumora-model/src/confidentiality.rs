@@ -421,13 +421,14 @@ impl Visibility {
     }
 }
 
-/// A channel as the confidentiality rules see it: where it is, and the
-/// classification of its contents.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct ChannelClassification {
+/// Where a channel is: its session and itself. Not how its contents are
+/// classified - that is the channel's `Classification` - but what decides
+/// whether one channel reaches another at all: today the session they are
+/// in, with consent later (issue 134).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct ChannelRef {
     pub session_id: SessionId,
     pub channel_id: ChannelId,
-    pub classification: Classification,
 }
 
 #[cfg(test)]

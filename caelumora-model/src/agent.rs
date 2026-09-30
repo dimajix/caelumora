@@ -132,10 +132,10 @@ pub struct TurnState {
     pub event_context: EventContext,
     /// Whose authority the turn acts with.
     pub security_context: SecurityContext,
-    /// The agent's channel as the confidentiality rules see it, as it was
-    /// when the turn began (issues 61, 133): the turn is consistent in
-    /// itself should the channel's classification change (issue 67).
-    pub classification: crate::confidentiality::ChannelClassification,
+    /// The channel's classification as it was when the turn began (issues
+    /// 61, 133): the turn is consistent in itself should the channel be
+    /// reclassified (issue 67).
+    pub classification: crate::confidentiality::Classification,
     /// The agent's tools as they were when the turn began (issue 137): what
     /// its model is offered for every call of the turn, and what its calls
     /// are labelled and put up for approval by - one set for the whole turn,
@@ -249,7 +249,7 @@ pub struct AgentState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentStateChange {
     /// A change to the agent's memory, made in the channel `origin`.
-    Memory { change: crate::memory::MemoryChange, origin: crate::confidentiality::ChannelClassification },
+    Memory { change: crate::memory::MemoryChange, origin: crate::confidentiality::ChannelRef },
 }
 
 impl AgentState {

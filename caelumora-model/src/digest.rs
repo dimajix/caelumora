@@ -201,7 +201,7 @@ pub fn note_chain(previous: Option<&Digest>, change: &crate::note::NoteChange, a
 /// channel `origin` after message `after`, whose predecessor chain has the
 /// digest `previous` (issue 62). Like `note_chain`, it covers what a reader
 /// learns, not when it was written.
-pub fn memory_chain(previous: Option<&Digest>, change: &crate::memory::MemoryChange, origin: &crate::confidentiality::ChannelClassification, after: crate::message::MessageId) -> Digest {
+pub fn memory_chain(previous: Option<&Digest>, change: &crate::memory::MemoryChange, origin: &crate::confidentiality::ChannelRef, after: crate::message::MessageId) -> Digest {
     let mut e = Encoder::new("caelumora.memory-chain.v1");
     e.opt_digest(previous);
     e.json(&to_json(change));

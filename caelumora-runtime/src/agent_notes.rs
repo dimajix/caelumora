@@ -82,7 +82,7 @@ impl AgentNotes {
             Some(highest) => NoteId(highest + 1),
             None => kind.chain(turn.agent_channel_state()).next_id(),
         };
-        let classification = turn.classification().classification;
+        let classification = turn.classification();
         turn.stage_channel_change(kind.change(NoteChange::Note { id, text, classification }));
         id
     }

@@ -11,7 +11,7 @@
 //! rule of issue 133, `Classification::flows_to`).
 
 use crate::chain::{Chain, ChainEntry};
-use crate::confidentiality::{ChannelClassification, Classification};
+use crate::confidentiality::{ChannelRef, Classification};
 use crate::digest::Digest;
 use crate::message::MessageId;
 use chrono::{DateTime, Utc};
@@ -34,7 +34,9 @@ impl fmt::Display for MemoryId {
 /// A change to an agent's memory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemoryChange {
-    Remember { id: MemoryId, text: String },
+    /// Remembers `text`, classified as the channel it was written in was
+    /// then (issue 133).
+    Remember { id: MemoryId, text: String, classification: Classification },
     Forget { id: MemoryId },
     /// The entry `id` is classified `classification` from now on (issue
     /// 133): recalled where that may be read, wherever it was written.
@@ -47,8 +49,8 @@ pub enum MemoryChange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
     pub change: MemoryChange,
-    /// The channel the change was made in, with its level at the time.
-    pub origin: ChannelClassification,
+    /// The channel the change was made in.
+    pub origin: ChannelRef,
     /// The message the change follows: the last one of the turn that made
     /// it in `origin` (`MessageId::default()` if there was none).
     pub after: MessageId,
@@ -67,7 +69,11 @@ impl ChainEntry for MemoryEntry {
 pub struct Memory {
     pub id: MemoryId,
     pub text: String,
-    pub origin: ChannelClassification,
+    /// How it is classified: as the channel it was written in was then,
+    /// unless it was reclassified (issue 133).
+    pub classification: Classification,
+    /// The channel it was written in.
+    pub origin: ChannelRef,
     pub after: MessageId,
     pub written_at: DateTime<Utc>,
 }
@@ -95,7 +101,7 @@ impl MemoryChain {
 
     /// Appends `change`, made in `origin` in the turn that ended with message
     /// `after`.
-    pub fn push(&mut self, change: MemoryChange, origin: ChannelClassification, after: MessageId) {
+    pub fn push(&mut self, change: MemoryChange, origin: ChannelRef, after: MessageId) {
         self.changes.push_with(|previous| {
             let digest = crate::digest::memory_chain(previous, &change, &origin, after);
             MemoryEntry { change, origin, after, written_at: Utc::now(), digest }
@@ -107,17 +113,18 @@ impl MemoryChain {
         let mut memories: Vec<Memory> = Vec::new();
         for entry in self.changes.entries() {
             match &entry.change {
-                MemoryChange::Remember { id, text } => memories.push(Memory {
+                MemoryChange::Remember { id, text, classification } => memories.push(Memory {
                     id: *id,
                     text: text.clone(),
-                    origin: entry.origin.clone(),
+                    classification: classification.clone(),
+                    origin: entry.origin,
                     after: entry.after,
                     written_at: entry.written_at,
                 }),
                 MemoryChange::Forget { id } => memories.retain(|m| m.id != *id),
                 MemoryChange::Reclassify { id, classification } => {
                     if let Some(memory) = memories.iter_mut().find(|m| m.id == *id) {
-                        memory.origin.classification = classification.clone();
+                        memory.classification = classification.clone();
                     }
                 }
             }
@@ -142,15 +149,15 @@ impl MemoryChain {
 mod tests {
     use super::*;
 
-    fn origin() -> ChannelClassification {
-        ChannelClassification::default()
+    fn origin() -> ChannelRef {
+        ChannelRef::default()
     }
 
     #[test]
     fn what_is_remembered_is_the_chain_read_from_start_to_end() {
         let mut chain = MemoryChain::new();
         assert_eq!(chain.next_id(), MemoryId(1));
-        let remember = |id, text: &str| MemoryChange::Remember { id: MemoryId(id), text: text.to_string() };
+        let remember = |id, text: &str| MemoryChange::Remember { id: MemoryId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT };
         chain.push(remember(1, "Kaya likes tea."), origin(), MessageId::new());
         chain.push(remember(2, "Kaya lives in Berlin."), origin(), MessageId::new());
         chain.push(MemoryChange::Forget { id: MemoryId(1) }, origin(), MessageId::new());

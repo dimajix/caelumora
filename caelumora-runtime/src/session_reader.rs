@@ -172,14 +172,14 @@ impl ChannelSessionReader {
     /// (`AccessQuestions::may_channel_read`, issue 133).
     async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop, classification: &Classification) -> bool {
         self.runtime.security_manager()
-            .may_channel_read(&self.context, &own.classification(), &source.classification(), classification)
+            .may_channel_read(&self.context, &own.channel_ref(), &own.classification(), &source.channel_ref(), classification)
             .await
     }
 
     /// Whether the channel `own` may read `source` as a whole: everything
     /// in it, at the channel's classification.
     async fn may_read_all(&self, own: &ChannelLoop, source: &ChannelLoop) -> bool {
-        self.may_read(own, source, &source.classification().classification).await
+        self.may_read(own, source, &source.classification()).await
     }
 
     /// The channel named `name` of the session, and whether the turn's

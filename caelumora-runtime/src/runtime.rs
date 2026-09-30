@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::ChannelClassification;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
@@ -24,7 +24,7 @@ use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::session_reader::{ChannelSessionReader, SessionReader};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStore, StateStore};
 use std::sync::{Arc, OnceLock, Weak};
@@ -84,8 +84,10 @@ impl ChannelRuntime {
 
     pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
 
-    /// See `RuntimeManager::roles_of`.
-    pub async fn roles_of(&self, actor: ActorId) -> Result<Vec<String>> { self.runtime_manager.roles_of(actor).await }
+    /// See `RuntimeManager::require_cleared`.
+    pub async fn require_cleared(&self, context: &SecurityContext, participant: ActorId, classification: &Classification, channel: ChannelId) -> Result<()> {
+        self.runtime_manager.require_cleared(context, participant, classification, channel).await
+    }
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
@@ -181,9 +183,9 @@ impl ActorRuntime {
             .publish(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes);
     }
 
-    /// The actor's channel as the confidentiality rules see it (issue 61);
-    /// `None` while the channel is being built or once it is gone.
-    pub fn classification(&self) -> Option<ChannelClassification> {
+    /// The classification of the actor's channel (issue 133); `None` while
+    /// the channel is being built or once it is gone.
+    pub fn channel_classification(&self) -> Option<Classification> {
         self.channel().map(|c| c.classification())
     }
 
@@ -290,6 +292,20 @@ impl RuntimeManager {
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
     pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.entity_store.clone() }
+
+    /// Nothing if `participant` is cleared for channel `channel`, classified
+    /// `classification` (`JoinChannel`, issue 133), by their roles
+    /// ([`roles_of`](Self::roles_of)) - to join it, to take part in it when
+    /// it is created, or for what it would be reclassified to.
+    ///
+    /// # Errors
+    /// `ChannelError::NotCleared` if they are not; whatever looking up their
+    /// roles reports.
+    pub async fn require_cleared(&self, context: &SecurityContext, participant: ActorId, classification: &Classification, channel: ChannelId) -> Result<()> {
+        let roles = self.roles_of(participant).await?;
+        let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
+        Ok(self.security_manager.require(context, action, || crate::channel::ChannelError::NotCleared { participant, channel }).await?)
+    }
 
     /// The roles `actor` is cleared by (issues 133, 142): a user's own, an
     /// agent's owner's - it must not see more than the person responsible

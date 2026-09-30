@@ -4,7 +4,7 @@ use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, Participant, DEFAULT_MODERATOR};
-use caelumora_model::confidentiality::{ChannelClassification, Classification};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
@@ -40,10 +40,6 @@ pub enum SessionError {
     /// configured, or one the policy does not let the creator give.
     #[error("A channel cannot be classified {0}: a compartment is not configured or may not be given")]
     ClassificationRefused(Classification),
-    /// A participant not cleared for the classification of a channel they
-    /// are to take part in (issue 133).
-    #[error("{participant} is not cleared for channel \"{channel}\" as it is classified")]
-    NotCleared { participant: ActorId, channel: String },
 }
 
 /// Nothing if `context` may give a channel `classification`
@@ -55,15 +51,11 @@ async fn require_classification(runtime_manager: &RuntimeManager, context: &Secu
 }
 
 /// Nothing if every participant of `channel` is cleared for its
-/// classification (`JoinChannel`, issue 133) - asked before anything is
-/// stored.
+/// classification (`RuntimeManager::require_cleared`, issue 133) - asked
+/// before anything is stored.
 async fn require_cleared(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
-    let classification = channel.channel_classification();
     for participant in channel.participants.iter().map(|p| p.actor_id()).filter(|p| !matches!(p, ActorId::Approver(_))) {
-        let roles = runtime_manager.roles_of(participant).await?;
-        let action = ActionType::JoinChannel { participant, roles: &roles, channel: &classification };
-        runtime_manager.security_manager()
-            .require(context, action, || SessionError::NotCleared { participant, channel: channel.name.clone() }).await?;
+        runtime_manager.require_cleared(context, participant, &channel.classification, channel.id).await?;
     }
     Ok(())
 }
@@ -71,7 +63,7 @@ async fn require_cleared(runtime_manager: &RuntimeManager, context: &SecurityCon
 /// Nothing if the user `context` acts for is cleared for `channel` (issue
 /// 133); `refusal` otherwise - reading a channel one is not cleared for is
 /// the same as reading one that does not exist.
-async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &ChannelClassification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
+async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
     let roles = runtime_manager.roles_of(context.initiator_id).await?;
     if runtime_manager.security_manager().may_see_channel(context, &roles, channel).await {
         Ok(())
@@ -700,7 +692,7 @@ impl SessionManager {
         let channel = channel.ok_or_else(not_found)?;
         self.runtime_manager.security_manager()
             .require(context, ActionType::GetChannel(&channel.security_attributes), not_found).await?;
-        require_seen(&self.runtime_manager, context, &channel.channel_classification(), not_found).await?;
+        require_seen(&self.runtime_manager, context, &channel.classification, not_found).await?;
         Ok(self.describe_channel(context, &channel).await)
     }
 
@@ -731,7 +723,7 @@ impl SessionManager {
         let mut readable = Vec::with_capacity(channels.len());
         for channel in &channels {
             if security.may_read_channel(context, &channel.security_attributes).await
-                && security.may_see_channel(context, &roles, &channel.channel_classification()).await
+                && security.may_see_channel(context, &roles, &channel.classification).await
             {
                 readable.push(self.describe_channel(context, channel).await);
             }
@@ -1440,7 +1432,7 @@ mod tests {
             let (reader, source, security, context) = (reader.clone(), source.clone(), security.clone(), alice_ctx.clone());
             async move {
                 use caelumora_model::security::AccessQuestions;
-                { let source = source.classification(); security.may_channel_read(&context, &reader.classification(), &source, &source.classification).await }
+                security.may_channel_read(&context, &reader.channel_ref(), &reader.classification(), &source.channel_ref(), &source.classification()).await
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");
@@ -1553,7 +1545,7 @@ mod tests {
         let lowered = classified(Confidentiality::Internal, &["hr"]);
         assert!(hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(), "only the owner reclassifies the channel");
         hr.reclassify(&alice_ctx, lowered.clone()).await.expect("the owner lowers it");
-        assert_eq!(hr.classification().classification, lowered);
+        assert_eq!(hr.classification(), lowered);
         assert_eq!(runtime.entity_store().get_channel(&alice_ctx, hr.id()).await.unwrap().classification, lowered, "stored");
         let history = hr.history().await;
         let classification_of = |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
@@ -1593,7 +1585,7 @@ mod tests {
         let hr_confidential = Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
         let with = |name: &str, classification: &Classification, participants| ChannelSpec { classification: Some(classification.clone()), ..spec(name, participants) };
         let refused = session.create_channel(&alice_ctx, with("hr", &hr_confidential, vec![bob_id])).await.expect_err("bob is not cleared for HR");
-        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotCleared { participant, .. }) if *participant == bob_id), "{refused}");
+        assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == bob_id), "{refused}");
         let hr = session.create_channel(&alice_ctx, with("hr", &hr_confidential, vec![])).await.expect("alice is");
         let joining = hr.add_participant(&alice_ctx, bob_id, caelumora_model::channel::HistoryAccess::All).await.expect_err("nor may he join");
         assert!(matches!(joining.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{joining}");
@@ -1601,7 +1593,7 @@ mod tests {
         let team = session.create_channel(&alice_ctx, with("team", &Classification::general(Confidentiality::Internal), vec![bob_id])).await.expect("both are cleared for internal");
         let raising = team.reclassify(&alice_ctx, Classification::general(Confidentiality::Confidential)).await.expect_err("above bob");
         assert!(matches!(raising.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{raising}");
-        assert_eq!(team.classification().classification, Classification::general(Confidentiality::Internal), "unchanged");
+        assert_eq!(team.classification(), Classification::general(Confidentiality::Internal), "unchanged");
 
         // Alice, no longer in HR, no longer sees its channel - though she owns it.
         store.update_user(&SecurityContext::system(), &User { roles: vec!["staff".to_string()], ..alice.clone() }).await.unwrap();

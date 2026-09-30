@@ -185,7 +185,6 @@ impl ApiError {
                 SessionError::DuplicateChannelName { .. } => return Self::conflict("channel_exists", detail),
                 SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
-                SessionError::NotCleared { .. } => return Self::forbidden("not_cleared", detail),
                 // A caller that is no user: not the client's request.
                 SessionError::OwnerNotAUser(_) => {}
             }

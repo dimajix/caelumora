@@ -186,7 +186,10 @@ mod tests {
     use crate::agent_state::{AgentStateHandle, AgentStates};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::confidentiality::{ChannelClassification, Classification, Confidentiality};
+    use caelumora_model::confidentiality::{ChannelRef, Classification, Confidentiality};
+
+    /// A channel of the tests: where it is, and how it is classified.
+    type At = (ChannelRef, Classification);
     use crate::tool::ToolError;
     use caelumora_model::security::{ActionType, OwnershipSecurityManager};
     use caelumora_model::session::{ChannelId, SessionId};
@@ -194,8 +197,13 @@ mod tests {
     use caelumora_model::store_impl::memory::MemoryStore;
     use caelumora_model::user::UserId;
 
-    fn channel(session: SessionId, level: Confidentiality) -> ChannelClassification {
-        ChannelClassification { session_id: session, channel_id: ChannelId::new(), classification: Classification::general(level) }
+    /// The context of an envelope routed in the channel `at`.
+    fn in_channel(at: &At) -> caelumora_model::actor::EventContext {
+        caelumora_model::actor::EventContext::new(at.0.session_id, at.0.channel_id, ActorId::None, String::new())
+    }
+
+    fn channel(session: SessionId, level: Confidentiality) -> At {
+        (ChannelRef { session_id: session, channel_id: ChannelId::new() }, Classification::general(level))
     }
 
     /// The component of an agent owned by `owner`, asking `policy`.
@@ -212,19 +220,19 @@ mod tests {
     }
 
     /// Remembers `text` in a turn in channel `at`, and completes the turn.
-    async fn remember(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: ChannelClassification, text: &str) {
+    async fn remember(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), at, Vec::new());
+        turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), &mut turn).await.unwrap();
         turn.commit_turn().await;
     }
 
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
-    async fn recall(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: ChannelClassification) -> Prompt {
+    async fn recall(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At) -> Prompt {
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), at, Vec::new());
+        turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         memory.get_prompt(&turn).await.unwrap()
     }
 
@@ -240,7 +248,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-            turn.next_turn(Default::default(), Default::default(), team.clone(), Vec::new());
+            turn.next_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new());
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
@@ -258,9 +266,9 @@ mod tests {
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), elsewhere, Vec::new());
+        turn.next_turn(in_channel(&elsewhere), Default::default(), elsewhere.1.clone(), Vec::new());
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err());
-        turn.next_turn(Default::default(), Default::default(), team, Vec::new());
+        turn.next_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new());
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
         turn.commit_turn().await;
         assert!(handle.current().memory.current().is_empty());
@@ -308,10 +316,8 @@ mod tests {
             security_context: SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default()).next(ActorId::Agent(agent)),
         };
         let session = SessionId::new();
-        let in_compartments = |names: &[&str]| ChannelClassification {
-            session_id: session,
-            channel_id: ChannelId::new(),
-            classification: Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap(),
+        let in_compartments = |names: &[&str]| -> At {
+            (ChannelRef { session_id: session, channel_id: ChannelId::new() }, Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap())
         };
         let (hr, finance) = (in_compartments(&["hr"]), in_compartments(&["finance"]));
         remember(&memory, &handle, agent, hr.clone(), "The budget is tight.").await;
@@ -319,7 +325,7 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), hr.clone(), Vec::new());
+        turn.next_turn(in_channel(&hr), Default::default(), hr.1.clone(), Vec::new());
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
         assert!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, &mut turn).await.is_err(), "never above the channel");
         let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });

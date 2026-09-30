@@ -268,7 +268,7 @@ impl AgentActor {
         }
         // What the model produces is derived in the channel: it carries
         // the channel's classification, as the turn began with it.
-        message.classification = turn.classification().classification;
+        message.classification = turn.classification();
 
         let owners_call = if complete {
             message.tool_calls.iter().any(|c| !c.visibility.content.is_channel())
@@ -316,7 +316,7 @@ impl AgentActor {
             return 0;
         };
         let mut answered = 0;
-        let classification = turn.classification.classification.clone();
+        let classification = turn.classification.clone();
         for call in &mut turn.tool_calls {
             if call.status == ApprovalStatus::Approved && call.result.is_none() {
                 call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result(), classification.clone()));
@@ -330,7 +330,7 @@ impl AgentActor {
     /// `security_context`, with the channel as it is now. Fails without a
     /// channel, which happens only while it is being torn down.
     async fn begin_turn<'a>(&self, turn: &mut Turn<'a>, event_context: &EventContext, security_context: &SecurityContext) -> Result<()> {
-        let classification = self.actor_runtime.classification()
+        let classification = self.actor_runtime.channel_classification()
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id))?;
         turn.next_turn(
             event_context.next(self.id, self.agent_controller.name()),
@@ -628,7 +628,7 @@ impl AgentActor {
             };
             if let Some((status, content)) = answer {
                 state.status = ApprovalStatus::Approved;
-                state.result = Some(ToolCallResult::of(tc, status, content, turn.classification().classification));
+                state.result = Some(ToolCallResult::of(tc, status, content, turn.classification()));
             }
             states.push(state);
         }

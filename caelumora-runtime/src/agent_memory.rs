@@ -14,7 +14,7 @@ use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
-use caelumora_model::confidentiality::{ChannelClassification, Classification};
+use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::memory::{Memory, MemoryChange, MemoryId};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 
@@ -26,19 +26,19 @@ impl AgentMemory {
     /// channel it may read, as the memory is now - without the turn's own
     /// changes. Whether it may is asked of `security` in `context`, the
     /// agent's (`AccessQuestions::may_channel_read`, issue 131), once per
-    /// channel the entries come from; the turn's channel is judged by the
-    /// classification the turn began with.
+    /// channel and classification the entries come with; the turn's channel
+    /// is judged by the classification the turn began with.
     pub async fn recalled(turn: &Turn<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
-        let here = turn.classification();
+        let (here, classification) = (turn.channel(), turn.classification());
         let memory = turn.agent_state().current().memory.current();
-        let mut decided: Vec<(ChannelClassification, bool)> = Vec::new();
+        let mut decided: Vec<(ChannelRef, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
         for entry in memory {
-            let readable = match decided.iter().find(|(origin, _)| *origin == entry.origin) {
-                Some((_, readable)) => *readable,
+            let readable = match decided.iter().find(|(origin, c, _)| *origin == entry.origin && *c == entry.classification) {
+                Some((_, _, readable)) => *readable,
                 None => {
-                    let readable = security.may_channel_read(context, &here, &entry.origin, &entry.origin.classification).await;
-                    decided.push((entry.origin.clone(), readable));
+                    let readable = security.may_channel_read(context, &here, &classification, &entry.origin, &entry.classification).await;
+                    decided.push((entry.origin, entry.classification.clone(), readable));
                     readable
                 }
             };
@@ -65,9 +65,9 @@ impl AgentMemory {
     /// time, and would otherwise hand out the same number. Deliberately the
     /// one exception to "commit, don't write" (issue 19).
     pub fn remember(turn: &mut Turn, text: String) -> MemoryId {
-        let origin = turn.classification();
+        let (origin, classification) = (turn.channel(), turn.classification());
         let id = turn.agent_state().reserve_memory_id();
-        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remember { id, text }, origin });
+        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remember { id, text, classification }, origin });
         id
     }
 
@@ -76,7 +76,7 @@ impl AgentMemory {
     /// and is not forgotten already - taken over when the turn completes.
     /// Returns whether it was.
     pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, security: &dyn SecurityManager, context: &SecurityContext) -> bool {
-        let origin = turn.classification();
+        let origin = turn.channel();
         let recalled = Self::recalled(turn, security, context).await.iter().any(|m| m.id == id);
         let staged = |wanted: fn(&MemoryChange, MemoryId) -> bool| turn.staged_agent_changes().iter()
             .any(|c| matches!(c, AgentStateChange::Memory { change, .. } if wanted(change, id)));
@@ -101,8 +101,8 @@ impl AgentMemory {
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
     pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
-        let origin = turn.classification();
-        let recalled = Self::recalled(turn, security, context).await.into_iter().find(|m| m.id == id).map(|m| m.origin.classification);
+        let (origin, here) = (turn.channel(), turn.classification());
+        let recalled = Self::recalled(turn, security, context).await.into_iter().find(|m| m.id == id).map(|m| m.classification);
         let staged = turn.staged_agent_changes();
         let remembered_now = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Remember { id: r, .. }, .. } if *r == id));
         let forgotten = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Forget { id: f }, .. } if *f == id));
@@ -111,7 +111,7 @@ impl AgentMemory {
             AgentStateChange::Memory { change: MemoryChange::Reclassify { id: r, classification }, .. } if *r == id => Some(classification.clone()),
             _ => None,
         });
-        let current = reclassified_now.or(recalled).or_else(|| remembered_now.then(|| origin.classification.clone()));
+        let current = reclassified_now.or(recalled).or_else(|| remembered_now.then(|| here.clone()));
         let Some(current) = current.filter(|_| !forgotten) else {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
         };
@@ -119,7 +119,7 @@ impl AgentMemory {
             target: Reclassified::Memory { author: ActorId::Agent(turn.agent_id()) },
             current: &current,
             new: &classification,
-            channel: &origin,
+            channel: &here,
         };
         security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))).await?;
         turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Reclassify { id, classification }, origin });

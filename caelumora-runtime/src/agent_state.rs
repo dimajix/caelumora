@@ -145,13 +145,13 @@ impl AgentStates {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::ChannelClassification;
+    use caelumora_model::confidentiality::{ChannelRef, Classification};
     use caelumora_model::memory::MemoryChange;
     use caelumora_model::store_impl::memory::MemoryStore;
 
     fn remember(id: MemoryId, text: &str) -> AgentStateChange {
-        let origin = ChannelClassification::default();
-        AgentStateChange::Memory { change: MemoryChange::Remember { id, text: text.to_string() }, origin }
+        let origin = ChannelRef::default();
+        AgentStateChange::Memory { change: MemoryChange::Remember { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, origin }
     }
 
     #[tokio::test]

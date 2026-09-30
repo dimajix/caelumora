@@ -37,7 +37,7 @@ impl<'t> ToolCalls<'t> {
     /// answered already (issue 118) - and returns the approval requests for
     /// those that wait for a decision.
     pub(crate) fn register(&mut self, calls: Vec<ToolCallState>) -> Vec<ApprovalRequest> {
-        let (session_id, channel_id) = (self.turn.classification.session_id, self.turn.classification.channel_id);
+        let (session_id, channel_id) = (self.turn.event_context.session_id, self.turn.event_context.channel_id);
         let requests = calls.iter()
             .filter(|c| c.status == ApprovalStatus::Pending)
             .map(|c| ApprovalRequest {
@@ -82,7 +82,7 @@ impl<'t> ToolCalls<'t> {
                 ApprovalStatus::Pending => None,
             };
             if let Some((status, content)) = answer {
-                call.result = Some(ToolCallResult::of(&call.tool_call, status, content, self.turn.classification.classification.clone()));
+                call.result = Some(ToolCallResult::of(&call.tool_call, status, content, self.turn.classification.clone()));
             }
         }
         to_run
@@ -117,7 +117,7 @@ impl<'t> ToolCalls<'t> {
             content: None,
             timestamp: chrono::Utc::now(),
             internal,
-            ..Message::new(self.turn.classification.classification.clone())
+            ..Message::new(self.turn.classification.clone())
         };
         self.turn.push(message.clone());
         Some(message)

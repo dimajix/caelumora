@@ -104,9 +104,10 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     contents may be read. The component asks the policy in the agent's name
     (`AccessQuestions::may_channel_read` through the `SecurityManager` of its
     `ComponentContext`, issue 131), once per channel the entries come from.
-    Under the ownership policy an entry is recalled where its channel's
-    classification flows into the current one's (the flow rule of issue
-    133) - within the session, and from `public` channels beyond it. Only
+    Under the ownership policy an entry is recalled where its own
+    classification - its channel's when it was written, unless it was
+    reclassified - flows into the current channel's (the flow rule of issue
+    133) - within the session, and what is `public` beyond it. Only
     entries recalled in a channel can be forgotten there, or reclassified
     (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).

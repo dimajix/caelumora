@@ -101,9 +101,9 @@ impl UserActor {
     /// `ChannelError::ClassificationRefused` if the message may not enter
     /// the channel as classified; an error if the channel is gone.
     pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
-        let channel = self.actor_runtime.classification()
+        let channel = self.actor_runtime.channel_classification()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        let classification = classification.unwrap_or_else(|| channel.classification.clone());
+        let classification = classification.unwrap_or_else(|| channel.clone());
         let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
         self.actor_runtime.security_manager()
             .require(&self.security_context, action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })

@@ -298,7 +298,7 @@ impl GuardedToolExecutor {
     fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
         let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
         let (status, content) = error.to_result(&available);
-        ToolCallResult::of(call, status, content, turn.classification().classification)
+        ToolCallResult::of(call, status, content, turn.classification())
     }
 
     /// The result for `call`, whose tool gave `output`: classified as the
@@ -309,12 +309,12 @@ impl GuardedToolExecutor {
     async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
         let channel = turn.classification();
         let configured = turn.tools().iter().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
-        let classification = output.classification.or(configured).unwrap_or_else(|| channel.classification.clone());
+        let classification = output.classification.or(configured).unwrap_or_else(|| channel.clone());
         let context = turn.security_context();
         let action = ActionType::Publish { classification: &classification, actor: context.caller_id, channel: &channel };
         if !self.security_manager.check(context, action).await {
             debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
-            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&classification), channel.classification);
+            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&classification), channel);
         }
         ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(output.value, call.visibility), classification)
     }
@@ -563,7 +563,7 @@ mod tests {
         let executor = executor(with_hr());
         let mut agent_channel_state = agent_turn(&executor);
         if let Some(turn) = agent_channel_state.turn.as_mut() {
-            turn.classification.classification = hr();
+            turn.classification = hr();
         }
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         let result = executor.execute(&call("hr_tool"), &mut turn).await;

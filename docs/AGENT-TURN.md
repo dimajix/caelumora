@@ -80,8 +80,8 @@ the turn is and what it has done so far:
 
 *   the envelope it answers (`EventContext`),
 *   whose authority it acts with (`SecurityContext`),
-*   the channel as the confidentiality rules see it
-    (`ChannelClassification`),
+*   the classification of its channel as the turn began - where the
+    channel is, the turn reads from the envelope it answers,
 *   what its next message is produced from (see [The turn's context and
     the resolver](#the-turns-context-and-the-resolver)), the messages
     produced, each with what it was produced from,
