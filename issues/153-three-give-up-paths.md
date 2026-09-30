@@ -1,6 +1,6 @@
 # 153 — A turn is given up along three paths, with two enums for one fact
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -54,3 +54,18 @@ A fourth way to end a turn - a branch switch ([08](08-retry-and-edit-past-answer
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, A4, T2), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-09-30** — Done.
+  - `AgentActor::give_up(turn, reason, output)` is the one way to give a
+    turn up: it asks `turn_flow` how executed calls are told, gives the
+    turn up and sends `TurnFailed` with what the reason says - the error's
+    user message, or that the channel was lowered - and nothing on a stop.
+    `fail_turn` logs and calls it; the lowering and the stop in `run` call
+    it; `give_up_lowered` and `carried_calls` are gone. The lowering asks
+    the policy once more instead of passing what the run loop found; the
+    answer is the same, and were the channel raised in between, the calls
+    would be told in full, as they then may be.
+  - `CarriedCalls` is `Option<Classification>` (`names_only`) on
+    `Turn::give_up_turn`. `TurnFlow` keeps its three values.
+  - `executed_calls` is `caelumora_model::message::executed_calls` over
+    `&[&Message]`, with a test of its own; the two texts are one
+    `told_of_executed(reason, executed, in_full)`, still in the runtime.

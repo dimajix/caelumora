@@ -35,11 +35,11 @@ use caelumora_model::confidentiality::{ChannelRef, Classification};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnEntry;
 use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::{executed_calls, Message, MessageRole};
 use caelumora_model::transcript::{GivenUp, GivenUpReason};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{Tool, ToolDefinition};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolDefinition};
 use crate::tool_calls::ToolCalls;
 
 /// What a turn reads as when none runs.
@@ -82,54 +82,32 @@ pub struct CommittedTurn {
     pub ended: EndedTurn,
 }
 
-/// How the tool calls that ran in a turn given up are told on the active
-/// branch (`Turn::give_up_turn`).
-#[derive(Debug, Clone)]
-pub(crate) enum CarriedCalls {
-    /// With arguments and results, classified as the turn: it still flows
-    /// into the channel.
-    InFull,
-    /// Only which tools ran, classified `classification`: the turn does no
-    /// longer flow into the channel, whose classification was lowered
-    /// meanwhile (issue 141), so what it saw may not either.
-    NamesOnly { classification: Classification },
-}
-
-/// The calls among `entries` that ran - their results have a start - each
-/// with its result and the call as the model made it, if it is there.
-fn executed_calls(entries: &[TurnEntry]) -> Vec<(Option<&caelumora_model::tool::ToolCall>, &caelumora_model::tool::ToolCallResult)> {
-    let calls: Vec<_> = entries.iter().flat_map(|e| &e.entry.message.tool_calls).collect();
-    entries.iter()
-        .flat_map(|e| &e.entry.message.tool_results)
-        .filter(|result| result.started_at.is_some())
-        .map(|result| (calls.iter().copied().find(|c| c.id.is_some() && c.id == result.id), result))
-        .collect()
-}
-
-/// How the turn ended, as the agent is told.
-fn given_up_because(reason: &GivenUpReason) -> &'static str {
-    match reason {
+/// What the agent is told of the calls that ran in a turn given up
+/// (`executed`), and why it was given up: with arguments and results
+/// `in_full`, else only which tools ran - the turn does no longer flow into
+/// the channel, whose classification was lowered meanwhile (issue 141), so
+/// what it saw may not either.
+fn told_of_executed(reason: &GivenUpReason, executed: &[(Option<&ToolCall>, &ToolCallResult)], in_full: bool) -> String {
+    let because = match reason {
         GivenUpReason::Failed { .. } => "it failed",
         GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
         GivenUpReason::Stopped => "you were stopped",
-    }
-}
-
-fn executed_in_full(reason: &GivenUpReason, executed: &[(Option<&caelumora_model::tool::ToolCall>, &caelumora_model::tool::ToolCallResult)]) -> String {
-    let calls: Vec<String> = executed.iter().map(|(call, result)| {
-        let arguments = call.map(|c| c.arguments.to_string()).unwrap_or_default();
-        format!("- {}({}) -> {}: {}", result.tool_name, arguments, serde_json::to_string(&result.status).unwrap_or_default().trim_matches('"'), result.content)
+    };
+    let calls: Vec<String> = executed.iter().map(|(call, result)| match in_full {
+        true => {
+            let arguments = call.map(|c| c.arguments.to_string()).unwrap_or_default();
+            let status = serde_json::to_string(&result.status).unwrap_or_default();
+            format!("- {}({}) -> {}: {}", result.tool_name, arguments, status.trim_matches('"'), result.content)
+        }
+        false => format!("- {}", result.tool_name),
     }).collect();
+    let (what, hidden) = match in_full {
+        true => ("these tool calls", ""),
+        false => ("calls of these tools", "Their arguments and results cannot be shown here: the channel's classification was lowered since. "),
+    };
     format!(
-        "Your previous turn was given up before it was complete, because {}. Its messages are gone, but these tool calls had already been executed, and their effects remain:\n{}\nDo not repeat them unless that is what is wanted.",
-        given_up_because(reason), calls.join("\n"))
-}
-
-fn executed_by_name(reason: &GivenUpReason, executed: &[(Option<&caelumora_model::tool::ToolCall>, &caelumora_model::tool::ToolCallResult)]) -> String {
-    let tools: Vec<String> = executed.iter().map(|(_, result)| format!("- {}", result.tool_name)).collect();
-    format!(
-        "Your previous turn was given up before it was complete, because {}. Its messages are gone, but calls of these tools had already been executed, and their effects remain:\n{}\nTheir arguments and results cannot be shown here: the channel's classification was lowered since. Do not repeat them unless that is what is wanted.",
-        given_up_because(reason), tools.join("\n"))
+        "Your previous turn was given up before it was complete, because {because}. Its messages are gone, but {what} had already been executed, and their effects remain:\n{}\n{hidden}Do not repeat them unless that is what is wanted.",
+        calls.join("\n"))
 }
 
 /// What the model is given for a step of the turn (`Turn::full_context`):
@@ -256,24 +234,20 @@ impl<'a> Turn<'a> {
     ///
     /// What its tools did stays done. If any of its calls ran, the agent is
     /// told on the active branch, in a message of the runtime in its
-    /// transcript - as `carried` says: in full, or only which tools ran.
-    pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, carried: CarriedCalls) -> EndedTurn {
+    /// transcript: in full, classified as the turn - or, with `names_only`,
+    /// only which tools ran, classified so.
+    pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
         let TurnState { entries, classification, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
-        let executed = executed_calls(&entries);
-        let told = (!executed.is_empty()).then(|| {
-            let (text, classification) = match carried {
-                CarriedCalls::InFull => (executed_in_full(&reason, &executed), classification),
-                CarriedCalls::NamesOnly { classification } => (executed_by_name(&reason, &executed), classification),
-            };
-            Message {
-                id: caelumora_model::message::MessageId::new(),
-                content: Some(text),
-                internal: true,
-                ..Message::new(classification)
-            }
+        let messages: Vec<&Message> = entries.iter().map(|e| &e.entry.message).collect();
+        let executed = executed_calls(&messages);
+        let told = (!executed.is_empty()).then(|| Message {
+            id: caelumora_model::message::MessageId::new(),
+            content: Some(told_of_executed(&reason, &executed, names_only.is_none())),
+            internal: true,
+            ..Message::new(names_only.unwrap_or(classification))
         });
 
         let transcript = self.agent_channel_state.transcript.digest();
@@ -690,7 +664,7 @@ mod tests {
         let mut state = a_state_with("mail bob");
         let (transcript, history) = (state.transcript.digest(), state.history.digest());
         let mut turn = a_turn_that_called(&mut state, "send_mail", false);
-        turn.give_up_turn(GivenUpReason::Stopped, CarriedCalls::InFull);
+        turn.give_up_turn(GivenUpReason::Stopped, None);
 
         assert!(state.turn.is_none(), "the turn is over");
         assert_eq!((state.transcript.digest(), state.history.digest()), (transcript, history), "both are where the turn began: nothing ran, so nothing is told");
@@ -705,7 +679,7 @@ mod tests {
     fn what_ran_in_a_turn_given_up_is_told_in_full_or_by_name() {
         let mut state = a_state_with("mail bob");
         let mut turn = a_turn_that_called(&mut state, "send_mail", true);
-        turn.give_up_turn(GivenUpReason::Failed { message: "boom".to_string() }, CarriedCalls::InFull);
+        turn.give_up_turn(GivenUpReason::Failed { message: "boom".to_string() }, None);
         let told = state.transcript.messages().pop().unwrap();
         let text = told.content.unwrap();
         assert!(text.contains("send_mail") && text.contains("bob") && text.contains("sent"), "{text}");
@@ -714,7 +688,7 @@ mod tests {
         let mut state = a_state_with("mail bob");
         let lowered = Classification::general(caelumora_model::confidentiality::Confidentiality::Public);
         let mut turn = a_turn_that_called(&mut state, "send_mail", true);
-        turn.give_up_turn(GivenUpReason::Stopped, CarriedCalls::NamesOnly { classification: lowered.clone() });
+        turn.give_up_turn(GivenUpReason::Stopped, Some(lowered.clone()));
         let told = state.transcript.messages().pop().unwrap();
         let text = told.content.unwrap();
         assert!(text.contains("send_mail") && !text.contains("bob") && !text.contains("sent"), "{text}");
@@ -726,7 +700,7 @@ mod tests {
         let mut state = a_state_with("hello");
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
-        turn.give_up_turn(GivenUpReason::Stopped, CarriedCalls::InFull);
+        turn.give_up_turn(GivenUpReason::Stopped, None);
         assert!(state.transcript.given_up_turns().is_empty());
         assert_eq!(state.transcript.entries().len(), 1);
     }

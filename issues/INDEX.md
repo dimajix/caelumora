@@ -245,7 +245,7 @@ against it, and what came out of the last attempt.
 | [144](144-runtime-and-entity-accessors.md) | done | Runtimes forward attributes of their own and of the entity above in several ways, with no rule for what the runtime answers and what the entity answers itself. |
 | [147](147-actor-control-unchecked.md) | open | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
 | [152](152-three-signals-end-a-turn.md) | done | A turn is ended by three signals - a state switched from outside, a token and a flag - that the run loop reconciles with a precedence rule. |
-| [153](153-three-give-up-paths.md) | open | A turn is given up along three paths that do the same, with two enums carrying one classification. |
+| [153](153-three-give-up-paths.md) | done | A turn is given up along three paths that do the same, with two enums carrying one classification. |
 | [154](154-model-step-mixes-four-things.md) | open | The model step mixes stamping messages, plan mode, streaming and plan progress in one function of 120 lines. |
 | [155](155-approval-admission-on-the-actor.md) | open | The actor decides how a tool call is admitted and builds its `ToolCallState` by hand, though everything the rule is made of is in the tool guard. |
 | [157](157-actor-holds-what-is-not-its-own.md) | open | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |

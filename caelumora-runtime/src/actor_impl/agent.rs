@@ -1,5 +1,5 @@
 use crate::actor::{Actor, GivenUpTurnsError, MessageContextError};
-use crate::agent_turn::{CarriedCalls, CommittedTurn, Turn};
+use crate::agent_turn::{CommittedTurn, Turn};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
@@ -503,10 +503,31 @@ impl AgentActor {
 
         let message = crate::error::user_message(error)
             .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
-        let carried = self.carried_calls(turn).await;
-        let ended = turn.give_up_turn(GivenUpReason::Failed { message: message.clone() }, carried);
+        self.give_up(turn, GivenUpReason::Failed { message }, output).await;
+    }
+
+    /// Gives `turn` up for `reason` (issue 145) - failed, lowered, stopped:
+    /// its messages stay as a branch no longer active, and the calls of its
+    /// tools that ran are told on the active branch, in full while the turn
+    /// still flows into the channel, else by name, classified as the channel
+    /// is now (issue 141). The channel's users are told with `TurnFailed`,
+    /// unless the agent was stopped: it left the channel.
+    async fn give_up<'a>(&self, turn: &mut Turn<'a>, reason: GivenUpReason, output: &dyn EventSender) {
+        let names_only = match self.turn_flow(turn).await {
+            TurnFlow::Flows => None,
+            TurnFlow::Lowered(channel) => Some(channel),
+            TurnFlow::NoChannel => Some(turn.classification()),
+        };
+        let agent_name = self.agent_controller.name();
+        let told = match &reason {
+            GivenUpReason::Failed { message } => Some(message.clone()),
+            GivenUpReason::Lowered { channel } => Some(format!("The channel's classification was lowered to {channel} while {agent_name} was answering; the answer was discarded.")),
+            GivenUpReason::Stopped => None,
+        };
+        let ended = turn.give_up_turn(reason, names_only);
+        let Some(message) = told else { return };
         if let Err(e) = ended.send_event(ActorEvent::TurnFailed { message }, output).await {
-            warn!("Agent {} {} cannot report its failed turn: {:#}", self.id(), agent_name, e);
+            warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id(), agent_name, e);
         }
     }
 
@@ -523,32 +544,6 @@ impl AgentActor {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
-        }
-    }
-
-    /// How the tool calls that ran in `turn` are told when it is given up
-    /// (issue 145): in full while the turn still flows into the channel,
-    /// else - the channel was lowered meanwhile, or is gone - only which
-    /// tools ran.
-    async fn carried_calls(&self, turn: &Turn<'_>) -> CarriedCalls {
-        match self.turn_flow(turn).await {
-            TurnFlow::Flows => CarriedCalls::InFull,
-            TurnFlow::Lowered(channel) => CarriedCalls::NamesOnly { classification: channel },
-            TurnFlow::NoChannel => CarriedCalls::NamesOnly { classification: turn.classification() },
-        }
-    }
-
-    /// Gives `turn` up because its channel was lowered to `channel` (issue
-    /// 141) - nothing of it may be taken over - and tells the channel's
-    /// users with `TurnFailed`.
-    async fn give_up_lowered<'a>(&self, turn: &mut Turn<'a>, channel: Classification, output: &dyn EventSender) {
-        let agent_name = self.agent_controller.name();
-        info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id(), agent_name, channel);
-        let carried = CarriedCalls::NamesOnly { classification: channel.clone() };
-        let ended = turn.give_up_turn(GivenUpReason::Lowered { channel: channel.clone() }, carried);
-        let message = format!("The channel's classification was lowered to {channel} while {agent_name} was answering; the answer was discarded.");
-        if let Err(e) = ended.send_event(ActorEvent::TurnFailed { message }, output).await {
-            warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id(), agent_name, e);
         }
     }
 
@@ -966,7 +961,8 @@ impl Actor for AgentActor {
             // about to do; nothing of it is run or taken over (issue 141).
             if current_state.in_turn() {
                 if let TurnFlow::Lowered(channel) = self.turn_flow(&turn).await {
-                    self.give_up_lowered(&mut turn, channel, &*output).instrument(span).await;
+                    info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id(), self.agent_controller.name(), channel);
+                    self.give_up(&mut turn, GivenUpReason::Lowered { channel }, &*output).instrument(span).await;
                     self.settle(&mut turn, ActorState::Idle).await;
                     continue;
                 }
@@ -1007,8 +1003,7 @@ impl Actor for AgentActor {
             // resumed (issues 75, 145).
             let interrupt = self.take_interrupt();
             if interrupt == Some(Interrupt::Stop) {
-                let carried = self.carried_calls(&turn).await;
-                turn.give_up_turn(GivenUpReason::Stopped, carried);
+                self.give_up(&mut turn, GivenUpReason::Stopped, &*output).await;
                 self.settle(&mut turn, ActorState::Idle).await;
                 break;
             }

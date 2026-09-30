@@ -146,6 +146,18 @@ pub enum MessageEvent {
 }
 
 
+/// The tool calls among `messages` that ran - their results have a start
+/// (issue 145) - each with its result and the call as the model made it, if
+/// it is there. What a turn given up is told to have done.
+pub fn executed_calls<'a>(messages: &[&'a Message]) -> Vec<(Option<&'a ToolCall>, &'a ToolCallResult)> {
+    let calls: Vec<&ToolCall> = messages.iter().flat_map(|m| &m.tool_calls).collect();
+    messages.iter()
+        .flat_map(|m| &m.tool_results)
+        .filter(|result| result.started_at.is_some())
+        .map(|result| (calls.iter().copied().find(|c| c.id.is_some() && c.id == result.id), result))
+        .collect()
+}
+
 /// An entry of a chain of messages.
 pub(crate) trait MessageEntry: ChainEntry {
     fn message(&self) -> &Message;
@@ -234,6 +246,16 @@ pub(crate) mod tests {
         assert_eq!(contents, ["secret", ""], "the hidden result is gone, the call-only one empty");
         let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
         assert_eq!(ran(&published.tool_results[1]), ran(&results.tool_results[1]), "when it ran is the call's, not the content's");
+    }
+
+    #[test]
+    fn only_calls_that_started_count_as_executed() {
+        let calls = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN), call("2", ToolVisibility::SHOWN)], ..make_message(MessageId::new()) };
+        let never_ran = ToolCallResult { started_at: None, finished_at: None, ..result("2", ToolVisibility::SHOWN) };
+        let results = Message { tool_results: vec![result("1", ToolVisibility::SHOWN), never_ran], ..make_message(MessageId::new()) };
+        let executed = executed_calls(&[&calls, &results]);
+        assert_eq!(executed.len(), 1);
+        assert_eq!((executed[0].0.and_then(|c| c.id.as_deref()), executed[0].1.id.as_deref()), (Some("1"), Some("1")), "with the call it answers");
     }
 
     #[test]
