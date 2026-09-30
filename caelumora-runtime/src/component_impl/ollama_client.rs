@@ -6,17 +6,19 @@
 //!
 //! Parameters: `base_url` (the Ollama server), `model`, `think` - whether
 //! the model is asked to reason; left out, Ollama's default for the model
-//! applies - and `reasoning_history`, which reasoning of earlier messages
-//! the model is given back (`never`, `current_turn` - the default - or
-//! `always`, issue 63). An unknown parameter is refused, so that a misspelt
-//! one does not silently fall back to its default.
+//! applies - `reasoning_history`, which reasoning of earlier messages the
+//! model is given back (`never`, `current_turn` - the default - or
+//! `always`, issue 63), and `system_messages`, where the model keeps system
+//! messages (`only_at_start` - the default - or `anywhere`, issue 49). An
+//! unknown parameter is refused, so that a misspelt one does not silently
+//! fall back to its default.
 
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{LLMClient, LLMError, LLMResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::context::{ModelProfile, ReasoningHistory};
+use caelumora_model::context::{ModelProfile, ReasoningHistory, SystemMessages};
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolConfidentiality};
 use chrono::Utc;
@@ -250,6 +252,8 @@ struct OllamaClientConfig {
     think: Option<bool>,
     #[serde(default)]
     reasoning_history: ReasoningHistory,
+    #[serde(default)]
+    system_messages: SystemMessages,
 }
 
 fn default_base_url() -> String {
@@ -279,7 +283,7 @@ impl OllamaClient {
             base_url: config.base_url,
             model: config.model,
             think: config.think,
-            profile: ModelProfile { reasoning_history: config.reasoning_history },
+            profile: ModelProfile { reasoning_history: config.reasoning_history, system_messages: config.system_messages },
         }
     }
 }
@@ -575,10 +579,12 @@ mod tests {
         assert_eq!(config.model, DEFAULT_MODEL);
         assert_eq!(config.think, None);
         assert_eq!(config.reasoning_history, ReasoningHistory::CurrentTurn);
+        assert_eq!(config.system_messages, SystemMessages::OnlyAtStart);
 
-        let config: OllamaClientConfig = serde_json::from_value(json!({ "model": "qwen3:8b", "think": true, "reasoning_history": "never" })).unwrap();
+        let config: OllamaClientConfig = serde_json::from_value(json!({ "model": "qwen3:8b", "think": true, "reasoning_history": "never", "system_messages": "anywhere" })).unwrap();
         assert_eq!((config.model.as_str(), config.think), ("qwen3:8b", Some(true)));
         assert_eq!(config.reasoning_history, ReasoningHistory::Never);
+        assert_eq!(config.system_messages, SystemMessages::Anywhere);
     }
 
     #[test]

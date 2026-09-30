@@ -46,6 +46,16 @@ pub enum ContextItem {
     Prompt { digest: Digest, role: MessageRole, text: String },
 }
 
+impl ContextItem {
+    /// The role the item is given in.
+    pub fn role(&self) -> MessageRole {
+        match self {
+            ContextItem::Conversation { message } => message.role,
+            ContextItem::Prompt { role, .. } => *role,
+        }
+    }
+}
+
 /// Knowledge from another place an agent's model was given (issue 17): what
 /// was read, from which channel, as the digest of the state read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +132,8 @@ impl ReasoningHistory {
 pub struct ModelProfile {
     /// Which reasoning of earlier messages the model is given back.
     pub reasoning_history: ReasoningHistory,
+    /// Where the model keeps system messages.
+    pub system_messages: SystemMessages,
 }
 
 impl ModelProfile {
@@ -130,6 +142,40 @@ impl ModelProfile {
     pub fn given(&self, message: Message, agent: ActorId, in_turn: bool) -> Message {
         self.reasoning_history.given(message, agent, in_turn)
     }
+
+    /// Gives every system message of `items` that does not lead them - a
+    /// prompt part or a message of the conversation - in the role the
+    /// model keeps where it stands (issue 49).
+    fn place_system_messages(&self, items: &mut [ContextItem]) {
+        if self.system_messages == SystemMessages::Anywhere {
+            return;
+        }
+        let leading = items.iter().take_while(|item| item.role() == MessageRole::System).count();
+        for item in &mut items[leading..] {
+            let role = match item {
+                ContextItem::Conversation { message } => &mut message.role,
+                ContextItem::Prompt { role, .. } => role,
+            };
+            if *role == MessageRole::System {
+                *role = MessageRole::User;
+            }
+        }
+    }
+}
+
+/// Where a model keeps system messages (issue 49). Some models' chat
+/// templates merge every system message into the system prompt and move it
+/// to the front, so that a system message in the middle of the context
+/// loses its place - and, changing the system prompt, the prompt cache.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemMessages {
+    /// Only those before everything else, the system prompt; any later one
+    /// is given as a user message. The default: it holds for every model.
+    #[default]
+    OnlyAtStart,
+    /// Wherever they stand.
+    Anywhere,
 }
 
 /// A prompt part as a `ContextProvider` places it: its text, the role it is
@@ -142,25 +188,46 @@ pub struct PromptPart {
     pub after: Option<Digest>,
 }
 
+/// A prompt part placed among the messages of the turn under way (issue
+/// 49) - an instruction of the runtime, such as the next step of a plan:
+/// the digest of its text, the role it is given in, and how many of the
+/// turn's messages precede it. Those messages are not in the transcript
+/// yet; when the turn is taken over, it becomes a [`PromptRef`] after the
+/// entry of the last of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnPromptRef {
+    pub text: Digest,
+    pub role: MessageRole,
+    pub after: usize,
+}
+
 /// What the model of a turn is given, as references (issue 49): the
-/// transcript and the prompt parts its `ContextProvider` gave it, and the
-/// rules of the model, fixed when the turn begins. The messages the turn
-/// produces follow it. Resolved by the [`ContextResolver`].
+/// transcript and the prompt parts its `ContextProvider` gave it, the parts
+/// placed among the turn's own messages, and the rules of the model, fixed
+/// when the turn begins. The messages the turn produces follow the
+/// transcript. Resolved by the [`ContextResolver`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextFrame {
     /// The digest of the agent's transcript the model is given.
     pub transcript: Option<Digest>,
     pub prompts: Vec<PromptRef>,
+    pub turn_prompts: Vec<TurnPromptRef>,
     pub profile: ModelProfile,
 }
 
 impl ContextFrame {
-
-    /// The reference recorded for a message the turn produced after
-    /// `turn_entries` messages of its own, when the transcript before it had
-    /// the digest `transcript` and `knowledge` had been read.
-    pub fn reference(&self, transcript: Option<Digest>, turn_entries: usize, knowledge: Vec<KnowledgeRef>) -> ContextRef {
-        ContextRef { transcript, prompts: self.prompts.clone(), knowledge, profile: self.profile, turn_entries }
+    /// The reference recorded for the turn's message `index`, once the
+    /// turn's messages are in the transcript - `before[i]` the digest of
+    /// the transcript before message `i` - and after `knowledge` had been
+    /// read. It names the parts placed among the turn's messages that came
+    /// before it, each after the entry it followed.
+    pub fn reference(&self, before: &[Option<Digest>], index: usize, knowledge: Vec<KnowledgeRef>) -> ContextRef {
+        let mut prompts = self.prompts.clone();
+        prompts.extend(self.turn_prompts.iter()
+            .filter(|p| p.after <= index)
+            .map(|p| PromptRef { text: p.text, role: p.role, after: before.get(p.after).copied().flatten() }));
+        let transcript = before.get(index).copied().flatten();
+        ContextRef { transcript, prompts, knowledge, profile: self.profile, turn_entries: index }
     }
 }
 
@@ -218,7 +285,7 @@ impl<'a> ContextResolver<'a> {
         let frame = &turn.frame;
         let before = self.entries(frame.transcript.as_ref())?;
         let during = turn.messages.iter().map(|m| (m, None));
-        self.assemble(&frame.prompts, &frame.profile, agent, before, during)
+        self.assemble(&frame.prompts, &frame.turn_prompts, &frame.profile, agent, before, during)
     }
 
     /// What the model of `agent` was given for the message `reference` was
@@ -232,7 +299,7 @@ impl<'a> ContextResolver<'a> {
         let turn_start = entries.len().checked_sub(reference.turn_entries)?;
         let (before, during) = entries.split_at(turn_start);
         let during = during.iter().map(|e| (&e.message, Some(e.digest)));
-        let items = self.assemble(&reference.prompts, &reference.profile, agent, before, during)?;
+        let items = self.assemble(&reference.prompts, &[], &reference.profile, agent, before, during)?;
         Some(ResolvedContext { reference: reference.clone(), items })
     }
 
@@ -247,38 +314,47 @@ impl<'a> ContextResolver<'a> {
     /// The items the model of `agent` is given: the entries `before` the
     /// turn, then the turn's messages `during` - each with its digest once
     /// it is in the transcript - as `profile` gives them, with every part of
-    /// `prompts` after the entry it follows. `None` if a part's text is not
-    /// kept or its entry is not there.
+    /// `prompts` after the entry it follows and every part of
+    /// `turn_prompts` after the number of the turn's messages it follows.
+    /// `None` if a part's text is not kept or its place is not there.
     fn assemble<'m>(
         &self,
         prompts: &[PromptRef],
+        turn_prompts: &[TurnPromptRef],
         profile: &ModelProfile,
         agent: ActorId,
         before: &[TranscriptEntry],
         during: impl Iterator<Item = (&'m Message, Option<Digest>)>,
     ) -> Option<Vec<ContextItem>> {
-        let mut items = Vec::with_capacity(before.len() + prompts.len());
-        let mut placed = 0;
-        let mut place = |after: Option<Digest>, items: &mut Vec<ContextItem>| -> Option<()> {
-            for p in prompts.iter().filter(|p| p.after == after) {
-                let text = self.prompts.get(&p.text)?.clone();
-                items.push(ContextItem::Prompt { digest: p.text, role: p.role, text });
-                placed += 1;
-            }
-            Some(())
+        let part = |digest: Digest, role: MessageRole| -> Option<ContextItem> {
+            Some(ContextItem::Prompt { digest, role, text: self.prompts.get(&digest)?.clone() })
         };
-        place(None, &mut items)?;
+        // The parts after the transcript entry `after` - `None`: before
+        // everything - and those after `n` of the turn's messages.
+        let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
+            prompts.iter().filter(|p| p.after == after).map(|p| part(p.text, p.role)).collect()
+        };
+        let after_turn = |n: usize| -> Option<Vec<ContextItem>> {
+            turn_prompts.iter().filter(|p| p.after == n).map(|p| part(p.text, p.role)).collect()
+        };
+
+        let mut items = after_entry(None)?;
         for entry in before {
             items.push(ContextItem::Conversation { message: profile.given(entry.message.clone(), agent, false) });
-            place(Some(entry.digest), &mut items)?;
+            items.extend(after_entry(Some(entry.digest))?);
         }
-        for (message, digest) in during {
+        items.extend(after_turn(0)?);
+        for (index, (message, digest)) in during.enumerate() {
             items.push(ContextItem::Conversation { message: profile.given(message.clone(), agent, true) });
             if digest.is_some() {
-                place(digest, &mut items)?;
+                items.extend(after_entry(digest)?);
             }
+            items.extend(after_turn(index + 1)?);
         }
-        (placed == prompts.len()).then_some(items)
+        profile.place_system_messages(&mut items);
+        // Every part was placed, none after what is not there.
+        let placed = items.iter().filter(|item| matches!(item, ContextItem::Prompt { .. })).count();
+        (placed == prompts.len() + turn_prompts.len()).then_some(items)
     }
 }
 
@@ -359,21 +435,54 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.push(own("earlier"));
         let before_question = state.transcript.push(text("question"));
-        state.prompts.insert(prompt("notes"), "notes".to_string());
+        for part in ["notes", "step 1", "step 2"] {
+            state.prompts.insert(prompt(part), part.to_string());
+        }
 
         let mut frame = ContextFrame { transcript: state.transcript.digest(), ..ContextFrame::default() };
         frame.prompts.push(PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question });
+        // Instructions of the runtime among the turn's messages: one before
+        // them, one after the first.
+        frame.turn_prompts.push(TurnPromptRef { text: prompt("step 1"), role: MessageRole::User, after: 0 });
+        frame.turn_prompts.push(TurnPromptRef { text: prompt("step 2"), role: MessageRole::User, after: 1 });
         let turn = TurnState { frame: frame.clone(), messages: vec![own("first"), own("second")], ..TurnState::default() };
         let current = ContextResolver::of(&state).current(&turn, agent).expect("everything it names is here");
-        assert_eq!(contents(&current), ["earlier", "prompt:notes", "question", "first", "second"]);
+        assert_eq!(contents(&current), ["earlier", "prompt:notes", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
         let reasoning = current.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
-        assert_eq!(reasoning, [false, false, false, true, true], "the turn's own reasoning, not an earlier turn's");
+        assert_eq!(reasoning, [false, false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
 
-        // Once taken over, the second message's reference resolves to what
-        // the turn gave the model for it.
+        // Once taken over, each message's reference resolves to what the
+        // turn gave the model for it - the instructions before it included.
         let before = state.transcript.extend(turn.messages.clone());
-        let reference = frame.reference(before[1], 1, Vec::new());
-        let seen = ContextResolver::of(&state).resolve(&reference, agent).expect("everything it names is here");
-        assert_eq!(contents(&seen.items), ["earlier", "prompt:notes", "question", "first"]);
+        let resolver = ContextResolver::of(&state);
+        let seen = |index| contents(&resolver.resolve(&frame.reference(&before, index, Vec::new()), agent).expect("everything it names is here").items);
+        assert_eq!(seen(0), ["earlier", "prompt:notes", "question", "prompt:step 1"]);
+        assert_eq!(seen(1), ["earlier", "prompt:notes", "question", "prompt:step 1", "first", "prompt:step 2"]);
+    }
+
+    #[test]
+    fn a_system_message_stays_where_it_is_only_where_the_model_keeps_it() {
+        let mut state = AgentChannelState::default();
+        let system = Message { role: MessageRole::System, ..text("an old instruction") };
+        state.transcript.push(Message { role: MessageRole::User, ..text("question") });
+        state.transcript.push(system);
+        state.prompts.insert(prompt("system prompt"), "system prompt".to_string());
+        state.prompts.insert(prompt("instruction"), "instruction".to_string());
+
+        let frame = |system_messages| ContextFrame {
+            transcript: state.transcript.digest(),
+            prompts: vec![PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None }],
+            turn_prompts: vec![TurnPromptRef { text: prompt("instruction"), role: MessageRole::System, after: 0 }],
+            profile: ModelProfile { system_messages, ..ModelProfile::default() },
+        };
+        let roles = |system_messages| {
+            let turn = TurnState { frame: frame(system_messages), ..TurnState::default() };
+            ContextResolver::of(&state).current(&turn, ActorId::None).expect("everything it names is here")
+                .iter().map(ContextItem::role).collect::<Vec<_>>()
+        };
+        use MessageRole::{System, User};
+        assert_eq!(roles(SystemMessages::OnlyAtStart), [System, User, User, User], "only the system prompt stays one");
+        assert_eq!(roles(SystemMessages::Anywhere), [System, User, System, System]);
+        assert_eq!(SystemMessages::default(), SystemMessages::OnlyAtStart);
     }
 }

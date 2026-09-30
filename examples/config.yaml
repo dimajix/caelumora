@@ -71,6 +71,7 @@ users:
 #        model: "gemma4:26b"
 #        think: true
 #        reasoning_history: current_turn
+#        system_messages: only_at_start
 #    - id: context
 #      kind: state_context_provider
 

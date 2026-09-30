@@ -57,7 +57,9 @@ confidentiality (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 When a plan is in progress (`create_plan`), the messages of its steps are
 *internal*: they are published as intermediate messages, kept in the
 transcript, but not in the history. The answer after the last step is the
-final one.
+final one. The instruction for each step, and the one to write the final
+answer, are prompt parts placed among the turn's messages, not messages
+(see [Instructions within a turn](#instructions-within-a-turn)).
 
 An error in one of the turn's states ends the turn, not the agent: the
 agent logs it, discards the turn (`Turn::abandon_turn`), emits
@@ -295,6 +297,38 @@ The parts may be left out, each by the fail policy of its own component: a
 part that fails open is left out of that turn with a warning; one that
 fails closed fails the turn.
 
+### Instructions within a turn
+
+The runtime steers the model within a turn, too: while a plan is executed,
+it tells the model which step to work on next and, after the last, to
+write the final answer (`Turn::advance_plan`). Such an instruction is a
+prompt part as well, placed with `Turn::place_turn_prompt` after the
+messages the turn has produced so far - after the tool result that accepted
+the plan, say, never between a tool call and its result. Like every part it
+is kept once by digest and never goes into the transcript: the turn it was
+given in is told it again, later turns are not given it. The plan itself
+stays visible to them through the `create_plan` call (issue 49).
+
+An instruction is system text; where it ends up depends on the model, as
+described next.
+
+### System messages
+
+Some models' chat templates merge every system message into the system
+prompt and move it to the front. A system message in the middle of the
+context then loses its place, and, since it changes the system prompt, the
+prompt cache. Where a model keeps system messages is part of its profile
+(`ModelProfile::system_messages`, issue 49):
+
+| Rule | A system message after the first message that is none is given |
+|---|---|
+| `only_at_start` | as a user message - the default, which holds for every model |
+| `anywhere` | as a system message, where it stands |
+
+The rule is applied when the context is resolved, to prompt parts and to
+messages of the transcript alike, and recorded with the profile; the
+system prompt at the front is a system message under either rule.
+
 ### The frame and the resolver
 
 What the model is given is not stored; it is resolved from what is (issue
@@ -302,8 +336,10 @@ What the model is given is not stored; it is resolved from what is (issue
 
 *   **The frame.** A turn holds a `ContextFrame` (`TurnState::frame`): the
     digest of the transcript its model is given, a `PromptRef` for every
-    prompt part, and the model's profile. References only - the turn keeps
-    no copy of the transcript.
+    prompt part, a `TurnPromptRef` for every instruction placed among the
+    turn's messages - by the number of messages it follows, since they are
+    not in the transcript yet - and the model's profile. References only -
+    the turn keeps no copy of the transcript.
 *   **Placing the parts.** The `ContextProvider` calls `Turn::set_context`
     with the transcript's digest and every part as a `PromptPart`: its
     text, its role and the transcript entry it follows. `set_context` keeps
@@ -311,13 +347,15 @@ What the model is given is not stored; it is resolved from what is (issue
     and puts its reference into the frame.
 *   **Resolving.** The `ContextResolver` resolves a frame against the
     agent's transcript and prompt texts: the transcript it names, every
-    part after its entry, then the turn's own messages, each as the
-    profile gives it. `Turn::full_context` gives the model the result, a
-    prompt part as a message in its role.
+    part after its entry, then the turn's own messages with the
+    instructions among them, each as the profile gives it.
+    `Turn::full_context` gives the model the result, a prompt part as a
+    message in its role.
 *   **Recording.** `commit_turn` records with every message the frame as it
-    stood for that message (`ContextFrame::reference`), and the same
-    resolver resolves that `ContextRef` when what the agent saw is asked
-    for.
+    stood for that message (`ContextFrame::reference`): the instructions
+    placed before it become `PromptRef`s after the entries they followed,
+    now that those are in the transcript. The same resolver resolves that
+    `ContextRef` when what the agent saw is asked for.
 
 What the model was given and what is recorded as given are resolved by one
 implementation, and therefore cannot diverge.

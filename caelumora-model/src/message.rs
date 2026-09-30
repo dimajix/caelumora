@@ -44,7 +44,7 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
     /// True for messages that are internal agent scaffolding - deliberation
-    /// chatter, plan-step instructions, mid-plan tool calls/results - rather
+    /// chatter, the answers to plan steps, mid-plan tool calls/results - rather
     /// than a genuine final answer. Kept in `Transcript` (this agent's
     /// own future-turn LLM input, which needs the full detail) but excluded
     /// from `MessageHistory` and end-of-turn `FullResponseGenerated`

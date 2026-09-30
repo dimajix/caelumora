@@ -22,7 +22,7 @@ pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 /// Composed alongside the personality's own system prompt by
 /// `StateContextProvider` once per turn - it stays for the whole turn
 /// (including once a plan is being executed), which is harmless: the far
-/// more specific `plan_step_message`/`plan_finalize_message` instructions
+/// more specific `plan_step_instruction`/`plan_finalize_instruction`
 /// dominate by then.
 const PLANNING_SYSTEM_PROMPT: &str = "Before responding, decide whether this request needs \
 research or multiple steps to complete. If it does, gather any information you need using \

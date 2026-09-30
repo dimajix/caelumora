@@ -1,6 +1,6 @@
 # 49 — Plan step instructions are system messages in the middle of a turn
 
-**Status:** in progress
+**Status:** done
 **Area:** Tools & approvals
 
 ## The problem
@@ -153,3 +153,26 @@ lands where it was meant is fragile, and hard to see from outside.
   - The stored form of `TurnState` (`frame` for `context`) and of
     `ContextRef` (`profile` for `reasoning`) changed, without serde
     defaults ([108](108-serde-defaults-for-legacy.md)).
+- **2026-09-30** — Resolved on top of the refactoring.
+  - **Instructions of the runtime are prompt parts of the turn.**
+    `Turn::place_turn_prompt` places a part after the messages the turn has
+    produced so far, as a `TurnPromptRef` in the frame - by that number,
+    since those messages are not in the transcript yet. `advance_plan` uses
+    it for the step and finalize instructions (`plan_step_instruction`,
+    `plan_finalize_instruction`, as text now) instead of pushing internal
+    system messages. `ContextFrame::reference` turns every instruction
+    placed before a message into a `PromptRef` after the transcript entry
+    it followed, so that the context panel shows it where it was given.
+    Later turns are not given them; the transcript holds none.
+  - **The first rule of the profile beyond reasoning:**
+    `ModelProfile::system_messages` (`SystemMessages`: `only_at_start`, the
+    default, or `anywhere`), the `ollama_client` parameter
+    `system_messages`. The resolver applies it to the resolved items: a
+    system message after the first item that is none - prompt part or
+    transcript message - is given as a user message unless the model keeps
+    them anywhere. It also covers the plan instructions that transcripts
+    written before this change hold as system messages. The instructions
+    are placed as system text, so that a model which keeps system messages
+    in place gets them as such.
+  - The instruction texts are unchanged; no framing was added beyond what
+    they say themselves ("Step 2 of 3: ...").

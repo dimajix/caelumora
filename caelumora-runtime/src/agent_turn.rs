@@ -34,9 +34,9 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelClassification, Publication};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnKnowledge;
-use caelumora_model::context::{ContextFrame, ContextItem, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
+use caelumora_model::context::{ContextFrame, ContextItem, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef, TurnPromptRef};
 use caelumora_model::digest::Digest;
-use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -278,6 +278,20 @@ impl<'a> Turn<'a> {
         frame.prompts = prompts;
     }
 
+    /// Places `text`, given in `role`, after the messages the turn has
+    /// produced so far (issue 49): an instruction of the runtime to the
+    /// model, such as the next step of a plan. A prompt part, not a message:
+    /// it is kept once by digest like the others, never goes into the
+    /// transcript, and is given as the model's profile says a message in
+    /// `role` there is to be given.
+    pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
+        let digest = caelumora_model::digest::prompt(&text);
+        self.agent_channel_state.prompts.entry(digest).or_insert(text);
+        let turn = self.current_mut();
+        let after = turn.messages.len();
+        turn.frame.turn_prompts.push(TurnPromptRef { text: digest, role, after });
+    }
+
     pub fn messages(&self) -> &Vec<Message> {
         &self.current().messages
     }
@@ -321,11 +335,14 @@ impl<'a> Turn<'a> {
     /// step, gives it the instruction to write the final answer, which is no
     /// step and announces nothing (an empty plan finalizes at once). Called
     /// when a plan is accepted or extended, and each time a step converges.
+    /// The instructions are system text placed after the turn's messages so
+    /// far (`place_turn_prompt`, issue 49): where the model keeps system
+    /// messages only at the start, they are given as user messages.
     pub(crate) fn advance_plan(&mut self, next: usize) -> Option<ActorEvent> {
         let plan = self.plan()?.plan.clone();
         match plan.steps.get(next) {
             Some(step) => {
-                self.push_message(plan_step_message(next + 1, plan.steps.len(), step));
+                self.place_turn_prompt(MessageRole::System, plan_step_instruction(next + 1, plan.steps.len(), step));
                 self.set_plan_progress(PlanProgress::Step(next));
                 Some(ActorEvent::PlanStepStarted {
                     step_index: next,
@@ -334,7 +351,7 @@ impl<'a> Turn<'a> {
                 })
             }
             None => {
-                self.push_message(plan_finalize_message(&plan));
+                self.place_turn_prompt(MessageRole::System, plan_finalize_instruction(&plan));
                 self.set_plan_progress(PlanProgress::Finalizing);
                 None
             }
@@ -405,13 +422,13 @@ impl<'a> Turn<'a> {
     /// were changes.
     fn record_turn(&mut self, frame: &ContextFrame, messages: Vec<Message>, knowledge: Vec<TurnKnowledge>, changes: Vec<AgentChannelChange>) -> bool {
         let before = self.agent_channel_state.transcript.extend(messages.clone());
-        for (index, (message, transcript)) in messages.into_iter().zip(before).enumerate() {
+        for (index, message) in messages.into_iter().enumerate() {
             if !message.internal {
                 // What was read before the message was produced; the turn
                 // had produced `index` messages by then, which are the last
                 // entries of the transcript before it.
                 let knowledge = knowledge.iter().filter(|k| k.before <= index).map(|k| k.reference).collect();
-                let reference = frame.reference(transcript, index, knowledge);
+                let reference = frame.reference(&before, index, knowledge);
                 self.agent_channel_state.history.push(message, Some(reference));
             }
         }
@@ -457,28 +474,18 @@ impl<'a> Turn<'a> {
     }
 }
 
-/// The instruction to work on step `step_number` of `total_steps` - an
-/// internal system message, scaffolding rather than an answer (issue 49).
-fn plan_step_message(step_number: usize, total_steps: usize, step: &PlanStep) -> Message {
-    Message {
-        id: MessageId::new(),
-        sender_id: ActorId::None,
-        sender_name: "system".to_string(),
-        role: MessageRole::System,
-        content: Some(format!(
-            "Step {} of {}: {}\n\nWork on this step now, using any tools you need. \
-             When you are finished, describe the outcome.",
-            step_number, total_steps, step.description
-        )),
-        timestamp: chrono::Utc::now(),
-        internal: true,
-        ..Message::default()
-    }
+/// The instruction to work on step `step_number` of `total_steps`.
+fn plan_step_instruction(step_number: usize, total_steps: usize, step: &PlanStep) -> String {
+    format!(
+        "Step {} of {}: {}\n\nWork on this step now, using any tools you need. \
+         When you are finished, describe the outcome.",
+        step_number, total_steps, step.description
+    )
 }
 
 /// The instruction to write the final answer once every step of `plan` is
 /// done.
-fn plan_finalize_message(plan: &Plan) -> Message {
+fn plan_finalize_instruction(plan: &Plan) -> String {
     let recap = plan
         .steps
         .iter()
@@ -486,20 +493,11 @@ fn plan_finalize_message(plan: &Plan) -> Message {
         .map(|(i, s)| format!("{}. {}", i + 1, s.description))
         .collect::<Vec<_>>()
         .join("\n");
-    Message {
-        id: MessageId::new(),
-        sender_id: ActorId::None,
-        sender_name: "system".to_string(),
-        role: MessageRole::System,
-        content: Some(format!(
-            "You have completed every step of the plan:\n{}\n\nNow provide your final, \
-             complete answer to the user's original request, incorporating what you learned.",
-            recap
-        )),
-        timestamp: chrono::Utc::now(),
-        internal: true,
-        ..Message::default()
-    }
+    format!(
+        "You have completed every step of the plan:\n{}\n\nNow provide your final, \
+         complete answer to the user's original request, incorporating what you learned.",
+        recap
+    )
 }
 
 /// Sends `av` as a turn of `agent_id` publishes it: redacted by what
@@ -524,7 +522,7 @@ async fn send(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::message::MessageRole;
+    use caelumora_model::message::MessageId;
     use caelumora_model::plan::{Plan, PlanId, PlanStep};
 
     fn make_plan_state() -> PlanState {
@@ -549,20 +547,28 @@ mod tests {
         }
     }
 
+    /// What the model of `turn` is given, as role and text.
+    fn given(turn: &Turn) -> Vec<(MessageRole, String)> {
+        turn.full_context().unwrap().into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
+    }
+
     #[test]
     fn advance_plan_moves_to_the_next_step_when_one_remains() {
         let mut state = AgentChannelState::default();
+        state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::default() });
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
+        let digest = turn.agent_channel_state().transcript.digest();
+        turn.set_context(digest, Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
 
         let started = turn.advance_plan(1);
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
-        let last = turn.messages().last().expect("a step message should have been pushed");
-        assert_eq!(last.role, MessageRole::System);
-        assert!(last.content.as_ref().unwrap().contains("second"));
-        assert!(last.internal, "plan-step instructions are scaffolding, never final answers");
+        assert!(turn.messages().is_empty(), "the instruction is no message of the turn");
+        let (role, text) = given(&turn).pop().expect("the instruction is given to the model");
+        assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
+        assert!(text.contains("second"));
         match started {
             Some(ActorEvent::PlanStepStarted { step_index, total_steps, description }) => {
                 assert_eq!((step_index, total_steps, description.as_str()), (1, 2, "second"));
@@ -581,10 +587,52 @@ mod tests {
         let started = turn.advance_plan(2);
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
-        let last = turn.messages().last().expect("a finalize message should have been pushed");
-        assert_eq!(last.role, MessageRole::System);
-        assert!(last.content.as_ref().unwrap().contains("completed every step"));
+        let (_, text) = given(&turn).pop().expect("the instruction to finalize is given to the model");
+        assert!(text.contains("completed every step"));
         assert!(started.is_none(), "finalization is not a step, so nothing is announced");
+    }
+
+    #[tokio::test]
+    async fn plan_instructions_are_given_where_they_were_placed_and_not_kept_for_later_turns() {
+        use caelumora_model::context::SystemMessages;
+        let agent = AgentId::new();
+        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), sender_id: ActorId::Agent(agent), role, content: Some(content.to_string()), ..Message::default() };
+        let mut state = AgentChannelState::default();
+        state.transcript.push(Message { sender_id: ActorId::None, ..text(MessageRole::User, "do it") });
+        let (step, answer) = (text(MessageRole::Assistant, "step done"), text(MessageRole::Assistant, "all done"));
+        let keeps_system = ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
+        {
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), keeps_system);
+            turn.begin();
+            let digest = turn.agent_channel_state().transcript.digest();
+            turn.set_context(digest, vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None }]);
+            turn.set_plan(plan_of(&["only"]));
+            turn.advance_plan(0);
+            let mut internal = step.clone();
+            internal.internal = true;
+            turn.push_message(internal);
+            turn.advance_plan(1);
+            let roles = given(&turn).into_iter().map(|(role, _)| role).collect::<Vec<_>>();
+            use MessageRole::{Assistant, System, User};
+            assert_eq!(roles, [System, User, System, Assistant, System], "a model that keeps them in place is given system messages");
+            turn.push_message(answer.clone());
+            turn.commit_turn().await;
+        }
+
+        let recorded = seen(&state, agent, answer.id).expect("the agent produced it");
+        let order = recorded.iter().map(|item| match item {
+            ContextItem::Prompt { text, .. } => text.lines().next().unwrap_or_default().to_string(),
+            ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
+        }).collect::<Vec<_>>();
+        assert_eq!(order, ["Be brief.", "do it", "Step 1 of 1: only", "step done", "You have completed every step of the plan:"],
+            "each instruction where it was given");
+        assert_eq!(state.transcript.messages().len(), 3, "the instructions are not in the transcript");
+
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), keeps_system);
+        turn.begin();
+        let digest = turn.agent_channel_state().transcript.digest();
+        turn.set_context(digest, Vec::new());
+        assert_eq!(given(&turn).len(), 3, "a later turn is not given them");
     }
 
     #[test]
@@ -656,7 +704,7 @@ mod tests {
         state.transcript.push(earlier.clone());
         state.transcript.push(theirs.clone());
 
-        let profile = |reasoning_history| ModelProfile { reasoning_history };
+        let profile = |reasoning_history| ModelProfile { reasoning_history, ..ModelProfile::default() };
         let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         {

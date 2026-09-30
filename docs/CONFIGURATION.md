@@ -40,6 +40,7 @@ component_defaults:
         model: "gemma4:26b"
         think: true
         reasoning_history: current_turn
+        system_messages: only_at_start
 ```
 
 | Parameter of `ollama_client` | Meaning | Default |
@@ -48,5 +49,6 @@ component_defaults:
 | `model` | The model | `gemma4:26b` |
 | `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (issue 63, see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
+| `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (issue 49, see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
 
 An unknown parameter is refused, and the agent does not start.
