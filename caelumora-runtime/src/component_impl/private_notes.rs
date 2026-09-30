@@ -154,7 +154,7 @@ impl PromptProvider for PrivateNotesComponent {
         elsewhere.sort_by(|l, r| l.channel.name.cmp(&r.channel.name));
 
         let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest } };
-        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(ChannelRef { session_id: turn.session_id(), channel_id: c.channel.id }, c.digest)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(ChannelRef { session_id: turn.channel().session_id, channel_id: c.channel.id }, c.digest)).collect();
         if !own.is_empty() {
             knowledge.push(private(turn.channel(), AgentNotes::digest(turn, NoteKind::Private)));
         }

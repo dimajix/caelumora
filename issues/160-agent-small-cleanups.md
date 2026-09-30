@@ -1,6 +1,6 @@
 # 160 — Dead surface, duplicates and stale comments around the agent actor
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -44,3 +44,23 @@ step over.
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, H1, M1, T3, A8), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-09-30** — Done.
+  - Gone: `Turn::transcript`, `channel_id`, `session_id` (callers use
+    `channel()`), `Transcript::last_message_id`, `MessageHistory::entries`,
+    and `new()` on `Transcript`, `MessageHistory`, `NoteChain` and
+    `MemoryChain` (`Default` instead). `Transcript::extend` returns
+    nothing; `Turn::messages` returns an iterator instead of a cloned
+    `Vec`.
+  - Actor: the fields `id` and `kind` are gone - `id()` is
+    `ActorId::Agent(agent_id)`, `kind()` the constant. `begin_turn` is
+    part of `request_response`, `AgentActor::next_turn` is
+    `assemble_context`. `reflect`, `handle_cancelling` and
+    `handle_reflecting` are one `end_turn(turn, cancelled, output)`; a
+    cancelled turn still lands `Idle` whatever a tool requested. `settle`
+    moves the actor to a state and stores, where the run loop did both by
+    hand; the third place, after a step, keeps its own form because of
+    the cancel rule, which [152](152-three-signals-end-a-turn.md) removes.
+  - Stale: the second `internal` assignment, the doubled doc comment,
+    `abandon_turn` in the `TurnState` doc and the field docs of
+    `history` and `transcript` are fixed; AGENT-TURN.md names
+    `request_response` where the tools are asked for.

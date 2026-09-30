@@ -164,7 +164,7 @@ impl NotesComponent {
         for (channel, published) in channels {
             let mut notes = Vec::new();
             for agent_notes in published {
-                if let Some(reference) = notes_ref(ChannelRef { session_id: turn.session_id(), channel_id: channel.id }, &agent_notes) {
+                if let Some(reference) = notes_ref(ChannelRef { session_id: turn.channel().session_id, channel_id: channel.id }, &agent_notes) {
                     turn.record_knowledge(reference);
                 }
                 for note in agent_notes.notes {
@@ -195,7 +195,7 @@ impl PromptProvider for NotesComponent {
             Ok(published) => published,
             Err(e) => {
                 // The agent can still answer without the others' notes.
-                warn!("Reading the notes of channel {} failed: {}", turn.channel_id(), e);
+                warn!("Reading the notes of channel {} failed: {}", turn.channel().channel_id, e);
                 Vec::new()
             }
         };

@@ -80,7 +80,7 @@ impl ToolProvider for ChannelHistoryComponent {
 
         let history = self.reader.history_of(channel).await?;
         let (channel, history) = (history.channel, history.history);
-        turn.record_knowledge(KnowledgeRef { channel: ChannelRef { session_id: turn.session_id(), channel_id: channel.id }, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
+        turn.record_knowledge(KnowledgeRef { channel: ChannelRef { session_id: turn.channel().session_id, channel_id: channel.id }, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
 
         let (messages, more) = select(&history.messages, last, query);
         Ok(serde_json::json!({

@@ -98,10 +98,6 @@ pub struct MemoryChain {
 }
 
 impl MemoryChain {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The digest of the whole chain - what a reader records as the state
     /// of knowledge it saw - or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
@@ -171,7 +167,7 @@ mod tests {
 
     #[test]
     fn what_is_remembered_is_the_chain_read_from_start_to_end() {
-        let mut chain = MemoryChain::new();
+        let mut chain = MemoryChain::default();
         assert_eq!(chain.next_id(), MemoryId(1));
         let remember = |id, text: &str| MemoryChange::Remember {
             id: MemoryId(id),

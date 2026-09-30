@@ -117,7 +117,7 @@ impl ChannelState {
     pub fn new(channel_id: ChannelId) -> Self {
         Self {
             channel_id,
-            history: MessageHistory::new(),
+            history: MessageHistory::default(),
         }
     }
 }

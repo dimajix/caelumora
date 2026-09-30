@@ -80,10 +80,6 @@ pub struct NoteChain {
 }
 
 impl NoteChain {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The digest of the whole chain - what a reader records as the state
     /// of knowledge it saw - or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
@@ -153,7 +149,7 @@ mod tests {
 
     #[test]
     fn what_is_noted_is_the_chain_read_from_start_to_end() {
-        let mut chain = NoteChain::new();
+        let mut chain = NoteChain::default();
         assert_eq!(chain.next_id(), NoteId(1));
         chain.push(note(1, "The user likes tea."), MessageId::new(), None);
         chain.push(note(2, "The user lives in Berlin."), MessageId::new(), None);
@@ -168,7 +164,7 @@ mod tests {
     #[test]
     fn a_reclassified_note_keeps_its_number_and_text() {
         use crate::confidentiality::Confidentiality;
-        let mut chain = NoteChain::new();
+        let mut chain = NoteChain::default();
         chain.push(note(1, "a"), MessageId::new(), None);
         let released = Classification::general(Confidentiality::Public);
         chain.push(NoteChange::Reclassify { id: NoteId(1), classification: released.clone() }, MessageId::new(), None);
@@ -179,7 +175,7 @@ mod tests {
 
     #[test]
     fn a_revoked_number_is_not_given_again() {
-        let mut chain = NoteChain::new();
+        let mut chain = NoteChain::default();
         chain.push(note(1, "a"), MessageId::new(), None);
         chain.push(NoteChange::Revoke { id: NoteId(1) }, MessageId::new(), None);
         assert!(chain.current().is_empty());
@@ -188,7 +184,7 @@ mod tests {
 
     #[test]
     fn a_branch_no_longer_active_is_not_noted_but_its_numbers_are_not_given_again() {
-        let mut chain = NoteChain::new();
+        let mut chain = NoteChain::default();
         chain.push(note(1, "a"), MessageId::new(), None);
         let fork = chain.digest();
         chain.push(note(2, "b"), MessageId::new(), None);
@@ -203,13 +199,13 @@ mod tests {
     #[test]
     fn the_digest_covers_revocations_and_the_place_in_the_conversation() {
         let after = MessageId::new();
-        let mut noted = NoteChain::new();
+        let mut noted = NoteChain::default();
         noted.push(note(1, "a"), after, None);
         let before_revocation = noted.digest();
         noted.push(NoteChange::Revoke { id: NoteId(1) }, after, None);
         assert_ne!(noted.digest(), before_revocation);
 
-        let mut elsewhere = NoteChain::new();
+        let mut elsewhere = NoteChain::default();
         elsewhere.push(note(1, "a"), MessageId::new(), None);
         assert_ne!(elsewhere.digest(), before_revocation, "the same note after another message");
 

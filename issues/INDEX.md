@@ -212,7 +212,7 @@ against it, and what came out of the last attempt.
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
 | [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
 | [151](151-agent-refactoring-epic.md) | open | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
-| [160](160-agent-small-cleanups.md) | open | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
+| [160](160-agent-small-cleanups.md) | done | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
 | [96](96-config-unification.md) | done | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
 | [97](97-small-model-unifications.md) | done | Six helper functions in five modules define the default confidentiality level. |
 | [112](112-id-types.md) | done | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |

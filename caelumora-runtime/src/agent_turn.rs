@@ -31,7 +31,6 @@ use tracing::warn;
 
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnEntry;
@@ -40,7 +39,6 @@ use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::transcript::{GivenUp, GivenUpReason};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::session::SessionId;
 use caelumora_model::tool::{Tool, ToolDefinition};
 use crate::tool_calls::ToolCalls;
 
@@ -209,14 +207,6 @@ impl<'a> Turn<'a> {
     pub fn channel(&self) -> ChannelRef {
         let event = &self.current().event_context;
         ChannelRef { session_id: event.session_id, channel_id: event.channel_id }
-    }
-
-    pub fn channel_id(&self) -> ChannelId {
-        self.current().event_context.channel_id
-    }
-
-    pub fn session_id(&self) -> SessionId {
-        self.current().event_context.session_id
     }
 
     /// Stages `change` to the agent's own state, applied when the turn
@@ -423,8 +413,8 @@ impl<'a> Turn<'a> {
     }
 
     /// The messages the turn produced so far.
-    pub fn messages(&self) -> Vec<Message> {
-        self.current().messages().cloned().collect()
+    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+        self.current().messages()
     }
     pub(crate) fn push_message(&mut self, message: Message) {
         self.current_mut().push(message);
@@ -493,9 +483,6 @@ impl<'a> Turn<'a> {
         &self.current().security_context
     }
 
-    pub fn transcript(&self) -> Vec<Message> {
-        self.agent_channel_state.transcript.messages()
-    }
     pub fn extend_transcript(&mut self, messages: Vec<Message>) {
         self.agent_channel_state.transcript.extend(messages);
     }
@@ -756,7 +743,7 @@ mod tests {
         let started = turn.advance_plan(1);
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
-        assert!(turn.messages().is_empty(), "the instruction is no message of the turn");
+        assert!(turn.messages().next().is_none(), "the instruction is no message of the turn");
         let (role, text) = given(&turn).pop().expect("the instruction is given to the model");
         assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
         assert!(text.contains("second"));
@@ -1045,7 +1032,7 @@ mod tests {
             Some(ActorEvent::FullResponseGenerated(messages)) => assert!(messages.is_empty(), "the hidden call is not published"),
             other => panic!("the complete message is not sent at all, got {other:?}"),
         }
-        assert_eq!(turn.messages()[0].tool_calls.len(), 1, "the agent keeps it");
+        assert_eq!(turn.messages().next().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
 
         // Reasoning reaches the channel unless it is the owner's.
         let thinking = Message {

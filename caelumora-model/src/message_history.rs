@@ -38,10 +38,6 @@ pub struct MessageHistory {
 }
 
 impl MessageHistory {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The digest of the whole history, or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
         self.messages.digest()
@@ -49,11 +45,6 @@ impl MessageHistory {
 
     pub fn messages(&self) -> Vec<Message> {
         messages_of(&self.messages)
-    }
-
-    /// The entries of the active branch.
-    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &HistoryEntry> + ExactSizeIterator {
-        self.messages.entries()
     }
 
     /// The entries of every branch, in the order they were added.
@@ -124,12 +115,12 @@ mod tests {
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
         let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 };
-        let mut history = MessageHistory::new();
+        let mut history = MessageHistory::default();
         history.extend(vec![make_message(id(1))]);
         history.push(make_message(id(2)), Some(reference.clone()));
 
         let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
-        let entries: Vec<_> = loaded.entries().collect();
+        let entries: Vec<_> = loaded.all_entries().collect();
         assert_eq!(entries[0].context, None, "said by someone else");
         assert_eq!(entries[1].context, Some(reference));
         assert_eq!(loaded.digest(), history.digest());

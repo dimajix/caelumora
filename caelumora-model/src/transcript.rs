@@ -3,7 +3,7 @@
 
 use crate::chain::{Chain, ChainEntry};
 use crate::digest::Digest;
-use crate::message::{last_message_id_of, messages_of, push_message, Message, MessageEntry, MessageId};
+use crate::message::{messages_of, push_message, Message, MessageEntry};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -83,10 +83,6 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The digest of the whole transcript, or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
         self.messages.digest()
@@ -96,14 +92,11 @@ impl Transcript {
         messages_of(&self.messages)
     }
 
-    pub fn last_message_id(&self) -> MessageId {
-        last_message_id_of(&self.messages)
-    }
-
-    /// Appends `msgs` and returns, for each of them, the digest of the
-    /// transcript before it - the transcript it was produced from.
-    pub fn extend(&mut self, msgs: Vec<Message>) -> Vec<Option<Digest>> {
-        msgs.into_iter().map(|m| self.push(m)).collect()
+    /// Appends `msgs`.
+    pub fn extend(&mut self, msgs: Vec<Message>) {
+        for m in msgs {
+            self.push(m);
+        }
     }
 
     /// Appends `msg` and returns the digest of the transcript before it.
@@ -164,7 +157,7 @@ mod tests {
 
     #[test]
     fn message_context_empty_state() {
-        let context = Transcript::new();
+        let context = Transcript::default();
 
         assert_eq!(context.digest(), None);
         assert!(context.messages().is_empty());
@@ -174,8 +167,8 @@ mod tests {
     fn message_context_chains_the_digests_of_its_messages() {
         let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
 
-        let mut context = Transcript::new();
-        let before = context.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
+        let mut context = Transcript::default();
+        let before: Vec<_> = [&m1, &m2, &m3].into_iter().map(|m| context.push(m.clone())).collect();
 
         let d1 = message_chain(None, &m1);
         let d2 = message_chain(Some(&d1), &m2);
@@ -189,10 +182,10 @@ mod tests {
     fn message_context_extend_matches_repeated_push_digest() {
         let messages = vec![make_message(id(11)), make_message(id(12)), make_message(id(13))];
 
-        let mut extend_context = Transcript::new();
+        let mut extend_context = Transcript::default();
         extend_context.extend(messages.clone());
 
-        let mut push_context = Transcript::new();
+        let mut push_context = Transcript::default();
         for message in messages {
             push_context.push(message);
         }
@@ -202,7 +195,7 @@ mod tests {
 
     #[test]
     fn a_digest_names_the_prefix_it_was_taken_at() {
-        let mut context = Transcript::new();
+        let mut context = Transcript::default();
         context.extend(vec![make_message(id(1)), make_message(id(2))]);
         let at_two = context.digest().unwrap();
         context.push(make_message(id(3)));
@@ -214,7 +207,7 @@ mod tests {
 
     #[test]
     fn digests_are_kept_as_recorded() {
-        let mut context = Transcript::new();
+        let mut context = Transcript::default();
         context.extend(vec![make_message(id(1)), make_message(id(2))]);
 
         // What was recorded stands, even if today's scheme would compute
@@ -232,7 +225,7 @@ mod tests {
 
     #[test]
     fn a_turn_given_up_is_a_marked_branch_with_its_messages() {
-        let mut transcript = Transcript::new();
+        let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
         let before = transcript.digest();
         transcript.extend(vec![make_message(id(2)), make_message(id(3))]);

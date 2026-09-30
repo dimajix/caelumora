@@ -100,9 +100,12 @@ pub struct AgentChannelState {
     /// state if it was cut off in the middle of one (issue 75). The actor
     /// owns the live value and writes it in when it stores.
     pub processing_state: ActorState,
-    /// Full message history
+    /// The conversation of the channel as the agent keeps it, each of its
+    /// own messages with what it was produced from (issue 06).
     pub history: MessageHistory,
-    /// Possibly preprocessed history used as context
+    /// What the agent's model is given of the conversation: its own
+    /// messages in full, internal steps included, and what others said
+    /// (issue 50).
     pub transcript: Transcript,
     /// The notes the agent published in this channel (issue 17).
     pub notes: NoteChain,
@@ -124,9 +127,9 @@ pub struct AgentChannelState {
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
 /// it begins - and what it has produced and staged so far, none of it taken
-/// over yet. Taking the turn over (`commit_turn`) or discarding it
-/// (`abandon_turn`) ends it as a whole; a branch switch (issue 08) will
-/// discard it the same way.
+/// over yet. Taking the turn over (`commit_turn`) or giving it up
+/// (`give_up_turn`, issue 145) ends it as a whole; a branch switch (issue
+/// 08) will give it up the same way.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnState {
     /// The envelope the turn answers: carries the ids (`span_id`,

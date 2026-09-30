@@ -262,7 +262,7 @@ channel's history identifies the agent by the message's sender.
 ### Tools offered
 
 A turn offers its model the agent's tools as they were when it began: they
-are asked for once, in `AgentActor::begin_turn`, and fixed in the turn
+are asked for once, in `AgentActor::request_response`, and fixed in the turn
 (`TurnState::tools`, issue 137) like its classification and publication - a
 resumed turn keeps them. The model is told of a tool only its name,
 description and parameters - a `ToolDefinition` (`Tool::definition`);
