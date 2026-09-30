@@ -81,6 +81,7 @@ against it, and what came out of the last attempt.
 | [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
 | [73](73-watch-leaving-duplicates-events.md) | done | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
 | [67](67-change-channel-level.md) | open | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
+| [134](134-session-privacy.md) | open | Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |
@@ -108,11 +109,12 @@ against it, and what came out of the last attempt.
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 | [31](31-session-renewal-from-ui.md) | done | The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input. |
 | [33](33-sse-outlives-its-token.md) | done | An open server-sent event stream is authenticated once, when it connects, and keeps delivering after its token has expired or its user was removed. |
-| [64](64-confidentiality-compartments.md) | open | Confidentiality has ordered levels only; information that may be shared between the channels of one topic or group but not others cannot be expressed. |
+| [64](64-confidentiality-compartments.md) | done | Confidentiality has ordered levels only; information that may be shared between the channels of one topic or group but not others cannot be expressed. |
 | [87](87-security-context-in-entities.md) | done | Stored agents and users carry a `SecurityContext` that the actors overwrite at start. |
 | [94](94-users-unchecked-in-store.md) | done | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
 | [95](95-require-for-security-manager.md) | done | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
 | [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
+| [133](133-classification-model.md) | open | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
 
 ## Tools and approvals
 

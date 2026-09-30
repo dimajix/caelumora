@@ -159,9 +159,13 @@ theirs alone (issue 54).
 
 The model is a first step. Not decided yet:
 
-*   **Compartments.** Levels are only ordered; information that may be shared
-    between the channels of one topic or group, but not with others, cannot be
-    expressed ([64](../issues/64-confidentiality-compartments.md)).
+*   **Sensitivity, not reach.** The levels say how far information may
+    travel, not how sensitive it is; topics cannot be told apart and a tool
+    cannot classify its results one by one. The model is to be replaced by a
+    classification of level and compartment
+    ([133](../issues/133-classification-model.md), which decides
+    [64](../issues/64-confidentiality-compartments.md)); what then keeps
+    sessions apart is privacy ([134](../issues/134-session-privacy.md)).
 *   **Clearances.** Who may join a channel is asked as
     `ActionType::JoinChannel` with the channel's classification
     ([46](../issues/46-channel-participants.md)), so that a policy can hold

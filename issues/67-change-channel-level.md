@@ -48,3 +48,7 @@ be deleted and recreated, losing its history.
 - **2026-09-27** — Split off from [61](61-reasoning-leaves-the-agent.md) at
   the maintainer's request: part of its decision (the owner may change the
   level later, lowering included), not implemented with it.
+- **2026-09-30** — With [133](133-classification-model.md) the level
+  becomes a classification (level and compartment); the considerations
+  above apply to changing that. Lowering then also means moving to a
+  compartment that dominates less.

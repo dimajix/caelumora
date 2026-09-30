@@ -1,6 +1,6 @@
 # 64 — Confidentiality has levels only, no compartments
 
-**Status:** open
+**Status:** done
 **Area:** Identity & access management
 
 ## The problem
@@ -49,3 +49,12 @@ every channel of the session, at `channel` none.
 - **2026-09-27** — Issue created at the maintainer's request while deciding
   [61](61-reasoning-leaves-the-agent.md): levels
   `public < session < channel < private` first, compartments later.
+- **2026-09-30** — Decided in [133](133-classification-model.md): the
+  classification becomes a level from `public < internal < confidential <
+  strictly_confidential` and an audience of administrator-managed
+  compartments, with a configurable, transitively closed read relation
+  between them. The lattice considered above is kept, but read from the
+  other side: the compartments say who may read, not what the information
+  touches, so that a release widens them. The structural levels `session`
+  and `channel` go with it. Nothing of it is implemented here; the work
+  is 133.
