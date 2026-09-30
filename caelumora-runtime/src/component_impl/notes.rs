@@ -247,7 +247,7 @@ mod tests {
     use caelumora_model::message::MessageId;
 
     fn note(id: u32, text: &str) -> Note {
-        Note { id: NoteId(id), text: text.to_string(), classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT, after: MessageId::new(), written_at: chrono::Utc::now() }
+        Note { id: NoteId(id), text: text.to_string(), classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT, after: MessageId::new(), origin: Default::default(), written_at: chrono::Utc::now() }
     }
 
     #[test]

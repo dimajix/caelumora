@@ -185,27 +185,19 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     e.finish()
 }
 
-/// The digest of a chain of note changes ending in `change`, made after
-/// message `after`, whose predecessor chain has the digest `previous`
-/// (issue 17). It covers what a reader of the notes learns - the change and
-/// where in the conversation it was made - not when it was written.
-pub fn note_chain(previous: Option<&Digest>, change: &crate::note::NoteChange, after: crate::message::MessageId) -> Digest {
-    let mut e = Encoder::new("caelumora.note-chain.v1");
+/// The digest of a ledger's chain (issue 92) ending in `change`, made at
+/// `origin` after message `after`, whose predecessor chain has the digest
+/// `previous` - in the scheme of the ledger's kind: notes (issue 17), memory
+/// (issue 62). It covers what a reader learns - the change, where in the
+/// conversation it was made and, where the kind says so, the origin - not
+/// when it was written.
+pub fn ledger_chain<K: crate::ledger::LedgerKind>(previous: Option<&Digest>, change: &crate::ledger::Change<K::Id>, origin: &K::Origin, after: crate::message::MessageId) -> Digest {
+    let mut e = Encoder::new(K::SCHEME);
     e.opt_digest(previous);
     e.json(&to_json(change));
-    e.bytes(after.0.as_bytes());
-    e.finish()
-}
-
-/// The digest of a chain of memory changes ending in `change`, made in
-/// channel `origin` after message `after`, whose predecessor chain has the
-/// digest `previous` (issue 62). Like `note_chain`, it covers what a reader
-/// learns, not when it was written.
-pub fn memory_chain(previous: Option<&Digest>, change: &crate::memory::MemoryChange, origin: &crate::confidentiality::ChannelRef, after: crate::message::MessageId) -> Digest {
-    let mut e = Encoder::new("caelumora.memory-chain.v1");
-    e.opt_digest(previous);
-    e.json(&to_json(change));
-    e.json(&to_json(origin));
+    if K::ORIGIN_DIGESTED {
+        e.json(&to_json(origin));
+    }
     e.bytes(after.0.as_bytes());
     e.finish()
 }

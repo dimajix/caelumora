@@ -162,3 +162,8 @@ the turn again.
   runtime ([69](69-scoped-actor-runtime.md)): `ComponentContext` carries
   `Option<ActorRuntime>`, `ComponentContext::session_reader()` builds the
   reader from it.
+- **2026-09-30** — First step, from [92](92-ledger-for-notes-and-memory.md):
+  notes and memory are one type, `Ledger<K>`, instantiated per kind. The
+  direction for the rest of this issue is that the core does not know the
+  kind - not another case in `AgentChannelChange` for the next component's
+  state.

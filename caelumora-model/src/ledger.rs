@@ -1,0 +1,230 @@
+//! A ledger: entries of text that are only added, removed and reclassified,
+//! kept as a chain of those changes (issue 92). An agent's notes
+//! (`crate::note`, issue 17) and its memory (`crate::memory`, issue 62) are
+//! ledgers; they work alike and differ only in what they are called and in
+//! where a change is recorded to have been made - which a [`LedgerKind`]
+//! says.
+//!
+//! What stands now is the chain's active branch read from start to end
+//! (issue 08). A new version of an entry is a removal and a new entry. The
+//! number of an entry is never given twice, on any branch: a reader may have
+//! read it before it was removed, or on a branch no longer active.
+
+use crate::chain::{Chain, ChainEntry};
+use crate::confidentiality::Classification;
+use crate::digest::Digest;
+use crate::message::MessageId;
+use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+
+/// What makes a ledger of one kind: the number of its entries, where a
+/// change is recorded to have been made, and how its chain is digested.
+pub trait LedgerKind {
+    /// The number of an entry: 1 for the first, counting on. Small, because
+    /// a model has to repeat it to name the entry.
+    type Id: Copy + Eq + Debug + Serialize + DeserializeOwned + From<u32> + Into<u32>;
+    /// Where a change was made, recorded with it; what an entry stands with
+    /// is where it was added.
+    type Origin: Clone + PartialEq + Debug + Serialize + DeserializeOwned;
+    /// The scheme of the chain's digest (`crate::digest::ledger_chain`).
+    const SCHEME: &'static str;
+    /// Whether the origin is part of what a reader learns, and so of the
+    /// digest.
+    const ORIGIN_DIGESTED: bool;
+}
+
+/// A change to a ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Change<Id> {
+    /// An entry, classified as the channel it was written in was then (issue
+    /// 133): what the agent derives carries its channel's classification,
+    /// and a later change of the channel changes none of its entries.
+    Add { id: Id, text: String, classification: Classification },
+    Remove { id: Id },
+    /// The entry `id` is classified `classification` from now on (issue
+    /// 133): released, or raised.
+    Reclassify { id: Id, classification: Classification },
+}
+
+/// An entry of a [`Ledger`]'s chain: a change, where it was made, and the
+/// digest of the chain up to and including it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct LedgerEntry<K: LedgerKind> {
+    pub change: Change<K::Id>,
+    pub origin: K::Origin,
+    /// The message the change follows: the last one of the turn that made
+    /// it (`MessageId::default()` if there was none).
+    pub after: MessageId,
+    pub written_at: DateTime<Utc>,
+    pub digest: Digest,
+}
+
+impl<K: LedgerKind> ChainEntry for LedgerEntry<K> {
+    fn digest(&self) -> &Digest {
+        &self.digest
+    }
+}
+
+/// An entry of a ledger as it stands now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Item<K: LedgerKind> {
+    pub id: K::Id,
+    pub text: String,
+    /// Its channel's classification when it was written, unless it was
+    /// reclassified since (issue 133).
+    pub classification: Classification,
+    /// Where it was added.
+    pub origin: K::Origin,
+    /// The message it follows.
+    pub after: MessageId,
+    pub written_at: DateTime<Utc>,
+}
+
+/// A ledger, as a chain of changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Ledger<K: LedgerKind> {
+    changes: Chain<LedgerEntry<K>>,
+}
+
+impl<K: LedgerKind> Default for Ledger<K> {
+    fn default() -> Self {
+        Self { changes: Chain::default() }
+    }
+}
+
+impl<K: LedgerKind> Ledger<K> {
+    /// The digest of the whole chain - what a reader records as the state
+    /// of knowledge it saw - or `None` while it is empty.
+    pub fn digest(&self) -> Option<Digest> {
+        self.changes.digest()
+    }
+
+    /// The changes of the active branch.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &LedgerEntry<K>> + ExactSizeIterator {
+        self.changes.entries()
+    }
+
+    /// Appends `change`, made at `origin` in the turn that ended with
+    /// message `after`.
+    pub fn push(&mut self, change: Change<K::Id>, origin: K::Origin, after: MessageId) {
+        self.changes.push_with(|previous| {
+            let digest = crate::digest::ledger_chain::<K>(previous, &change, &origin, after);
+            LedgerEntry { change, origin, after, written_at: Utc::now(), digest }
+        });
+    }
+
+    /// The entries as they stand on the active branch: every entry that was
+    /// not removed, oldest first.
+    pub fn current(&self) -> Vec<Item<K>> {
+        let mut items: Vec<Item<K>> = Vec::new();
+        for entry in self.changes.entries() {
+            match &entry.change {
+                Change::Add { id, text, classification } => items.push(Item {
+                    id: *id,
+                    text: text.clone(),
+                    classification: classification.clone(),
+                    origin: entry.origin.clone(),
+                    after: entry.after,
+                    written_at: entry.written_at,
+                }),
+                Change::Remove { id } => items.retain(|i| i.id != *id),
+                Change::Reclassify { id, classification } => {
+                    if let Some(item) = items.iter_mut().find(|i| i.id == *id) {
+                        item.classification = classification.clone();
+                    }
+                }
+            }
+        }
+        items
+    }
+
+    /// The number the next entry gets: one more than any entry ever added,
+    /// on any branch.
+    pub fn next_id(&self) -> K::Id {
+        let highest = self.changes.all_entries()
+            .filter_map(|e| match &e.change {
+                Change::Add { id, .. } => Some((*id).into()),
+                Change::Remove { .. } | Change::Reclassify { .. } => None,
+            })
+            .max()
+            .unwrap_or(0);
+        K::Id::from(highest + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::note::{NoteChain, NoteId, NoteOrigin};
+
+    fn add(id: u32, text: &str) -> Change<NoteId> {
+        Change::Add { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }
+    }
+
+    fn push(chain: &mut NoteChain, change: Change<NoteId>, after: MessageId) {
+        chain.push(change, NoteOrigin::default(), after);
+    }
+
+    #[test]
+    fn what_stands_is_the_chain_read_from_start_to_end() {
+        let mut chain = NoteChain::default();
+        assert_eq!(chain.next_id(), NoteId(1));
+        push(&mut chain, add(1, "The user likes tea."), MessageId::new());
+        push(&mut chain, add(2, "The user lives in Berlin."), MessageId::new());
+        push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());
+        push(&mut chain, add(3, "The user likes coffee."), MessageId::new());
+
+        let texts: Vec<String> = chain.current().into_iter().map(|n| n.text).collect();
+        assert_eq!(texts, ["The user lives in Berlin.", "The user likes coffee."]);
+        assert_eq!(chain.next_id(), NoteId(4), "a removed number is not given again");
+    }
+
+    #[test]
+    fn a_reclassified_entry_keeps_its_number_and_text() {
+        use crate::confidentiality::Confidentiality;
+        let mut chain = NoteChain::default();
+        push(&mut chain, add(1, "a"), MessageId::new());
+        let released = Classification::general(Confidentiality::Public);
+        push(&mut chain, Change::Reclassify { id: NoteId(1), classification: released.clone() }, MessageId::new());
+        let current = chain.current();
+        assert_eq!((current[0].id, current[0].text.as_str(), &current[0].classification), (NoteId(1), "a", &released));
+        assert_eq!(chain.next_id(), NoteId(2));
+    }
+
+    #[test]
+    fn a_branch_no_longer_active_does_not_stand_but_its_numbers_are_not_given_again() {
+        let mut chain = NoteChain::default();
+        push(&mut chain, add(1, "a"), MessageId::new());
+        let fork = chain.digest();
+        push(&mut chain, add(2, "b"), MessageId::new());
+        push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());
+        chain.changes.move_head(fork.as_ref());
+
+        let texts: Vec<String> = chain.current().into_iter().map(|n| n.text).collect();
+        assert_eq!(texts, ["a"], "the removal was on the other branch too");
+        assert_eq!(chain.next_id(), NoteId(3), "2 was given on the other branch");
+    }
+
+    #[test]
+    fn the_digest_covers_removals_and_the_place_in_the_conversation() {
+        let after = MessageId::new();
+        let mut noted = NoteChain::default();
+        push(&mut noted, add(1, "a"), after);
+        let before_removal = noted.digest();
+        push(&mut noted, Change::Remove { id: NoteId(1) }, after);
+        assert_ne!(noted.digest(), before_removal);
+
+        let mut elsewhere = NoteChain::default();
+        push(&mut elsewhere, add(1, "a"), MessageId::new());
+        assert_ne!(elsewhere.digest(), before_removal, "the same entry after another message");
+
+        let loaded: NoteChain = serde_json::from_value(serde_json::to_value(&noted).unwrap()).unwrap();
+        assert_eq!(loaded.digest(), noted.digest());
+        assert_eq!(loaded.current(), noted.current());
+    }
+}

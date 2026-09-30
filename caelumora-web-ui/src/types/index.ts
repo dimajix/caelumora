@@ -110,6 +110,8 @@ export interface Note {
   /** The message it follows. */
   after: string;
   written_at: string;
+  /** Where it was noted: the digest of the agent's transcript then. */
+  origin: { transcript: string | null };
 }
 
 /** The notes one agent published in a channel. */

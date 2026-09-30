@@ -1,6 +1,6 @@
 # 92 — `NoteChain` and `MemoryChain` are the same type written twice
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -48,3 +48,28 @@ instantiations of it.
   common `Change` trait (the added id, the fold) under one
   `Ledger<C, X>`, rather than one enum for both. [156](156-notes-and-memory-staged-scans.md)
   builds on the fold and should follow it.
+- **2026-09-30** — Decided: one generic change enum (the option of the
+  considerations), not an enum per kind behind a `Change` trait as the
+  review proposed. Notes and memory differ in data only - what they are
+  called, where a change was made - and a trait with a view of the change
+  would have been a third enum for one concept. The stored form, REST and
+  the web UI may change: there is only test data.
+- **2026-09-30** — Done. `caelumora_model::ledger`: `Ledger<K: LedgerKind>`
+  over `Chain<LedgerEntry<K>>`, `Change<Id> { Add, Remove, Reclassify }`,
+  `Item<K>` for what stands now. `LedgerKind` says the id type, the
+  `Origin` of a change, the digest scheme and whether the origin is
+  digested; `digest::ledger_chain` replaces `note_chain` and
+  `memory_chain`. `NoteChain`, `NoteChange`, `Note` and the memory's are
+  aliases of the instantiations for `Notes` and `Memories`.
+  - Deviation from the considerations: the memory's `session` moved from
+    `Remember` into `MemoryOrigin { channel, session }` - where a change was
+    made, recorded with every change, forget and reclassify included. The
+    change enum is then the same for both kinds, and `Item::origin` holds
+    what `Memory::origin` and `Memory::session` held. For notes the origin
+    is the transcript digest (`NoteOrigin`), not digested, as before.
+  - The stored form and both digest schemes changed (`…-chain.v2`); the
+    web UI's `Note` gains `origin`.
+  - Tests of the chain moved to `ledger.rs`; `memory.rs` tests that the
+    origin is recorded and part of the digest.
+  - `AgentChannelChange::Note`/`PrivateNote` are unchanged; the direction
+    for [65](65-generic-component-state.md) is recorded there.

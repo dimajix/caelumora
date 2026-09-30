@@ -195,7 +195,7 @@ against it, and what came out of the last attempt.
 | [72](72-history-digest-ignores-limit.md) | done | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
-| [92](92-ledger-for-notes-and-memory.md) | open | `NoteChain` and `MemoryChain` are the same type written twice. |
+| [92](92-ledger-for-notes-and-memory.md) | done | `NoteChain` and `MemoryChain` are the same type written twice. |
 | [156](156-notes-and-memory-staged-scans.md) | open | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |

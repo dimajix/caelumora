@@ -692,7 +692,7 @@ mod tests {
         result.started_at = ran.then(chrono::Utc::now);
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) });
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Tool, tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) });
-        turn.stage_channel_change(AgentChannelChange::Note(NoteChange::Note { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }));
+        turn.stage_channel_change(AgentChannelChange::Note(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }));
         turn
     }
 

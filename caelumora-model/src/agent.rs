@@ -5,7 +5,7 @@ use crate::context::{ContextRef, KnowledgeRef};
 use crate::message::{Message, MessageId};
 use crate::message_history::MessageHistory;
 use crate::transcript::{Transcript, TranscriptEntry};
-use crate::note::{NoteChain, NoteChange};
+use crate::note::{NoteChain, NoteChange, NoteOrigin};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -230,8 +230,8 @@ impl AgentChannelState {
     /// while the agent's transcript had the digest `transcript`.
     pub fn apply(&mut self, change: AgentChannelChange, after: MessageId, transcript: Option<Digest>) {
         match change {
-            AgentChannelChange::Note(change) => self.notes.push(change, after, transcript),
-            AgentChannelChange::PrivateNote(change) => self.private_notes.push(change, after, transcript),
+            AgentChannelChange::Note(change) => self.notes.push(change, NoteOrigin { transcript }, after),
+            AgentChannelChange::PrivateNote(change) => self.private_notes.push(change, NoteOrigin { transcript }, after),
         }
     }
 
@@ -258,8 +258,8 @@ pub struct AgentState {
 /// as it is when the turn completes (issue 62).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentStateChange {
-    /// A change to the agent's memory, made in the channel `origin`.
-    Memory { change: crate::memory::MemoryChange, origin: crate::confidentiality::ChannelRef },
+    /// A change to the agent's memory, made at `origin`.
+    Memory { change: crate::memory::MemoryChange, origin: crate::memory::MemoryOrigin },
 }
 
 impl AgentState {
@@ -301,9 +301,9 @@ mod tests {
 
     #[test]
     fn a_channel_change_goes_to_the_chain_it_names() {
-        use crate::note::{NoteChange, NoteId};
+        use crate::note::NoteId;
         let mut state = AgentChannelState::default();
-        let note = |id, text: &str| NoteChange::Note { id: NoteId(id), text: text.to_string(), classification: crate::confidentiality::Classification::CHANNEL_DEFAULT };
+        let note = |id, text: &str| NoteChange::Add { id: NoteId(id), text: text.to_string(), classification: crate::confidentiality::Classification::CHANNEL_DEFAULT };
         state.apply(AgentChannelChange::Note(note(1, "public")), MessageId::new(), None);
         state.apply(AgentChannelChange::PrivateNote(note(1, "private")), MessageId::new(), None);
         assert_eq!(state.notes.current()[0].text, "public");

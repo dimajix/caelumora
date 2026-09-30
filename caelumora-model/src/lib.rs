@@ -14,6 +14,7 @@ pub mod message;
 pub mod message_history;
 pub mod transcript;
 pub mod mention;
+pub mod ledger;
 pub mod note;
 pub mod memory;
 pub mod plan;

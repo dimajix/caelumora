@@ -156,8 +156,8 @@ impl PromptProvider for AgentMemoryComponent {
         let source = KnowledgeSource::Memory { agent: turn.agent_id(), digest: AgentMemory::digest(turn) };
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
         for memory in &recalled {
-            if !knowledge.iter().any(|k| k.channel == memory.origin) {
-                knowledge.push(KnowledgeRef { channel: memory.origin, source });
+            if !knowledge.iter().any(|k| k.channel == memory.origin.channel) {
+                knowledge.push(KnowledgeRef { channel: memory.origin.channel, source });
             }
         }
         Ok(Prompt { text: render(&recalled), knowledge })
@@ -432,7 +432,7 @@ mod tests {
         let origin = channel(hers, Confidentiality::Internal);
         remember(&writer, &handle, agent, origin.clone(), "Kaya likes tea.").await;
         let remembered = handle.current().memory.current();
-        assert_eq!(remembered[0].session.policy, PrivacyConfig::SameOwner, "the entry keeps its session's privacy");
+        assert_eq!(remembered[0].origin.session.policy, PrivacyConfig::SameOwner, "the entry keeps its session's privacy");
 
         // ... and recalled in another of hers, while the session still agrees.
         let (memory, reader) = in_session(session_of(PrivacyConfig::Private, alice));

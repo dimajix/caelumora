@@ -1,23 +1,21 @@
 //! Agent memory (issue 62, step 3): what an agent remembers across its
 //! channels and sessions, kept in its `AgentState`.
 //!
-//! Like notes (`crate::note`), memory is a chain of changes that is only
-//! appended to - something remembered, or an earlier entry forgotten - and
-//! what is remembered now is the chain read from start to end. Unlike notes,
-//! it belongs to the agent itself, not to one of its channels: it does not
-//! branch with a channel's history (principle 7 in issue 19), and every entry
-//! carries the classification of the channel it was written in, so that it
-//! is recalled only where that channel's contents may be read (the flow
-//! rule of issue 133, `Classification::flows_to`), and the privacy of its
-//! session as it was then, so that it is recalled in another session only
-//! where that session's people agreed to it (issue 134).
+//! Like notes (`crate::note`), memory is a ledger (`crate::ledger`, issue
+//! 92): something is remembered (added), forgotten (removed) or
+//! reclassified. Unlike notes, it belongs to the agent itself, not to one of
+//! its channels: it does not branch with a channel's history (principle 7 in
+//! issue 19), and every change records the channel it was made in and the
+//! privacy of that channel's session then. An entry carries the
+//! classification of the channel it was written in, so that it is recalled
+//! only where that channel's contents may be read (the flow rule of issue
+//! 133, `Classification::flows_to`), and its session's privacy as it was,
+//! so that it is recalled in another session only where that session's
+//! people agreed to it (issue 134).
 
-use crate::chain::{Chain, ChainEntry};
-use crate::confidentiality::{ChannelRef, Classification};
-use crate::digest::Digest;
-use crate::message::MessageId;
+use crate::confidentiality::ChannelRef;
+use crate::ledger::{Change, Item, Ledger, LedgerKind};
 use crate::privacy::SessionPrivacy;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -34,154 +32,79 @@ impl fmt::Display for MemoryId {
     }
 }
 
-/// A change to an agent's memory.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MemoryChange {
-    /// Remembers `text`, classified as the channel it was written in was
-    /// then (issue 133), in a session as privacy saw it then (issue 134):
-    /// what its people agreed to when it was said holds, whatever the
-    /// session's policy becomes.
-    Remember {
-        id: MemoryId,
-        text: String,
-        classification: Classification,
-        #[serde(default)]
-        session: SessionPrivacy,
-    },
-    Forget { id: MemoryId },
-    /// The entry `id` is classified `classification` from now on (issue
-    /// 133): recalled where that may be read, wherever it was written.
-    Reclassify { id: MemoryId, classification: Classification },
-}
-
-/// An entry of a [`MemoryChain`]: a change, the channel it was made in,
-/// where in that channel's conversation, and the digest of the chain up to
-/// and including it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryEntry {
-    pub change: MemoryChange,
-    /// The channel the change was made in.
-    pub origin: ChannelRef,
-    /// The message the change follows: the last one of the turn that made
-    /// it in `origin` (`MessageId::default()` if there was none).
-    pub after: MessageId,
-    pub written_at: DateTime<Utc>,
-    pub digest: Digest,
-}
-
-impl ChainEntry for MemoryEntry {
-    fn digest(&self) -> &Digest {
-        &self.digest
+impl From<u32> for MemoryId {
+    fn from(n: u32) -> Self {
+        MemoryId(n)
     }
 }
 
-/// Something an agent remembers now.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Memory {
-    pub id: MemoryId,
-    pub text: String,
-    /// How it is classified: as the channel it was written in was then,
-    /// unless it was reclassified (issue 133).
-    pub classification: Classification,
-    /// The channel it was written in.
-    pub origin: ChannelRef,
-    /// The session of `origin` as privacy saw it when it was written.
+impl From<MemoryId> for u32 {
+    fn from(id: MemoryId) -> Self {
+        id.0
+    }
+}
+
+/// Where a change to memory was made: the channel, and its session as
+/// privacy saw it then (issue 134) - what the session's people agreed to
+/// when it was said holds, whatever the session's policy becomes. Part of
+/// the digest: a reader learns where what it recalls comes from.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MemoryOrigin {
+    pub channel: ChannelRef,
     pub session: SessionPrivacy,
-    pub after: MessageId,
-    pub written_at: DateTime<Utc>,
 }
 
+/// The kind of ledger an agent's memory is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Memories {}
+
+impl LedgerKind for Memories {
+    type Id = MemoryId;
+    type Origin = MemoryOrigin;
+    const SCHEME: &'static str = "caelumora.memory-chain.v2";
+    const ORIGIN_DIGESTED: bool = true;
+}
+
+/// A change to an agent's memory.
+pub type MemoryChange = Change<MemoryId>;
+/// Something an agent remembers now.
+pub type Memory = Item<Memories>;
 /// An agent's memory, as a chain of changes.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MemoryChain {
-    changes: Chain<MemoryEntry>,
-}
-
-impl MemoryChain {
-    /// The digest of the whole chain - what a reader records as the state
-    /// of knowledge it saw - or `None` while it is empty.
-    pub fn digest(&self) -> Option<Digest> {
-        self.changes.digest()
-    }
-
-    /// The changes of the active branch - the only one: memory outlives
-    /// the conversation and does not branch with it (issue 19, point 7).
-    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &MemoryEntry> + ExactSizeIterator {
-        self.changes.entries()
-    }
-
-    /// Appends `change`, made in `origin` in the turn that ended with message
-    /// `after`.
-    pub fn push(&mut self, change: MemoryChange, origin: ChannelRef, after: MessageId) {
-        self.changes.push_with(|previous| {
-            let digest = crate::digest::memory_chain(previous, &change, &origin, after);
-            MemoryEntry { change, origin, after, written_at: Utc::now(), digest }
-        });
-    }
-
-    /// What is remembered now: every entry not forgotten, oldest first.
-    pub fn current(&self) -> Vec<Memory> {
-        let mut memories: Vec<Memory> = Vec::new();
-        for entry in self.changes.entries() {
-            match &entry.change {
-                MemoryChange::Remember { id, text, classification, session } => memories.push(Memory {
-                    id: *id,
-                    text: text.clone(),
-                    classification: classification.clone(),
-                    origin: entry.origin,
-                    session: session.clone(),
-                    after: entry.after,
-                    written_at: entry.written_at,
-                }),
-                MemoryChange::Forget { id } => memories.retain(|m| m.id != *id),
-                MemoryChange::Reclassify { id, classification } => {
-                    if let Some(memory) = memories.iter_mut().find(|m| m.id == *id) {
-                        memory.classification = classification.clone();
-                    }
-                }
-            }
-        }
-        memories
-    }
-
-    /// The number the next entry gets: one more than any ever remembered.
-    pub fn next_id(&self) -> MemoryId {
-        let highest = self.changes.all_entries()
-            .filter_map(|e| match &e.change {
-                MemoryChange::Remember { id, .. } => Some(id.0),
-                MemoryChange::Forget { .. } | MemoryChange::Reclassify { .. } => None,
-            })
-            .max()
-            .unwrap_or(0);
-        MemoryId(highest + 1)
-    }
-}
+pub type MemoryChain = Ledger<Memories>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::confidentiality::Classification;
+    use crate::message::MessageId;
 
-    fn origin() -> ChannelRef {
-        ChannelRef::default()
+    #[test]
+    fn every_entry_knows_where_it_was_written() {
+        let mut chain = MemoryChain::default();
+        let origin = MemoryOrigin { channel: ChannelRef::default(), session: SessionPrivacy::default() };
+        let remember = |id, text: &str| Change::Add { id: MemoryId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT };
+        chain.push(remember(1, "Kaya likes tea."), origin.clone(), MessageId::new());
+        chain.push(remember(2, "Kaya lives in Berlin."), origin.clone(), MessageId::new());
+        chain.push(Change::Remove { id: MemoryId(1) }, origin.clone(), MessageId::new());
+
+        let current = chain.current();
+        assert_eq!(current.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["Kaya lives in Berlin."]);
+        assert_eq!(current[0].origin, origin);
+        assert_eq!(chain.next_id(), MemoryId(3));
     }
 
     #[test]
-    fn what_is_remembered_is_the_chain_read_from_start_to_end() {
-        let mut chain = MemoryChain::default();
-        assert_eq!(chain.next_id(), MemoryId(1));
-        let remember = |id, text: &str| MemoryChange::Remember {
-            id: MemoryId(id),
-            text: text.to_string(),
-            classification: Classification::CHANNEL_DEFAULT,
-            session: SessionPrivacy::default(),
+    fn the_digest_covers_where_a_change_was_made() {
+        let after = MessageId::new();
+        let remember = Change::Add { id: MemoryId(1), text: "a".to_string(), classification: Classification::CHANNEL_DEFAULT };
+        let digest_in = |origin: MemoryOrigin| {
+            let mut chain = MemoryChain::default();
+            chain.push(remember.clone(), origin, after);
+            chain.digest()
         };
-        chain.push(remember(1, "Kaya likes tea."), origin(), MessageId::new());
-        chain.push(remember(2, "Kaya lives in Berlin."), origin(), MessageId::new());
-        chain.push(MemoryChange::Forget { id: MemoryId(1) }, origin(), MessageId::new());
-
-        let texts: Vec<_> = chain.current().into_iter().map(|m| m.text).collect();
-        assert_eq!(texts, ["Kaya lives in Berlin."]);
-        assert_eq!(chain.next_id(), MemoryId(3), "a forgotten number is not given again");
-        assert_eq!(chain.current()[0].origin, origin(), "every entry knows where it was written");
+        let here = MemoryOrigin::default();
+        let elsewhere = MemoryOrigin { channel: ChannelRef { channel_id: crate::channel::ChannelId::new(), ..ChannelRef::default() }, ..MemoryOrigin::default() };
+        assert_ne!(digest_in(here.clone()), digest_in(elsewhere));
+        assert_eq!(digest_in(here.clone()), digest_in(here));
     }
 }

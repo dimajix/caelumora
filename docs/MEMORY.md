@@ -42,7 +42,16 @@ in the channel.
 
 *   **Where they live.** Each agent keeps its notes per channel in
     `AgentChannelState::notes`, a `NoteChain`. Every entry records the
-    message it follows and the context digest.
+    message it follows and, as its `NoteOrigin`, the digest of the agent's
+    transcript.
+*   **A ledger.** `NoteChain` and `MemoryChain` are one type,
+    `caelumora_model::ledger::Ledger<K>` (issue 92): a chain of `Change`s -
+    `Add`, `Remove`, `Reclassify` - read from start to end into the
+    `Item`s that stand now. The `LedgerKind` (`Notes`, `Memories`) says
+    only what differs: the type of the numbers, where a change is recorded
+    to have been made (`Origin`), and the digest's scheme and whether the
+    origin is part of it. Revoking a note and forgetting a memory entry are
+    both a `Remove`.
 *   **Numbers.** Notes are numbered per agent, counting up, and a number is
     never given again, so that a model can repeat it to revoke.
 *   **Staging.** `AgentNotes` numbers, notes and revokes (`NoteKind::Public`
@@ -97,7 +106,10 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
 
 *   **Where it lives.** The memory is a `MemoryChain` in the agent's own
     `AgentState` (`AgentState::memory`), not in one channel. It does not
-    branch with a channel's history.
+    branch with a channel's history. Every change records its
+    `MemoryOrigin`: the channel it was made in and the privacy of that
+    channel's session then; an entry stands with the origin it was added
+    at.
 *   **Tools.** `remember(text)` and `forget(id)`, both
     `ToolVisibility::HIDDEN`: like private notes, memory is the
     agent's own, seen by its owner in the context panel only.
@@ -111,7 +123,7 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     reclassified - flows into the current channel's (the flow rule of issue
     133) - within the session, and beyond it only where the entry's session
     permits it ([134](../issues/134-session-privacy.md)). An entry keeps the
-    privacy its session had when it was written (`SessionPrivacy`); in
+    privacy its session had when it was written (`MemoryOrigin::session`); in
     another session it is recalled only where both that and the privacy
     the session has now permit it, so that what was said under a private
     policy stays private and a session made private again takes back what

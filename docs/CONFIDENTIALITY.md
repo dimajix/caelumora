@@ -380,7 +380,7 @@ written in, stamped when it is written, so that the reading rule can follow
 it into other channels; a later change of the channel changes none of it:
 
 *   **Notes** (issue 17) and **private notes** (issue 51) carry their
-    classification (`NoteChange::Note`, `Note::classification`). Other
+    classification (`NoteChange::Add`, `Note::classification`). Other
     channels read them note by note; the agent is shown the private notes
     of every other channel of the session that its current channel may
     read (`AccessQuestions::may_channel_read`).
