@@ -144,6 +144,11 @@ export type GlobalEvent = Record<string, unknown>;
 export interface Message {
   id?: string;
   role: 'User' | 'Assistant' | 'System' | 'Tool';
+  /**
+   * How sensitive the message is and for whom (issue 133). Absent only on
+   * what the UI shows without the server - a command's answer, a failed turn.
+   */
+  classification?: Classification;
   sender_id?: ActorId;
   /** Internal scaffolding (deliberation, plan steps, mid-plan tool steps): never shown in the chat. */
   internal?: boolean;

@@ -19,6 +19,7 @@ import type {
   ChannelResponse,
   ChannelSnapshot,
   Command,
+  Compartment,
   Envelope,
   Message,
   PlanStepEvent,
@@ -27,7 +28,8 @@ import type {
 } from '../types';
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
-import {classificationDescription, classificationLabel} from '../confidentiality';
+import {type Classification, classificationDescription, classificationLabel, sameClassification} from '../confidentiality';
+import {ClassificationPicker} from './ClassificationPicker';
 import {changedChannel, membershipChangedChannel, onGlobalEvent} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
@@ -69,6 +71,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // Restored from session storage, so a forced re-login does not lose it.
   const [inputText, setInputText] = useState(() => loadDraft(channelId));
   const [isSending, setIsSending] = useState(false);
+  // How the next message is classified, in the channel it was chosen in;
+  // `null`: as the channel (issue 133).
+  const [chosenRelease, setChosenRelease] = useState<{channelId: string; classification: Classification} | null>(null);
+  const release = chosenRelease?.channelId === channelId ? chosenRelease.classification : null;
+  const setRelease = (classification: Classification | null) =>
+    setChosenRelease(classification && {channelId, classification});
+  const [compartments, setCompartments] = useState<Compartment[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
   const [streamingSender, setStreamingSender] = useState<string | null>(null);
@@ -117,6 +126,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const participant = channel?.id === channelId
     ? channel.members.some(m => typeof m.id !== 'string' && m.id.User === user.id)
     : undefined;
+
+  // The compartments a message may be released to; none if they cannot be
+  // fetched - the message is then the channel's.
+  useEffect(() => {
+    api.getCompartments()
+      .then(setCompartments)
+      .catch(error => reportError('Failed to load the compartments', error));
+  }, []);
 
   useEffect(() => {
     api.getCommands(sessionId, channelId)
@@ -348,7 +365,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           setMessages(prev => [...prev, notice]);
         }
       } else {
-        await api.sendMessage(sessionId, channelId, input.text);
+        await api.sendMessage(sessionId, channelId, input.text, release ?? undefined);
+        // A release is for one message.
+        setRelease(null);
       }
     } catch (error) {
       // The server's detail for a command already names it.
@@ -501,6 +520,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               key={idx}
               message={msg}
               members={members}
+              badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
+                ? [`released: ${classificationLabel(msg.classification)}`]
+                : undefined}
               actions={mayShowContext(msg) ? (
                 <button
                   onClick={() => setContextOf({channelId, message: msg})}
@@ -573,6 +595,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             </p>
           ) : (
           <form onSubmit={handleSendMessage} className="flex space-x-2">
+            {channel && (
+              <ClassificationPicker
+                channel={channel.classification}
+                compartments={compartments}
+                value={release ?? channel.classification}
+                onChange={(c) => setRelease(sameClassification(c, channel.classification) ? null : c)}
+              />
+            )}
             <div className="relative flex-1 flex">
               {suggestions.length > 0 && (
                 <ul

@@ -337,7 +337,7 @@ mod tests {
     use crate::message::MessageId;
 
     fn text(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() }
+        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) }
     }
 
     fn contents(items: &[ContextItem]) -> Vec<String> {

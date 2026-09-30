@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::ToolDefinition;
@@ -57,12 +58,22 @@ impl LLMError {
 
 pub type LLMResult<T> = Result<T, LLMError>;
 
+/// An empty message of a model, as an `LLMClient` builds its answer from.
+/// A client does not know where its answer goes; the agent classifies every
+/// message of its model before it is used (`AgentActor::label`, issue 133).
+/// Until then it is the strictest classification there is without
+/// compartments, which no channel below `strictly_confidential` admits.
+pub fn unlabelled_message() -> Message {
+    Message::new(Classification::general(Confidentiality::StrictlyConfidential))
+}
+
 #[async_trait]
 pub trait LLMClient: Send + Sync + Debug {
     /// Sends `context` and the `tools` the model may call, as the model is
     /// offered them (issue 137), and streams its answer as `MessageEvent`s:
-    /// partial messages as they arrive, then the complete ones. The stream
-    /// owns the request; dropping it abandons it.
+    /// partial messages as they arrive, then the complete ones, each built
+    /// on `unlabelled_message`. The stream owns the request; dropping it
+    /// abandons it.
     async fn chat_completion(&self, context: &[Message], tools: &[ToolDefinition]) -> BoxStream<'static, LLMResult<MessageEvent>>;
 
     /// How the model is to be given its context - which reasoning of

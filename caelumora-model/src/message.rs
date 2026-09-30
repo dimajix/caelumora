@@ -1,5 +1,5 @@
 use crate::actor::ActorId;
-use crate::confidentiality::Visibility;
+use crate::confidentiality::{Classification, Visibility};
 use crate::tool::{ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,12 @@ pub struct Message {
     pub sender_id: ActorId,
     pub sender_name: String,
     pub role: MessageRole,
+    /// How sensitive the message is and for whom (issue 133): set by its
+    /// sender - the channel's, unless a user classifies it otherwise - and
+    /// checked by the channel it enters, which admits only what may flow
+    /// into it. So a message is never classified above its channel; one
+    /// classified below is released to a wider audience.
+    pub classification: Classification,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,14 +75,19 @@ pub struct Message {
     pub total_duration: Option<u64>,         // ns
 }
 
-impl Default for Message {
-    fn default() -> Self {
+// No `Default`: a message has no classification that would be right
+// everywhere, and a forgotten one must not pass silently (issue 133).
+impl Message {
+    /// An empty system message classified `classification`, for the other
+    /// fields to be filled in with `..`.
+    pub fn new(classification: Classification) -> Self {
         Message {
             id: MessageId::default(),
             prev_id: MessageId::default(),
             sender_id: ActorId::None,
             sender_name: "".to_string(),
             role: MessageRole::System,
+            classification,
             content: None,
             reasoning: None,
             reasoning_visibility: Visibility::Channel,
@@ -323,7 +334,7 @@ mod tests {
             role: MessageRole::User,
             content: Some("hello".to_string()),
             timestamp: Utc::now(),
-            ..Message::default()
+            ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT)
         }
     }
 

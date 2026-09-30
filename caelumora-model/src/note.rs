@@ -9,6 +9,7 @@
 //! the chain read from start to end.
 
 use crate::chain::{Chain, ChainEntry};
+use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::MessageId;
 use chrono::{DateTime, Utc};
@@ -30,7 +31,10 @@ impl fmt::Display for NoteId {
 /// A change to an agent's notes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NoteChange {
-    Note { id: NoteId, text: String },
+    /// A note, classified as the channel it was written in was then (issue
+    /// 133): what the agent derives carries its channel's classification,
+    /// and a later change of the channel changes none of its notes.
+    Note { id: NoteId, text: String, classification: Classification },
     Revoke { id: NoteId },
 }
 
@@ -59,6 +63,8 @@ impl ChainEntry for NoteEntry {
 pub struct Note {
     pub id: NoteId,
     pub text: String,
+    /// Its channel's classification when it was written (issue 133).
+    pub classification: Classification,
     /// The message it follows.
     pub after: MessageId,
     pub written_at: DateTime<Utc>,
@@ -100,7 +106,13 @@ impl NoteChain {
         let mut notes: Vec<Note> = Vec::new();
         for entry in self.changes.entries() {
             match &entry.change {
-                NoteChange::Note { id, text } => notes.push(Note { id: *id, text: text.clone(), after: entry.after, written_at: entry.written_at }),
+                NoteChange::Note { id, text, classification } => notes.push(Note {
+                    id: *id,
+                    text: text.clone(),
+                    classification: classification.clone(),
+                    after: entry.after,
+                    written_at: entry.written_at,
+                }),
                 NoteChange::Revoke { id } => notes.retain(|n| n.id != *id),
             }
         }
@@ -126,7 +138,7 @@ mod tests {
     use super::*;
 
     fn note(id: u32, text: &str) -> NoteChange {
-        NoteChange::Note { id: NoteId(id), text: text.to_string() }
+        NoteChange::Note { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }
     }
 
     #[test]

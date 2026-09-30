@@ -288,7 +288,7 @@ impl<'a> Turn<'a> {
                     content: Some(text),
                     sender_id: ActorId::Agent(self.agent_id),
                     sender_name: self.agent_name.clone(),
-                    ..Default::default()
+                    ..Message::new(self.current().classification.classification.clone())
                 },
             })
             .collect();
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn advance_plan_moves_to_the_next_step_when_one_remains() {
         let mut state = AgentChannelState::default();
-        state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::default() });
+        state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) });
         let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
         turn.set_context(Vec::new());
@@ -621,7 +621,7 @@ mod tests {
     async fn plan_instructions_are_given_where_they_were_placed_and_not_kept_for_later_turns() {
         use caelumora_model::context::SystemMessages;
         let agent = AgentId::new();
-        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), sender_id: ActorId::Agent(agent), role, content: Some(content.to_string()), ..Message::default() };
+        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), sender_id: ActorId::Agent(agent), role, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         state.transcript.push(Message { sender_id: ActorId::None, ..text(MessageRole::User, "do it") });
         let (step, answer) = (text(MessageRole::Assistant, "step done"), text(MessageRole::Assistant, "all done"));
@@ -718,7 +718,7 @@ mod tests {
             role: if sender == ActorId::Agent(agent) { MessageRole::Assistant } else { MessageRole::User },
             content: Some(content.to_string()),
             reasoning: Some(format!("why {content}")),
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let other = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
@@ -763,7 +763,7 @@ mod tests {
     #[tokio::test]
     async fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
         let agent = AgentId::new();
-        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
+        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
         state.transcript.push(question.clone());
@@ -831,7 +831,7 @@ mod tests {
             requires_approval,
             confidentiality: Default::default(),
         };
-        let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::default() };
+        let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
@@ -869,7 +869,7 @@ mod tests {
         turn.next_turn(Default::default(), Default::default(), Default::default(), Vec::new());
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
-        let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::default() };
+        let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         turn.push_message(message.clone());
         turn.send_event(ActorEvent::CompleteMessageGenerated(message.clone()), &output).await.unwrap();
         turn.send_event(ActorEvent::FullResponseGenerated(vec![message]), &output).await.unwrap();
@@ -885,7 +885,7 @@ mod tests {
             role: MessageRole::Assistant,
             content: Some("done".to_string()),
             reasoning: Some("weighing".to_string()),
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output).await.unwrap();
         let owners = Message { reasoning_visibility: Visibility::Owner, ..thinking };

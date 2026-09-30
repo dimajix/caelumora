@@ -14,6 +14,7 @@ import type {
   Compartment,
   UserResponse
 } from '../types';
+import type {Classification} from '../confidentiality';
 
 import {ensureOk} from '../errors';
 
@@ -153,11 +154,12 @@ export const api = {
     return res.json();
   },
 
-  async sendMessage(sessionId: string, channelId: string, content: string): Promise<void> {
+  /** Writes a message, classified `classification` - the channel's if absent (issue 133). */
+  async sendMessage(sessionId: string, channelId: string, content: string, classification?: Classification): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, classification }),
     });
     await ensureOk(res, 'Failed to send message');
   },

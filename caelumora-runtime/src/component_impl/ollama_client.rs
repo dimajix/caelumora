@@ -14,7 +14,7 @@
 //! fall back to its default.
 
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::llm::{LLMClient, LLMError, LLMResult};
+use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -396,7 +396,7 @@ impl LLMClient for OllamaClient {
                                         role: MessageRole::Assistant,
                                         reasoning: Some(thinking),
                                         timestamp: Utc::now(),
-                                        ..Message::default()
+                                        ..unlabelled_message()
                                     };
                                     yield Ok(MessageEvent::Partial(partial_message));
                                 }
@@ -411,7 +411,7 @@ impl LLMClient for OllamaClient {
                                         role: MessageRole::Assistant,
                                         content: Some(msg.content),
                                         timestamp: Utc::now(),
-                                        ..Message::default()
+                                        ..unlabelled_message()
                                     };
                                     yield Ok(MessageEvent::Partial(partial_message));
                                 }
@@ -427,7 +427,7 @@ impl LLMClient for OllamaClient {
                                     reasoning: if full_reasoning.is_empty() { None } else { Some(full_reasoning.clone()) },
                                     tool_calls: all_tool_calls.clone(),
                                     timestamp: Utc::now(),
-                                    ..Message::default()
+                                    ..unlabelled_message()
                                 };
                                 // Fill in usage metrics from Ollama if available
                                 message.total_duration = body.total_duration;
@@ -502,7 +502,7 @@ mod tests {
         let message = Message {
             role: MessageRole::Assistant,
             tool_calls,
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
 
         let ollama_messages = OllamaChatMessage::from(&message);
@@ -527,7 +527,7 @@ mod tests {
             role: MessageRole::Assistant,
             content: Some("the answer".to_string()),
             reasoning: Some("let me think".to_string()),
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
 
         let ollama_messages = OllamaChatMessage::from(&message);

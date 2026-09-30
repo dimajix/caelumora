@@ -261,6 +261,10 @@ impl ChannelMemberResponse {
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
+    /// How the message is classified (issue 133); the channel's if absent.
+    /// Another than the channel's releases it: to a wider audience or a
+    /// lower level, as long as it may flow into the channel.
+    pub classification: Option<Classification>,
 }
 
 #[derive(Debug, Deserialize)]

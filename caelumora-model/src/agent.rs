@@ -277,7 +277,7 @@ mod tests {
             processing_state: ActorState::WaitingForApproval,
             turn: Some({
                 let mut turn = TurnState::default();
-                turn.push(Message::default());
+                turn.push(Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT));
                 turn
             }),
             ..AgentChannelState::default()
@@ -293,7 +293,7 @@ mod tests {
     fn a_channel_change_goes_to_the_chain_it_names() {
         use crate::note::{NoteChange, NoteId};
         let mut state = AgentChannelState::default();
-        let note = |id, text: &str| NoteChange::Note { id: NoteId(id), text: text.to_string() };
+        let note = |id, text: &str| NoteChange::Note { id: NoteId(id), text: text.to_string(), classification: crate::confidentiality::Classification::CHANNEL_DEFAULT };
         state.apply(AgentChannelChange::Note(note(1, "public")), MessageId::new(), None);
         state.apply(AgentChannelChange::PrivateNote(note(1, "private")), MessageId::new(), None);
         assert_eq!(state.notes.current()[0].text, "public");

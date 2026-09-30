@@ -242,7 +242,10 @@ impl AgentActor {
             .await)
     }
 
-    /// Labels the parts of `message` (issues 54, 61). Every tool call gets
+    /// Labels `message` and its parts (issues 54, 61, 133). The message is
+    /// classified as the turn's channel - every message of the agent's
+    /// model passes here, partial and complete, before it goes anywhere.
+    /// Every tool call gets
     /// the labels its tool declares now, so that the call and its result are
     /// published by what applied at the time of the call; a call of an
     /// unknown tool is public: it fails, and its failure hides nothing.
@@ -263,6 +266,9 @@ impl AgentActor {
         for call in &mut message.tool_calls {
             call.confidentiality = declared(&call.function_name);
         }
+        // What the model produces is derived in the channel: it carries
+        // the channel's classification, as the turn began with it.
+        message.classification = turn.classification().classification;
 
         let owners_call = if complete {
             message.tool_calls.iter().any(|c| !c.confidentiality.content.is_channel())
@@ -1086,7 +1092,7 @@ mod tests {
             content: Some(content.to_string()),
             tool_calls: Vec::new(),
             timestamp: Utc::now(),
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         }
     }
 
@@ -1238,7 +1244,7 @@ mod tests {
         use caelumora_model::message::MessageRole;
 
         let actor = ActorId::Agent(AgentId::new());
-        let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
+        let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         let question = text("question");
         state.transcript.push(question.clone());

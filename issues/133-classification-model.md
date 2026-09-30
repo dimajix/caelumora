@@ -307,3 +307,28 @@ message rendering, and the prompt notes of
   from a template. REST: `classification` on channels, `GET /compartments`.
   `docs/CONFIDENTIALITY.md` rewritten. Resolves
   [97](97-small-model-unifications.md) on the way.
+- **2026-09-30** — Decided before step 2: a message's classification is a
+  required field, not an `Option`, and `Message` has no `Default` - no
+  default classification is safe, a general one would pass a channel with
+  compartments; messages are built with `Message::new(classification)`.
+  The sender classifies, the channel is the gate (`ActionType::Publish`,
+  back with the classification instead of the old label; the author may
+  release when writing). `ReadChannel` carries the classification of the
+  entry read: reachability per channel, classification per entry, so a
+  channel reads what was released to it even where it may not read the
+  channel as a whole. Notes and private notes stamp their classification
+  when written.
+- **2026-09-30** — Step 2 done: `Message::classification`, stamped by the
+  agent (`AgentActor::label`, tool messages, prompt parts) and by the
+  user's actor, and admitted by `ChannelLoop::admits`; `UserActor::
+  send_message` takes an optional classification and asks `Publish`
+  first. `NoteChange::Note` and `Note` carry a classification; the
+  `SessionReader` filters history, notes and private notes per entry, and
+  answers a channel of which nothing may be read as absent. REST: message
+  `classification`, `POST …/messages` with an optional one
+  (`invalid_classification`). Web UI: `ClassificationPicker` next to the
+  input, a `released` badge on messages. What remains open: a
+  `KnowledgeRef` records the digest of the whole chain read, also where
+  only some entries of it were readable; and a model's messages are built
+  on a placeholder classification (`llm::unlabelled_message`) until the
+  agent labels them.

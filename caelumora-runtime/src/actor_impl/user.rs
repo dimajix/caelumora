@@ -9,7 +9,8 @@ use caelumora_model::approval::ApprovalResponse;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::security::SecurityContext;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::SessionId;
 use crate::controller::UserController;
 use chrono::Utc;
@@ -86,11 +87,27 @@ impl UserActor {
         Envelope::new(self.security_context.clone(), context, event)
     }
 
-    /// Sends a message from this user into the channel.
+    /// Sends a message from this user into the channel, classified
+    /// `classification` - the channel's if `None` (issue 133). A user may
+    /// release what they write: classify it for a wider audience or a
+    /// lower level than the channel, as long as it may flow into the
+    /// channel. Asked here, so that the user learns of a refusal; the
+    /// channel asks again as it admits the message.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
     /// caused by the message carries as well (see `crate::logging`).
-    pub async fn send_message(&self, message: String) -> anyhow::Result<Uuid> {
+    ///
+    /// # Errors
+    /// `ChannelError::ClassificationRefused` if the message may not enter
+    /// the channel as classified; an error if the channel is gone.
+    pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
+        let channel = self.actor_runtime.classification()
+            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let classification = classification.unwrap_or_else(|| channel.classification.clone());
+        let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
+        self.actor_runtime.security_manager()
+            .require(&self.security_context, action, || crate::channel::ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.channel_id })
+            .await?;
         let msg = Message {
             role: MessageRole::User,
             content: Some(message),
@@ -98,7 +115,7 @@ impl UserActor {
             sender_id: self.id(),
             sender_name: self.name(),
             timestamp: Utc::now(),
-            ..Message::default()
+            ..Message::new(classification)
         };
         // All stem from one user action: one span. First the request to wake
         // the channel's agents for it - the channel does not wake by itself
@@ -306,7 +323,9 @@ mod tests {
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
     use caelumora_model::store_impl::memory::MemoryStore;
 
-    async fn user_actor() -> UserActor {
+    /// A user's actor, with the channel it is in - to be kept while the
+    /// actor is used: the actor's runtime holds it weakly.
+    async fn user_actor() -> (UserActor, Arc<crate::channel::ChannelLoop>) {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
@@ -327,9 +346,11 @@ mod tests {
             email: String::new(),
             roles: Vec::new(),
         };
+        let channel_loop = crate::channel::ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
         runtime.entity_store().create_user(&SecurityContext::system(), &user).await.unwrap();
-        UserActor::new(&channel, runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap()
+        let actor = UserActor::new(&channel, runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
+        (actor, channel_loop)
     }
 
     fn envelope_from(sender: ActorId) -> Envelope {
@@ -339,9 +360,9 @@ mod tests {
 
     #[tokio::test]
     async fn send_message_asks_for_a_wakeup_and_returns_the_span_of_all_its_envelopes() {
-        let actor = user_actor().await;
+        let (actor, _channel) = user_actor().await;
 
-        let span_id = actor.send_message("hello".to_string()).await.unwrap();
+        let span_id = actor.send_message("hello".to_string(), None).await.unwrap();
 
         let mut rx = actor.user_rx.lock().await;
         let wakeup = rx.recv().await.expect("WakeupRequested");
@@ -361,12 +382,12 @@ mod tests {
     #[tokio::test]
     async fn a_user_actor_whose_channel_is_gone_ends_without_an_error() {
         use crate::transport_impl::{InMemoryEventReceiver, InMemoryEventSender};
-        let actor = user_actor().await;
+        let (actor, _channel) = user_actor().await;
         let (_inbox, rx) = mpsc::channel(1);
         let (output, channel_inbox) = mpsc::channel(1);
         drop(channel_inbox);
 
-        actor.send_message("hello".to_string()).await.unwrap();
+        actor.send_message("hello".to_string(), None).await.unwrap();
         let ended = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))),
@@ -376,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn envelopes_without_a_subscriber_are_dropped_without_blocking() {
-        let actor = user_actor().await;
+        let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
         // More than any queue would hold: must neither block nor fail.
         for _ in 0..(SUBSCRIBER_CAPACITY * 2) {
@@ -387,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_lagging_subscriber_loses_envelopes_but_does_not_stall_the_actor() {
-        let actor = user_actor().await;
+        let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
         let mut rx = actor.subscribe();
 
@@ -408,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_user_has_no_message_context() {
-        let actor = user_actor().await;
+        let (actor, _channel) = user_actor().await;
         let result = actor.message_context(&SecurityContext::default(), MessageId::new()).await;
         assert!(matches!(result, Err(crate::actor::MessageContextError::NotRecorded { .. })));
     }

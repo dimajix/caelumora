@@ -311,7 +311,7 @@ mod tests {
             role: MessageRole::User,
             content: Some(content.to_string()),
             mentions,
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         envelope(sender_id, ActorEvent::FullResponseGenerated(vec![message]))
     }
@@ -455,10 +455,10 @@ mod tests {
         let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC };
         let result = ToolCallResult::of(&call, Default::default(), "done".to_string());
         let said = vec![
-            Message { role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::default() },
-            Message { role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::default() },
-            Message { role: MessageRole::Assistant, content: None, ..Message::default() },
-            Message { role: MessageRole::Assistant, content: Some("All done.".to_string()), ..Message::default() },
+            Message { role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
+            Message { role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
+            Message { role: MessageRole::Assistant, content: None, ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
+            Message { role: MessageRole::Assistant, content: Some("All done.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
         ];
 
         let heard = as_user_messages(&said);

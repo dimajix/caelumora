@@ -78,8 +78,8 @@ channel, `AgentChannelState::private_notes`, with its own tools
     every other channel of the session that this channel may read
     (`AccessQuestions::may_channel_read`, the same rule as for
     [reading another channel](#reading-other-channels)). A note carries the
-    classification of the channel it was written in, checked against that
-    channel's current classification when it is read.
+    classification of the channel it was written in, stamped when it is
+    written, and is read note by note.
 *   **Hidden calls.** Both tools are `ToolConfidentiality::HIDDEN`, so the
     calls never reach the channel. "Private" means private from other agents
     and other users, not from the agent's owner, who sees them in the
@@ -133,14 +133,16 @@ nothing.
     (`ChannelLoop::session()`, a weak handle the `SessionLoop` sets on each
     of its channels with `ChannelLoop::attach`, issue 123). The actors'
     runtimes carry no session.
-*   **Who may read what.** Another channel is read only if the reading
-    channel may read it (`AccessQuestions::may_channel_read`,
-    `ActionType::ReadChannel`). That depends on the two channels'
-    classifications, not on who takes part in them, because an agent
-    passes on what it reads to its channel (see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+*   **Who may read what.** What another channel holds is read entry by
+    entry - message, note - as the reading channel may read it
+    (`AccessQuestions::may_channel_read`, `ActionType::ReadChannel`). That
+    depends on the channels and the entry's classification, not on who
+    takes part in them, because an agent passes on what it reads to its
+    channel; an entry released below its channel is read where the channel
+    as a whole is not (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 *   **No probing.** A channel that does not exist and one that may not be
-    read are the same error, so channels cannot be probed.
+    read, and of which nothing was released, are the same error, so
+    channels cannot be probed.
 *   **Tools.** `read_notes(channel?)` in `notes` reads the notes of another
     channel, or without a channel of every readable channel.
     `read_history(channel, last?, query?)` in the component

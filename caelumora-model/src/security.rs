@@ -73,11 +73,19 @@ pub enum ActionType<'a> {
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
     WakeChannel(&'a SecurityAttributes),
-    /// Reading a channel's notes or history (`source`) from another channel
-    /// (`reader`), issue 17. Decided by the channels alone - their places and
-    /// classifications (issue 133) - not by who takes part in them, so that
-    /// the answer does not change when someone joins or leaves.
-    ReadChannel { source: &'a ChannelClassification, reader: &'a ChannelClassification },
+    /// Reading what is classified `classification` - a message, a note, a
+    /// memory entry - of the channel `source` from another channel
+    /// (`reader`), issue 17. Decided per entry by where it is and how it is
+    /// classified (issue 133), not by who takes part in the channels, so
+    /// that the answer does not change when someone joins or leaves. An
+    /// entry released below its channel's classification may be read where
+    /// the channel as a whole may not.
+    ReadChannel { source: &'a ChannelClassification, classification: &'a Classification, reader: &'a ChannelClassification },
+    /// `actor` putting a message classified `classification` into `channel`
+    /// (issue 133) - asked by the channel for every message that enters it.
+    /// A classification other than the channel's releases the message to a
+    /// wider audience or a lower level.
+    Publish { classification: &'a Classification, actor: ActorId, channel: &'a ChannelClassification },
     /// Giving something a classification - a channel when it is created
     /// (issue 133). Where a policy refuses compartments that are not
     /// configured.
@@ -137,7 +145,8 @@ impl ActionType<'_> {
             ActionType::DeleteUser(_) => "DeleteUser".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
-            ActionType::ReadChannel { source, reader } => format!("ReadChannel({} from {})", source.channel_id, reader.channel_id),
+            ActionType::ReadChannel { source, classification, reader } => format!("ReadChannel({classification} of {} from {})", source.channel_id, reader.channel_id),
+            ActionType::Publish { classification, actor, channel } => format!("Publish({classification} by {actor} to {})", channel.channel_id),
             ActionType::Classify(classification) => format!("Classify({classification})"),
             ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
             ActionType::ExecuteCommand(name) => format!("ExecuteCommand(/{name})"),
@@ -251,10 +260,11 @@ pub trait AccessQuestions {
     async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
     /// Whether the channel `reader` may read what comes from the channel
-    /// `source` - its notes and history, or what an agent wrote down there
-    /// (`ReadChannel`, issues 17, 61 and 131): asked in `context`, the
-    /// agent's who reads and passes it on. A channel may always read itself.
-    async fn may_channel_read(&self, context: &SecurityContext, reader: &ChannelClassification, source: &ChannelClassification) -> bool;
+    /// `source` classified `classification` - a message, a note, or what an
+    /// agent remembered there (`ReadChannel`, issues 17, 131 and 133): asked
+    /// in `context`, the agent's who reads and passes it on. A channel may
+    /// always read itself.
+    async fn may_channel_read(&self, context: &SecurityContext, reader: &ChannelClassification, source: &ChannelClassification, classification: &Classification) -> bool;
 
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
@@ -275,11 +285,11 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::UpdateChannel(channel)).await
     }
 
-    async fn may_channel_read(&self, context: &SecurityContext, reader: &ChannelClassification, source: &ChannelClassification) -> bool {
+    async fn may_channel_read(&self, context: &SecurityContext, reader: &ChannelClassification, source: &ChannelClassification, classification: &Classification) -> bool {
         if reader.channel_id == source.channel_id {
             return true;
         }
-        self.check(context, ActionType::ReadChannel { source, reader }).await
+        self.check(context, ActionType::ReadChannel { source, classification, reader }).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -355,12 +365,15 @@ impl SecurityManager for DummySecurityManager {
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
-/// - Reading one channel from another follows the flow rule of their
-///   classifications (`Classification::flows_to`, issue 133) with the
-///   configured compartments. Until reading across sessions is a question of
-///   consent (issue 134), a channel reads only channels of its own session,
-///   and public ones.
-/// - A classification may be given if its compartments are configured.
+/// - Reading from another channel follows the flow rule
+///   (`Classification::flows_to`, issue 133) with the configured
+///   compartments: what is read must flow into the reading channel. Until
+///   reading across sessions is a question of consent (issue 134), a channel
+///   reads only from channels of its own session, and from public ones.
+/// - A classification may be given if its compartments are configured. A
+///   message may be put into a channel if, moreover, it flows into the
+///   channel and the actor putting it there is the one acting - its author,
+///   who may release what they write.
 ///   That these rules live in the ownership policy is issue 138.
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
@@ -384,10 +397,11 @@ impl OwnershipSecurityManager {
         Self { compartments }
     }
 
-    /// Whether `reader` may read `source` (`ReadChannel`).
-    fn may_flow(&self, source: &ChannelClassification, reader: &ChannelClassification) -> bool {
+    /// Whether `reader` may read what `source` holds classified
+    /// `classification` (`ReadChannel`).
+    fn may_read_from(&self, source: &ChannelClassification, classification: &Classification, reader: &ChannelClassification) -> bool {
         let reachable = source.session_id == reader.session_id || source.classification.level() == Confidentiality::Public;
-        reachable && source.classification.flows_to(&reader.classification, &self.compartments)
+        reachable && classification.flows_to(&reader.classification, &self.compartments)
     }
 
     fn system_owned(attributes: &SecurityAttributes) -> bool {
@@ -416,8 +430,15 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetUser(a)
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
-            ActionType::ReadChannel { source, reader } => source.channel_id == reader.channel_id || self.may_flow(source, reader),
+            ActionType::ReadChannel { source, classification, reader } => {
+                source.channel_id == reader.channel_id || self.may_read_from(source, classification, reader)
+            }
             ActionType::Classify(classification) => self.compartments.check(classification).is_ok(),
+            ActionType::Publish { classification, actor, channel } => {
+                actor == context.caller_id
+                    && self.compartments.check(classification).is_ok()
+                    && classification.flows_to(&channel.classification, &self.compartments)
+            }
             // Clearances are not modelled yet: whoever may change the
             // channel may add anyone of the session to it.
             ActionType::JoinChannel { .. } => true,
@@ -500,8 +521,8 @@ mod tests {
         }
         let session_id = SessionId::new();
         let (own, other) = (channel(session_id, Confidentiality::Confidential, &[]), channel(session_id, Confidentiality::Public, &[]));
-        assert!(DenyAll.may_channel_read(&context(alice), &own, &own).await, "a channel reads itself, whatever the policy");
-        assert!(!DenyAll.may_channel_read(&context(alice), &own, &other).await, "another channel only as the policy decides");
+        assert!(DenyAll.may_channel_read(&context(alice), &own, &own, &own.classification).await, "a channel reads itself, whatever the policy");
+        assert!(!DenyAll.may_channel_read(&context(alice), &own, &other, &other.classification).await, "another channel only as the policy decides");
     }
 
     #[tokio::test]
@@ -526,6 +547,11 @@ mod tests {
         ChannelClassification { session_id, channel_id: ChannelId::new(), classification }
     }
 
+    /// Reading what `source` holds at its own classification.
+    fn read<'a>(source: &'a ChannelClassification, reader: &'a ChannelClassification) -> ActionType<'a> {
+        ActionType::ReadChannel { source, classification: &source.classification, reader }
+    }
+
     fn hr_reads_finance() -> OwnershipSecurityManager {
         let compartments = Compartments::new([
             (Compartment::new("hr"), vec![Compartment::new("finance")]),
@@ -539,8 +565,8 @@ mod tests {
         let session = SessionId::new();
         let (team, secret) = (channel(session, Confidentiality::Internal, &[]), channel(session, Confidentiality::Confidential, &[]));
         for actor in [user(), user()] {
-            assert!(allows(actor, ActionType::ReadChannel { source: &team, reader: &secret }).await);
-            assert!(!allows(actor, ActionType::ReadChannel { source: &secret, reader: &team }).await);
+            assert!(allows(actor, read(&team, &secret)).await);
+            assert!(!allows(actor, read(&secret, &team)).await);
         }
     }
 
@@ -552,10 +578,10 @@ mod tests {
             channel(session, Confidentiality::Internal, &["finance"]),
             channel(session, Confidentiality::Internal, &[]),
         );
-        assert!(policy.check(&alice, ActionType::ReadChannel { source: &finance, reader: &hr }).await, "HR reads finance");
-        assert!(!policy.check(&alice, ActionType::ReadChannel { source: &hr, reader: &finance }).await, "not the other way round");
-        assert!(!policy.check(&alice, ActionType::ReadChannel { source: &hr, reader: &general }).await, "nor a general channel");
-        assert!(policy.check(&alice, ActionType::ReadChannel { source: &general, reader: &hr }).await, "what is general flows anywhere");
+        assert!(policy.check(&alice, read(&finance, &hr)).await, "HR reads finance");
+        assert!(!policy.check(&alice, read(&hr, &finance)).await, "not the other way round");
+        assert!(!policy.check(&alice, read(&hr, &general)).await, "nor a general channel");
+        assert!(policy.check(&alice, read(&general, &hr)).await, "what is general flows anywhere");
     }
 
     #[tokio::test]
@@ -563,8 +589,40 @@ mod tests {
         let (here, elsewhere) = (SessionId::new(), SessionId::new());
         let reader = channel(here, Confidentiality::Internal, &[]);
         let alice = user();
-        assert!(!allows(alice, ActionType::ReadChannel { source: &channel(elsewhere, Confidentiality::Internal, &[]), reader: &reader }).await);
-        assert!(allows(alice, ActionType::ReadChannel { source: &channel(elsewhere, Confidentiality::Public, &[]), reader: &reader }).await);
+        assert!(!allows(alice, read(&channel(elsewhere, Confidentiality::Internal, &[]), &reader)).await);
+        assert!(allows(alice, read(&channel(elsewhere, Confidentiality::Public, &[]), &reader)).await);
+    }
+
+    #[tokio::test]
+    async fn what_is_released_below_its_channel_is_read_where_the_channel_is_not() {
+        let (policy, session, alice) = (hr_reads_finance(), SessionId::new(), context(user()));
+        let (hr, finance) = (channel(session, Confidentiality::Confidential, &["hr"]), channel(session, Confidentiality::Confidential, &["finance"]));
+        let released = Classification::new(Confidentiality::Confidential, [Compartment::new("hr"), Compartment::new("finance")]).unwrap();
+        assert!(!policy.check(&alice, read(&hr, &finance)).await, "finance does not read HR");
+        assert!(policy.check(&alice, ActionType::ReadChannel { source: &hr, classification: &released, reader: &finance }).await, "but what HR released to it");
+        let elsewhere = channel(SessionId::new(), Confidentiality::Confidential, &["finance"]);
+        assert!(!policy.check(&alice, ActionType::ReadChannel { source: &hr, classification: &released, reader: &elsewhere }).await, "not from another session");
+    }
+
+    #[tokio::test]
+    async fn an_author_puts_into_a_channel_what_may_flow_into_it() {
+        let (policy, session) = (hr_reads_finance(), SessionId::new());
+        let alice = user();
+        let hr = channel(session, Confidentiality::Confidential, &["hr"]);
+        let classified = |level, c: &[&str]| Classification::new(level, c.iter().map(|c| Compartment::new(*c))).unwrap();
+        let (policy, hr) = (&policy, &hr);
+        let publish = |classification| async move {
+            policy.check(&context(alice), ActionType::Publish { classification: &classification, actor: alice, channel: hr }).await
+        };
+        assert!(publish(classified(Confidentiality::Confidential, &["hr"])).await, "the channel's own");
+        assert!(publish(classified(Confidentiality::Internal, &["hr", "finance"])).await, "released to finance, at a lower level");
+        assert!(!publish(classified(Confidentiality::StrictlyConfidential, &["hr"])).await, "above the channel");
+        assert!(publish(classified(Confidentiality::Confidential, &["finance"])).await, "HR may read what is finance's");
+        assert!(publish(Classification::general(Confidentiality::Confidential)).await, "what is general flows into any channel");
+        assert!(!publish(classified(Confidentiality::Confidential, &["hr", "payroll"])).await, "not configured");
+        let bob = user();
+        let own = classified(Confidentiality::Confidential, &["hr"]);
+        assert!(!policy.check(&context(bob), ActionType::Publish { classification: &own, actor: alice, channel: hr }).await, "only in one's own name");
     }
 
     #[tokio::test]

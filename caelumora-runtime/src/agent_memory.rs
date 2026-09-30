@@ -35,7 +35,7 @@ impl AgentMemory {
             let readable = match decided.iter().find(|(origin, _)| *origin == entry.origin) {
                 Some((_, readable)) => *readable,
                 None => {
-                    let readable = security.may_channel_read(context, &here, &entry.origin).await;
+                    let readable = security.may_channel_read(context, &here, &entry.origin, &entry.origin.classification).await;
                     decided.push((entry.origin.clone(), readable));
                     readable
                 }

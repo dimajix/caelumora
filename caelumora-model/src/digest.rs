@@ -240,7 +240,7 @@ mod tests {
     use serde_json::json;
 
     fn message(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() }
+        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, UserController};
 use caelumora_model::approval::Approver;
-use caelumora_model::confidentiality::ChannelClassification;
+use caelumora_model::confidentiality::{ChannelClassification, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
@@ -80,6 +80,11 @@ pub enum ChannelError {
     /// Every channel keeps its approver.
     #[error("the approver of channel {channel} cannot be removed")]
     ApproverStays { channel: ChannelId },
+    /// A message classified so that it may not enter the channel - above
+    /// it, for an audience the channel's would not be covered by, or with a
+    /// compartment that is not configured or may not be given (issue 133).
+    #[error("a message classified {classification} cannot be written into channel {channel}")]
+    ClassificationRefused { classification: Classification, channel: ChannelId },
 }
 
 /// A participant with what its actor is built from: the instance's
@@ -676,6 +681,9 @@ impl ChannelLoop {
         }
         // The full envelope carries message content: trace level only.
         trace!("Envelope: {:?}", event);
+        if !self.admits(&event).await {
+            return;
+        }
         let event = self.resolve_mentions(event);
         self.record_receive_event(&event).await;
         self.append_history(&event).await;
@@ -712,6 +720,31 @@ impl ChannelLoop {
         ));
 
         ActorHandle { id, abort_handle, sender: filtered_sender }
+    }
+
+    /// Whether every message `event` carries may enter the channel as its
+    /// sender classified it (`ActionType::Publish`, issue 133): the gate for
+    /// every actor, whatever it checked itself. An event with a message that
+    /// may not is dropped whole, and logged: its sender misclassified it.
+    async fn admits(&self, event: &Envelope) -> bool {
+        let messages: Vec<&Message> = match &event.event {
+            ActorEvent::PartialMessageGenerated(m)
+            | ActorEvent::CompleteMessageGenerated(m)
+            | ActorEvent::IntermediatePartialGenerated(m)
+            | ActorEvent::IntermediateMessageGenerated(m) => vec![m],
+            ActorEvent::FullResponseGenerated(messages) => messages.iter().collect(),
+            _ => return true,
+        };
+        let channel = self.classification();
+        let security = self.runtime.security_manager();
+        for message in messages {
+            let action = ActionType::Publish { classification: &message.classification, actor: event.context.sender_id, channel: &channel };
+            if !security.check(&event.security, action).await {
+                warn!("Dropped {}: its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, message.classification, self.id);
+                return false;
+            }
+        }
+        true
     }
 
     /// Resolves the `@`-mentions in every complete message carried by `event`
@@ -1040,7 +1073,7 @@ mod tests {
     /// Five messages, one a day, the last one `now`.
     fn daily(now: chrono::DateTime<chrono::Utc>) -> Vec<Message> {
         (0..5).rev()
-            .map(|days| Message { id: caelumora_model::message::MessageId::new(), timestamp: now - chrono::Duration::days(days), ..Message::default() })
+            .map(|days| Message { id: caelumora_model::message::MessageId::new(), timestamp: now - chrono::Duration::days(days), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) })
             .collect()
     }
 
@@ -1084,7 +1117,7 @@ mod tests {
         let now = chrono::Utc::now();
         let mut later = daily(now);
         let start = HistoryStart::After(later[1].id);
-        later.push(Message { id: caelumora_model::message::MessageId::new(), ..Message::default() });
+        later.push(Message { id: caelumora_model::message::MessageId::new(), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) });
         assert_eq!(ids(&visible_from(start, later.clone())), ids(&later[2..]), "messages sent after joining stay visible");
         assert!(visible_from(HistoryStart::From(caelumora_model::message::MessageId::new()), later).is_empty(),
                 "an unknown start shows nothing rather than everything");
@@ -1096,7 +1129,7 @@ mod tests {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let agent = caelumora_model::agent::AgentId::new();
-        let message = |text: &str| Message { id: MessageId::new(), content: Some(text.to_string()), ..Message::default() };
+        let message = |text: &str| Message { id: MessageId::new(), content: Some(text.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let (one, two, three, four) = (message("one"), message("two"), message("three"), message("four"));
         let transcript = |channel: Arc<ChannelLoop>| async move {
             channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()
@@ -1230,7 +1263,7 @@ mod tests {
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
             event,
         );
-        let said = || from_alice(ActorEvent::FullResponseGenerated(vec![Message::default()]));
+        let said = || from_alice(ActorEvent::FullResponseGenerated(vec![Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)]));
         let delivered = |rx: &mut mpsc::Receiver<Envelope>| {
             let mut kinds = Vec::new();
             while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
@@ -1250,13 +1283,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_channel_admits_only_what_may_flow_into_it_in_its_senders_name() {
+        use caelumora_model::actor::EventContext;
+        use caelumora_model::confidentiality::Confidentiality;
+        use caelumora_model::security::OwnershipSecurityManager;
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(OwnershipSecurityManager::new())).await;
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
+        let from = |sender: ActorId, context: ActorId, classification: Classification| Envelope::new(
+            SecurityContext::new(context, Default::default(), Default::default()),
+            EventContext { sender_id: sender, ..EventContext::default() },
+            ActorEvent::FullResponseGenerated(vec![Message::new(classification)]),
+        );
+        let internal = Classification::general(Confidentiality::Internal);
+        let actors = HashMap::new();
+        channel.process_envelope(from(alice_id, alice_id, internal.clone()), &actors).await;
+        channel.process_envelope(from(alice_id, alice_id, Classification::general(Confidentiality::Confidential)), &actors).await;
+        channel.process_envelope(from(alice_id, bob_id, internal), &actors).await;
+        assert_eq!(channel.history().await.len(), 1, "neither above the channel nor in another's name");
+    }
+
+    #[tokio::test]
     async fn a_stopped_channel_refuses_what_a_user_sends() {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut said = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
-        actor.send_message("hello".to_string()).await.expect("a running channel takes it");
+        actor.send_message("hello".to_string(), None).await.expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
         tokio::time::timeout(Duration::from_secs(5), said.recv()).await.expect("the message went through").unwrap();
 
@@ -1264,7 +1318,7 @@ mod tests {
         // with it, so a sender learns so instead of waiting for ever.
         running.abort();
         let _ = running.await;
-        let refused = tokio::time::timeout(Duration::from_secs(5), actor.send_message("anyone?".to_string())).await
+        let refused = tokio::time::timeout(Duration::from_secs(5), actor.send_message("anyone?".to_string(), None)).await
             .expect("an answer, not a wait");
         assert!(refused.is_err(), "a stopped channel takes nothing");
     }
@@ -1372,7 +1426,7 @@ mod tests {
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         // The message makes the agent start a turn.
-        channel.user_actor(alice.id).unwrap().send_message("hello".to_string()).await.unwrap();
+        channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
         let helper = channel.actor_by_id(ActorId::Agent(agent_id)).unwrap();
         Stuck { channel, context, agent: agent_id, helper, events, running }
     }
@@ -1410,7 +1464,7 @@ mod tests {
             role: MessageRole::Assistant,
             content: Some("Good bye.".to_string()),
             tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC }],
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
@@ -1454,7 +1508,7 @@ mod tests {
         let calculate = Message {
             role: MessageRole::Assistant,
             tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), confidentiality: ToolConfidentiality::PUBLIC }],
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
@@ -1492,9 +1546,9 @@ mod tests {
         let not_a_plan = Message {
             role: MessageRole::Assistant,
             tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC }],
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
-        let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::default() };
+        let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "plan".to_string(),
             kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),

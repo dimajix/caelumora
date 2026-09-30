@@ -117,7 +117,7 @@ impl<'t> ToolCalls<'t> {
             content: None,
             timestamp: chrono::Utc::now(),
             internal,
-            ..Message::default()
+            ..Message::new(self.turn.classification.classification.clone())
         };
         self.turn.push(message.clone());
         Some(message)

@@ -75,6 +75,36 @@ anything is stored; the ownership policy refuses a compartment that is not
 configured, so that a typo does not go unnoticed. The rules see a channel as
 a `ChannelClassification`: its session, its id and its classification.
 
+### Messages
+
+Every message carries a classification (`Message::classification`, issue
+133). It is not optional, and a `Message` has no default: a message is
+built with `Message::new(classification)`, so that no code path can leave a
+message classified by accident.
+
+*   **Its sender classifies it.** An agent's messages - its answers, tool
+    results, what its model is given - carry the classification its turn
+    began with (`AgentActor::label` for everything its model produces; until
+    then an `LLMClient` builds on `llm::unlabelled_message`, the strictest
+    general classification). A user's message carries the channel's, unless
+    the user classifies it otherwise.
+*   **The channel admits it.** Putting a message into a channel is
+    `ActionType::Publish { classification, actor, channel }`, asked by the
+    `ChannelLoop` for every message of every event that enters it
+    (`ChannelLoop::admits`) - the gate for every actor. An event with a
+    message it may not admit is dropped and logged. The ownership policy
+    allows it if the actor is the one acting (the context's caller), every
+    compartment is configured, and the classification flows into the
+    channel.
+*   **Released when written.** By the flow rule a message is never
+    classified above its channel. One classified otherwise is released: at a
+    lower level, or to further compartments besides those the channel's are
+    covered by - an `{hr, finance}` message in an `{hr}` channel is readable
+    from finance from the start. A user may release what they write
+    (`UserActor::send_message` asks `Publish` before it sends, so that a
+    refusal reaches the user as `ChannelError::ClassificationRefused`).
+    Changing a classification afterwards is step 4 of issue 133.
+
 ## The flow rule
 
 One relation decides everything (`Classification::flows_to`): information
@@ -92,15 +122,24 @@ general one.
 
 ## Reading another channel
 
-Reading another channel's notes and history is `ActionType::ReadChannel {
-source, reader }`, with both channels' `ChannelClassification`
+Reading from another channel is decided per entry: per message of its
+history, per note, per memory entry. It is `ActionType::ReadChannel {
+source, classification, reader }`, with both channels'
+`ChannelClassification` and the classification of the entry
 (`AccessQuestions::may_channel_read`). It is asked in the name of the agent
 that reads - the security context it acts in, its owner's - because the agent
 passes on what it reads (issue 131). A channel may always read itself.
 Otherwise the ownership policy allows it if
 
-*   the source's classification flows into the reader's, and
-*   both belong to the same session, or the source is `public`.
+*   the entry's classification flows into the reader's, and
+*   both channels belong to the same session, or the source is `public`.
+
+So a channel reads the entries of another that were released to it, even
+where it may not read that channel as a whole. Whether it may, is the
+question asked with the source channel's own classification: a channel is
+listed among the readable ones (`SessionReader::readable_channels`) only
+then, and one that may not be read as a whole and of which nothing was
+released reads as absent, so that channels cannot be probed.
 
 The second condition keeps sessions apart until reading across sessions is a
 question of the participants' consent
@@ -189,14 +228,15 @@ quote (issue 66):
 
 ## Knowledge that carries its channel
 
-What an agent keeps privately carries the classification of the channel it
-was written in, so that the reading rule can follow it into other channels:
+What an agent writes down carries the classification of the channel it was
+written in, stamped when it is written, so that the reading rule can follow
+it into other channels; a later change of the channel changes none of it:
 
-*   **Private notes** (issue 51) carry the classification of the channel
-    they were written in. The agent is shown the private notes of every
-    other channel of the session that its current channel may read
-    (`AccessQuestions::may_channel_read`), checked against that channel's
-    current classification at every read.
+*   **Notes** (issue 17) and **private notes** (issue 51) carry their
+    classification (`NoteChange::Note`, `Note::classification`). Other
+    channels read them note by note; the agent is shown the private notes
+    of every other channel of the session that its current channel may
+    read (`AccessQuestions::may_channel_read`).
 *   **Agent memory** (issue 62) entries carry the classification of the
     channel they were written in, and are recalled only in channels that may
     read it (`AgentMemory::recalled`, which asks
@@ -215,13 +255,9 @@ theirs alone (issue 54).
 ## Open questions
 
 The classification model is introduced in steps
-([133](../issues/133-classification-model.md)); only the first is done.
+([133](../issues/133-classification-model.md)); steps 1 and 2 are done.
 Still to come:
 
-*   **Messages, notes and memory entries.** Only channels carry a
-    classification of their own yet; a message a user writes cannot be
-    classified differently from its channel, and reading is decided per
-    channel, not per message (step 2).
 *   **Tool results.** A tool cannot classify its results one by one; every
     result carries the channel's classification. Results that may not flow
     into the channel are to be withheld from the model by the

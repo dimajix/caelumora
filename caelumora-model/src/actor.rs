@@ -236,11 +236,10 @@ impl Envelope {
             ActorEvent::CompleteMessageGenerated(m) => {
                 format!("Complete(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
             }
-            ActorEvent::FullResponseGenerated(v) => {
-                let default_message = Message::default();
-                let m = v.last().unwrap_or(&default_message);
-                format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
-            }
+            ActorEvent::FullResponseGenerated(v) => match v.last() {
+                Some(m) => format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id),
+                None => format!("EndOfTurn(sender_id={}, sender_name={}, no message)", ctx.sender_id, ctx.sender_name),
+            },
             ActorEvent::ResponseRequested => {
                 format!("ResponseRequested(sender_id={}, sender_name={}", ctx.sender_id, ctx.sender_name)
             }
@@ -403,9 +402,9 @@ mod tests {
         use crate::tool::{ToolCall, ToolConfidentiality};
         let hidden = Message {
             tool_calls: vec![ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::HIDDEN }],
-            ..Message::default()
+            ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT)
         };
-        let text = Message { content: Some("hi".to_string()), ..Message::default() };
+        let text = Message { content: Some("hi".to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) };
 
         assert!(ActorEvent::CompleteMessageGenerated(hidden.clone()).published().is_none(), "nothing left to show");
         assert!(ActorEvent::PartialMessageGenerated(hidden.clone()).published().is_none());

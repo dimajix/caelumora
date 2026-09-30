@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
@@ -109,9 +110,9 @@ pub trait SessionReader: Send + Sync + Debug {
     /// [`ReadError::NotReadable`] if there is no such channel or it may not be read.
     async fn history_of(&self, name: &str) -> ReadResult<ChannelHistory>;
     /// The private notes `agent` wrote in the other channels of the session
-    /// that the turn's channel may read (issue 51) - its agent session
-    /// memory, bounded by confidentiality. The own channel's are not among
-    /// them: the turn has them itself.
+    /// that the turn's channel may read, note by note (issues 51, 133) -
+    /// its agent session memory, bounded by confidentiality. The own
+    /// channel's are not among them: the turn has them itself.
     async fn private_notes(&self, agent: AgentId) -> ReadResult<Vec<ChannelNotes>>;
 }
 
@@ -166,17 +167,25 @@ impl ChannelSessionReader {
         Self { runtime, context }
     }
 
-    /// Whether the channel `own` may read `source`, as the confidentiality
-    /// rules decide (`AccessQuestions::may_channel_read`).
-    async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop) -> bool {
+    /// Whether the channel `own` may read what `source` holds classified
+    /// `classification`, as the confidentiality rules decide
+    /// (`AccessQuestions::may_channel_read`, issue 133).
+    async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop, classification: &Classification) -> bool {
         self.runtime.security_manager()
-            .may_channel_read(&self.context, &own.classification(), &source.classification())
+            .may_channel_read(&self.context, &own.classification(), &source.classification(), classification)
             .await
     }
 
-    /// The channel named `name` of the session, if the turn's channel may
-    /// read it.
-    async fn readable(&self, name: &str) -> ReadResult<Arc<ChannelLoop>> {
+    /// Whether the channel `own` may read `source` as a whole: everything
+    /// in it, at the channel's classification.
+    async fn may_read_all(&self, own: &ChannelLoop, source: &ChannelLoop) -> bool {
+        self.may_read(own, source, &source.classification().classification).await
+    }
+
+    /// The channel named `name` of the session, and whether the turn's
+    /// channel may read it as a whole. What it may not read as a whole is
+    /// read entry by entry: only what was released to it.
+    async fn find(&self, name: &str) -> ReadResult<(Arc<ChannelLoop>, Arc<ChannelLoop>, bool)> {
         let not_readable = || ReadError::NotReadable(name.to_string());
         let own = self.runtime.channel().ok_or_else(not_readable)?;
         let source = if own.name() == name {
@@ -185,7 +194,19 @@ impl ChannelSessionReader {
             let session = own.session().ok_or_else(not_readable)?;
             session.channel_by_name(name).ok_or_else(not_readable)?
         };
-        if self.may_read(&own, &source).await { Ok(source) } else { Err(not_readable()) }
+        let whole = self.may_read_all(&own, &source).await;
+        Ok((own, source, whole))
+    }
+
+    /// Of `notes` in `source`, those the channel `own` may read.
+    async fn readable_notes(&self, own: &ChannelLoop, source: &ChannelLoop, notes: Vec<Note>) -> Vec<Note> {
+        let mut readable = Vec::with_capacity(notes.len());
+        for note in notes {
+            if self.may_read(own, source, &note.classification).await {
+                readable.push(note);
+            }
+        }
+        readable
     }
 }
 
@@ -215,7 +236,7 @@ impl SessionReader for ChannelSessionReader {
         };
         let mut readable = Vec::new();
         for channel in channels {
-            if self.may_read(&own, &channel).await {
+            if self.may_read_all(&own, &channel).await {
                 readable.push(info(&channel));
             }
         }
@@ -223,15 +244,35 @@ impl SessionReader for ChannelSessionReader {
     }
 
     async fn notes_of(&self, name: &str) -> ReadResult<(ChannelInfo, Vec<PublishedNotes>)> {
-        let channel = self.readable(name).await?;
-        Ok((info(&channel), channel.published_notes().await?))
+        let (own, channel, whole) = self.find(name).await?;
+        let mut published = Vec::new();
+        for mut notes in channel.published_notes().await? {
+            notes.notes = self.readable_notes(&own, &channel, notes.notes).await;
+            published.push(notes);
+        }
+        // A channel that may not be read, and of which nothing was
+        // released, is the same as one that does not exist: no probing.
+        if !whole && published.iter().all(|p| p.notes.is_empty()) {
+            return Err(ReadError::NotReadable(name.to_string()));
+        }
+        Ok((info(&channel), published))
     }
 
     async fn history_of(&self, name: &str) -> ReadResult<ChannelHistory> {
-        let channel = self.readable(name).await?;
+        let (own, channel, whole) = self.find(name).await?;
         // A reader who joined the channel later sees no more of its history
         // than was granted - also through this tool (issue 46).
-        let history = channel.visible_history(self.runtime.actor()).await;
+        let mut history = channel.visible_history(self.runtime.actor()).await;
+        let mut readable = Vec::with_capacity(history.messages.len());
+        for message in history.messages {
+            if self.may_read(&own, &channel, &message.classification).await {
+                readable.push(message);
+            }
+        }
+        if !whole && readable.is_empty() {
+            return Err(ReadError::NotReadable(name.to_string()));
+        }
+        history.messages = readable;
         Ok(ChannelHistory { channel: info(&channel), history })
     }
 
@@ -240,11 +281,14 @@ impl SessionReader for ChannelSessionReader {
         let Some(session) = own.session() else { return Ok(Vec::new()) };
         let mut found = Vec::new();
         for channel in session.channels() {
-            if channel.id() == own.id() || !self.may_read(&own, &channel).await {
+            if channel.id() == own.id() {
                 continue;
             }
             if let Some((notes, digest)) = channel.private_notes(agent).await? {
-                found.push(ChannelNotes { channel: info(&channel), notes, digest });
+                let notes = self.readable_notes(&own, &channel, notes).await;
+                if !notes.is_empty() {
+                    found.push(ChannelNotes { channel: info(&channel), notes, digest });
+                }
             }
         }
         Ok(found)

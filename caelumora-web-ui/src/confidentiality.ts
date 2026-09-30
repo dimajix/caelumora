@@ -52,3 +52,17 @@ export function classificationDescription(classification: Classification): strin
     ? `${level} No compartment: channels with a compartment may read it too.`
     : `${level} Meant for ${compartments.join(', ')}: only channels whose every compartment may read one of these.`;
 }
+
+/** Whether two classifications are the same. */
+export function sameClassification(a: Classification, b: Classification): boolean {
+  const names = (c: Classification) => [...(c.compartments ?? [])].sort().join('\n');
+  return a.level === b.level && names(a) === names(b);
+}
+
+/**
+ * The levels a message in a channel of `level` may have: the channel's and
+ * those below - a message is never classified above its channel (issue 133).
+ */
+export function levelsUpTo(level: ConfidentialityLevel): ConfidentialityLevel[] {
+  return CONFIDENTIALITY_LEVELS.slice(0, CONFIDENTIALITY_LEVELS.indexOf(level) + 1);
+}

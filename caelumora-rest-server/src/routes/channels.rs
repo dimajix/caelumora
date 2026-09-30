@@ -204,8 +204,8 @@ pub async fn send_message(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let span_id = user_actor.send_message(payload.content).await
-        .map_err(|e| ApiError::internal("message_not_sent", "sending the message", &e))?;
+    let span_id = user_actor.send_message(payload.content, payload.classification).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "sending the message"))?;
     tracing::Span::current().record("span_id", tracing::field::display(span_id));
     Ok(StatusCode::OK)
 }
@@ -329,7 +329,7 @@ mod tests {
         (0..count).map(|i| Message {
             id: MessageId::new(),
             content: Some(format!("message {i}")),
-            ..Message::default()
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         }).collect()
     }
 

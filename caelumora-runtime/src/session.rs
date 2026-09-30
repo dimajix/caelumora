@@ -1402,7 +1402,7 @@ mod tests {
             let (reader, source, security, context) = (reader.clone(), source.clone(), security.clone(), alice_ctx.clone());
             async move {
                 use caelumora_model::security::AccessQuestions;
-                security.may_channel_read(&context, &reader.classification(), &source.classification()).await
+                { let source = source.classification(); security.may_channel_read(&context, &reader.classification(), &source, &source.classification).await }
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");
@@ -1415,6 +1415,56 @@ mod tests {
 
         let refused = session.create_channel(&alice_ctx, with("typo", classified(Confidentiality::Internal, &["hrr"]), vec![])).await.expect_err("not configured");
         assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ClassificationRefused(_))), "{refused}");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_released_message_is_read_where_its_channel_is_not() {
+        use crate::channel::ChannelError;
+        use crate::session_reader::ReadError;
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::user::{User, UserId};
+
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let manager = SessionManager::new(runtime.clone());
+        let alice = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new() };
+        let alice_id = ActorId::User(alice.id);
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes::owned_by(alice_id);
+        session.participants = record_users(&manager, &[&alice]).await;
+        let session = create(&manager, &alice_ctx, session).await.unwrap();
+
+        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let with = |name: &str, classification| ChannelSpec { classification: Some(classification), ..spec(name, vec![]) };
+        let hr = session.create_channel(&alice_ctx, with("hr", classified(Confidentiality::Internal, &["hr"]))).await.unwrap();
+        let finance = session.create_channel(&alice_ctx, with("finance", classified(Confidentiality::Internal, &["finance"]))).await.unwrap();
+        let team = session.create_channel(&alice_ctx, with("team", classified(Confidentiality::Internal, &[]))).await.unwrap();
+
+        let writer = hr.user_actor(alice.id).expect("the creator takes part");
+        writer.send_message("for HR".to_string(), None).await.unwrap();
+        writer.send_message("for finance too".to_string(), Some(classified(Confidentiality::Internal, &["hr", "finance"]))).await.unwrap();
+        let above = writer.send_message("too secret".to_string(), Some(classified(Confidentiality::Confidential, &["hr"]))).await.expect_err("above the channel");
+        assert!(matches!(above.downcast_ref::<ChannelError>(), Some(ChannelError::ClassificationRefused { .. })), "{above}");
+        let history = history_of(&hr, 2).await;
+        assert_eq!(history[0].classification, classified(Confidentiality::Internal, &["hr"]), "the channel's, unless classified otherwise");
+
+        // Read as an agent in another channel reads.
+        let reader = |channel: &Arc<ChannelLoop>| {
+            let channel_runtime = ChannelRuntime::new(runtime.clone(), session.commands.clone());
+            channel_runtime.attach(channel);
+            channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).session_reader(alice_ctx.clone())
+        };
+        let read = reader(&finance).history_of("hr").await.expect("what was released to finance");
+        let texts: Vec<_> = read.history.messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect();
+        assert_eq!(texts, ["for finance too"], "only what was released");
+        assert!(matches!(reader(&team).history_of("hr").await, Err(ReadError::NotReadable(_))), "nothing was released to a general channel");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
@@ -1491,7 +1541,7 @@ mod tests {
         let owner = match ctx.initiator_id { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");
         for text in ["one", "two", "three"] {
-            writer.send_message(text.to_string()).await.unwrap();
+            writer.send_message(text.to_string(), None).await.unwrap();
         }
         let before = history_of(&channel, 3).await;
         let mut rx = runtime.event_bus().subscribe_all();
@@ -1517,7 +1567,7 @@ mod tests {
                 "the join is announced: {events:?}");
 
         // What is written after joining is visible.
-        writer.send_message("four".to_string()).await.unwrap();
+        writer.send_message("four".to_string(), None).await.unwrap();
         history_of(&channel, 4).await;
         assert_eq!(channel.visible_history(other).await.messages.len(), 2);
 

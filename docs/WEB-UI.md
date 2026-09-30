@@ -136,6 +136,16 @@ shown its history and no input.
     `/` the commands the user may see. An unsent draft survives a forced
     re-login, in the session storage.
 
+### Classification
+
+The channel's classification is shown above the member list. Next to the
+input, `ClassificationPicker` lets a user release the next message (issue
+133): to a lower level than the channel's, or - in a channel with
+compartments - to further compartments from `GET /compartments`. It offers
+only what may enter the channel, the server decides, and a release is for
+one message. Messages whose classification differs from the channel's carry
+a `released` badge.
+
 ### Members, moderator and notes
 
 The member list is sorted by name and uses the members' handles for `@`
