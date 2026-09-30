@@ -109,7 +109,7 @@ announcing changes is the runtime's (issue 86).
     which is where the permission is checked - and only then takes it over
     live and announces it.
 *   **Events.** Controllers publish their changes on the `EventBus` (see
-    [EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md)) and take over changes
+    [EVENTS.md](EVENTS.md)) and take over changes
     announced elsewhere through `process_global_event`.
 *   **One shape.** Every controller is built from the document, the event
     publisher and the store. The `UserController` is the exception: users are

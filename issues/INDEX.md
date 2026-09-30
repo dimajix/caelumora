@@ -203,7 +203,7 @@ against it, and what came out of the last attempt.
 | [109](109-code-hygiene.md) | done | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
 | [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 | [129](129-documentation-structure.md) | done | AGENTS.md and ARCHITECTURE.md hold everything in two long files, so the architecture draws no overall picture and the details of one subject are hard to find. |
-| [132](132-rest-and-web-ui-docs.md) | open | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
+| [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
 
 ## Code structure
 

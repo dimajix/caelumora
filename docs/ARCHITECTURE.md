@@ -19,9 +19,10 @@ The project is a Rust workspace, with a web UI next to it:
     the controllers that keep entities live, and the store implementations.
 *   **`caelumora-rest-server`** - the REST API and the server-sent event
     streams, with authentication. It maps what the runtime answers to
-    responses and decides nothing itself.
+    responses and decides nothing itself. See
+    [REST-SERVER.md](REST-SERVER.md).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built
-    on the REST server.
+    on the REST server. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its
     own process.
 *   **`caelumora-client-api`**, **`caelumora-local-client`**,
@@ -104,7 +105,7 @@ A turn that fails ends the turn, not the agent: it is reported as
 resumed when the agent is loaded again.
 
 Details: [AGENT-TURN.md](AGENT-TURN.md), [CHANNELS.md](CHANNELS.md),
-[EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md).
+[EVENTS.md](EVENTS.md), [REST-SERVER.md](REST-SERVER.md#streams).
 
 ## Agents are made of components
 
@@ -213,8 +214,11 @@ The design repeats a few decisions; new code follows them.
     channels, the terms for what an agent remembers.
 *   [CHANNELS.md](CHANNELS.md) - sessions, channels, actors, participants,
     moderators and mentions.
-*   [EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md) - the event bus and the
-    server-sent event streams.
+*   [EVENTS.md](EVENTS.md) - the event bus.
+*   [REST-SERVER.md](REST-SERVER.md) - the REST API, authentication, errors
+    and the server-sent event streams.
+*   [WEB-UI.md](WEB-UI.md) - the browser frontend: how it talks to the server
+    and what it shows.
 *   [STORAGE.md](STORAGE.md) - entity and state store, controllers, several
     instances.
 *   [SECURITY.md](SECURITY.md) - the security manager, ownership, views,

@@ -303,9 +303,6 @@ the runtime builds the channel's view (see [SECURITY.md](SECURITY.md)): for
 agents only, the same policy question `message_context` checks, whether the
 channel runs or not.
 
-The web UI shows an eye icon on stored messages of agents the user may
-read. It opens a panel with the context's messages and the prompt parts
-where they were given, a leading system prompt on top (issue 41), and the
-knowledge as "Knowledge read". `MessageView` renders a message the same way
-in the chat and in that panel, marking internal messages and tool results,
-which the chat itself does not show.
+The web UI shows it in its context panel (issue 41), with the prompt parts
+where they were given and the knowledge read; see
+[WEB-UI.md](WEB-UI.md#what-an-agent-saw).

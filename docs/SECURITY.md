@@ -210,53 +210,16 @@ development stand-in: it accepts any username and password and keeps users in
 the `EntityStore`. It must be enabled explicitly and warns at startup (issues
 10, 25).
 
-## Authentication in the REST server
+## Authentication
 
-Every route except `POST /auth/login` and `POST /auth/logout` requires a
-logged-in user.
-
-*   **Login** verifies username and password through the `UserManager` and
-    answers with a signed JWT (HS256) in an `HttpOnly`, `SameSite=Strict`,
-    `Secure` cookie (`Secure` unless `auth.secure_cookie` is switched off, for
-    plain HTTP in a test setup).
-*   **No server-side session store:** the token is the session.
-*   **`require_auth`** (`caelumora-rest-server/src/auth.rs`) verifies the
-    cookie on each request and puts an `AuthenticatedUser` into it, from which
-    handlers derive their `SecurityContext`.
-
-A cookie rather than an `Authorization` header, because `EventSource` cannot
-send headers, and an `HttpOnly` cookie is out of reach of injected scripts.
-
-### Renewal
-
-Sessions are renewed by use: any request past half a token's lifetime gets
-fresh cookies.
-
-Server-sent events cannot do that. One long response cannot set headers again,
-and their reconnects deliberately do not renew either (see
-[EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md)). So the web UI calls `POST
-/auth/refresh` on a timer *while its tab is visible*; that is what keeps a
-session alive for someone who is only watching a channel (issue 31).
-
-Next to the token cookie the server sets `caelumora_session_expires`,
-deliberately without `HttpOnly`. It holds only the expiry, and lets the UI -
-and any other tab - see when the next renewal is due.
-
-### Bounding a token
-
-A JWT cannot be revoked, so its validity is bounded instead:
-
-*   Tokens are short-lived (`auth.token_lifetime_secs`, default 15 minutes)
-    and renewed once past half their lifetime.
-*   Only on renewal is the `UserManager` asked whether the user still exists.
-*   The `auth_time` claim survives renewal, so a login ends after
-    `auth.max_session_secs` (default 12 hours) regardless.
-*   The event streams end with the token they were opened with, so the bound
-    holds for them too (issue 33).
-
-The signing key is the secret named by `auth.jwt_secret`, resolved through the
-secret chain. If it is missing, a random key is generated at startup, and
-every restart logs everybody out.
+Users are authenticated by the frontend that serves them; the runtime only
+receives the `SecurityContext` it builds. The REST server logs a user in
+through the `UserManager` and keeps the login as a short-lived signed token
+in a cookie, renewed by use and bounded in its lifetime, since it cannot be
+revoked. How it does that is described in
+[REST-SERVER.md](REST-SERVER.md#authentication). The TUI logs nobody in:
+it acts as one fixed local user (`UserId::default()`), recorded by the system
+on its first start.
 
 ## Secrets
 

@@ -1,6 +1,6 @@
 # 132 — The REST server and the web UI have no document of their own
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -49,3 +49,14 @@ sentence here and there across most documents in `docs/`.
 
 - **2026-09-30** — Opened at the maintainer's request, following the
   restructuring in [129](129-documentation-structure.md).
+- **2026-09-30** — Done. `docs/REST-SERVER.md` holds the server's structure,
+  how a handler works, the endpoints, authentication and the token (from
+  `SECURITY.md`, which keeps a short section and a link), the problem
+  details (the format from `CODING-GUIDELINES.md`, which keeps the rules for
+  handlers) and the streams. `EVENTS-AND-STREAMS.md` is renamed `EVENTS.md`
+  and keeps the event bus. `docs/WEB-UI.md` describes running the UI, what
+  it decides and does not, its structure, how it talks to the server, and
+  what it shows; the runtime documents keep a sentence and a link where they
+  described the UI. Found on the way: renaming a channel
+  (`ChannelLoop::update_name`) has no endpoint, and the web UI's own
+  `README.md` is still the Vite template.

@@ -7,7 +7,7 @@ channels are made, run and changed, how actors act in them, and how
 moderators decide who responds. What an agent does in its turn is in
 [AGENT-TURN.md](AGENT-TURN.md), how the channel's state is stored in
 [STORAGE.md](STORAGE.md), and how clients follow a channel in
-[EVENTS-AND-STREAMS.md](EVENTS-AND-STREAMS.md).
+[REST-SERVER.md](REST-SERVER.md#streams).
 
 ## Sessions
 
@@ -184,10 +184,9 @@ A leave is announced on the event bus like every change of membership (issue
 it is followed through their actor (`UserActor::watch`), which ends when it is
 stopped, so no one has to listen for the announcement (issue 104).
 
-Every channel response carries `can_change`. The web UI offers adding (with
-the choice of history) and removing participants in the member list only
-where it is set, and fetches the channel again when the global stream
-announces a join or leave for it.
+Every channel response carries `can_change`, so that a client offers adding
+and removing participants only where the user may (see
+[WEB-UI.md](WEB-UI.md)).
 
 ## Acting on the channel as a whole
 
@@ -314,9 +313,9 @@ policy:
 | `random` | one agent, chosen at random |
 | `mentions_only` | nobody: agents respond only when a user mentions them |
 
-The REST API returns each channel's `moderator`. The web UI shows it above
-the member list, and for `mentions_only` its input field says that agents
-answer only when mentioned. The TUI prints it when the chat starts.
+The REST API returns each channel's `moderator`, which the web UI explains
+to the user (see [WEB-UI.md](WEB-UI.md)); the TUI prints it when the chat
+starts.
 
 ### `@`-Mentions
 
@@ -342,5 +341,4 @@ address each other in an unbounded loop.
 
 The REST API lists each channel's `members` in no particular order, each with
 its handle (`null` for participants that cannot be mentioned, such as
-approvers). The web UI sorts them by name and uses them for the member list,
-`@` completion and highlighting.
+approvers), which the web UI uses for `@` completion and highlighting.

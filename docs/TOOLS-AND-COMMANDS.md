@@ -157,7 +157,7 @@ Every call ends with a result the model can act on (issue 15).
 A call that ran also records when: `ToolCallResult::started_at` and
 `finished_at`, set by the executor around the tool's own run (not the
 checks before it). They are stored with the history and published with the
-call; the web UI shows the duration next to it (issue 100).
+call, so that a client can show the duration (issue 100).
 
 ## User commands
 

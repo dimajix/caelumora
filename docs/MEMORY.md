@@ -58,10 +58,10 @@ in the channel.
 *   **Prompt part.** The notes prompt part is a `BeforeTurnInput` part,
     empty when nothing is noted: the agent's own notes first, then those of
     the other agents of the channel.
-*   **Web UI.** The channel snapshot carries `notes` per agent. The web UI
-    shows them in a "Notes" tab next to the members, and fetches them again
-    (`GET …/channels/{cid}/notes`) when the global stream announces
-    `AgentChannelStateChanged` for the channel.
+*   **Clients.** The channel snapshot carries `notes` per agent, and
+    `GET …/channels/{cid}/notes` reads them again; the web UI does so when
+    the global stream announces `AgentChannelStateChanged` for the channel
+    (see [WEB-UI.md](WEB-UI.md#members-moderator-and-notes)).
 
 ## Private notes
 

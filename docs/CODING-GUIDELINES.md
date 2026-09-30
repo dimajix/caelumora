@@ -77,21 +77,13 @@ the model *should* see are the subject of
 ### REST errors
 
 REST handlers return `Result<_, crate::error::ApiError>`. Never map an error
-to a bare status code.
+to a bare status code; the server answers every error with problem details,
+as described in [REST-SERVER.md](REST-SERVER.md#errors).
 
-*   Errors are answered as RFC 9457 problem details
-    (`application/problem+json`) with two extension members: `code`, a stable
-    identifier (also the last segment of `type`,
-    `urn:caelumora:problem:<code>`), and `request_id`, which also appears as
-    the `x-request-id` header and on the request's log span.
-*   Client errors state their cause. Server errors state it only if
-    `user_message` allows it, and otherwise point to the log.
 *   Use `ApiError::internal` for server errors: it logs the full chain and
     discloses only what `user_message` allows.
 *   Use the `Json` and `Path` extractors from `crate::error`, so that
     malformed requests get problem details too.
-*   `ensure_session` distinguishes a session that does not exist (`404`) from
-    one that cannot be started (`500`, naming e.g. the broken component).
 
 ## Asynchronous programming
 
