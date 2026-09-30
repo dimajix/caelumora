@@ -21,6 +21,15 @@ yields both), deleting a session deletes them, and loading a session loads
 them. Loading happens in the runtime's name, since starting a session the
 caller may read must not fail on a channel the caller is not in.
 
+Every session has a privacy policy (`Session.privacy`, issue 134): whom it
+lets read what was said in it from other sessions. It is taken over from its
+template (`SessionTemplate.privacy`, private unless the template says
+otherwise), changed only by the session's owner
+(`SessionLoop::update_privacy`, stored first like a new name, announced as
+`SessionUpdated`), and shown to everyone who takes part (`SessionView`).
+What it decides is described in
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel).
+
 ### Creating and deleting channels
 
 Channels can be created in and deleted from a running session:

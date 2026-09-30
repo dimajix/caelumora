@@ -62,6 +62,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/sessions/{id}",
             get(sessions::get_session).delete(sessions::delete_session).patch(sessions::rename_session),
         )
+        .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
         .route(

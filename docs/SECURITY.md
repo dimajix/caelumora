@@ -128,6 +128,7 @@ They are asked:
 *   by an agent, deciding what it may put up for approval.
 
 The questions are `may_read_channel`, `may_change_channel`,
+`may_change_session`,
 `may_channel_read`, `may_read_agent_context`, `may_call_tool` and
 `may_see_channel`.
 
@@ -162,8 +163,8 @@ whom an event reaches, the commands a user is shown.
 What a client lists and offers comes from the runtime as views of
 `caelumora_model::view` (issue 80), each built for one viewer:
 
-*   a `SessionView`: the session's participants and the channels the viewer
-    may read;
+*   a `SessionView`: the session's participants, its privacy (issue 134),
+    the channels the viewer may read, and `can_change`;
 *   a `ChannelView`: the channel's members with their handles and
     `can_read_context`, and `can_change`.
 

@@ -88,9 +88,11 @@ const PromptView: React.FC<{prompt: SeenPrompt; leading: boolean}> = ({prompt, l
   </details>
 );
 
-/** What a knowledge reference read, in words. */
-function knowledgeLabel(knowledge: KnowledgeRef): string {
-  const channel = knowledge.channel_name ? `#${knowledge.channel_name}` : 'a deleted channel';
+/** What a knowledge reference read, in words; `sessionId` is the session the panel is shown in. */
+function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
+  const channel = knowledge.session_id !== sessionId
+    ? 'a channel of another session'
+    : knowledge.channel_name ? `#${knowledge.channel_name}` : 'a deleted channel';
   const agent = knowledge.agent_name ?? 'an agent';
   switch (knowledge.source) {
     case 'notes':
@@ -98,21 +100,21 @@ function knowledgeLabel(knowledge: KnowledgeRef): string {
     case 'private_notes':
       return `Private notes of ${agent} in ${channel}`;
     case 'memory':
-      return `Memory of ${agent}, as recalled in ${channel}`;
+      return `Memory of ${agent}, from ${channel}`;
     default:
       // A reader who joined later saw only part of it (issue 72).
       return knowledge.history_start ? `History of ${channel}, from when it was granted` : `History of ${channel}`;
   }
 }
 
-const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]}> = ({knowledge}) => (
+const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]; sessionId: string}> = ({knowledge, sessionId}) => (
   <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm" open>
     <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
       Knowledge read ({knowledge.length})
     </summary>
     <div className="px-3 pb-2 space-y-1">
       {knowledge.map((k, idx) => (
-        <DigestLine key={idx} label={knowledgeLabel(k)} digest={k.digest} />
+        <DigestLine key={idx} label={knowledgeLabel(k, sessionId)} digest={k.digest} />
       ))}
     </div>
   </details>
@@ -205,7 +207,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {!context && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
         {context && (
           <>
-            {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} />}
+            {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} sessionId={sessionId} />}
             {context.tools?.length > 0 && <ToolList tools={context.tools} />}
             {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
               <PromptView key={row.digest} prompt={row} leading />

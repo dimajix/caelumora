@@ -242,6 +242,12 @@ read, that session passes on by its own policy without breaking the first
 one's promise; `same_owner` and `shared_audience` are, a grant to a named
 session would not be (`caelumora_model::privacy`).
 
+Only the session's owner changes its policy (`UpdateSession`), and everyone
+who takes part sees it (see [CHANNELS.md](CHANNELS.md#sessions)). What an
+agent remembered keeps the policy it was said under
+([MEMORY.md](MEMORY.md)): a policy that lets more sessions read holds for
+what is said from then on, one that lets fewer takes back what it let go.
+
 How an agent reads other channels - the `SessionReader`, `read_notes`,
 `read_history` - is described in [MEMORY.md](MEMORY.md).
 

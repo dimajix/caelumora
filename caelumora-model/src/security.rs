@@ -299,6 +299,10 @@ pub trait AccessQuestions {
     /// rename it, add and remove participants (`UpdateChannel`).
     async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may change the session with `session` attributes -
+    /// rename it, change its privacy (`UpdateSession`).
+    async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool;
+
     /// Whether the channel of `reader` may read what comes from `source` - a
     /// message, a note, or what an agent remembered there (`ReadChannel`,
     /// issues 17, 131, 133 and 134): asked in `context`, the agent's who
@@ -327,6 +331,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::UpdateChannel(channel)).await
+    }
+
+    async fn may_change_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::UpdateSession(session)).await
     }
 
     async fn may_channel_read(&self, context: &SecurityContext, reader: Place<'_>, source: Place<'_>) -> bool {
@@ -582,6 +590,8 @@ mod tests {
         assert!(policy.may_read_channel(&context(bob), &hers).await, "a participant reads the channel");
         assert!(policy.may_change_channel(&context(alice), &hers).await, "the owner changes it");
         assert!(!policy.may_change_channel(&context(bob), &hers).await, "a participant does not");
+        assert!(policy.may_change_session(&context(alice), &hers).await, "the owner changes a session");
+        assert!(!policy.may_change_session(&context(bob), &hers).await, "a participant does not");
         assert!(!policy.may_read_agent_context(&context(bob), &hers).await, "what an agent saw is its owner's alone");
         assert!(allows(alice, ActionType::StopSession(&hers)).await, "the owner stops a session");
         assert!(!allows(bob, ActionType::StopSession(&hers)).await, "a participant does not");

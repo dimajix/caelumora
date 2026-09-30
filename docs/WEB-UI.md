@@ -53,7 +53,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of moderators and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `NewChannelDialog`, `AddParticipantDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -105,8 +105,14 @@ The sidebar lists the user's sessions with their channels. It follows the
 global stream (issue 35, `globalEvents.ts`): it takes its state from the
 snapshot, removes a session on `SessionDeleted`, takes a new name from
 `SessionUpdated`, and fetches a session again (`GET /sessions/{id}`) on any
-event that changes its channels or their members. Starting and stopping are
-ignored.
+other `SessionUpdated` - a changed privacy - and on any event that changes
+its channels or their members. Starting and stopping are ignored.
+
+A session's privacy (issue 134, `privacy.ts`) is shown to everyone in it:
+a session other sessions may read is marked in the list, and its menu opens
+`PrivacyDialog`, where its owner (`can_change`) changes it. Choosing a
+policy that lets other sessions read says that it holds for what is said
+from then on.
 
 A new session is created from a template; the one used last in this browser
 is preselected (issue 40). A new channel is created with its name, moderator,
@@ -178,7 +184,8 @@ Stored messages of agents whose context the user may read (`can_read_context`)
 carry an eye icon. It opens the context panel (`ContextPanel`, issue 41):
 the messages of the context and the prompt parts where they were given, a
 leading system prompt on top (issue 47), the knowledge the turn read as
-"Knowledge read", and - collapsed - the tools the model was offered as
+"Knowledge read" - a channel of another session, which an agent's memory
+came from, is not named (issue 134) - and - collapsed - the tools the model was offered as
 "Tools offered", each with its description and parameters (issue 137). The panel shows internal messages and tool results, which
 the chat hides; `MessageView` renders a message the same way in both. A
 context never changes, so what was fetched once is kept. See

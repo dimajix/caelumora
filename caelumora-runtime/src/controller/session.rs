@@ -1,6 +1,7 @@
 use arc_swap::ArcSwap;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
+use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use chrono::Utc;
@@ -41,16 +42,32 @@ impl SessionController {
         self.session.load().metadata.name.clone()
     }
 
-    /// Renames the session on behalf of `ctx`: stored first - which is where
-    /// the permission is checked (issue 11) - and only then changed live and
+    /// Renames the session on behalf of `ctx`, as [`Self::update`] does.
+    ///
+    /// # Errors
+    /// See [`Self::update`].
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::NameChanged(new_name)).await
+    }
+
+    /// Changes the session's privacy policy on behalf of `ctx` (issue 134),
+    /// as [`Self::update`] does.
+    ///
+    /// # Errors
+    /// See [`Self::update`].
+    pub async fn update_privacy(&self, ctx: &SecurityContext, privacy: PrivacyConfig) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::PrivacyChanged(privacy)).await
+    }
+
+    /// Applies `event` on behalf of `ctx`: stored first - which is where the
+    /// permission is checked (issue 11) - and only then changed live and
     /// announced.
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
+    async fn update(&self, ctx: &SecurityContext, event: SessionUpdateEvent) -> StoreResult<()> {
         let _guard = self.write_lock.lock().await;
-        let event = SessionUpdateEvent::NameChanged(new_name);
         let session = self.apply(&event);
         self.entity_store.update_session(ctx, &session).await?;
         let attributes = session.security_attributes.clone();
@@ -113,6 +130,7 @@ impl SessionController {
         let mut session = (**self.session.load()).clone();
         match event {
             SessionUpdateEvent::NameChanged(name) => session.metadata.name = name.clone(),
+            SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
         }
         session
     }

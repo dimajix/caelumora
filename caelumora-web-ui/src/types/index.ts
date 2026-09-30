@@ -1,4 +1,5 @@
 import type {Classification} from '../confidentiality';
+import type {PrivacyPolicy} from '../privacy';
 
 export interface SessionId {
   0: string;
@@ -18,6 +19,8 @@ export interface UserResponse {
 export interface SessionResponse {
   id: string;
   name: string;
+  /** Whom the session lets read what was said in it (issue 134). */
+  privacy: PrivacyPolicy;
 }
 
 /** Serialized `ActorId`: `"None"` or an object like `{ "Agent": "<uuid>" }`. */
@@ -120,6 +123,10 @@ export interface PublishedNotes {
 export interface SessionSnapshot {
   id: string;
   name: string;
+  /** Whom the session lets read what was said in it (issue 134). */
+  privacy: PrivacyPolicy;
+  /** Whether you may change it - rename it, change its privacy. */
+  can_change: boolean;
   channels: ChannelResponse[];
   /** Everyone who takes part in the session - whom a new channel can be made of (issue 09). */
   participants: SessionParticipant[];
@@ -330,7 +337,10 @@ export interface ToolDefinition {
 
 /** Knowledge a message was produced with (issue 17). */
 export interface KnowledgeRef {
+  /** The session of the channel: another one's, for what an agent recalled from its memory (issue 134). */
+  session_id: string;
   channel_id: string;
+  /** Null for a channel that is gone, or of another session. */
   channel_name: string | null;
   source: 'notes' | 'private_notes' | 'history' | 'memory';
   /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */

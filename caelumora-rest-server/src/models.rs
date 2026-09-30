@@ -1,6 +1,7 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::Message;
+use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
@@ -20,17 +21,19 @@ pub struct CreateSessionRequest {
 pub struct SessionResponse {
     pub id: SessionId,
     pub name: String,
+    /// Whom the session lets read what was said in it (issue 134).
+    pub privacy: PrivacyConfig,
 }
 
 impl From<&caelumora_model::session::Session> for SessionResponse {
     fn from(session: &caelumora_model::session::Session) -> Self {
-        Self { id: session.id, name: session.metadata.name.clone() }
+        Self { id: session.id, name: session.metadata.name.clone(), privacy: session.privacy }
     }
 }
 
 impl From<SessionView> for SessionResponse {
     fn from(view: SessionView) -> Self {
-        Self { id: view.id, name: view.name }
+        Self { id: view.id, name: view.name, privacy: view.privacy }
     }
 }
 
@@ -136,6 +139,10 @@ pub struct GlobalSnapshot {
 pub struct SessionSnapshot {
     pub id: SessionId,
     pub name: String,
+    /// Whom the session lets read what was said in it (issue 134).
+    pub privacy: PrivacyConfig,
+    /// Whether you may change it - rename it, change its privacy.
+    pub can_change: bool,
     pub channels: Vec<ChannelResponse>,
     /// Everyone who takes part in the session - whom a new channel can be
     /// made of (issue 09).
@@ -147,6 +154,8 @@ impl From<SessionView> for SessionSnapshot {
         Self {
             id: view.id,
             name: view.name,
+            privacy: view.privacy,
+            can_change: view.can_change,
             channels: view.channels.into_iter().map(Into::into).collect(),
             // Every participant is a user, an agent or an approver.
             participants: view.participants.into_iter().filter_map(ParticipantResponse::of).collect(),
@@ -172,6 +181,12 @@ impl ParticipantResponse {
 #[derive(Debug, Deserialize)]
 pub struct RenameSessionRequest {
     pub name: String,
+}
+
+/// A session's new privacy policy (issue 134).
+#[derive(Debug, Deserialize)]
+pub struct SessionPrivacyRequest {
+    pub privacy: PrivacyConfig,
 }
 
 /// A participant of the session to add to a channel (issue 46), with how
@@ -316,7 +331,11 @@ pub struct MessageContextResponse {
 /// where they are still known.
 #[derive(Debug, Serialize)]
 pub struct KnowledgeRefResponse {
+    /// The session of the channel: another one's, for what an agent
+    /// recalled from its memory (issue 134).
+    pub session_id: SessionId,
     pub channel_id: caelumora_model::session::ChannelId,
+    /// `None` for a channel that is gone, or of another session.
     pub channel_name: Option<String>,
     /// `"notes"`, `"private_notes"`, `"memory"` or `"history"`.
     pub source: &'static str,
@@ -346,6 +365,7 @@ impl KnowledgeRefResponse {
         };
         let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
         Self {
+            session_id: knowledge.channel.session_id,
             channel_id: knowledge.channel.channel_id,
             channel_name: channel.map(|c| c.name()),
             source,

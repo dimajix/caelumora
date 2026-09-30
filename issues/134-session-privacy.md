@@ -1,6 +1,6 @@
 # 134 — Reading across sessions is a matter of consent, not of classification
 
-**Status:** in progress
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -100,3 +100,13 @@ agreed to be read by the other.
   what is recalled from memory is recorded once per channel it was written
   in. The REST response does not name a channel of another session yet
   (step 3).
+- **2026-09-30** — Step 3, done: the owner changes a session's privacy
+  (`SessionLoop::update_privacy`, stored first, announced as
+  `SessionUpdated(PrivacyChanged)`; `PUT /sessions/{id}/privacy`). Every
+  participant sees it: `SessionView` and the REST session responses carry
+  `privacy`, the snapshot also `can_change`
+  (`AccessQuestions::may_change_session`). The web UI marks sessions others
+  may read and shows the policy in `PrivacyDialog`, changeable by the owner;
+  the context panel does not name a channel of another session
+  (`KnowledgeRefResponse::session_id`). What a participant added later sees
+  is [143](143-joining-a-channel-with-foreign-knowledge.md).

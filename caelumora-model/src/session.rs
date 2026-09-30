@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
     NameChanged(String),
+    /// The session's privacy policy changed (issue 134).
+    PrivacyChanged(PrivacyConfig),
 }
 
 define_id!(SessionId);

@@ -66,6 +66,7 @@ logged-in user.
 | `GET /sessions`, `POST /sessions` | List the user's sessions; create one from a template (`SessionManager::create_from_template`) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session |
+| `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
 | `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |

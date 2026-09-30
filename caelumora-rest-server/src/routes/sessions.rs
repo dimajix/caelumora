@@ -1,6 +1,6 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Subject};
-use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionResponse, SessionSnapshot};
+use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode};
 use crate::error::{Json, Path};
@@ -65,4 +65,23 @@ pub async fn rename_session(
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("renaming session {session_id}")))?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
+}
+
+/// Changes whom session `id` lets read what was said in it (issue 134);
+/// only its owner may. Answers the session as the snapshot shows it.
+pub async fn update_session_privacy(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(payload): Json<SessionPrivacyRequest>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+
+    session_loop.update_privacy(&user.security_context(), payload.privacy).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the privacy of session {session_id}")))?;
+
+    let session = state.session_manager.session_view(&user.security_context(), session_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(Json(session.into()))
 }

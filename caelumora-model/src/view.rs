@@ -10,6 +10,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
+use crate::privacy::PrivacyConfig;
 use crate::session::{ChannelId, SessionId};
 
 /// A session with its participants and the channels the viewer may read.
@@ -17,6 +18,12 @@ use crate::session::{ChannelId, SessionId};
 pub struct SessionView {
     pub id: SessionId,
     pub name: String,
+    /// Whom the session lets read what was said in it (issue 134) - shown
+    /// to everyone who takes part.
+    pub privacy: PrivacyConfig,
+    /// Whether the viewer may change the session - rename it, change its
+    /// privacy (`UpdateSession`).
+    pub can_change: bool,
     /// Everyone who takes part in the session - whom a new channel can be
     /// made of (issue 09).
     pub participants: Vec<ParticipantView>,

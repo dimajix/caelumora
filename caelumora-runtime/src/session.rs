@@ -9,7 +9,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
 use caelumora_model::mention::handle_of;
-use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -175,6 +175,18 @@ impl SessionLoop {
     /// session, or whatever else storing it reports.
     pub async fn update_name(&self, context: &SecurityContext, new_name: String) -> Result<()> {
         Ok(self.session_controller.update_name(context, new_name).await?)
+    }
+
+    /// Changes whom the session lets read what was said in it (issue 134)
+    /// on behalf of `context`. What was remembered before keeps the privacy
+    /// it was said under: a wider policy lets go only what is said from now
+    /// on, a narrower one takes back what it let go.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// session, or whatever else storing it reports.
+    pub async fn update_privacy(&self, context: &SecurityContext, privacy: PrivacyConfig) -> Result<()> {
+        Ok(self.session_controller.update_privacy(context, privacy).await?)
     }
 
     /// The running channels, in the order of the session: those from its
@@ -739,7 +751,8 @@ impl SessionManager {
             let (name, _) = self.look_up(participant).await;
             participants.push(ParticipantView { id: participant.actor_id(), name });
         }
-        SessionView { id: session.id, name: session.metadata.name, participants, channels: readable }
+        let can_change = security.may_change_session(context, &session.security_attributes).await;
+        SessionView { id: session.id, name: session.metadata.name, privacy: session.privacy, can_change, participants, channels: readable }
     }
 
     /// `channel` as `context` sees it: whether they may change it
@@ -1379,6 +1392,7 @@ mod tests {
                 assert_eq!(for_alice.participants.iter().filter_map(|p| p.name.as_deref()).collect::<Vec<_>>(), ["alice", "bob", "Helper"], "{state}");
                 let for_bob = manager.session_view(&as_user(bob.id), id).await.unwrap();
                 assert_eq!(names(&for_bob), ["main"], "{state}: bob is not in the private channel");
+                assert!(for_alice.can_change && !for_bob.can_change, "{state}: the owner changes the session, a participant does not");
 
                 let main = &for_alice.channels[0];
                 assert!(main.can_change, "{state}: the owner changes the channel");
@@ -1402,6 +1416,43 @@ mod tests {
         assert!(manager.stop_session(&as_user(alice.id), id).await.unwrap(), "it ran");
         check("stopped").await;
         assert!(!manager.sessions.contains_key(&id), "describing a session does not start it");
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_changes_a_sessions_privacy_and_everyone_in_it_sees_it() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::privacy::PrivacyConfig;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::session::SessionUpdateEvent;
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let manager = SessionManager::new(runtime.clone());
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let (alice, bob) = (user("alice"), user("bob"));
+        let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: ActorId::User(alice.id), contributors: vec![ActorId::User(bob.id)] };
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        let session = create(&manager, &as_user(alice.id), session).await.unwrap();
+        let mut events = runtime.event_bus().subscribe_all();
+
+        let refused = session.update_privacy(&as_user(bob.id), PrivacyConfig::SharedAudience).await.expect_err("a participant may not");
+        assert!(matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied { .. })), "{refused}");
+        assert_eq!(session.privacy().policy, PrivacyConfig::Private, "unchanged");
+
+        session.update_privacy(&as_user(alice.id), PrivacyConfig::SharedAudience).await.expect("the owner may");
+        assert_eq!(session.privacy().policy, PrivacyConfig::SharedAudience);
+        let stored = runtime.entity_store().get_session(&SecurityContext::system(), session.id()).await.unwrap();
+        assert_eq!(stored.privacy, PrivacyConfig::SharedAudience, "stored");
+        assert!(drain(&mut events).iter().any(|e| matches!(e, GlobalEvent::SessionUpdated(id, SessionUpdateEvent::PrivacyChanged(PrivacyConfig::SharedAudience)) if *id == session.id())),
+                "announced");
+        let for_bob = manager.session_view(&as_user(bob.id), session.id()).await.unwrap();
+        assert_eq!(for_bob.privacy, PrivacyConfig::SharedAudience, "shown to everyone who takes part");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]

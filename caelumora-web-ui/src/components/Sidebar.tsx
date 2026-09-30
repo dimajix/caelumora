@@ -7,8 +7,10 @@ import {
   MessageSquare,
   MoreVertical,
   Plus,
+  Shield,
   Trash2,
-  User
+  User,
+  Users
 } from 'lucide-react';
 import type {ChannelResponse, SessionSnapshot, SessionTemplate, UserResponse} from '../types';
 import {api} from '../api';
@@ -17,6 +19,8 @@ import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
 import {NewChannelDialog} from './NewChannelDialog';
+import {PrivacyDialog} from './PrivacyDialog';
+import {privacyInfo} from '../privacy';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 
@@ -78,6 +82,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingName, setEditingName] = useState<string>('');
   // The session a new channel is being created in (issue 09).
   const [newChannelIn, setNewChannelIn] = useState<SessionSnapshot | null>(null);
+  // The session whose privacy is shown (issue 134), by id, so that the
+  // dialog follows changes to it.
+  const [privacyOf, setPrivacyOf] = useState<string | null>(null);
+  const privacySession = sessions.find(s => s.id === privacyOf) ?? null;
 
   useEffect(() => {
     api.getTemplates()
@@ -205,6 +213,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleShowPrivacy = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+    setPrivacyOf(sessionId);
+  };
+
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
     setOpenMenuId(null);
@@ -309,6 +323,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ) : (
                     <span className="truncate">{session.name || `Session ${session.id?.slice?.(0, 8) || session.id}`}</span>
                   )}
+                  {session.privacy && session.privacy !== 'private' && (
+                    <span className="ml-1 shrink-0 text-gray-500" title={`${privacyInfo(session.privacy).label}: ${privacyInfo(session.privacy).description}`}>
+                      <Users size={12} aria-label={privacyInfo(session.privacy).label} />
+                    </span>
+                  )}
                 </button>
                 
                 <button
@@ -327,6 +346,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     >
                       <Edit2 size={12} className="mr-2" />
                       Rename
+                    </button>
+                    <button
+                      onClick={(e) => handleShowPrivacy(e, session.id)}
+                      className="w-full flex items-center px-3 py-2 text-xs hover:bg-gray-700 transition-colors"
+                    >
+                      <Shield size={12} className="mr-2" />
+                      Privacy
                     </button>
                     <button
                       onClick={(e) => handleDeleteSession(e, session.id)}
@@ -400,6 +426,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       </div>
+
+      {privacySession && (
+        <PrivacyDialog
+          sessionName={privacySession.name}
+          current={privacySession.privacy}
+          canChange={privacySession.can_change}
+          onSubmit={async (privacy) => {
+            const updated = await api.setSessionPrivacy(privacySession.id, privacy);
+            setSessions(prev => upsert(prev, updated));
+          }}
+          onClose={() => setPrivacyOf(null)}
+        />
+      )}
 
       {newChannelIn && (
         <NewChannelDialog

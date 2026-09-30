@@ -15,6 +15,7 @@ import type {
   UserResponse
 } from '../types';
 import type {Classification} from '../confidentiality';
+import type {PrivacyPolicy} from '../privacy';
 
 import {ensureOk} from '../errors';
 
@@ -238,6 +239,17 @@ export const api = {
       body: JSON.stringify({ name }),
     });
     await ensureOk(res, 'Failed to rename session');
+    return res.json();
+  },
+
+  /** Changes whom the session lets read what was said in it (issue 134); only its owner may. */
+  async setSessionPrivacy(sessionId: string, privacy: PrivacyPolicy): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ privacy }),
+    });
+    await ensureOk(res, 'Failed to change the privacy');
     return res.json();
   },
 
