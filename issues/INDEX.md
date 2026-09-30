@@ -212,7 +212,7 @@ against it, and what came out of the last attempt.
 | [36](36-replace-serde-yaml.md) | done | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
 | [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
-| [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
+| [74](74-refactoring-epic.md) | done | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
 | [151](151-agent-refactoring-epic.md) | open | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
 | [160](160-agent-small-cleanups.md) | done | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
 | [96](96-config-unification.md) | done | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |

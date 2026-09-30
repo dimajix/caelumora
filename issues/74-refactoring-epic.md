@@ -1,6 +1,6 @@
 # 74 — Refactoring epic: the structure review of 2026-09-28
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -90,3 +90,10 @@ changed in the order along the way.
   [92](92-ledger-for-notes-and-memory.md), which still needs its
   architecture decision. [117](117-message-prev-id.md) was done last,
   after a discussion of what `prev_id` was meant for.
+- **2026-09-30** — Done: every issue 75-118 is done or rejected.
+  [92](92-ledger-for-notes-and-memory.md) came last, taken into the epic
+  of the agent review ([151](151-agent-refactoring-epic.md)): notes and
+  memory are one generic `Ledger<K>` with one change enum, not an enum
+  per kind behind a trait. Its follow-up [156](156-notes-and-memory-staged-scans.md)
+  and the navigation it led to ([163](163-navigable-views.md)) are
+  their own issues.
