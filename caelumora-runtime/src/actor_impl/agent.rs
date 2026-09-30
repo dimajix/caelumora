@@ -1086,7 +1086,6 @@ mod tests {
     fn make_message(content: &str) -> Message {
         Message {
             id: MessageId(Uuid::new_v4()),
-            prev_id: MessageId::default(),
             sender_id: ActorId::None,
             sender_name: "tester".to_string(),
             role: MessageRole::User,

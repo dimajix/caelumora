@@ -103,13 +103,11 @@ impl<'t> ToolCalls<'t> {
         if self.turn.tool_calls.iter().any(|c| c.result.is_none()) {
             return None;
         }
-        let prev_id = self.turn.messages().last().map(|m| m.id).unwrap_or_default();
         let tool_results = mem::take(&mut self.turn.tool_calls).into_iter()
             .filter_map(|c| c.result)
             .collect();
         let message = Message {
             id: MessageId::new(),
-            prev_id,
             sender_id: ActorId::Agent(self.agent_id),
             sender_name: self.agent_name.to_string(),
             role: MessageRole::Tool,

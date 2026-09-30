@@ -86,3 +86,7 @@ changed in the order along the way.
 
 - **2026-09-28** — Created from the structure review
   (`work/2026-09-28-code-review.md`).
+- **2026-09-30** — Status: all of 75-118 are done or rejected (89) except
+  [92](92-ledger-for-notes-and-memory.md), which still needs its
+  architecture decision. [117](117-message-prev-id.md) was done last,
+  after a discussion of what `prev_id` was meant for.

@@ -200,3 +200,6 @@ and comes later.
   ([117](117-message-prev-id.md)); the parent pointer of a tree of chain
   entries is to be the predecessor's digest (`prev_digest`) on the entry,
   not a field of the message.
+- **2026-09-30** — [117](117-message-prev-id.md) is done: `Message` has no
+  predecessor field anymore. The notes above on `prev_id` describe the state
+  before; the parent pointer of a branch is `prev_digest` on the entry.

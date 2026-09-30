@@ -1,6 +1,6 @@
 # 117 — `Message::prev_id` is excluded from the digest yet still set
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -90,3 +90,10 @@ branching) is recorded here and referenced from 08.
   `Message::prev_id` and its setters; the predecessor belongs to the chain
   entry as `prev_digest`, to be added when entries are stored individually
   (03/04) or chains branch (08). Considerations and "done when" extended.
+- **2026-09-30** — Done. `Message::prev_id` is removed, with the setting in
+  `push_message`, in the Ollama client and in `ToolCalls::collect`, and the
+  test that checked it. `prev_digest` on the entry is not added: while
+  chains are stored as documents the order of their entries is the
+  predecessor. Stored messages that still carry the field load as before,
+  `Message` ignores unknown fields. The web UI and the REST server never
+  read it.

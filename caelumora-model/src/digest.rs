@@ -170,7 +170,7 @@ fn to_json<T: Serialize>(value: &T) -> Value {
 /// It covers what the model sees of a message - id, role, sender, content,
 /// reasoning, tool calls and results, whether it is internal - and not what
 /// only describes it afterwards: timestamps, usage statistics, resolved
-/// mentions, metadata, and `prev_id`, which the chain already expresses.
+/// mentions and metadata. Its predecessor is covered as `previous`.
 pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     let mut e = Encoder::new("caelumora.message-chain.v1");
     e.opt_digest(previous);

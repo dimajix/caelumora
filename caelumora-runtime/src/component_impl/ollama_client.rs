@@ -297,7 +297,6 @@ impl LLMClient for OllamaClient {
     ) -> BoxStream<'static, LLMResult<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
         let message_count = context.len();
-        let prev_id = context.iter().map(|m| m.id).last().unwrap_or(MessageId::default());
 
         let ollama_tools: Vec<_> = tools
             .iter()
@@ -390,7 +389,6 @@ impl LLMClient for OllamaClient {
                                     full_reasoning.push_str(&thinking);
                                     let partial_message = Message {
                                         id: MessageId(Uuid::new_v4()),
-                                        prev_id,
                                         sender_id,
                                         sender_name: sender_name.clone(),
                                         role: MessageRole::Assistant,
@@ -405,7 +403,6 @@ impl LLMClient for OllamaClient {
                                     full_content.push_str(&msg.content);
                                     let partial_message = Message {
                                         id: MessageId(Uuid::new_v4()),
-                                        prev_id,
                                         sender_id,
                                         sender_name: sender_name.clone(),
                                         role: MessageRole::Assistant,
@@ -419,7 +416,6 @@ impl LLMClient for OllamaClient {
                             if body.done {
                                 let mut message = Message {
                                     id: MessageId(Uuid::new_v4()),
-                                    prev_id,
                                     sender_id,
                                     sender_name: sender_name.clone(),
                                     role: MessageRole::Assistant,

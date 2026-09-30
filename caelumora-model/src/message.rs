@@ -23,7 +23,6 @@ pub enum MessageRole {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: MessageId,
-    pub prev_id: MessageId,
     pub timestamp: DateTime<Utc>,
     pub sender_id: ActorId,
     pub sender_name: String,
@@ -83,7 +82,6 @@ impl Message {
     pub fn new(classification: Classification) -> Self {
         Message {
             id: MessageId::default(),
-            prev_id: MessageId::default(),
             sender_id: ActorId::None,
             sender_name: "".to_string(),
             role: MessageRole::System,
@@ -175,14 +173,14 @@ impl MessageEntry for TranscriptEntry {
 }
 
 /// Appends `msg` to `chain` as the entry `make` builds from it and its
-/// digest, and returns the digest before it. The message's `prev_id` becomes
-/// the chain's last message - so it is per chain: the same message has
-/// different predecessors in different chains.
-fn push_message<E: MessageEntry>(chain: &mut Chain<E>, mut msg: Message, make: impl FnOnce(Message, Digest) -> E) -> Option<Digest> {
-    let prev_id = last_message_id_of(chain);
-    if prev_id != MessageId::default() {
-        msg.prev_id = prev_id;
-    }
+/// digest, and returns the digest before it.
+///
+/// A message's predecessor is not a property of the message: the same
+/// message is in several chains, with a different predecessor in each
+/// (issue 117). The chain holds it - today as the order of its entries,
+/// once entries are stored one by one or chains branch (03/04, 08) as the
+/// predecessor's digest on the entry.
+fn push_message<E: MessageEntry>(chain: &mut Chain<E>, msg: Message, make: impl FnOnce(Message, Digest) -> E) -> Option<Digest> {
     chain.push_with(|previous| {
         let digest = crate::digest::message_chain(previous, &msg);
         make(msg, digest)
@@ -356,7 +354,6 @@ mod tests {
     fn make_message(id: MessageId) -> Message {
         Message {
             id,
-            prev_id: MessageId::default(),
             sender_id: ActorId::None,
             sender_name: "tester".to_string(),
             role: MessageRole::User,
@@ -385,7 +382,6 @@ mod tests {
         let mut context = Transcript::new();
         let before = context.extend(vec![m1.clone(), m2.clone(), m3.clone()]);
 
-        // The chain assigns `prev_id`, which the digest does not cover.
         let d1 = message_chain(None, &m1);
         let d2 = message_chain(Some(&d1), &m2);
         let d3 = message_chain(Some(&d2), &m3);
@@ -448,26 +444,6 @@ mod tests {
         assert_eq!(loaded.entries()[0].context, None, "said by someone else");
         assert_eq!(loaded.entries()[1].context, Some(reference));
         assert_eq!(loaded.digest(), history.digest());
-    }
-
-    #[test]
-    fn message_prev_id_updates() {
-        let (m1, m2, m3) = (make_message(id(1)), make_message(id(2)), make_message(id(3)));
-
-        let mut context = Transcript::new();
-        context.push(m1.clone());
-        context.push(m2.clone());
-
-        let messages = context.messages();
-        assert_eq!(messages[0].prev_id, MessageId::default());
-        assert_eq!(messages[1].prev_id, id(1));
-
-        let mut history = MessageHistory::new();
-        history.extend(vec![m1, m2, m3]);
-        let messages = history.messages();
-        assert_eq!(messages[0].prev_id, MessageId::default());
-        assert_eq!(messages[1].prev_id, id(1));
-        assert_eq!(messages[2].prev_id, id(2));
     }
 
     fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
