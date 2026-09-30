@@ -66,3 +66,17 @@ export function sameClassification(a: Classification, b: Classification): boolea
 export function levelsUpTo(level: ConfidentialityLevel): ConfidentialityLevel[] {
   return CONFIDENTIALITY_LEVELS.slice(0, CONFIDENTIALITY_LEVELS.indexOf(level) + 1);
 }
+
+/**
+ * Whether going from `from` to `to` releases something: a lower level, a
+ * compartment added to the audience, or none left where there were some -
+ * readable by more than before (issue 133).
+ */
+export function releases(from: Classification, to: Classification): boolean {
+  const levels = CONFIDENTIALITY_LEVELS;
+  if (levels.indexOf(to.level) < levels.indexOf(from.level)) return true;
+  const before = new Set(from.compartments ?? []);
+  const after = to.compartments ?? [];
+  if (before.size > 0 && after.length === 0) return true;
+  return after.some(c => !before.has(c));
+}

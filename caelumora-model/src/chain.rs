@@ -60,6 +60,12 @@ impl<E: ChainEntry> Chain<E> {
         self.entries.is_empty()
     }
 
+    /// The entries, to change what their digests do not cover - and nothing
+    /// else: what a digest covers is the record and is never rewritten.
+    pub(crate) fn entries_mut(&mut self) -> &mut [E] {
+        &mut self.entries
+    }
+
     /// Appends the entry `make` builds from the digest of the chain before
     /// it, and returns that digest.
     pub fn push_with(&mut self, make: impl FnOnce(Option<&Digest>) -> E) -> Option<Digest> {

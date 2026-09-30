@@ -92,6 +92,12 @@ pub enum ActionType<'a> {
     /// (issue 133). Where a policy refuses compartments that are not
     /// configured.
     Classify(&'a Classification),
+    /// Changing the classification of `target` from `current` to `new`
+    /// (issue 133) - lowering it releases what it holds to a wider circle,
+    /// raising it retracts nothing already read. `channel` is the channel
+    /// it belongs to, as it is classified now, with the channel's
+    /// attributes: who owns the channel, and so what is in it.
+    Reclassify { target: Reclassified, current: &'a Classification, new: &'a Classification, channel: &'a ChannelClassification, attributes: &'a SecurityAttributes },
     /// Seeing that a user command exists - in `/help` and in completion.
     /// Keyed by the command's name, without the slash (issue 28).
     ShowCommand(&'a str),
@@ -150,6 +156,7 @@ impl ActionType<'_> {
             ActionType::ReadChannel { source, classification, reader } => format!("ReadChannel({classification} of {} from {})", source.channel_id, reader.channel_id),
             ActionType::Publish { classification, actor, channel } => format!("Publish({classification} by {actor} to {})", channel.channel_id),
             ActionType::Classify(classification) => format!("Classify({classification})"),
+            ActionType::Reclassify { target, current, new, channel, .. } => format!("Reclassify({target:?} of {} from {current} to {new})", channel.channel_id),
             ActionType::ShowCommand(name) => format!("ShowCommand(/{name})"),
             ActionType::ExecuteCommand(name) => format!("ExecuteCommand(/{name})"),
             ActionType::CallTool(call) => format!("CallTool({})", call.function_name),
@@ -161,6 +168,15 @@ impl ActionType<'_> {
             ActionType::DeleteComponent(_) => "DeleteComponent".into(),
         }
     }
+}
+
+/// What is reclassified (`ActionType::Reclassify`, issue 133).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reclassified {
+    /// The channel itself.
+    Channel,
+    /// A message of the channel, written by `author`.
+    Message { author: ActorId },
 }
 
 /// Who an entity belongs to - what a policy decides by (issue 11).
@@ -376,6 +392,9 @@ impl SecurityManager for DummySecurityManager {
 ///   message may be put into a channel if, moreover, it flows into the
 ///   channel and the actor putting it there is the one acting - its author,
 ///   who may release what they write.
+/// - A channel may be reclassified by its owner, a message by the channel's
+///   owner or its author - never above the channel - and only with
+///   configured compartments.
 ///   That these rules live in the ownership policy is issue 138.
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
@@ -436,6 +455,15 @@ impl SecurityManager for OwnershipSecurityManager {
                 source.channel_id == reader.channel_id || self.may_read_from(source, classification, reader)
             }
             ActionType::Classify(classification) => self.compartments.check(classification).is_ok(),
+            ActionType::Reclassify { target, new, channel, attributes, .. } => {
+                let owner = attributes.owner_id == me && me != ActorId::None;
+                self.compartments.check(new).is_ok() && match target {
+                    Reclassified::Channel => owner,
+                    Reclassified::Message { author } => {
+                        (owner || author == context.caller_id) && new.flows_to(&channel.classification, &self.compartments)
+                    }
+                }
+            }
             ActionType::Publish { classification, actor, channel } => {
                 actor == context.caller_id
                     && self.compartments.check(classification).is_ok()
@@ -625,6 +653,33 @@ mod tests {
         let bob = user();
         let own = classified(Confidentiality::Confidential, &["hr"]);
         assert!(!policy.check(&context(bob), ActionType::Publish { classification: &own, actor: alice, channel: hr }).await, "only in one's own name");
+    }
+
+    #[tokio::test]
+    async fn a_channel_is_reclassified_by_its_owner_a_message_also_by_its_author() {
+        let policy = hr_reads_finance();
+        let (owner, author, stranger) = (user(), user(), user());
+        let attributes = SecurityAttributes { owner_id: owner, contributors: vec![author, stranger] };
+        let hr = channel(SessionId::new(), Confidentiality::Confidential, &["hr"]);
+        let classified = |level, c: &[&str]| Classification::new(level, c.iter().map(|c| Compartment::new(*c))).unwrap();
+        let current = hr.classification.clone();
+        let reclassify = |who: ActorId, target: Reclassified, new: Classification| {
+            let (policy, hr, attributes, current) = (&policy, &hr, &attributes, &current);
+            async move {
+                policy.check(&context(who), ActionType::Reclassify { target, current, new: &new, channel: hr, attributes }).await
+            }
+        };
+        let internal = classified(Confidentiality::Internal, &["hr"]);
+        assert!(reclassify(owner, Reclassified::Channel, internal.clone()).await, "the owner releases the channel");
+        assert!(!reclassify(author, Reclassified::Channel, internal.clone()).await, "a participant does not");
+        assert!(!reclassify(owner, Reclassified::Channel, classified(Confidentiality::Internal, &["payroll"])).await, "not configured");
+
+        let message = Reclassified::Message { author };
+        let released = classified(Confidentiality::Internal, &["hr", "finance"]);
+        assert!(reclassify(author, message, released.clone()).await, "the author releases their message");
+        assert!(reclassify(owner, message, released.clone()).await, "so does the channel's owner");
+        assert!(!reclassify(stranger, message, released).await, "nobody else");
+        assert!(!reclassify(author, message, classified(Confidentiality::StrictlyConfidential, &["hr"])).await, "never above the channel");
     }
 
     #[tokio::test]

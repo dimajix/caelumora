@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronRight,
   NotebookPen,
+  Pencil,
   Scale,
   Shield,
   ScrollText,
@@ -28,9 +29,17 @@ import type {
 } from '../types';
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
-import {type Classification, classificationDescription, classificationLabel, sameClassification} from '../confidentiality';
+import {
+  CONFIDENTIALITY_LEVELS,
+  type Classification,
+  classificationDescription,
+  classificationLabel,
+  levelsUpTo,
+  sameClassification,
+} from '../confidentiality';
 import {ClassificationPicker} from './ClassificationPicker';
-import {changedChannel, membershipChangedChannel, onGlobalEvent} from '../globalEvents';
+import {ClassificationDialog} from './ClassificationDialog';
+import {changedChannel, membershipChangedChannel, onGlobalEvent, reclassifiedChannel, reclassifiedMessage} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
@@ -100,6 +109,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [commands, setCommands] = useState<Command[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
+  // What is being reclassified (issue 133): the channel, or one message.
+  const [reclassifying, setReclassifying] = useState<{kind: 'channel'} | {kind: 'message'; message: Message} | null>(null);
 
   // The server returns members in no particular order.
   const members: ChannelMember[] = [...(channel?.members ?? [])].sort((l, r) => l.name.localeCompare(r.name));
@@ -172,6 +183,32 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         });
     });
   }, [sessionId, channelId]);
+
+  // Reclassifications follow the global stream (issue 133): a message's
+  // classification is taken from the event; a reclassified channel may have
+  // changed its messages too, which are fetched again.
+  useEffect(() => {
+    return onGlobalEvent(event => {
+      const message = reclassifiedMessage(event);
+      if (message && message.channelId === channelId) {
+        setMessages(prev => prev.map(m => m.id === message.messageId ? {...m, classification: message.classification} : m));
+        return;
+      }
+      const reclassified = reclassifiedChannel(event);
+      if (!reclassified || reclassified.channelId !== channelId) return;
+      setChannel(prev => prev && {...prev, classification: reclassified.classification});
+      api.getMessages(sessionId, channelId)
+        .then(data => {
+          const now = new Map(data.map(m => [m.id, m.classification]));
+          setMessages(prev => prev.map(m => (m.id && now.get(m.id)) ? {...m, classification: now.get(m.id)} : m));
+        })
+        .catch(error => reportError('Failed to load the messages', error));
+    });
+  }, [sessionId, channelId]);
+
+  /** Whether the user may change the classification of `msg`: its author, or the channel's owner. */
+  const mayReclassify = (msg: Message) =>
+    !!msg.id && !!msg.classification && (!!channel?.can_change || (typeof msg.sender_id === 'object' && msg.sender_id !== null && 'User' in msg.sender_id && msg.sender_id.User === user.id));
 
   const removeParticipant = async (member: ChannelMember) => {
     const uuid = actorUuid(member.id);
@@ -523,15 +560,29 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
                 ? [`released: ${classificationLabel(msg.classification)}`]
                 : undefined}
-              actions={mayShowContext(msg) ? (
-                <button
-                  onClick={() => setContextOf({channelId, message: msg})}
-                  className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
-                  title="Show what the agent saw"
-                  aria-label="Show what the agent saw"
-                >
-                  <ScrollText size={13} />
-                </button>
+              actions={(mayShowContext(msg) || mayReclassify(msg)) ? (
+                <>
+                  {mayReclassify(msg) && (
+                    <button
+                      onClick={() => setReclassifying({kind: 'message', message: msg})}
+                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+                      title="Change the classification"
+                      aria-label="Change the classification"
+                    >
+                      <Shield size={13} />
+                    </button>
+                  )}
+                  {mayShowContext(msg) && (
+                    <button
+                      onClick={() => setContextOf({channelId, message: msg})}
+                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+                      title="Show what the agent saw"
+                      aria-label="Show what the agent saw"
+                    >
+                      <ScrollText size={13} />
+                    </button>
+                  )}
+                </>
               ) : undefined}
             />
           ))}
@@ -696,6 +747,27 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           onClose={() => setIsAddingParticipant(false)}
         />
       )}
+      {reclassifying && channel && (reclassifying.kind === 'channel' ? (
+        <ClassificationDialog
+          title={`Classification of ${channel.name}`}
+          current={channel.classification}
+          levels={CONFIDENTIALITY_LEVELS}
+          compartments={compartments}
+          releaseWarning="This releases the channel: everything in it - its history, and what its agents know - becomes readable by the wider circle. What was read under the old classification is not retracted by raising it again."
+          onSubmit={async (c) => setChannel(await api.reclassifyChannel(sessionId, channelId, c))}
+          onClose={() => setReclassifying(null)}
+        />
+      ) : reclassifying.message.classification && (
+        <ClassificationDialog
+          title="Classification of the message"
+          current={reclassifying.message.classification}
+          levels={levelsUpTo(channel.classification.level)}
+          compartments={compartments}
+          releaseWarning="This releases the message: it becomes readable by the wider circle."
+          onSubmit={(c) => api.reclassifyMessage(sessionId, channelId, reclassifying.message.id!, c)}
+          onClose={() => setReclassifying(null)}
+        />
+      ))}
       {contextOf && contextOf.channelId === channelId ? (
         <ContextPanel
           key={contextOf.message.id}
@@ -747,6 +819,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               <Shield size={14} />
               <span>Classification:</span>
               <span className="text-gray-700 dark:text-gray-300">{classificationLabel(channel.classification)}</span>
+              {channel.can_change && (
+                <button
+                  onClick={() => setReclassifying({kind: 'channel'})}
+                  className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+                  title="Change the classification"
+                  aria-label="Change the classification of the channel"
+                >
+                  <Pencil size={12} />
+                </button>
+              )}
             </div>
           )}
           <div className="space-y-2">

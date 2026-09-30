@@ -154,6 +154,27 @@ export const api = {
     return res.json();
   },
 
+  /** Reclassifies the channel (issue 133); answers with the channel as it is now. */
+  async reclassifyChannel(sessionId: string, channelId: string, classification: Classification): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/classification`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(classification),
+    });
+    await ensureOk(res, 'Failed to change the classification');
+    return res.json();
+  },
+
+  /** Reclassifies message `messageId` of the channel (issue 133). */
+  async reclassifyMessage(sessionId: string, channelId: string, messageId: string, classification: Classification): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}/classification`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(classification),
+    });
+    await ensureOk(res, 'Failed to change the classification');
+  },
+
   /** Writes a message, classified `classification` - the channel's if absent (issue 133). */
   async sendMessage(sessionId: string, channelId: string, content: string, classification?: Classification): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages`, {

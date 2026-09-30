@@ -157,6 +157,26 @@ impl Classification {
     }
 }
 
+impl Classification {
+    /// This classification changed as little as it must to flow into
+    /// `destination`, whatever compartments read which: its level at most
+    /// the destination's, and the destination's compartments added to its
+    /// audience - none if it is general already, or the destination is
+    /// general, or it becomes public. What flows already stays as it is, up
+    /// to the audiences added, which may read it anyway. What a channel's messages become when the channel is
+    /// released to `destination` (issue 133).
+    pub fn fitted_into(&self, destination: &Classification) -> Classification {
+        let level = self.level.min(destination.level);
+        let general = self.compartments.is_empty() || destination.compartments.is_empty() || level == Confidentiality::Public;
+        let compartments = if general {
+            BTreeSet::new()
+        } else {
+            self.compartments.union(&destination.compartments).cloned().collect()
+        };
+        Classification { level, compartments }
+    }
+}
+
 impl Default for Classification {
     fn default() -> Self {
         Self::CHANNEL_DEFAULT
@@ -334,6 +354,24 @@ mod tests {
         let hr = classified(Confidential, &["hr"]);
         assert_eq!(serde_json::to_value(&hr).unwrap(), serde_json::json!({"level": "confidential", "compartments": ["hr"]}));
         assert_eq!(serde_json::from_value::<Classification>(serde_json::json!({"level": "confidential", "compartments": ["hr"]})).unwrap(), hr);
+    }
+
+    #[test]
+    fn a_classification_is_fitted_into_a_channel_by_as_little_as_must_change() {
+        let compartments = organisation();
+        let fitted = |source: Classification, channel: Classification| {
+            let fitted = source.fitted_into(&channel);
+            assert!(fitted.flows_to(&channel, &compartments), "{fitted} flows into {channel}");
+            fitted
+        };
+        let hr_confidential = classified(Confidential, &["hr"]);
+        assert_eq!(fitted(hr_confidential.clone(), classified(Internal, &["hr"])), classified(Internal, &["hr"]), "the level lowered");
+        assert_eq!(fitted(classified(Confidential, &["hr", "sales"]), classified(Internal, &["hr"])), classified(Internal, &["hr", "sales"]), "keeps its wider audience");
+        assert_eq!(fitted(classified(Internal, &["hr"]), classified(Internal, &["hr", "sales"])), classified(Internal, &["hr", "sales"]), "released to the new audience");
+        assert_eq!(fitted(hr_confidential.clone(), Classification::general(Internal)), Classification::general(Internal), "released to everyone");
+        assert_eq!(fitted(hr_confidential.clone(), Classification::general(Public)), Classification::general(Public));
+        assert_eq!(fitted(classified(Internal, &["hr"]), classified(StrictlyConfidential, &["hr"])), classified(Internal, &["hr"]), "raising changes nothing");
+        assert_eq!(fitted(Classification::general(Internal), classified(Internal, &["hr"])), Classification::general(Internal), "what is general stays general");
     }
 
     #[test]

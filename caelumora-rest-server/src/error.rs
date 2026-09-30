@@ -195,6 +195,7 @@ impl ApiError {
                 ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => return Self::not_found("participant_not_found", detail),
                 ChannelError::NotInSession { .. } | ChannelError::ApproverStays { .. } => return bad_request("invalid_participant"),
                 ChannelError::ClassificationRefused { .. } => return bad_request("invalid_classification"),
+                ChannelError::MessageNotFound { .. } => return Self::not_found("message_not_found", detail),
                 ChannelError::Forbidden { .. } => {}
             }
         }
@@ -369,6 +370,8 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(ChannelError::ApproverStays { channel }), Subject::Participant), (400, "invalid_participant"));
         let classification = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;
         assert_eq!(answer(anyhow::Error::new(ChannelError::ClassificationRefused { classification, channel }), Subject::Session), (400, "invalid_classification"));
+        let message = caelumora_model::message::MessageId::new();
+        assert_eq!(answer(anyhow::Error::new(ChannelError::MessageNotFound { message, channel }), Subject::Session), (404, "message_not_found"));
         assert_eq!(answer(anyhow::Error::new(caelumora_model::template::TemplateError::UnsupportedScope("group")), Subject::Session), (400, "template_invalid"));
 
         // A refusal is named after what was refused, whichever layer refused it.

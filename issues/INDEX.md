@@ -80,7 +80,7 @@ against it, and what came out of the last attempt.
 | [46](46-channel-participants.md) | done | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
 | [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
 | [73](73-watch-leaving-duplicates-events.md) | done | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
-| [67](67-change-channel-level.md) | open | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
+| [67](67-change-channel-level.md) | done | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
 | [134](134-session-privacy.md) | open | Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
@@ -94,6 +94,7 @@ against it, and what came out of the last attempt.
 | [120](120-participant-copies.md) | done | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
 | [121](121-agent-controller-per-process.md) | done | An agent that takes part in several running sessions has one controller in each, so its document has more than one writer. |
 | [124](124-observer-participants.md) | open | Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live. |
+| [141](141-turn-during-reclassification.md) | open | A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it. |
 
 ## Identity and access management
 
@@ -116,6 +117,7 @@ against it, and what came out of the last attempt.
 | [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
 | [133](133-classification-model.md) | in progress | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
 | [138](138-confidentiality-policy-in-ownership.md) | open | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
+| [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 
 ## Tools and approvals
 

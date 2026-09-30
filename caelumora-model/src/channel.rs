@@ -15,6 +15,8 @@ pub const DEFAULT_MODERATOR: &str = "round_robin";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
     NameChanged(String),
+    /// Reclassified (issue 133).
+    ClassificationChanged(Classification),
 }
 
 define_id!(ChannelId);

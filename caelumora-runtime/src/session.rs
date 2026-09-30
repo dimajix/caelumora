@@ -1469,6 +1469,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_channel_and_its_messages_are_reclassified_by_who_may() {
+        use crate::channel::ChannelError;
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::user::{User, UserId};
+
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let manager = SessionManager::new(runtime.clone());
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let (alice, bob) = (user("alice"), user("bob"));
+        let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+        let bob_ctx = SecurityContext::new(bob_id, Default::default(), Default::default());
+        let mut session = make_session("hers");
+        session.security_attributes = SecurityAttributes { owner_id: alice_id, contributors: vec![bob_id] };
+        session.participants = record_users(&manager, &[&alice, &bob]).await;
+        let session = create(&manager, &alice_ctx, session).await.unwrap();
+
+        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let spec = ChannelSpec { classification: Some(classified(Confidentiality::Confidential, &["hr"])), ..spec("hr", vec![bob_id]) };
+        let hr = session.create_channel(&alice_ctx, spec).await.unwrap();
+        hr.user_actor(bob.id).unwrap().send_message("from bob".to_string(), None).await.unwrap();
+        hr.user_actor(alice.id).unwrap().send_message("from alice".to_string(), None).await.unwrap();
+        let history = history_of(&hr, 2).await;
+        // Two users' messages arrive in either order.
+        let id_of = |history: &[caelumora_model::message::Message], text: &str| history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap();
+        let (bobs, alices) = (id_of(&history, "from bob"), id_of(&history, "from alice"));
+        let mut events = runtime.event_bus().subscribe_all();
+
+        let released = classified(Confidentiality::Internal, &["hr", "finance"]);
+        hr.reclassify_message(&bob_ctx, bobs, released.clone()).await.expect("the author releases their message");
+        let refused = hr.reclassify_message(&bob_ctx, alices, released.clone()).await.expect_err("not another's");
+        assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Forbidden { .. })), "{refused}");
+        let missing = hr.reclassify_message(&alice_ctx, caelumora_model::message::MessageId::new(), released.clone()).await.expect_err("no such message");
+        assert!(matches!(missing.downcast_ref::<ChannelError>(), Some(ChannelError::MessageNotFound { .. })), "{missing}");
+        assert!(drain(&mut events).iter().any(|e| matches!(e, GlobalEvent::MessageReclassified(_, cid, mid, c) if *cid == hr.id() && *mid == bobs && *c == released)),
+                "announced");
+
+        let lowered = classified(Confidentiality::Internal, &["hr"]);
+        assert!(hr.reclassify(&bob_ctx, lowered.clone()).await.is_err(), "only the owner reclassifies the channel");
+        hr.reclassify(&alice_ctx, lowered.clone()).await.expect("the owner lowers it");
+        assert_eq!(hr.classification().classification, lowered);
+        assert_eq!(runtime.entity_store().get_channel(&alice_ctx, hr.id()).await.unwrap().classification, lowered, "stored");
+        let history = hr.history().await;
+        let classification_of = |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
+        assert_eq!(classification_of(bobs), released, "what was released stays released");
+        assert_eq!(classification_of(alices), lowered, "the rest is released with the channel");
+        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn deleting_a_session_deletes_its_state_from_the_state_store() {
         use caelumora_model::store::StateStore;
         let entities = Arc::new(MemoryStore::new());

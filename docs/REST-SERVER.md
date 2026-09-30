@@ -68,6 +68,8 @@ logged-in user.
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session |
 | `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it |
+| `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
+| `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`) |
 | `POST …/approvals` | Approve or deny a tool call |
 | `POST …/cancel` | End the current turn of every agent in the channel |

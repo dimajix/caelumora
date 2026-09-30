@@ -103,7 +103,39 @@ message classified by accident.
     from finance from the start. A user may release what they write
     (`UserActor::send_message` asks `Publish` before it sends, so that a
     refusal reaches the user as `ChannelError::ClassificationRefused`).
-    Changing a classification afterwards is step 4 of issue 133.
+    Changing a classification afterwards is
+    [reclassifying](#reclassification) it.
+
+### Reclassification
+
+The classification of a channel or a message can be changed afterwards
+(`ActionType::Reclassify { target, current, new, channel, attributes }`,
+issue 133). Lowering it - a lower level, a compartment added to the
+audience, or none left - *releases* what it holds to a wider circle; raising
+it retracts nothing already read. The ownership policy allows a channel's
+owner to reclassify the channel and every message in it, and a message's
+author to reclassify their own message - a message never above its
+channel, and only with configured compartments.
+
+*   **A channel** (`ChannelLoop::reclassify`, REST `PUT
+    …/channels/{cid}/classification`) is stored (`UpdateChannel`) and
+    announced as `GlobalEvent::ChannelUpdated` with
+    `ChannelUpdateEvent::ClassificationChanged`. Lowering it releases what
+    is in it: every message is fitted into the new classification
+    (`Classification::fitted_into`: its level at most the channel's, the
+    channel's compartments added to its audience, none if the channel is
+    general), since the agents in the channel carry what they know into
+    what they write next. Messages released further before keep their
+    wider audience. A turn that is running keeps the classification it
+    began with until it ends.
+*   **A message** (`ChannelLoop::reclassify_message`, REST `PUT
+    …/messages/{mid}/classification`) is changed in place in the history -
+    its digest does not cover its classification, so the record stays what
+    it was - and announced as `GlobalEvent::MessageReclassified`, without
+    content.
+
+Who reclassified what, and when, is not recorded: that is an audit log
+([140](../issues/140-audit-log.md)).
 
 ## The flow rule
 
@@ -285,9 +317,12 @@ Still to come:
     configured with one classification for all of them
     ([139](../issues/139-mcp-result-classification.md)). Configuring a tool
     with a classification is trusted: it is not asked as `Classify`.
-*   **Release.** An authorised actor cannot yet widen an entity's audience or
-    lower its level (step 4), and a channel's classification can only be set
-    when it is created ([67](../issues/67-change-channel-level.md)).
+*   **Reclassifying notes and memory.** Channels and messages can be
+    reclassified; notes and memory entries, and an agent reclassifying
+    through a tool that asks for approval, are step 4b.
+*   **A turn during a reclassification.** A turn keeps the classification
+    it began with: its messages, after the channel was lowered, are
+    classified above the channel and refused by it.
 *   **Clearances.** Who may join a channel is asked as
     `ActionType::JoinChannel` with the channel's classification
     ([46](../issues/46-channel-participants.md)). The ownership policy

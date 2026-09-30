@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{participant_attributes, Channel, ChannelId, ChannelUpdateEvent, HistoryLimit, HistoryStart, Participant};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -55,6 +56,18 @@ impl ChannelController {
     /// the channel is then unchanged.
     pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name);
+        self.update(ctx, &event).await
+    }
+
+    /// Reclassifies the channel on behalf of `ctx` (`UpdateChannel`; whether
+    /// it may be reclassified at all is its `ChannelLoop`'s to ask, issue
+    /// 133).
+    ///
+    /// # Errors
+    /// Whatever the store reports, `StoreError::PermissionDenied` included;
+    /// the channel is then unchanged.
+    pub async fn update_classification(&self, ctx: &SecurityContext, classification: Classification) -> StoreResult<()> {
+        let event = ChannelUpdateEvent::ClassificationChanged(classification);
         self.update(ctx, &event).await
     }
 
@@ -133,6 +146,7 @@ impl ChannelController {
         let mut channel = (**self.channel.load()).clone();
         match event {
             ChannelUpdateEvent::NameChanged(name) => channel.name = name.clone(),
+            ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
         }
         self.store(ctx, &channel).await?;
         let attributes = channel.security_attributes.clone();

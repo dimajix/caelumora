@@ -1,0 +1,49 @@
+# 141 — A turn running while its channel is lowered loses its answer
+
+**Status:** open
+**Area:** Sessions and channels
+
+## The problem
+
+A turn keeps the classification its channel had when it began
+(`TurnState::classification`), so that what it reads, publishes and
+remembers is judged alike for the whole turn. When the channel is lowered
+while the turn runs ([133](133-classification-model.md), step 4a), the
+agent goes on classifying its messages as the channel was - above the
+channel now. The channel's gate (`ChannelLoop::admits`) refuses them: the
+events are dropped with a warning, and the turn's answer never reaches the
+channel. Raising the channel during a turn does no harm: the turn's
+messages are classified below the channel and admitted.
+
+## Why it matters
+
+- Lowering a channel is a deliberate act of its owner, likely while the
+  conversation goes on; losing an answer to it silently is surprising.
+- The agent's own transcript keeps the answer, so the agent and the
+  channel disagree about what was said.
+
+## Considerations
+
+- **Wait for idle agents.** The reclassification waits until no turn runs
+  in the channel, or is refused while one does. Simple and consistent, but
+  a long turn - waiting for an approval - blocks the owner.
+- **Cancel running turns.** Lowering the channel cancels them, as a
+  deliberate cancel would. The answer is lost too, but visibly, and the
+  agents answer anew under the new classification.
+- **Fit at the gate.** The channel fits messages classified as its previous
+  classification into the new one, as it fitted the history. That makes the
+  gate change what it admits, and needs the channel to remember what it was.
+- **Re-read per message.** The turn takes the channel's classification for
+  each message instead of once. That gives up the turn's consistency, which
+  the reading rules rely on.
+
+## Done when
+
+- A reclassification during a running turn loses nothing silently, and how
+  it is handled is documented in `docs/CONFIDENTIALITY.md`.
+
+## History
+
+- **2026-09-30** — Found while implementing step 4a of
+  [133](133-classification-model.md) and noted there; opened at the
+  maintainer's request.

@@ -13,10 +13,11 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, UserController};
 use caelumora_model::approval::Approver;
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::confidentiality::{ChannelClassification, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
-use caelumora_model::message::Message;
-use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext};
+use caelumora_model::message::{Message, MessageId};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use caelumora_model::user::UserId;
@@ -85,6 +86,8 @@ pub enum ChannelError {
     /// compartment that is not configured or may not be given (issue 133).
     #[error("a message classified {classification} cannot be written into channel {channel}")]
     ClassificationRefused { classification: Classification, channel: ChannelId },
+    #[error("channel {channel} has no message {message}")]
+    MessageNotFound { message: MessageId, channel: ChannelId },
 }
 
 /// A participant with what its actor is built from: the instance's
@@ -295,6 +298,72 @@ impl ChannelLoop {
     /// channel, or whatever else storing it reports.
     pub async fn update_name(&self, context: &SecurityContext, new_name: String) -> Result<()> {
         Ok(self.channel.update_name(context, new_name).await?)
+    }
+
+    /// Reclassifies the channel as `classification` on behalf of `context`
+    /// (issue 133): asked as `ActionType::Reclassify`, then stored
+    /// (`UpdateChannel`) and announced. Lowering it releases what is in it:
+    /// every message is fitted into the new classification
+    /// (`MessageHistory::fit_into`), since the agents in the channel carry
+    /// what they know into what they write next. Raising it changes nothing
+    /// already written. A turn that is running keeps the classification it
+    /// began with until it ends.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if `context` may not reclassify the
+    /// channel as asked; whatever storing it reports.
+    pub async fn reclassify(&self, context: &SecurityContext, classification: Classification) -> Result<()> {
+        let channel = self.classification();
+        let attributes = self.security_attributes();
+        let action = ActionType::Reclassify {
+            target: Reclassified::Channel,
+            current: &channel.classification,
+            new: &classification,
+            channel: &channel,
+            attributes: &attributes,
+        };
+        self.require(context, action, "reclassifying").await?;
+        self.channel.update_classification(context, classification.clone()).await?;
+        let mut state = self.state.lock().await;
+        let fitted = state.history.fit_into(&classification);
+        if fitted > 0 {
+            self.state_store.put_channel_state(self.id, &state).await?;
+        }
+        info!(channel = %self.id, %classification, fitted, "Channel reclassified");
+        Ok(())
+    }
+
+    /// Reclassifies message `message` as `classification` on behalf of
+    /// `context` (issue 133): asked as `ActionType::Reclassify` - its author
+    /// or the channel's owner, never above the channel - then changed in the
+    /// history, stored and announced (`GlobalEvent::MessageReclassified`).
+    ///
+    /// # Errors
+    /// `ChannelError::MessageNotFound` if the history has no such message,
+    /// `ChannelError::Forbidden` if `context` may not reclassify it as
+    /// asked; whatever storing it reports.
+    pub async fn reclassify_message(&self, context: &SecurityContext, message: MessageId, classification: Classification) -> Result<()> {
+        let channel = self.classification();
+        let attributes = self.security_attributes();
+        let mut state = self.state.lock().await;
+        let not_found = || ChannelError::MessageNotFound { message, channel: self.id };
+        let (author, current) = state.history.entries().iter()
+            .find(|e| e.message.id == message)
+            .map(|e| (e.message.sender_id, e.message.classification.clone()))
+            .ok_or_else(not_found)?;
+        let action = ActionType::Reclassify {
+            target: Reclassified::Message { author },
+            current: &current,
+            new: &classification,
+            channel: &channel,
+            attributes: &attributes,
+        };
+        self.require(context, action, "reclassifying a message of").await?;
+        state.history.reclassify(message, classification.clone());
+        self.state_store.put_channel_state(self.id, &state).await?;
+        drop(state);
+        self.runtime.event_bus().publish(GlobalEvent::MessageReclassified(self.session_id, self.id, message, classification), attributes);
+        Ok(())
     }
 
     /// The part of the history `participant` may see (issue 46): all of it,

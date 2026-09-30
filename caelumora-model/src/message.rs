@@ -315,6 +315,34 @@ impl MessageHistory {
     pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
         push_message(&mut self.messages, msg, |message, digest| HistoryEntry { message, context, digest });
     }
+
+    /// Reclassifies message `id` as `classification` (issue 133), in place:
+    /// a message's digest does not cover its classification, so the record
+    /// stays what it was. `false` if there is no such message.
+    pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
+        match self.messages.entries_mut().iter_mut().find(|e| e.message.id == id) {
+            Some(entry) => {
+                entry.message.classification = classification;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Fits every message into a channel now classified `channel`
+    /// (`Classification::fitted_into`) - what lowering a channel's
+    /// classification does to what is in it. Returns how many changed.
+    pub fn fit_into(&mut self, channel: &Classification) -> usize {
+        let mut changed = 0;
+        for entry in self.messages.entries_mut() {
+            let fitted = entry.message.classification.fitted_into(channel);
+            if fitted != entry.message.classification {
+                entry.message.classification = fitted;
+                changed += 1;
+            }
+        }
+        changed
+    }
 }
 
 

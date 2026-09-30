@@ -1,6 +1,6 @@
 # 67 — A channel's confidentiality level cannot be changed after creation
 
-**Status:** open
+**Status:** done
 **Area:** Sessions & channels
 
 ## The problem
@@ -52,3 +52,12 @@ be deleted and recreated, losing its history.
   becomes a classification (level and compartment); the considerations
   above apply to changing that. Lowering then also means moving to a
   compartment that dominates less.
+- **2026-09-30** — Done with step 4a of
+  [133](133-classification-model.md): the owner reclassifies a channel
+  (`ActionType::Reclassify`, `ChannelLoop::reclassify`, REST `PUT
+  …/channels/{cid}/classification`, the web UI's pencil next to the
+  classification, with a warning when it releases). Lowering releases what
+  is in it: the messages are fitted into the new classification, since the
+  agents in the channel carry what they know on; lowering stays allowed. A
+  running turn keeps its classification until it ends - its messages are
+  then refused by the lowered channel, noted in `docs/CONFIDENTIALITY.md`.

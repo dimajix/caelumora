@@ -146,6 +146,14 @@ only what may enter the channel, the server decides, and a release is for
 one message. Messages whose classification differs from the channel's carry
 a `released` badge.
 
+Who may reclassify - the channel's owner the channel, the author or the
+owner a message - changes it with `ClassificationDialog`: from the pencil
+next to the channel's classification, or the shield among a message's
+actions. A change that releases something says what it releases before it
+is made. Reclassifications follow the global stream: a message takes its new
+classification from `MessageReclassified`, and a reclassified channel
+fetches its messages again, which lowering it may have changed.
+
 ### Members, moderator and notes
 
 The member list is sorted by name and uses the members' handles for `@`

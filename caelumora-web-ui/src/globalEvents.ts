@@ -7,6 +7,7 @@
 // ignored.
 
 import type {GlobalEvent} from './types';
+import type {Classification} from './confidentiality';
 
 export type SessionChange =
   | {kind: 'remove'; sessionId: string}
@@ -90,4 +91,24 @@ export function membershipChangedChannel(event: GlobalEvent): string | null {
 export function changedChannel(event: GlobalEvent): string | null {
   const value = event.AgentChannelStateChanged;
   return Array.isArray(value) && typeof value[1] === 'string' ? value[1] : null;
+}
+
+/**
+ * The channel that was reclassified and its classification now, for
+ * `ChannelUpdated` with `ClassificationChanged` (issue 133); `null` for any
+ * other event. Lowering it changed its messages too: whoever shows them
+ * fetches them again.
+ */
+export function reclassifiedChannel(event: GlobalEvent): {channelId: string; classification: Classification} | null {
+  const value = event.ChannelUpdated;
+  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
+  const update = value[2] as {ClassificationChanged?: Classification} | undefined;
+  return update?.ClassificationChanged ? {channelId: value[1], classification: update.ClassificationChanged} : null;
+}
+
+/** The message that was reclassified, for `MessageReclassified` (issue 133); `null` for any other event. */
+export function reclassifiedMessage(event: GlobalEvent): {channelId: string; messageId: string; classification: Classification} | null {
+  const value = event.MessageReclassified;
+  if (!Array.isArray(value) || typeof value[1] !== 'string' || typeof value[2] !== 'string') return null;
+  return {channelId: value[1], messageId: value[2], classification: value[3] as Classification};
 }

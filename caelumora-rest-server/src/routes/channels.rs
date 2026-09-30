@@ -13,6 +13,7 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -240,6 +241,34 @@ pub async fn cancel_channel(
     Ok(StatusCode::OK)
 }
 
+
+/// Reclassifies the channel (issue 133): only its owner. Lowering it
+/// releases what is in it. Answers with the channel as the user sees it now.
+pub async fn reclassify_channel(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(classification): Json<Classification>,
+) -> Result<Json<ChannelResponse>, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    channel.reclassify(&user.security_context(), classification).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "reclassifying the channel"))?;
+    Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
+}
+
+/// Reclassifies a message of the channel (issue 133): its author or the
+/// channel's owner, never above the channel.
+pub async fn reclassify_message(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(classification): Json<Classification>,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    channel.reclassify_message(&user.security_context(), MessageId(mid), classification).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, "reclassifying a message"))?;
+    Ok(StatusCode::OK)
+}
 
 /// The commands the authenticated user may see in the channel, for
 /// completion (issue 28).

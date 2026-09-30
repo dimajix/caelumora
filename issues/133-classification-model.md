@@ -348,3 +348,28 @@ message rendering, and the prompt notes of
 - **2026-09-30** — Step 3 done as decided; `mcp_tool` takes a
   `classification` parameter for all tools of its server. That a server
   classifies its results itself is [139](139-mcp-result-classification.md).
+- **2026-09-30** — Decided before step 4: the act is called
+  *reclassify* - both directions; *release* stays the word for the one
+  that widens (`ActionType::Reclassify`, `NoteChange::Reclassify`, the
+  tool `reclassify`). Lowering a channel's classification releases what is
+  in it: its messages are fitted into the new classification, since the
+  agents in it carry what they know into what they write next. Raising
+  changes nothing already written. Who may: the channel's owner for the
+  channel and every message in it, the author for their own messages,
+  notes and memory entries - never above the channel. A message's
+  classification is changed in place (the digest does not cover it); a
+  protocol of who changed what is an audit log, which does not exist yet
+  ([140](140-audit-log.md)). Notes and memory are reclassified by a change
+  of their chains. Agents reclassify through a tool that asks for
+  approval, not channels. Split: 4a channels and messages (with
+  [67](67-change-channel-level.md)), REST and web UI; 4b notes, memory and
+  the agent's tool.
+- **2026-09-30** — Step 4a done: `ActionType::Reclassify` with
+  `Reclassified::{Channel, Message}`; `ChannelLoop::reclassify` fits the
+  messages into a lowered channel (`Classification::fitted_into`, which
+  keeps what is general general and wider audiences wide);
+  `ChannelLoop::reclassify_message` changes a message in place and
+  announces `GlobalEvent::MessageReclassified`. REST `PUT
+  …/classification` for both; the web UI's `ClassificationDialog`, with a
+  warning when a change releases. Open: a turn running while its channel is
+  lowered keeps its classification, and its messages are refused.
