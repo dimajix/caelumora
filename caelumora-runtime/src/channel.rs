@@ -1943,6 +1943,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_cancel_while_a_tool_runs_ends_the_turn_after_the_tool() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let call = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "sleep".to_string(),
+            kind: crate::component_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+            params: serde_json::json!({ "seconds": 0.5 }),
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let unasked = Message { role: MessageRole::Assistant, content: Some("never given".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let model = Arc::new(Scripted(std::sync::Mutex::new([call, unasked].into())));
+        let Stuck { channel, context, helper, running, .. } = with_an_agent(model.clone(), components).await;
+        settled(&helper, ActorState::ExecutingTools).await;
+
+        channel.cancel(&context).await.expect("permitted");
+
+        // The tool step returns `Planning`; the cancel wins over it, and the
+        // model is not asked again.
+        settled(&helper, ActorState::Idle).await;
+        assert_eq!(model.0.lock().unwrap().len(), 1, "the second answer was never asked for");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;

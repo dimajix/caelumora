@@ -270,6 +270,7 @@ impl Envelope {
 
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum ActorState {
     #[default]
     Idle,
@@ -289,33 +290,35 @@ pub enum ActorState {
 }
 
 impl ActorState {
-    /// The state behind the byte `ProcessingStateHolder` stores.
+    /// Every state, in the order of its declaration - its byte
+    /// (`#[repr(u8)]`) is its place here.
+    const ALL: [ActorState; 7] = [
+        ActorState::Idle,
+        ActorState::Planning,
+        ActorState::ExecutingTools,
+        ActorState::Reflecting,
+        ActorState::Cancelling,
+        ActorState::Sleeping,
+        ActorState::WaitingForApproval,
+    ];
+
+    /// Whether the state belongs to a turn - an error in it ends the turn,
+    /// not the actor - rather than waiting between turns.
+    pub fn in_turn(self) -> bool {
+        !matches!(self, ActorState::Idle | ActorState::Sleeping)
+    }
+
     fn from_raw(v: u8) -> Self {
-        match v {
-            0 => ActorState::Idle,
-            2 => ActorState::Cancelling,
-            3 => ActorState::Sleeping,
-            5 => ActorState::WaitingForApproval,
-            6 => ActorState::Planning,
-            7 => ActorState::ExecutingTools,
-            8 => ActorState::Reflecting,
-            _ => ActorState::Idle,
-        }
+        Self::ALL.get(usize::from(v)).copied().unwrap_or_default()
     }
 
     fn raw(self) -> u8 {
-        match self {
-            ActorState::Idle => 0,
-            ActorState::Cancelling => 2,
-            ActorState::Sleeping => 3,
-            ActorState::WaitingForApproval => 5,
-            ActorState::Planning => 6,
-            ActorState::ExecutingTools => 7,
-            ActorState::Reflecting => 8,
-        }
+        self as u8
     }
 }
 
+/// The live state of an actor, read by other tasks - the moderator, the
+/// channel - while the actor's run loop moves it on.
 #[derive(Debug, Default)]
 pub struct ProcessingStateHolder {
     state: AtomicU8
@@ -336,45 +339,11 @@ impl ProcessingStateHolder {
         self.state.store(state.raw(), Ordering::SeqCst);
     }
 
-    /// The core "CAS Loop" logic.
-    /// This takes a closure that decides the next state based on the current one.
-    pub fn transition<F>(&self, decision_logic: F) -> ActorState
-    where
-        F: Fn(ActorState) -> Option<ActorState>,
-    {
-        let mut current_raw = self.state.load(Ordering::SeqCst);
-        loop {
-            let current_state = ActorState::from_raw(current_raw);
-
-            // 1. Execute the decision logic provided by the caller
-            // We return Option: Some(new_state) to transition, None to do nothing.
-            let next_state = match decision_logic(current_state) {
-                Some(s) => s,
-                None => return current_state, // No transition needed
-            };
-
-            // 2. Try to atomicaly swap the value.
-            // compare_exchange checks if the value is still 'current_raw'.
-            // If yes, it sets it to 'next_state' and returns Ok.
-            // If no, it returns Err(actual_value_now_in_memory).
-            match self.state.compare_exchange(
-                current_raw,
-                next_state.raw(),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => {
-                    // Success! The state transitioned without interference.
-                    return next_state;
-                }
-                Err(actual_new_value) => {
-                    // Failure! Someone else changed the state.
-                    // Update our 'current_raw' and retry the loop with the new reality.
-                    current_raw = actual_new_value;
-                }
-            }
-        }
-    }}
+    /// Moves the state from `from` to `to` if it is `from`; whether it was.
+    pub fn replace(&self, from: ActorState, to: ActorState) -> bool {
+        self.state.compare_exchange(from.raw(), to.raw(), Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    }
+}
 
 
 
@@ -385,16 +354,15 @@ mod tests {
     use crate::actor::ActorState;
 
     #[test]
-    fn test_processing_state_conversion() {
-        assert_eq!(ActorState::Idle.raw(), 0);
-        assert_eq!(ActorState::WaitingForApproval.raw(), 5);
-        assert_eq!(ActorState::from_raw(5), ActorState::WaitingForApproval);
-        assert_eq!(ActorState::Planning.raw(), 6);
-        assert_eq!(ActorState::ExecutingTools.raw(), 7);
-        assert_eq!(ActorState::Reflecting.raw(), 8);
-        assert_eq!(ActorState::from_raw(6), ActorState::Planning);
-        assert_eq!(ActorState::from_raw(7), ActorState::ExecutingTools);
-        assert_eq!(ActorState::from_raw(8), ActorState::Reflecting);
+    fn every_state_is_kept_as_its_own_byte() {
+        for state in ActorState::ALL {
+            assert_eq!(ActorState::from_raw(state.raw()), state);
+        }
+        let holder = ProcessingStateHolder::new(ActorState::Sleeping);
+        assert!(!holder.replace(ActorState::Planning, ActorState::Idle), "not in that state");
+        assert!(holder.replace(ActorState::Sleeping, ActorState::Idle));
+        assert_eq!(holder.load(), ActorState::Idle);
+        assert!(ActorState::WaitingForApproval.in_turn() && !ActorState::Sleeping.in_turn());
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod mcp_tool;
 pub mod notes;
 pub mod ollama_client;
 pub mod private_notes;
+pub mod sleep_tool;
 pub mod transcript_appender;
 pub mod state_context_provider;
 pub mod state_history_appender;
@@ -42,6 +43,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     notes::register(registry);
     ollama_client::register(registry);
     private_notes::register(registry);
+    sleep_tool::register(registry);
     transcript_appender::register(registry);
     state_context_provider::register(registry);
     state_history_appender::register(registry);

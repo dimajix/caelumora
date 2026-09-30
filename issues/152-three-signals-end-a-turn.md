@@ -1,6 +1,6 @@
 # 152 — Three signals and a precedence rule end a turn
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -62,3 +62,28 @@ stop while waiting for an approval that 141 found was one.
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, A1, M3, M4), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-09-30** — Done as proposed.
+  - `enum Interrupt { Cancel, Stop }` on the actor, kept in an `AtomicU8`;
+    `cancel` leaves `Cancel` while the actor is in `Planning`,
+    `ExecutingTools` or `WaitingForApproval` (never over a `Stop`), `stop`
+    leaves `Stop`; both cancel the turn's token. The run loop takes the
+    interrupt after every step: `Stop` gives the turn up and ends the loop,
+    `Cancel` turns a next state within a turn into `Cancelling`. A cancel
+    left over when the next turn begins is dropped there. `stopping`, the
+    CAS in `cancel` and the precedence rule are gone.
+  - `ActorState` is `#[repr(u8)]` with `ActorState::ALL`, so the holder's
+    byte has no gaps; `ActorState::in_turn()` replaces
+    `AgentActor::is_turn_state`; `ProcessingStateHolder::transition` is
+    `replace(from, to)`, which `wakeup` uses.
+  - New test: a cancel while a tool runs ends the turn after the tool
+    without asking the model again (it fails without the rule). For it the
+    built-in component `sleep_tool` (tool `sleep`, parameters `seconds`
+    and `requires_approval`) was added at the maintainer's request, as a
+    tool for tests generally.
+  - Tested in the web UI with a personality that calls `sleep`: a cancel
+    while it runs ends the turn once the tool is done, with its result and
+    no further answer. A stop - removing the agent - while it runs found
+    two gaps older than this change, opened as
+    [161](161-tools-cannot-be-interrupted.md) and
+    [162](162-ui-keeps-a-removed-agents-turn.md). CHANNELS.md describes the
+    interrupt.

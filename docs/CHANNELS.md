@@ -215,12 +215,16 @@ who may, and nobody has to be a participant for it (issue 102).
 It is not a kill. A running tool finishes, the agent reflects, emits
 `FullResponseGenerated` so that observers stop waiting, and returns to a
 normal state with its history intact. A model call in flight, however, is
-dropped rather than awaited: `Actor::cancel` is synchronous, flips the
-agent's `ProcessingStateHolder` to `Cancelling` and cancels the turn's
-`CancellationToken`. The streaming loop waits on that token next to the
-model's stream, so the request is abandoned at once, wherever it stands
-(issue 76). Waiting for an approval waits on it too: a turn waiting for a
-decision ends at once, without one.
+dropped rather than awaited: `Actor::cancel` is synchronous, leaves the
+agent's run loop an interrupt and cancels the turn's `CancellationToken`.
+The streaming loop waits on that token next to the model's stream, so the
+request is abandoned at once, wherever it stands (issue 76). Waiting for an
+approval waits on it too: a turn waiting for a decision ends at once,
+without one. The run loop takes the interrupt after the step it cut short
+and goes on in `Cancelling`, whatever that step returned; `stop` works the
+same way with an interrupt of its own, which wins (issue 152). A tool does
+not see the token: it runs to its end, and a cancel waits for it
+([161](../issues/161-tools-cannot-be-interrupted.md)).
 
 Lowering a channel's classification cancels its turns in the same way,
 as a consequence of the reclassification; each agent then gives its turn

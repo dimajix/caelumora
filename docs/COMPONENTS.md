@@ -164,6 +164,7 @@ passes on with `?`.
 | Kind | Facets | Params | What it does |
 |---|---|---|---|
 | `echo_tool` | `ToolProvider` | - | The tool `echo`, for testing. |
+| `sleep_tool` | `ToolProvider` | `seconds` (default 5), `requires_approval` (default `false`) | The tool `sleep`, which waits, for testing what happens while a tool runs. |
 | `calculator_tool` | `ToolProvider` | - | The tool `calculate`. |
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |

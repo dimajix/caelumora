@@ -271,6 +271,7 @@ A command answers the issuer alone (`/help`) or the whole channel
 | Tool | Component | Parameters | Approval | Visibility | What it does |
 |---|---|---|---|---|---|
 | `echo` | `echo_tool` | `message` | no | `SHOWN` | Returns its arguments unchanged. |
+| `sleep` | `sleep_tool` | `seconds` (optional, at most 60) | as configured, no by default | `SHOWN` | Waits, then says so; for testing a cancel or a stop while a tool runs. |
 | `calculate` | `calculator_tool` | `expression` | no | `SHOWN` | Evaluates a mathematical expression. |
 | `stop` | `stop_tool` | - | yes | `SHOWN` | Ends the turn: the agent has finished its task and goes to sleep. |
 | `bye` | `stop_tool` | - | yes | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |

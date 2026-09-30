@@ -26,7 +26,7 @@ use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultS
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -55,14 +55,15 @@ pub struct AgentActor {
     // State
     state: Mutex<AgentActorState>,
     processing_state: Arc<ProcessingStateHolder>,
-    /// Cancelled by `cancel` while a turn runs, replaced when the next one
-    /// begins: the streaming loop waits on it next to the model's stream, so
-    /// that a cancel drops the request instead of waiting for its next
-    /// chunk. A `std` mutex, because `cancel` is synchronous.
+    /// Cancelled by `cancel` and `stop` while a turn runs, replaced when the
+    /// next one begins: the streaming loop waits on it next to the model's
+    /// stream, so that a cancel drops the request instead of waiting for its
+    /// next chunk, and so does waiting for an approval. A `std` mutex,
+    /// because `cancel` is synchronous.
     turn_cancel: std::sync::Mutex<CancellationToken>,
-    /// Set by `stop`: the actor left the channel, and its run loop ends at
-    /// the next step boundary, giving up a turn under way.
-    stopping: AtomicBool,
+    /// What `cancel` or `stop` asked of the run loop (an `Interrupt`, or
+    /// `NO_INTERRUPT`), taken after every step (issue 152).
+    interrupt: AtomicU8,
     loop_count: AtomicI32,
     max_iterations: i32,
 }
@@ -133,7 +134,7 @@ impl AgentActor {
             state,
             processing_state,
             turn_cancel: std::sync::Mutex::new(CancellationToken::new()),
-            stopping: AtomicBool::new(false),
+            interrupt: AtomicU8::new(NO_INTERRUPT),
             loop_count: AtomicI32::new(0),
             max_iterations: 25,
         })
@@ -225,6 +226,9 @@ impl AgentActor {
             self.tool_executor.tools(),
         );
         *self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = CancellationToken::new();
+        // A cancel that came as the turn before ended has nothing to end
+        // here; a stop still has.
+        let _ = self.interrupt.compare_exchange(Interrupt::Cancel as u8, NO_INTERRUPT, Ordering::SeqCst, Ordering::SeqCst);
 
         debug!("Starting generating messages for agent {} {}", self.id(), turn.agent_name());
         turn.send_event(ActorEvent::ResponseStarted, output).await?;
@@ -319,7 +323,7 @@ impl AgentActor {
     /// A state in the middle of a turn without the turn's working state
     /// cannot be resumed; it starts idle.
     fn prepare_resume(state: &mut AgentChannelState) -> usize {
-        if Self::is_turn_state(state.processing_state) && state.turn.is_none() {
+        if state.processing_state.in_turn() && state.turn.is_none() {
             state.processing_state = ActorState::Idle;
         }
         let Some(turn) = state.turn.as_mut().filter(|_| state.processing_state == ActorState::ExecutingTools) else {
@@ -336,9 +340,30 @@ impl AgentActor {
         answered
     }
 
-    /// The token of the current turn, cancelled by `cancel`.
+    /// The token of the current turn, cancelled by `cancel` and `stop`.
     fn turn_token(&self) -> CancellationToken {
         self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    }
+
+    /// Asks the run loop for `interrupt` - a stop is not turned back into a
+    /// cancel - and interrupts the step under way.
+    fn interrupt(&self, interrupt: Interrupt) {
+        match interrupt {
+            Interrupt::Cancel => {
+                let _ = self.interrupt.compare_exchange(NO_INTERRUPT, Interrupt::Cancel as u8, Ordering::SeqCst, Ordering::SeqCst);
+            }
+            Interrupt::Stop => self.interrupt.store(Interrupt::Stop as u8, Ordering::SeqCst),
+        }
+        self.turn_token().cancel();
+    }
+
+    /// What was asked of the run loop since it last looked, if anything.
+    fn take_interrupt(&self) -> Option<Interrupt> {
+        match self.interrupt.swap(NO_INTERRUPT, Ordering::SeqCst) {
+            v if v == Interrupt::Cancel as u8 => Some(Interrupt::Cancel),
+            v if v == Interrupt::Stop as u8 => Some(Interrupt::Stop),
+            _ => None,
+        }
     }
 
     /// Runs the approved calls of the step that have no result yet - the
@@ -465,19 +490,6 @@ impl AgentActor {
         }.instrument(span).await?;
         rx.commit().await?;
         Ok(Some(if started { ActorState::Planning } else { self.processing_state.load() }))
-    }
-
-    /// Whether `state` belongs to a turn, i.e. an error in it aborts the turn
-    /// rather than the actor.
-    fn is_turn_state(state: ActorState) -> bool {
-        matches!(
-            state,
-            ActorState::Planning
-                | ActorState::ExecutingTools
-                | ActorState::Reflecting
-                | ActorState::Cancelling
-                | ActorState::WaitingForApproval
-        )
     }
 
     /// Ends the current turn after `error`: logs the full error, gives the
@@ -860,6 +872,22 @@ impl AgentActor {
 }
 
 
+/// What `cancel` or `stop` asked of the run loop, which takes it after every
+/// step and alone decides what follows (issue 152). A stop wins over a
+/// cancel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Interrupt {
+    /// End the turn under way and take it over (`Cancelling`).
+    Cancel = 1,
+    /// Give the turn under way up and end the run loop: the actor left the
+    /// channel.
+    Stop = 2,
+}
+
+/// `AgentActor::interrupt` when nothing was asked.
+const NO_INTERRUPT: u8 = 0;
+
 /// Whether a turn may still flow into its channel (`AgentActor::turn_flow`).
 enum TurnFlow {
     Flows,
@@ -912,7 +940,7 @@ impl Actor for AgentActor {
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
-        if Self::is_turn_state(self.processing_state.load()) {
+        if self.processing_state.load().in_turn() {
             info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.processing_state.load());
         }
 
@@ -936,7 +964,7 @@ impl Actor for AgentActor {
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was
             // about to do; nothing of it is run or taken over (issue 141).
-            if Self::is_turn_state(current_state) {
+            if current_state.in_turn() {
                 if let TurnFlow::Lowered(channel) = self.turn_flow(&turn).await {
                     self.give_up_lowered(&mut turn, channel, &*output).instrument(span).await;
                     self.settle(&mut turn, ActorState::Idle).await;
@@ -965,17 +993,20 @@ impl Actor for AgentActor {
             // the actor.
             let next_state = match result {
                 Ok(next) => next,
-                Err(e) if Self::is_turn_state(current_state) => {
+                Err(e) if current_state.in_turn() => {
                     self.fail_turn(&mut turn, &e, &*output).instrument(span).await;
                     Some(ActorState::Idle)
                 }
                 Err(e) => return Err(e),
             };
 
-            // Told to stop, the actor is leaving the channel: a turn under
-            // way is not resumed later, so it is given up rather than
-            // stored to be resumed (issues 75, 145).
-            if self.stopping.load(Ordering::SeqCst) {
+            // What `cancel` or `stop` asked for is decided here, after the
+            // step it interrupted, and nowhere else (issue 152). Told to
+            // stop, the actor is leaving the channel: a turn under way is
+            // not resumed later, so it is given up rather than stored to be
+            // resumed (issues 75, 145).
+            let interrupt = self.take_interrupt();
+            if interrupt == Some(Interrupt::Stop) {
                 let carried = self.carried_calls(&turn).await;
                 turn.give_up_turn(GivenUpReason::Stopped, carried);
                 self.settle(&mut turn, ActorState::Idle).await;
@@ -988,11 +1019,11 @@ impl Actor for AgentActor {
             // already in the turn nor asks the model before a tool result is
             // in (issue 85).
             if let Some(next) = next_state {
-                // If state has been switched to "Cancelling", but "current_state" was not
-                // "Cancelling", then ignore "next_state"
-                if current_state == ActorState::Cancelling || self.processing_state.load() != ActorState::Cancelling {
-                    self.processing_state.store(next)
-                }
+                // A cancel ends a turn still under way, whatever its step
+                // returned; one that came as the turn ended finds nothing
+                // left to end.
+                let cancelled = interrupt == Some(Interrupt::Cancel) && next.in_turn();
+                self.processing_state.store(if cancelled { ActorState::Cancelling } else { next });
             }
             self.store_channel_state(&mut turn).await;
             // Channel is closed, actor wants to quit
@@ -1018,10 +1049,7 @@ impl Actor for AgentActor {
         );
         // Only a sleeping agent should be woken; forcing Idle from any other
         // state (e.g. mid-Planning) would corrupt an in-flight turn.
-        self.processing_state.transition(|s| match s {
-            ActorState::Sleeping => Some(ActorState::Idle),
-            _ => None,
-        });
+        self.processing_state.replace(ActorState::Sleeping, ActorState::Idle);
     }
 
     async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
@@ -1057,25 +1085,18 @@ impl Actor for AgentActor {
             self.id(),
             self.agent_controller.name()
         );
-        // The state first, so that the run loop keeps `Cancelling` whatever
-        // the interrupted step returns; then the token, which interrupts a
-        // model call in flight. Outside a turn there is nothing to cancel.
-        let state = self.processing_state.transition(|s| match s {
-            ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning
-                => Some(ActorState::Cancelling),
-            _ => None,
-        });
-        if state == ActorState::Cancelling {
-            self.turn_token().cancel();
+        // Outside a turn there is nothing to cancel, and a turn already
+        // ending is ended anyway. The run loop decides after the step.
+        if matches!(self.processing_state.load(), ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning) {
+            self.interrupt(Interrupt::Cancel);
         }
     }
 
     fn stop(&self) {
         info!("Stopping agent {} {}: it left the channel", self.id(), self.agent_controller.name());
-        self.stopping.store(true, Ordering::SeqCst);
-        // Interrupts a model call in flight; the run loop then sees the
-        // flag and abandons the turn instead of reflecting on it.
-        self.turn_token().cancel();
+        // Interrupts a model call in flight; the run loop then gives the
+        // turn up instead of taking it over.
+        self.interrupt(Interrupt::Stop);
     }
 }
 
