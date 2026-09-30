@@ -238,6 +238,24 @@ pub struct ToolCallState {
     pub result: Option<ToolCallResult>,
 }
 
+impl ToolCallState {
+    /// `tool_call`, waiting for a user's decision, who is shown
+    /// `description`.
+    pub fn pending(tool_call: ToolCall, description: String) -> Self {
+        Self { id: ApprovalId::new(), status: ApprovalStatus::Pending, tool_call, description, result: None }
+    }
+
+    /// `tool_call`, to be run as it is.
+    pub fn approved(tool_call: ToolCall) -> Self {
+        Self { id: ApprovalId::new(), status: ApprovalStatus::Approved, tool_call, description: String::new(), result: None }
+    }
+
+    /// `tool_call`, answered with `result` before it ran: it is not run.
+    pub fn answered(tool_call: ToolCall, result: ToolCallResult) -> Self {
+        Self { result: Some(result), ..Self::approved(tool_call) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

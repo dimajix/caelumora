@@ -5,7 +5,7 @@ use crate::context::ContextProvider;
 use crate::llm::LLMClient;
 use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
-use crate::tool::{GuardedToolExecutor, ToolError, ToolExecutor};
+use crate::tool::{GuardedToolExecutor, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use crate::controller::AgentController;
-use caelumora_model::approval::{ApprovalId, ApprovalStatus};
+use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::{Classification, Visibility};
@@ -22,7 +22,7 @@ use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::transcript::{GivenUpReason, GivenUpTurn};
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
@@ -631,66 +631,22 @@ impl AgentActor {
         }
     }
 
-    /// Registers tool calls for approval and requests approval for the ones that
-    /// need it. Purely records data on `turn` - it never touches
-    /// `processing_state`; `handle_planning`'s return value (always
-    /// `ExecutingTools` when there are tool calls) and `handle_executing_tools`
-    /// (which decides `Planning` vs `WaitingForApproval` once it knows which
-    /// calls actually still need a decision) are the sole authority on state.
+    /// Takes the model's `tool_calls` into the turn as the tool guard admits
+    /// them (`GuardedToolExecutor::admit`) and asks for the approvals they
+    /// wait for. Only records them: whether the turn goes on to run them or
+    /// waits is `handle_executing_tools`'s to decide.
     async fn request_approvals<'a>(
         &self,
-        tool_calls: &Vec<ToolCall>,
+        tool_calls: &[ToolCall],
         turn: &mut Turn<'a>,
         output: &dyn EventSender,
     ) -> Result<()> {
-        // The tools the model was offered: a call is put up for approval by
-        // what its tool declared then (issue 137).
-        let tools = turn.tools().to_vec();
-        let mut states: Vec<ToolCallState> = Vec::with_capacity(tool_calls.len());
-        for tc in tool_calls {
-            let tool = tools.iter().find(|t| t.name == tc.function_name);
-            let approval = tool.map(|t| t.requires_approval).unwrap_or(false);
-            let mut state = ToolCallState {
-                id: ApprovalId::new(),
-                status: if approval { ApprovalStatus::Pending } else { ApprovalStatus::Approved },
-                tool_call: tc.clone(),
-                description: String::new(),
-                result: None,
-            };
-            // A call that cannot succeed is answered right away rather than
-            // put to a user who could only approve it in vain - in the order
-            // `execute` would find out: first the policy, then the call
-            // itself (issue 118). The status then no longer matters: a call
-            // with a result is not executed.
-            let answer = if !self.tool_executor.is_permitted(tc, turn).await {
-                info!("Tool call '{}' by agent {} forbidden by the security manager", tc.function_name, self.id());
-                Some((ToolResultStatus::Forbidden, crate::tool::forbidden_result()))
-            } else {
-                match self.tool_executor.describe(tc) {
-                    Ok(description) => {
-                        state.description = description;
-                        None
-                    }
-                    Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
-                        info!("Tool call '{}' by agent {} cannot run: {}", tc.function_name, self.id(), e);
-                        let available: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
-                        Some(e.to_result(&available))
-                    }
-                    Err(e) => {
-                        warn!("Cannot describe tool call '{}' for approval: {}", tc.function_name, e);
-                        state.description = "No description".to_string();
-                        None
-                    }
-                }
-            };
-            if let Some((status, content)) = answer {
-                state.status = ApprovalStatus::Approved;
-                state.result = Some(ToolCallResult::of(tc, status, content, turn.classification()));
-            }
-            states.push(state);
-        }
-        if states.is_empty() {
+        if tool_calls.is_empty() {
             return Ok(());
+        }
+        let mut states = Vec::with_capacity(tool_calls.len());
+        for call in tool_calls {
+            states.push(self.tool_executor.admit(call, turn).await.state(call.clone()));
         }
         for request in turn.tool_calls().register(states) {
             turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
@@ -1068,16 +1024,16 @@ mod tests {
 
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
-        use caelumora_model::approval::ApprovalId;
-        use caelumora_model::tool::ToolVisibility;
+        use caelumora_model::tool::{ToolCallState, ToolVisibility};
         let call = |status: ApprovalStatus, result: Option<&str>| {
             let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
-            ToolCallState {
-                id: ApprovalId::new(),
-                status,
-                result: result.map(|r| ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)),
-                tool_call,
-                description: String::new(),
+            match (status, result) {
+                (ApprovalStatus::Pending, _) => ToolCallState::pending(tool_call, String::new()),
+                (_, Some(r)) => {
+                    let result = ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
+                    ToolCallState::answered(tool_call, result)
+                }
+                _ => ToolCallState::approved(tool_call),
             }
         };
         let state_in = |actor_state: ActorState| AgentChannelState {

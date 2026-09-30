@@ -268,7 +268,7 @@ resumed turn keeps them. The model is told of a tool only its name,
 description and parameters - a `ToolDefinition` (`Tool::definition`);
 whether its calls need approval and how far they may travel stay with the
 runtime, which labels the model's answer (`AgentActor::label`) and puts its
-calls up for approval (`request_approvals`) by the same `Tool`s. A tool that
+calls up for approval (`GuardedToolExecutor::admit`) by the same `Tool`s. A tool that
 changes or disappears during a turn is offered as it is from the next turn
 on; a call of one that is gone fails as unknown.
 

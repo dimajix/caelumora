@@ -3,13 +3,13 @@ use crate::component::ComponentImpl;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolVisibility, ToolResultStatus};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -246,10 +246,34 @@ pub trait ToolExecutor: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 }
 
+/// How a tool call of the model is admitted, before anything runs
+/// (`GuardedToolExecutor::admit`, issue 155).
+#[derive(Debug)]
+pub enum Admission {
+    /// A user decides first; they are shown `description`.
+    Ask { description: String },
+    /// It runs as it is.
+    Run,
+    /// It cannot succeed and is answered at once, without asking anyone.
+    Answered(ToolCallResult),
+}
+
+impl Admission {
+    /// The state `call` starts with, admitted so.
+    pub fn state(self, call: ToolCall) -> ToolCallState {
+        match self {
+            Admission::Ask { description } => ToolCallState::pending(call, description),
+            Admission::Run => ToolCallState::approved(call),
+            Admission::Answered(result) => ToolCallState::answered(call, result),
+        }
+    }
+}
+
 /// An agent's [`ToolExecutor`] with what the runtime keeps to itself
 /// (issues 127, 133): only an agent calls tools, and only what the policy
 /// permits (`CallTool`) - asked before a call is put up for approval
-/// (`is_permitted`) and again when it is run. And the result the model is
+/// (`admit`, which also decides whether a user is asked) and again when
+/// it is run. And the result the model is
 /// given is made here, the one place: what the tool gave, or what went
 /// wrong and what to do next (issue 15), classified - as the tool
 /// classified it, else as the tool is configured, else as the channel -
@@ -296,7 +320,7 @@ impl GuardedToolExecutor {
     /// The result for `call`, which failed with `error`: what went wrong and
     /// what to do next, classified as the channel.
     fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
-        let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
+        let available: Vec<String> = turn.tools().iter().map(|t| t.name.clone()).collect();
         let (status, content) = error.to_result(&available);
         ToolCallResult::of(call, status, content, turn.classification())
     }
@@ -318,15 +342,37 @@ impl GuardedToolExecutor {
         ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(output.value, call.visibility), classification)
     }
 
-    /// Whether the policy permits `call` in the turn. Checked before asking
-    /// anyone for approval, so that users are not asked about calls that
-    /// would be refused anyway; `execute` checks again.
-    pub async fn is_permitted(&self, call: &ToolCall, turn: &Turn<'_>) -> bool {
-        self.security_manager.may_call_tool(turn.security_context(), call).await
+    /// How `call`, made by the model in `turn`, is admitted: a call that
+    /// cannot succeed is answered at once rather than put to a user who
+    /// could only approve it in vain - in the order `execute` would find
+    /// out: first the policy (`CallTool`; `execute` checks again), then the
+    /// call itself (issue 118). Otherwise a user is asked if its tool - as
+    /// the turn began with it (issue 137) - requires approval, and shown
+    /// what the tool says of the call.
+    pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
+        let agent = turn.agent_id();
+        if !self.is_permitted(call, turn).await {
+            info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.classification()));
+        }
+        let description = match self.executor.facet.describe(call) {
+            Ok(description) => description,
+            Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
+                info!("Tool call '{}' by agent {} cannot run: {}", call.function_name, agent, e);
+                return Admission::Answered(self.failed(call, e, turn));
+            }
+            Err(e) => {
+                warn!("Cannot describe tool call '{}' for approval: {}", call.function_name, e);
+                "No description".to_string()
+            }
+        };
+        let asks = turn.tools().iter().any(|t| t.name == call.function_name && t.requires_approval);
+        if asks { Admission::Ask { description } } else { Admission::Run }
     }
 
-    pub fn describe(&self, call: &ToolCall) -> ToolResult<String> {
-        self.executor.facet.describe(call)
+    /// Whether the policy permits `call` in the turn.
+    async fn is_permitted(&self, call: &ToolCall, turn: &Turn<'_>) -> bool {
+        self.security_manager.may_call_tool(turn.security_context(), call).await
     }
 
     pub fn tools(&self) -> Vec<Tool> {
@@ -490,6 +536,36 @@ mod tests {
         assert_eq!(result.status, ToolResultStatus::Forbidden);
         assert_eq!(result.content, forbidden_result());
         assert!(result.started_at.is_none() && result.finished_at.is_none(), "a refused call never ran");
+    }
+
+    #[tokio::test]
+    async fn a_call_is_asked_for_run_or_answered_at_once_as_it_can_succeed() {
+        let asking = executor(Arc::new(DummySecurityManager::new()));
+        let mut agent_channel_state = agent_turn(&asking);
+        let turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description } if description == "desc"), "its tool requires approval");
+        match asking.admit(&call("does_not_exist"), &turn).await {
+            Admission::Answered(result) => {
+                assert_eq!(result.status, ToolResultStatus::UnknownTool);
+                assert!(result.content.contains("Available tools: test_tool"), "the tools the turn began with: {}", result.content);
+            }
+            other => panic!("an unknown tool is answered at once, got {other:?}"),
+        }
+
+        let refusing = executor(Arc::new(DenyAllSecurityManager));
+        let mut agent_channel_state = agent_turn(&refusing);
+        let turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        assert!(matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden), "first the policy");
+
+        let provider: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
+        let tools = DefaultToolExecutor::new(vec![ComponentImpl { id: "tools".to_string(), fail_policy: Default::default(), facet: provider }]).unwrap();
+        let running = GuardedToolExecutor::new(Arc::new(DummySecurityManager::new()), ComponentImpl { id: "executor".to_string(), fail_policy: Default::default(), facet: Arc::new(tools) });
+        let mut agent_channel_state = agent_turn(&running);
+        let turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let admitted = running.admit(&call("test_tool"), &turn).await;
+        assert!(matches!(admitted, Admission::Run), "no approval needed");
+        let state = admitted.state(call("test_tool"));
+        assert!(state.status == caelumora_model::approval::ApprovalStatus::Approved && state.result.is_none(), "to be run");
     }
 
     #[tokio::test]

@@ -154,8 +154,13 @@ the arguments of a call they are asked to decide.
 
 ### Checked before anyone is asked
 
+Before a call is registered, the runtime's guard decides how it is admitted
+(`GuardedToolExecutor::admit`, issue 155): answered at once, put to a user
+if its tool requires approval, or run as it is. The actor only records what
+the guard decided.
+
 *   **Policy.** A call the `SecurityManager` does not permit
-    (`ActionType::CallTool`, via `GuardedToolExecutor::is_permitted`) is
+    (`ActionType::CallTool`) is
     refused before any approval is requested, so users are not asked about
     calls that would be refused anyway. `execute` checks again.
 *   **Validity.** A call that cannot run - arguments its tool's `describe`
