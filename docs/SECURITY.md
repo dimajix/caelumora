@@ -119,8 +119,10 @@ They are asked:
 
 *   by the runtime building views, which decide what a client lists and offers
     (`can_change`, `can_read_context`, issue 80);
-*   by the `SessionReader`, deciding what an agent may read (see
-    [MEMORY.md](MEMORY.md));
+*   by the `SessionReader` and the components, deciding what an agent may
+    read of other channels or recall (see [MEMORY.md](MEMORY.md)); a
+    component asks with the `SecurityManager` and `SecurityContext` of its
+    `ComponentContext` (issue 131);
 *   by an agent, deciding what it may publish or put up for approval.
 
 The questions are `may_read_channel`, `may_change_channel`,

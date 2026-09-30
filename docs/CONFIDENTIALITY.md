@@ -118,8 +118,10 @@ quote (issue 66):
 ## Reading another channel
 
 Reading another channel's notes and history is `ActionType::ReadChannel {
-source, reader }`, with both channels' `ChannelClassification`, asked in the
-name of the reading channel's owner. The ownership policy allows it if
+source, reader }`, with both channels' `ChannelClassification`
+(`AccessQuestions::may_channel_read`). It is asked in the name of the agent
+that reads - the security context it acts in, its owner's - because the agent
+passes on what it reads (issue 131). The ownership policy allows it if
 (`ChannelClassification::readable_from`, rule 2 of issue 61):
 
 *   the reader lies within the source's reach, and
@@ -144,8 +146,10 @@ so that the reading rule can follow it into other channels:
     current level at every read.
 *   **Agent memory** (issue 62) entries carry the classification of the
     channel they were written in, and are recalled only in channels that may
-    read it (`AgentMemory::recalled`, by
-    `ChannelClassification::readable_from`).
+    read it (`AgentMemory::recalled`, which asks
+    `AccessQuestions::may_channel_read` like the private notes, issue 131).
+    The reading channel is judged by the classification the turn began
+    with.
 
 "Private" means private from other agents and other users, not from the
 agent's owner: the owner sees private notes in the context panel, which is
@@ -173,7 +177,7 @@ The model is a first step. Not decided yet:
     ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge
     out of it relies on the model.
 *   **Whose rights.** Publishing and reading are asked in the name of the
-    agent's or the channel's owner. How an agent's rights combine with those
+    agent's owner. How an agent's rights combine with those
     of the user it acts for is open
     ([12](../issues/12-user-and-agent-permissions.md)).
 *   **Knowledge beyond the session.** Knowledge kept across sessions or shared
@@ -184,9 +188,8 @@ The model is a first step. Not decided yet:
 *   **One enforcement for component state.** When the state of notes becomes
     generic component state ([65](../issues/65-generic-component-state.md)),
     the rules are to be applied by the core, not re-implemented per component.
-    Today agent memory filters by `ChannelClassification::readable_from`
-    itself, while private notes and `read_notes` ask the policy through
-    `AccessQuestions::may_channel_read`.
+    Today every component that reads across channels asks
+    `AccessQuestions::may_channel_read` itself (issue 131).
 *   **One default level.** Six helper functions in five modules define the
     default confidentiality level
     ([97](../issues/97-small-model-unifications.md)).

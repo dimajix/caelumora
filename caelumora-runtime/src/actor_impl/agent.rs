@@ -104,7 +104,7 @@ impl AgentActor {
             &actor_runtime.component_registry(),
             // Its components read the session's other channels as the agent
             // (issue 17), but get nothing else of its runtime (issue 128).
-            &ComponentContext::new(security_context.clone(), actor_runtime.secret_manager(), actor_runtime.session_reader()),
+            &ComponentContext::new(security_context.clone(), actor_runtime.security_manager(), actor_runtime.secret_manager(), actor_runtime.session_reader(security_context.clone())),
         )
         .await?;
         let context_provider = components.one::<dyn ContextProvider>().await?;

@@ -251,11 +251,11 @@ pub trait AccessQuestions {
     /// rename it, add and remove participants (`UpdateChannel`).
     async fn may_change_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
-    /// Whether the channel `reader` may read the notes and history of the
-    /// channel `source` (`ReadChannel`, issues 17 and 61): asked in the name
-    /// of `reader_owner`, who is responsible for what is read into their
-    /// channel. A channel may always read itself.
-    async fn may_channel_read(&self, reader: &ChannelClassification, reader_owner: ActorId, source: &ChannelClassification) -> bool;
+    /// Whether the channel `reader` may read what comes from the channel
+    /// `source` - its notes and history, or what an agent wrote down there
+    /// (`ReadChannel`, issues 17, 61 and 131): asked in `context`, the
+    /// agent's who reads and passes it on. A channel may always read itself.
+    async fn may_channel_read(&self, context: &SecurityContext, reader: &ChannelClassification, source: &ChannelClassification) -> bool;
 
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
@@ -280,12 +280,11 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::UpdateChannel(channel)).await
     }
 
-    async fn may_channel_read(&self, reader: &ChannelClassification, reader_owner: ActorId, source: &ChannelClassification) -> bool {
+    async fn may_channel_read(&self, context: &SecurityContext, reader: &ChannelClassification, source: &ChannelClassification) -> bool {
         if reader.channel_id == source.channel_id {
             return true;
         }
-        let context = SecurityContext::new(reader_owner, reader.session_id, reader.channel_id);
-        self.check(&context, ActionType::ReadChannel { source, reader }).await
+        self.check(context, ActionType::ReadChannel { source, reader }).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
@@ -493,8 +492,8 @@ mod tests {
         let session_id = SessionId::new();
         let channel = |level| ChannelClassification { session_id, channel_id: ChannelId::new(), level };
         let (own, other) = (channel(Confidentiality::Channel), channel(Confidentiality::Public));
-        assert!(DenyAll.may_channel_read(&own, alice, &own).await, "a channel reads itself, whatever the policy");
-        assert!(!DenyAll.may_channel_read(&own, alice, &other).await, "another channel only as the policy decides");
+        assert!(DenyAll.may_channel_read(&context(alice), &own, &own).await, "a channel reads itself, whatever the policy");
+        assert!(!DenyAll.may_channel_read(&context(alice), &own, &other).await, "another channel only as the policy decides");
     }
 
     #[tokio::test]

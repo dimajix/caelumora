@@ -174,7 +174,7 @@ against it, and what came out of the last attempt.
 | [61](61-reasoning-leaves-the-agent.md) | done | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
 | [63](63-reasoning-in-model-input.md) | open | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
-| [131](131-agent-memory-bypasses-policy.md) | open | Agent memory decides with the built-in rule which entries may be recalled in a channel, instead of asking the `SecurityManager` like the other reads across channels. |
+| [131](131-agent-memory-bypasses-policy.md) | done | Agent memory decides with the built-in rule which entries may be recalled in a channel, instead of asking the `SecurityManager` like the other reads across channels. |
 | [66](66-channel-level-in-prompt.md) | done | Private notes and results of tools the channel does not see are not marked as private for the model, which may quote them in its always-published answer. |
 | [72](72-history-digest-ignores-limit.md) | done | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |

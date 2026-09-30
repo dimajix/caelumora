@@ -7,10 +7,11 @@
 //! so a reader sees notes of finished turns only, as principle 3 in issue 19
 //! requires. Another channel's notes
 //! and history are read only if the reading channel may read that channel
-//! (`ChannelSessionReader::may_read`, `AccessQuestions::may_channel_read`): decided by the two
-//! channels' confidentiality levels, not by who takes part in them, since an
-//! agent passes on what it reads to its channel (principle 11 in issue 19,
-//! as changed by issue 61).
+//! (`ChannelSessionReader::may_read`, `AccessQuestions::may_channel_read`),
+//! asked as the agent that reads: decided by the two channels'
+//! confidentiality levels, not by who takes part in them, since an agent
+//! passes on what it reads to its channel (principle 11 in issue 19, as
+//! changed by issue 61).
 
 use crate::channel::ChannelLoop;
 use crate::runtime::ActorRuntime;
@@ -21,7 +22,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
-use caelumora_model::security::AccessQuestions;
+use caelumora_model::security::{AccessQuestions, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -151,22 +152,25 @@ impl SessionReader for DetachedSessionReader {
     }
 }
 
-/// Reads the session of the channel an actor runs in.
+/// Reads the session of the channel an actor runs in, as that actor.
 #[derive(Debug)]
 pub struct ChannelSessionReader {
     runtime: ActorRuntime,
+    /// Whose reading it is: the actor's security context, in whose name
+    /// every read is asked (issue 131).
+    context: SecurityContext,
 }
 
 impl ChannelSessionReader {
-    pub fn new(runtime: ActorRuntime) -> Self {
-        Self { runtime }
+    pub fn new(runtime: ActorRuntime, context: SecurityContext) -> Self {
+        Self { runtime, context }
     }
 
     /// Whether the channel `own` may read `source`, as the confidentiality
     /// rules decide (`AccessQuestions::may_channel_read`).
     async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop) -> bool {
         self.runtime.security_manager()
-            .may_channel_read(&own.classification(), own.security_attributes().owner_id, &source.classification())
+            .may_channel_read(&self.context, &own.classification(), &source.classification())
             .await
     }
 

@@ -196,9 +196,10 @@ impl ActorRuntime {
     }
 
     /// What the actor may read of the session's other channels: their notes
-    /// and histories, as the confidentiality rules allow (issue 17).
-    pub fn session_reader(&self) -> Arc<dyn SessionReader> {
-        Arc::new(ChannelSessionReader::new(self.clone()))
+    /// and histories, as the confidentiality rules allow (issue 17), asked
+    /// in `context` - the actor's own (issue 131).
+    pub fn session_reader(&self, context: SecurityContext) -> Arc<dyn SessionReader> {
+        Arc::new(ChannelSessionReader::new(self.clone(), context))
     }
 
     /// The channel the actor is in, or `None` while the channel is still
@@ -272,7 +273,7 @@ impl RuntimeManager {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
         // Commands run outside of any channel: they read none.
-        let context = ComponentContext::new(security, self.secret_manager(), crate::session_reader::detached());
+        let context = ComponentContext::new(security, self.security_manager(), self.secret_manager(), crate::session_reader::detached());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.

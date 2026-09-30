@@ -100,10 +100,13 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     agent's own, seen by its owner in the context panel only.
 *   **Where it is recalled.** Every entry carries the classification of the
     channel it was written in and is recalled only where that channel's
-    contents may be read (`ChannelClassification::readable_from`, rule 2 of
-    issue 61): an entry from a `public` channel everywhere, from a
-    `session` channel within that session, from a `channel` channel only
-    there. Only entries recalled in a channel can be forgotten there.
+    contents may be read. The component asks the policy in the agent's name
+    (`AccessQuestions::may_channel_read` through the `SecurityManager` of its
+    `ComponentContext`, issue 131), once per channel the entries come from.
+    Under the ownership policy (rule 2 of issue 61) an entry from a `public`
+    channel is recalled everywhere, from a `session` channel within that
+    session, from a `channel` channel only there. Only entries recalled in a
+    channel can be forgotten there.
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in
     the channel, as the memory is now.
 *   **Staging.** A change is staged as an `AgentStateChange`

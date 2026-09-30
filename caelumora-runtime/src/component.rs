@@ -13,7 +13,7 @@
 
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::store::EntityStore;
 use futures::future::BoxFuture;
 use serde::Deserialize;
@@ -72,6 +72,10 @@ impl FacetType {
 #[derive(Clone)]
 pub struct ComponentContext {
     pub security_context: SecurityContext,
+    /// The policy, for the questions a component asks in
+    /// `security_context` (`AccessQuestions`) - such as what an agent's
+    /// memory may recall in its channel (issue 131).
+    pub security_manager: Arc<dyn SecurityManager>,
     pub secret_manager: Arc<SecretManager>,
     /// What the components may read of the session's other channels (issue
     /// 17): their actor's (`ActorRuntime::session_reader`), or
@@ -96,8 +100,8 @@ impl ComponentContext {
     /// The environment a component graph is built in:
     /// `ComponentContainer::from_config` gives each component this context,
     /// through which it reaches the others.
-    pub fn new(security_context: SecurityContext, secret_manager: Arc<SecretManager>, session_reader: Arc<dyn SessionReader>) -> Self {
-        Self { security_context, secret_manager, session_reader, building: None }
+    pub fn new(security_context: SecurityContext, security_manager: Arc<dyn SecurityManager>, secret_manager: Arc<SecretManager>, session_reader: Arc<dyn SessionReader>) -> Self {
+        Self { security_context, security_manager, secret_manager, session_reader, building: None }
     }
 
     /// Every other component of the graph that provides `T`, in the order of
@@ -659,6 +663,7 @@ mod tests {
     fn context_with_session(session_id: SessionId) -> ComponentContext {
         ComponentContext::new(
             SecurityContext { session_id, ..SecurityContext::default() },
+            Arc::new(DummySecurityManager::new()),
             Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
             crate::session_reader::detached(),
         )

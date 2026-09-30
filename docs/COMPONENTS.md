@@ -103,7 +103,11 @@ and the `ToolExecutor` (issue 127). They are registered with
 `ComponentContainer::from_config` takes the registry and a
 `ComponentContext`. The context holds:
 
-*   the `SecurityContext` of the whole graph,
+*   the `SecurityContext` of the whole graph - for an agent's components,
+    the agent's, in whose name they ask,
+*   the `SecurityManager`, for the questions a component asks in that
+    context (`AccessQuestions`; the memory asks what it may recall, issue
+    131),
 *   the `SecretManager`,
 *   the `SessionReader` of the actor the components are built for
     (`session_reader::detached()` for components of no actor, such as the

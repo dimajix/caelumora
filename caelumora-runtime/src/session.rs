@@ -1384,10 +1384,10 @@ mod tests {
 
         let security = runtime.security_manager();
         let may_read = |reader: &Arc<ChannelLoop>, source: &Arc<ChannelLoop>| {
-            let (reader, source, security) = (reader.clone(), source.clone(), security.clone());
+            let (reader, source, security, context) = (reader.clone(), source.clone(), security.clone(), alice_ctx.clone());
             async move {
                 use caelumora_model::security::AccessQuestions;
-                security.may_channel_read(&reader.classification(), reader.security_attributes().owner_id, &source.classification()).await
+                security.may_channel_read(&context, &reader.classification(), &source.classification()).await
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");
