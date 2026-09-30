@@ -135,3 +135,10 @@ each step, for running and stopped sessions alike.
   a node handing out its loaded data as a value, not for a parallel
   hierarchy. So renaming the views to snapshots would be an intermediate
   step at most.
+- **2026-09-30** — Decided by the maintainer: `SessionReader` goes up in
+  the new views - it is not kept beside them, renamed or as a facade over
+  them. What components read of their session today (`own_channel`,
+  `readable_channels`, `notes_of`, `history_of`, `private_notes`,
+  `channel_notes`, `privacy_of`) they read through the navigation, with the
+  agent as viewer, starting in its channel; the component gets that view
+  where it gets its `SessionReader` today (`ComponentContext`, issue 128).
