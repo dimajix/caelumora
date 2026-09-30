@@ -299,7 +299,6 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::command::default_commands;
     use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
@@ -319,7 +318,7 @@ mod tests {
             moderator: "broadcast".to_string(),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
-            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
         };
         let user = caelumora_model::user::User {

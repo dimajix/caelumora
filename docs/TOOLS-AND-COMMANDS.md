@@ -25,15 +25,17 @@ parameter `requires_approval` for every tool of its server.
 
 ### Tool confidentiality
 
-Every tool declares a `ToolConfidentiality` (issues 54, 61): how far the
-call itself may travel, and how far its content - arguments and result -
-may travel.
+Every tool declares a `ToolConfidentiality` (issues 54, 133): whether the
+call itself is published to the channel, and whether its content -
+arguments and result - is, or only the agent's owner sees it. How
+sensitive a result is - its classification - is the channel's for now; a
+tool classifying each result is step 3 of issue 133.
 
 *   `PUBLIC`, the default: others see the call in full.
 *   `CALL_ONLY`: others see that the tool was called, but not with what.
 *   `HIDDEN`: the whole call stays with the agent.
 
-How these labels are stamped on calls, how published messages are redacted,
+How these flags are stamped on calls, how published messages are redacted,
 and what the model is told about results it must not quote is described in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 

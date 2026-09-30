@@ -1,14 +1,14 @@
 // Creating a channel in a running session (issue 09): its name, its
-// moderator, its confidentiality level (issue 61), and who of the session
-// takes part besides the user.
+// moderator, its classification - a level and compartments (issue 133) -
+// and who of the session takes part besides the user.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
-import type {ActorId, ChannelResponse, SessionSnapshot, UserResponse} from '../types';
+import type {ActorId, ChannelResponse, Compartment, SessionSnapshot, UserResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_MODERATOR, MODERATOR_KINDS, moderatorInfo} from '../moderator';
-import {CONFIDENTIALITY_LEVELS, DEFAULT_CONFIDENTIALITY, confidentialityInfo} from '../confidentiality';
+import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
 
 /** The key an `ActorId` is told apart by. */
 function actorKey(id: ActorId): string {
@@ -34,10 +34,28 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     .sort((l, r) => l.name.localeCompare(r.name));
   const [name, setName] = useState('');
   const [moderator, setModerator] = useState(DEFAULT_MODERATOR);
-  const [confidentiality, setConfidentiality] = useState(DEFAULT_CONFIDENTIALITY);
+  const [level, setLevel] = useState<ConfidentialityLevel>(DEFAULT_CLASSIFICATION.level);
+  const [compartments, setCompartments] = useState<Compartment[]>([]);
+  const [chosenCompartments, setChosenCompartments] = useState<Set<string>>(new Set());
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(candidates.map(p => actorKey(p.id))));
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+
+  // The configured compartments; none if they cannot be fetched - the
+  // channel is then general.
+  useEffect(() => {
+    api.getCompartments()
+      .then(setCompartments)
+      .catch(error => reportError('Failed to fetch the compartments', error));
+  }, []);
+
+  const toggleCompartment = (name: string) => {
+    setChosenCompartments(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
 
   const toggle = (key: string) => {
     setChosen(prev => {
@@ -56,7 +74,8 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
       const channel = await api.createChannel(session.id, {
         name: name.trim(),
         moderator,
-        confidentiality,
+        // Public takes no compartment.
+        classification: {level, compartments: level === 'public' ? [] : [...chosenCompartments]},
         participants: candidates.filter(p => chosen.has(actorKey(p.id))).map(p => p.id),
       });
       onCreated(channel);
@@ -122,16 +141,37 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
           <label className="block space-y-1">
             <span className="text-xs text-gray-400">Confidentiality</span>
             <select
-              value={confidentiality}
-              onChange={(e) => setConfidentiality(e.target.value as typeof confidentiality)}
+              value={level}
+              onChange={(e) => setLevel(e.target.value as ConfidentialityLevel)}
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
             >
-              {CONFIDENTIALITY_LEVELS.map(level => (
-                <option key={level} value={level}>{confidentialityInfo(level).label}</option>
+              {CONFIDENTIALITY_LEVELS.map(l => (
+                <option key={l} value={l}>{confidentialityInfo(l).label}</option>
               ))}
             </select>
-            <span className="block text-xs text-gray-500">{confidentialityInfo(confidentiality).description}</span>
+            <span className="block text-xs text-gray-500">{confidentialityInfo(level).description}</span>
           </label>
+
+          {compartments.length > 0 && (
+            <fieldset className="space-y-1" disabled={level === 'public'}>
+              <legend className="text-xs text-gray-400">Compartments</legend>
+              <div className="text-xs text-gray-500">
+                {level === 'public'
+                  ? 'Public takes no compartment.'
+                  : 'Who it is meant for. Without one, it is general and may not read channels that have one.'}
+              </div>
+              {compartments.map(compartment => (
+                <label key={compartment.name} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={level !== 'public' && chosenCompartments.has(compartment.name)}
+                    onChange={() => toggleCompartment(compartment.name)}
+                  />
+                  <span>{compartment.name}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
 
           <fieldset className="space-y-1">
             <legend className="text-xs text-gray-400">Participants</legend>

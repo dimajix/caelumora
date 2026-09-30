@@ -70,7 +70,7 @@ impl ToolExecutor for DefaultToolExecutor {
             }
         };
         let mut result = match outcome {
-            Ok(value) => ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(value, call.confidentiality, turn.publication())),
+            Ok(value) => ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(value, call.confidentiality)),
             Err(e) => {
                 warn!("Tool call '{}' failed: {}", call.function_name, e);
                 let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();

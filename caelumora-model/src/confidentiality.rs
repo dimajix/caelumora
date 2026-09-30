@@ -1,131 +1,293 @@
-//! Confidentiality levels (issue 61): how far a piece of information may
-//! travel.
+//! Classification (issue 133): how sensitive a piece of information is, and
+//! for whom it is meant.
 //!
-//! A level is a reach. As the level of a channel it says how far the
-//! channel's contents may travel; as the label of a part of a message, how
-//! far that part may. What may be read or shown where depends on these
-//! levels and on the channels involved alone - not on who takes part in a
-//! channel at the moment, so that a decision stays the same when someone
-//! joins or leaves. The `SecurityManager` makes the decisions; the rules of
-//! the default policy are here. Compartments beside the levels are issue 64.
+//! A `Classification` is a level from a fixed scale and an audience of
+//! compartments - areas such as a topic, a group or a customer, which the
+//! administrator configures (`Compartments`). What may flow where is decided
+//! by the one flow rule, `Classification::flows_to`, from the
+//! classifications involved alone - not by who takes part in a channel at
+//! the moment, so that a decision stays the same when someone joins or
+//! leaves. The `SecurityManager` makes the decisions; the rule is here.
+//!
+//! Whether anyone but an actor's owner sees something at all is a separate
+//! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::channel::ChannelId;
 use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use thiserror::Error;
 
-/// How far information may travel, from `Public` (anywhere) to `Private`
-/// (never leaves the actor). Ordered: a higher level is more confidential.
+/// How sensitive information is, from `Public` to `StrictlyConfidential`.
+/// Ordered: a higher level is more confidential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidentiality {
-    /// Anywhere, beyond the session too.
+    /// Anyone may read it.
     Public,
-    /// The channels of the same session.
-    Session,
-    /// Only the channel it belongs to.
-    Channel,
-    /// Only the actor it belongs to - never published to a channel; its
-    /// owner sees it where they may see what the actor saw.
-    Private,
-}
-
-impl Confidentiality {
-    /// The level of a channel whose creator or template names none.
-    pub const CHANNEL_DEFAULT: Confidentiality = Confidentiality::Session;
-
-    /// Whether a channel may have this level: `Private` is the actor's, not
-    /// a channel's.
-    pub fn is_channel_level(&self) -> bool {
-        *self != Confidentiality::Private
-    }
+    /// For the organisation.
+    Internal,
+    Confidential,
+    StrictlyConfidential,
 }
 
 impl fmt::Display for Confidentiality {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Confidentiality::Public => "public",
-            Confidentiality::Session => "session",
-            Confidentiality::Channel => "channel",
-            Confidentiality::Private => "private",
+            Confidentiality::Internal => "internal",
+            Confidentiality::Confidential => "confidential",
+            Confidentiality::StrictlyConfidential => "strictly_confidential",
         })
     }
 }
 
-/// A channel as the confidentiality rules see it: where it is, and the level
-/// of its contents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// An area information may belong to - a topic, a group, a customer - by
+/// its name. Which compartments exist is configured (`Compartments`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Compartment(String);
+
+impl Compartment {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Compartment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ClassificationError {
+    #[error("A public classification takes no compartment")]
+    PublicWithCompartments,
+    #[error("Compartment '{0}' is not configured")]
+    UnknownCompartment(Compartment),
+    #[error("A compartment needs a name")]
+    UnnamedCompartment,
+    #[error("Compartment '{0}' is configured twice")]
+    DuplicateCompartment(Compartment),
+}
+
+/// A level and an audience of compartments (issue 133).
+///
+/// The compartments are who may read it: adding one widens the audience. A
+/// classification without compartments is *general* - readable by everyone
+/// of a sufficient level. `Public` takes no compartment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "ClassificationFields")]
+pub struct Classification {
+    level: Confidentiality,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    compartments: BTreeSet<Compartment>,
+}
+
+/// A classification as it is written down, checked by `Classification::new`
+/// when it is read.
+#[derive(Deserialize)]
+struct ClassificationFields {
+    level: Confidentiality,
+    #[serde(default)]
+    compartments: BTreeSet<Compartment>,
+}
+
+impl TryFrom<ClassificationFields> for Classification {
+    type Error = ClassificationError;
+
+    fn try_from(fields: ClassificationFields) -> Result<Self, Self::Error> {
+        Self::new(fields.level, fields.compartments)
+    }
+}
+
+impl Classification {
+    /// The classification of a channel whose creator or template names none.
+    pub const CHANNEL_DEFAULT: Classification = Classification::general(Confidentiality::Internal);
+
+    /// `level` with the audience `compartments`; refused for `Public` with
+    /// compartments. Whether the compartments exist is the configuration's
+    /// question (`Compartments::check`).
+    pub fn new(level: Confidentiality, compartments: impl IntoIterator<Item = Compartment>) -> Result<Self, ClassificationError> {
+        let compartments: BTreeSet<Compartment> = compartments.into_iter().collect();
+        if level == Confidentiality::Public && !compartments.is_empty() {
+            return Err(ClassificationError::PublicWithCompartments);
+        }
+        Ok(Self { level, compartments })
+    }
+
+    /// `level` without compartments.
+    pub const fn general(level: Confidentiality) -> Self {
+        Self { level, compartments: BTreeSet::new() }
+    }
+
+    pub fn level(&self) -> Confidentiality {
+        self.level
+    }
+
+    pub fn compartments(&self) -> &BTreeSet<Compartment> {
+        &self.compartments
+    }
+
+    /// Whether information classified `self` may flow into what is
+    /// classified `destination` - a part into a channel, one channel's
+    /// contents into another, a result into an agent's context (issue 133).
+    ///
+    /// The destination's level must be at least this one. If this has
+    /// compartments, so must the destination, and every one of them must be
+    /// covered by one of these - the same, or one it may read: everything
+    /// the destination's audiences see must be meant for them. What is
+    /// general flows into any destination of a sufficient level; what has
+    /// an audience never into a general destination.
+    pub fn flows_to(&self, destination: &Classification, compartments: &Compartments) -> bool {
+        if destination.level < self.level {
+            return false;
+        }
+        if self.compartments.is_empty() {
+            return true;
+        }
+        !destination.compartments.is_empty()
+            && destination.compartments.iter().all(|reader| self.compartments.iter().any(|source| compartments.may_read(reader, source)))
+    }
+}
+
+impl Default for Classification {
+    fn default() -> Self {
+        Self::CHANNEL_DEFAULT
+    }
+}
+
+impl fmt::Display for Classification {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.level)?;
+        if !self.compartments.is_empty() {
+            let names: Vec<&str> = self.compartments.iter().map(Compartment::name).collect();
+            write!(f, " {{{}}}", names.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+/// The compartments the administrator configured, and which may read which
+/// (issue 133). The read relation is closed transitively when it is built:
+/// what a compartment wrote may contain what it read, so whoever may read
+/// the one reads the other too. Every compartment reads itself.
+///
+/// Written as a list of definitions, each a `name` and the compartments it
+/// `reads` - the `compartments` section of the configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<CompartmentDefinition>")]
+pub struct Compartments {
+    reads: BTreeMap<Compartment, BTreeSet<Compartment>>,
+}
+
+/// One compartment as the configuration defines it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompartmentDefinition {
+    name: Compartment,
+    #[serde(default)]
+    reads: Vec<Compartment>,
+}
+
+impl TryFrom<Vec<CompartmentDefinition>> for Compartments {
+    type Error = ClassificationError;
+
+    fn try_from(definitions: Vec<CompartmentDefinition>) -> Result<Self, Self::Error> {
+        Self::new(definitions.into_iter().map(|d| (d.name, d.reads)))
+    }
+}
+
+impl Compartments {
+    /// The compartments `definitions` name, each with the compartments it
+    /// may read. Refused if a name is empty, given twice, or reads a
+    /// compartment that is not defined.
+    pub fn new(definitions: impl IntoIterator<Item = (Compartment, Vec<Compartment>)>) -> Result<Self, ClassificationError> {
+        let mut reads: BTreeMap<Compartment, BTreeSet<Compartment>> = BTreeMap::new();
+        for (compartment, readable) in definitions {
+            if compartment.name().is_empty() {
+                return Err(ClassificationError::UnnamedCompartment);
+            }
+            if reads.contains_key(&compartment) {
+                return Err(ClassificationError::DuplicateCompartment(compartment));
+            }
+            let mut readable: BTreeSet<Compartment> = readable.into_iter().collect();
+            readable.insert(compartment.clone());
+            reads.insert(compartment, readable);
+        }
+        if let Some(unknown) = reads.values().flatten().find(|c| !reads.contains_key(*c)) {
+            return Err(ClassificationError::UnknownCompartment(unknown.clone()));
+        }
+        // Transitive closure: add what the readable ones read until nothing
+        // changes.
+        loop {
+            let mut changed = false;
+            let snapshot = reads.clone();
+            for readable in reads.values_mut() {
+                let further: BTreeSet<Compartment> = readable.iter().flat_map(|c| snapshot[c].iter().cloned()).collect();
+                if !further.is_subset(readable) {
+                    readable.extend(further);
+                    changed = true;
+                }
+            }
+            if !changed {
+                return Ok(Self { reads });
+            }
+        }
+    }
+
+    /// The configured compartments, by name.
+    pub fn names(&self) -> impl Iterator<Item = &Compartment> {
+        self.reads.keys()
+    }
+
+    /// Whether `reader`'s audience may read what is meant for `source`:
+    /// the same compartment, or one it reads, directly or through others.
+    pub fn may_read(&self, reader: &Compartment, source: &Compartment) -> bool {
+        reader == source || self.reads.get(reader).is_some_and(|readable| readable.contains(source))
+    }
+
+    /// Nothing if every compartment of `classification` is configured.
+    pub fn check(&self, classification: &Classification) -> Result<(), ClassificationError> {
+        match classification.compartments.iter().find(|c| !self.reads.contains_key(*c)) {
+            Some(unknown) => Err(ClassificationError::UnknownCompartment(unknown.clone())),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Who sees a part of what an actor produces - an ownership flag beside the
+/// classification (issue 133). `Owner` is what never reaches a channel: the
+/// actor sees it, and its owner where they may see what the actor saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    /// Published to the channel, which may read it as it reads the channel.
+    #[default]
+    Channel,
+    /// Only the actor and its owner.
+    Owner,
+}
+
+impl Visibility {
+    pub fn is_channel(&self) -> bool {
+        *self == Visibility::Channel
+    }
+}
+
+/// A channel as the confidentiality rules see it: where it is, and the
+/// classification of its contents.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ChannelClassification {
     pub session_id: SessionId,
     pub channel_id: ChannelId,
-    pub level: Confidentiality,
-}
-
-impl ChannelClassification {
-    /// Whether `reader` lies within the reach of this channel's contents.
-    fn reaches(&self, reader: &ChannelClassification) -> bool {
-        match self.level {
-            Confidentiality::Public => true,
-            Confidentiality::Session => self.session_id == reader.session_id,
-            Confidentiality::Channel | Confidentiality::Private => self.channel_id == reader.channel_id,
-        }
-    }
-
-    /// Whether a part of a message labelled `label` may be published to this
-    /// channel (rule 1 of issue 61): if the label does not reach further
-    /// than the channel's contents may travel anyway. Never for `Private`.
-    pub fn admits(&self, label: Confidentiality) -> bool {
-        label.is_channel_level() && label <= self.level
-    }
-
-    /// Whether the notes and history of this channel may be read from
-    /// `reader` (rule 2 of issue 61): `reader` must lie within this
-    /// channel's reach, and its own level must be at least this channel's,
-    /// because an agent passes on what it reads to `reader`. A channel may
-    /// always read itself.
-    pub fn readable_from(&self, reader: &ChannelClassification) -> bool {
-        self.channel_id == reader.channel_id || (self.reaches(reader) && self.level <= reader.level)
-    }
-}
-
-/// No channel yet: the nil ids, at the level a channel gets by default.
-impl Default for ChannelClassification {
-    fn default() -> Self {
-        Self { session_id: SessionId::default(), channel_id: ChannelId::default(), level: Confidentiality::CHANNEL_DEFAULT }
-    }
-}
-
-/// Which labels an actor may publish to its channel, as the
-/// `SecurityManager` decided when its turn began (issue 61) - asked once per
-/// turn and level rather than once per streamed part. `Private` is never
-/// among them, whatever the policy says. Without a decision only `Public`
-/// is published.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Publication {
-    session: bool,
-    channel: bool,
-}
-
-impl Publication {
-    /// A decision: whether `Session` and `Channel` may be published.
-    pub fn new(session: bool, channel: bool) -> Self {
-        Self { session, channel }
-    }
-
-    pub fn allows(&self, label: Confidentiality) -> bool {
-        match label {
-            Confidentiality::Public => true,
-            Confidentiality::Session => self.session,
-            Confidentiality::Channel => self.channel,
-            Confidentiality::Private => false,
-        }
-    }
-}
-
-impl Default for Publication {
-    fn default() -> Self {
-        Self::new(false, false)
-    }
+    pub classification: Classification,
 }
 
 #[cfg(test)]
@@ -133,48 +295,94 @@ mod tests {
     use super::*;
     use Confidentiality::*;
 
-    fn channel(session: SessionId, level: Confidentiality) -> ChannelClassification {
-        ChannelClassification { session_id: session, channel_id: ChannelId::new(), level }
+    fn compartment(name: &str) -> Compartment {
+        Compartment::new(name)
+    }
+
+    fn classified(level: Confidentiality, compartments: &[&str]) -> Classification {
+        Classification::new(level, compartments.iter().map(|c| compartment(c))).unwrap()
+    }
+
+    /// HR management reads HR, HR reads finance.
+    fn organisation() -> Compartments {
+        Compartments::new([
+            (compartment("hr_management"), vec![compartment("hr")]),
+            (compartment("hr"), vec![compartment("finance")]),
+            (compartment("finance"), vec![]),
+            (compartment("sales"), vec![]),
+        ])
+        .unwrap()
     }
 
     #[test]
-    fn the_levels_are_ordered_by_reach() {
-        assert!(Public < Session && Session < Channel && Channel < Private);
-        assert!(!Private.is_channel_level());
-        assert_eq!(serde_json::to_value(Session).unwrap(), "session");
+    fn the_levels_are_ordered_by_sensitivity() {
+        assert!(Public < Internal && Internal < Confidential && Confidential < StrictlyConfidential);
+        assert_eq!(serde_json::to_value(StrictlyConfidential).unwrap(), "strictly_confidential");
+        assert_eq!(Classification::default(), Classification::general(Internal));
     }
 
     #[test]
-    fn a_channel_is_read_within_its_reach_by_channels_at_least_as_confidential() {
-        let (here, elsewhere) = (SessionId::new(), SessionId::new());
-        let reader = |level| channel(here, level);
-
-        // What may be read from a session-level channel, by source level.
-        let session_reader = reader(Session);
-        assert!(channel(here, Public).readable_from(&session_reader));
-        assert!(channel(here, Session).readable_from(&session_reader));
-        assert!(!channel(here, Channel).readable_from(&session_reader), "stays in its channel");
-        assert!(!channel(elsewhere, Session).readable_from(&session_reader), "another session");
-        assert!(channel(elsewhere, Public).readable_from(&session_reader), "public reaches everywhere");
-
-        // A reader passes on what it reads: a public channel reads only
-        // public contents, a channel-level one everything within reach.
-        assert!(!channel(here, Session).readable_from(&reader(Public)));
-        assert!(channel(here, Session).readable_from(&reader(Channel)));
-        assert!(!channel(here, Channel).readable_from(&reader(Channel)), "not even by another confidential channel");
+    fn public_takes_no_compartment() {
+        assert_eq!(Classification::new(Public, [compartment("hr")]), Err(ClassificationError::PublicWithCompartments));
+        let written = serde_json::json!({"level": "public", "compartments": ["hr"]});
+        assert!(serde_json::from_value::<Classification>(written).is_err(), "not even when it is read");
     }
 
     #[test]
-    fn a_channel_admits_what_travels_no_further_than_its_contents() {
-        let team = channel(SessionId::new(), Session);
-        assert!(team.admits(Public) && team.admits(Session));
-        assert!(!team.admits(Channel), "would reach the other channels of the session");
-        assert!(!channel(SessionId::new(), Channel).admits(Private), "never leaves the actor");
+    fn a_classification_is_written_without_an_empty_audience() {
+        assert_eq!(serde_json::to_value(Classification::general(Internal)).unwrap(), serde_json::json!({"level": "internal"}));
+        let hr = classified(Confidential, &["hr"]);
+        assert_eq!(serde_json::to_value(&hr).unwrap(), serde_json::json!({"level": "confidential", "compartments": ["hr"]}));
+        assert_eq!(serde_json::from_value::<Classification>(serde_json::json!({"level": "confidential", "compartments": ["hr"]})).unwrap(), hr);
     }
 
     #[test]
-    fn a_channel_always_reads_itself() {
-        let own = channel(SessionId::new(), Channel);
-        assert!(own.readable_from(&own));
+    fn the_read_relation_is_closed_transitively() {
+        let compartments = organisation();
+        assert!(compartments.may_read(&compartment("hr_management"), &compartment("finance")), "through hr");
+        assert!(compartments.may_read(&compartment("hr"), &compartment("hr")), "itself");
+        assert!(!compartments.may_read(&compartment("finance"), &compartment("hr")), "not the other way round");
+        assert!(!compartments.may_read(&compartment("sales"), &compartment("hr")));
+    }
+
+    #[test]
+    fn compartments_are_refused_if_they_read_what_is_not_configured() {
+        let refused = Compartments::new([(compartment("hr"), vec![compartment("payroll")])]);
+        assert_eq!(refused, Err(ClassificationError::UnknownCompartment(compartment("payroll"))));
+        let twice = Compartments::new([(compartment("hr"), vec![]), (compartment("hr"), vec![])]);
+        assert_eq!(twice, Err(ClassificationError::DuplicateCompartment(compartment("hr"))));
+        assert_eq!(organisation().check(&classified(Internal, &["hrr"])), Err(ClassificationError::UnknownCompartment(compartment("hrr"))));
+        assert_eq!(organisation().check(&classified(Internal, &["hr"])), Ok(()));
+    }
+
+    #[test]
+    fn information_flows_only_to_a_level_at_least_its_own() {
+        let none = Compartments::default();
+        assert!(Classification::general(Internal).flows_to(&Classification::general(Confidential), &none));
+        assert!(Classification::general(Internal).flows_to(&Classification::general(Internal), &none));
+        assert!(!Classification::general(Confidential).flows_to(&Classification::general(Internal), &none));
+        assert!(Classification::general(Public).flows_to(&classified(Internal, &["hr"]), &none), "what is general flows anywhere");
+    }
+
+    #[test]
+    fn information_with_an_audience_never_flows_into_a_general_destination() {
+        let compartments = organisation();
+        assert!(!classified(Internal, &["hr"]).flows_to(&Classification::general(Internal), &compartments));
+        assert!(!classified(Internal, &["hr"]).flows_to(&Classification::general(StrictlyConfidential), &compartments));
+    }
+
+    #[test]
+    fn every_audience_of_the_destination_must_be_covered() {
+        let compartments = organisation();
+        let hr = classified(Internal, &["hr"]);
+        assert!(hr.flows_to(&classified(Internal, &["hr"]), &compartments));
+        assert!(hr.flows_to(&classified(Internal, &["hr_management"]), &compartments), "HR management reads HR");
+        assert!(classified(Internal, &["finance"]).flows_to(&classified(Internal, &["hr_management"]), &compartments), "transitively");
+        assert!(!hr.flows_to(&classified(Internal, &["finance"]), &compartments), "finance does not read HR");
+        assert!(!hr.flows_to(&classified(Internal, &["hr", "sales"]), &compartments), "sales would see it too");
+
+        let released = classified(Internal, &["hr", "sales"]);
+        assert!(released.flows_to(&classified(Internal, &["hr", "sales"]), &compartments), "released to both");
+        assert!(released.flows_to(&classified(Internal, &["sales"]), &compartments), "any of its audiences will do");
     }
 }

@@ -1,5 +1,5 @@
 use crate::approval::{ApprovalId, ApprovalStatus};
-use crate::confidentiality::Confidentiality;
+use crate::confidentiality::Visibility;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -72,26 +72,26 @@ impl ToolParameters {
     }
 }
 
-/// The confidentiality labels of a tool's calls (issues 54, 61): how far
-/// the call itself - that the tool was called - may travel, and how far its
-/// content, the arguments and the result. The content is never less
-/// confidential than the call. The agent keeps every call in full; what it
-/// publishes to its channel is redacted by these labels against the
-/// channel's level (`Message::published`).
+/// Who sees a tool's calls (issues 54, 133): the call itself - that the
+/// tool was called - and its content, the arguments and the result. The
+/// content is never seen by more than the call. The agent keeps every call
+/// in full; what it publishes to its channel is redacted by these flags
+/// (`Message::published`). How sensitive a result is, is its
+/// classification - issue 133, step 3; the name of this type is too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolConfidentiality {
-    pub call: Confidentiality,
-    pub content: Confidentiality,
+    pub call: Visibility,
+    pub content: Visibility,
 }
 
 impl ToolConfidentiality {
-    /// Call, arguments and result may travel anywhere.
-    pub const PUBLIC: ToolConfidentiality = ToolConfidentiality { call: Confidentiality::Public, content: Confidentiality::Public };
+    /// Call, arguments and result are published to the channel.
+    pub const PUBLIC: ToolConfidentiality = ToolConfidentiality { call: Visibility::Channel, content: Visibility::Channel };
     /// Others may see that the tool was called, but not with what or what
     /// it returned.
-    pub const CALL_ONLY: ToolConfidentiality = ToolConfidentiality { call: Confidentiality::Public, content: Confidentiality::Private };
+    pub const CALL_ONLY: ToolConfidentiality = ToolConfidentiality { call: Visibility::Channel, content: Visibility::Owner };
     /// Nothing of the call leaves the agent.
-    pub const HIDDEN: ToolConfidentiality = ToolConfidentiality { call: Confidentiality::Private, content: Confidentiality::Private };
+    pub const HIDDEN: ToolConfidentiality = ToolConfidentiality { call: Visibility::Owner, content: Visibility::Owner };
 
     pub fn is_public(&self) -> bool {
         *self == Self::PUBLIC
@@ -110,8 +110,8 @@ pub struct Tool {
     pub description: String,
     pub parameters: ToolParameters,
     pub requires_approval: bool,
-    /// How far its calls may travel. Approvers see the arguments of a call
-    /// that needs approval regardless: they cannot decide otherwise.
+    /// Who sees its calls. Approvers see the arguments of a call that needs
+    /// approval regardless: they cannot decide otherwise.
     #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
     pub confidentiality: ToolConfidentiality,
 }

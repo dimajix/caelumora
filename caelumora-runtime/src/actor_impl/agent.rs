@@ -17,10 +17,10 @@ use crate::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
-use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, Publication};
+use caelumora_model::confidentiality::Visibility;
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -49,9 +49,9 @@ pub struct AgentActor {
     /// Runs the agent's tool calls: its `ToolExecutor` component, behind
     /// the runtime's permission checks (issue 127).
     tool_executor: GuardedToolExecutor,
-    /// The least confidential label its reasoning gets (issue 61), from the
+    /// Who sees its reasoning at least (issues 61, 133), from the
     /// personality.
-    reasoning_confidentiality: Confidentiality,
+    reasoning_visibility: Visibility,
 
     // State
     state: Mutex<AgentActorState>,
@@ -132,7 +132,7 @@ impl AgentActor {
             perceive_in_processors,
             emit_out_processors,
             tool_executor,
-            reasoning_confidentiality: personality.reasoning_confidentiality,
+            reasoning_visibility: personality.reasoning_visibility,
             state,
             processing_state,
             turn_cancel: std::sync::Mutex::new(CancellationToken::new()),
@@ -247,15 +247,16 @@ impl AgentActor {
     /// published by what applied at the time of the call; a call of an
     /// unknown tool is public: it fails, and its failure hides nothing.
     ///
-    /// The reasoning gets the most confidential of: the personality's
-    /// default; `Private` once the turn saw the agent's private knowledge;
-    /// and the content of the calls it leads to - those of the message once
-    /// it is `complete`, and while it streams those of every tool the agent
-    /// could still call, since reasoning comes before the call it leads to.
-    /// Knowledge read from other channels adds nothing: a channel reads only
-    /// what reaches no further than its own contents (rule 2), so the
-    /// channel admits it anyway. The tools are those the turn began with,
-    /// which the model was offered (issue 137).
+    /// The reasoning is the owner's (`Visibility::Owner`) if the
+    /// personality says so, once the turn saw the agent's private
+    /// knowledge, or if the content of a call it leads to is - those of the
+    /// message once it is `complete`, and while it streams those of every
+    /// tool the agent could still call, since reasoning comes before the
+    /// call it leads to. Otherwise it carries the channel's classification,
+    /// as everything the agent derives does (issue 133). Knowledge read
+    /// from other channels adds nothing: a channel reads only what may flow
+    /// into it. The tools are those the turn began with, which the model
+    /// was offered (issue 137).
     fn label(&self, message: &mut Message, turn: &Turn, complete: bool) {
         let tools = turn.tools();
         let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.confidentiality).unwrap_or_default();
@@ -263,16 +264,13 @@ impl AgentActor {
             call.confidentiality = declared(&call.function_name);
         }
 
-        let mut label = self.reasoning_confidentiality;
-        if turn.saw_private_knowledge() {
-            label = Confidentiality::Private;
-        }
-        let calls = if complete {
-            message.tool_calls.iter().map(|c| c.confidentiality.content).max()
+        let owners_call = if complete {
+            message.tool_calls.iter().any(|c| !c.confidentiality.content.is_channel())
         } else {
-            tools.iter().map(|t| t.confidentiality.content).max()
+            tools.iter().any(|t| !t.confidentiality.content.is_channel())
         };
-        message.reasoning_confidentiality = label.max(calls.unwrap_or(Confidentiality::Public));
+        let owners = !self.reasoning_visibility.is_channel() || turn.saw_private_knowledge() || owners_call;
+        message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };
     }
 
     /// Stores the agent's state in its channel as `turn` holds it.
@@ -322,18 +320,15 @@ impl AgentActor {
     }
 
     /// Begins a turn in answer to the envelope with `event_context` and
-    /// `security_context`: with the channel as it is now and what the
-    /// `SecurityManager` lets the agent publish there. Fails without a
+    /// `security_context`, with the channel as it is now. Fails without a
     /// channel, which happens only while it is being torn down.
     async fn begin_turn<'a>(&self, turn: &mut Turn<'a>, event_context: &EventContext, security_context: &SecurityContext) -> Result<()> {
         let classification = self.actor_runtime.classification()
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id))?;
-        let publication = self.publication(&classification).await;
         turn.next_turn(
             event_context.next(self.id, self.agent_controller.name()),
             security_context.next(self.id),
             classification,
-            publication,
             self.tool_executor.tools(),
         );
         *self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = CancellationToken::new();
@@ -343,20 +338,6 @@ impl AgentActor {
     /// The token of the current turn, cancelled by `cancel`.
     fn turn_token(&self) -> CancellationToken {
         self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
-    }
-
-    /// What the agent may publish to its channel in the turn beginning now
-    /// (issue 61): the `SecurityManager` is asked for each level a channel
-    /// can have, with the agent's channel and in its owner's name.
-    async fn publication(&self, classification: &ChannelClassification) -> Publication {
-        let owner = self.agent_controller.load().security_attributes.owner_id;
-        let context = SecurityContext::new(owner, classification.session_id, classification.channel_id);
-        let security = self.actor_runtime.security_manager();
-        let allows = |label| {
-            let (security, context) = (security.clone(), context.clone());
-            async move { security.may_publish(&context, label, self.id, classification).await }
-        };
-        Publication::new(allows(Confidentiality::Session).await, allows(Confidentiality::Channel).await)
     }
 
     /// Runs the approved calls of the step that have no result yet - the

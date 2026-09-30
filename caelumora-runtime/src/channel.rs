@@ -520,7 +520,7 @@ impl ChannelLoop {
 
     /// The channel as the confidentiality rules see it (issue 61).
     pub fn classification(&self) -> ChannelClassification {
-        self.channel.load().classification()
+        self.channel.load().channel_classification()
     }
 
     /// The notes every agent of the channel published (issue 17), read from
@@ -905,7 +905,6 @@ fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::store::EntityStore;
     use crate::command::CommandExecutor;
     use crate::component::ComponentImpl;
@@ -974,7 +973,7 @@ mod tests {
             moderator: "broadcast".to_string(),
             participants,
             security_attributes: SecurityAttributes::default(),
-            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
         };
         let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
@@ -1314,7 +1313,7 @@ mod tests {
         let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
         let store = Arc::new(MemoryStore::new());
         let personality = Personality {
-            reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
+            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
             components,
@@ -1362,7 +1361,7 @@ mod tests {
                 Participant::Approver(caelumora_model::approval::Approver { id: caelumora_model::approval::ApproverId::new(), strategy: caelumora_model::approval::ApprovalStrategy::Any }),
             ],
             security_attributes: SecurityAttributes::default(),
-            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
         };
         // Stored, so that leaving it can be stored too.

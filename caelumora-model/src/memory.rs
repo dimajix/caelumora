@@ -7,9 +7,8 @@
 //! it belongs to the agent itself, not to one of its channels: it does not
 //! branch with a channel's history (principle 7 in issue 19), and every entry
 //! carries the classification of the channel it was written in, so that it
-//! is recalled only where that channel's contents may be read (rule 2 of
-//! issue 61) - an entry from a `public` channel everywhere, from a `session`
-//! channel within that session, from a `channel` channel only there.
+//! is recalled only where that channel's contents may be read (the flow
+//! rule of issue 133, `Classification::flows_to`).
 
 use crate::chain::{Chain, ChainEntry};
 use crate::confidentiality::ChannelClassification;
@@ -108,7 +107,7 @@ impl MemoryChain {
                 MemoryChange::Remember { id, text } => memories.push(Memory {
                     id: *id,
                     text: text.clone(),
-                    origin: entry.origin,
+                    origin: entry.origin.clone(),
                     after: entry.after,
                     written_at: entry.written_at,
                 }),
@@ -134,10 +133,9 @@ impl MemoryChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::Confidentiality;
 
     fn origin() -> ChannelClassification {
-        ChannelClassification { session_id: Default::default(), channel_id: Default::default(), level: Confidentiality::Session }
+        ChannelClassification::default()
     }
 
     #[test]

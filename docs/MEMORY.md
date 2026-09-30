@@ -78,8 +78,8 @@ channel, `AgentChannelState::private_notes`, with its own tools
     every other channel of the session that this channel may read
     (`AccessQuestions::may_channel_read`, the same rule as for
     [reading another channel](#reading-other-channels)). A note carries the
-    confidentiality of the channel it was written in, checked against that
-    channel's current level when it is read.
+    classification of the channel it was written in, checked against that
+    channel's current classification when it is read.
 *   **Hidden calls.** Both tools are `ToolConfidentiality::HIDDEN`, so the
     calls never reach the channel. "Private" means private from other agents
     and other users, not from the agent's owner, who sees them in the
@@ -103,10 +103,10 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     contents may be read. The component asks the policy in the agent's name
     (`AccessQuestions::may_channel_read` through the `SecurityManager` of its
     `ComponentContext`, issue 131), once per channel the entries come from.
-    Under the ownership policy (rule 2 of issue 61) an entry from a `public`
-    channel is recalled everywhere, from a `session` channel within that
-    session, from a `channel` channel only there. Only entries recalled in a
-    channel can be forgotten there.
+    Under the ownership policy an entry is recalled where its channel's
+    classification flows into the current one's (the flow rule of issue
+    133) - within the session, and from `public` channels beyond it. Only
+    entries recalled in a channel can be forgotten there.
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in
     the channel, as the memory is now.
 *   **Staging.** A change is staged as an `AgentStateChange`
@@ -136,7 +136,7 @@ nothing.
 *   **Who may read what.** Another channel is read only if the reading
     channel may read it (`AccessQuestions::may_channel_read`,
     `ActionType::ReadChannel`). That depends on the two channels'
-    confidentiality levels, not on who takes part in them, because an agent
+    classifications, not on who takes part in them, because an agent
     passes on what it reads to its channel (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 *   **No probing.** A channel that does not exist and one that may not be
@@ -190,8 +190,8 @@ branch of the conversation it came from
 | **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes ([17](../issues/17-information-sharing-within-session.md)). | agent in channel | session | yes |
 | **Session memory** | The union of the active public note chains of all agents in all channels of a session - a view, not a store. | session | session | per channel |
 | **Agent memory** | An alternative to private notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)): what an agent remembers across its channels and sessions: a chain in its `AgentState` (component `agent_memory`, tools `remember` / `forget`), each entry carrying the classification of the channel it was written in and recalled only where that channel may be read ([62](../issues/62-json-store-concurrent-writes.md)). | agent | beyond the session | no |
-| **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent, carrying the confidentiality of that channel ([51](../issues/51-agent-private-notes.md)). | agent in channel | session | yes |
-| **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its confidentiality allows. | agent in session | session | per channel |
+| **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent, carrying the classification of that channel ([51](../issues/51-agent-private-notes.md)). | agent in channel | session | yes |
+| **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its channel's classification allows. | agent in session | session | per channel |
 | **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](../issues/18-knowledge-sharing.md)). | agent | permanent | no |
 | **Shared knowledge** | Knowledge shared by several agents or users ([18](../issues/18-knowledge-sharing.md)). | group / global | permanent | no |
 | **Workspace** | Documents several channels edit together; outside the branches, every change an effect ([20](../issues/20-transactional-effects.md)). | session or beyond | until deleted | no |

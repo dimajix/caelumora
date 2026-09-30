@@ -114,7 +114,8 @@ against it, and what came out of the last attempt.
 | [94](94-users-unchecked-in-store.md) | done | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
 | [95](95-require-for-security-manager.md) | done | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
 | [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
-| [133](133-classification-model.md) | open | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
+| [133](133-classification-model.md) | in progress | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
+| [138](138-confidentiality-policy-in-ownership.md) | open | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
 
 ## Tools and approvals
 
@@ -199,7 +200,7 @@ against it, and what came out of the last attempt.
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
 | [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
 | [96](96-config-unification.md) | done | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
-| [97](97-small-model-unifications.md) | open | Six helper functions in five modules define the default confidentiality level. |
+| [97](97-small-model-unifications.md) | done | Six helper functions in five modules define the default confidentiality level. |
 | [112](112-id-types.md) | done | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
 | [113](113-error-shapes.md) | done | "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it. |
 | [114](114-moderator-details.md) | done | `ModeratorActors` uses a concurrent map behind `&mut self`, downcasts for a kind the id already tells, and clones every message twice. |

@@ -83,3 +83,16 @@ users:
 #security:
 #  type: ownership
 
+# The compartments a classification may name (issue 133): areas such as a
+# topic, a group or a customer, each with the compartments it may read. The
+# read relation is closed transitively - here management reads HR, and
+# through HR finance too. A channel classified with a compartment is read
+# only by channels whose every compartment reads it; a channel without
+# compartments reads none of it. Without this section there are no
+# compartments.
+compartments:
+  - name: management
+    reads: [hr]
+  - name: hr
+    reads: [finance]
+  - name: finance

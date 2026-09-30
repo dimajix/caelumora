@@ -1,7 +1,6 @@
 use crate::agent_turn::Turn;
 use crate::component::ComponentImpl;
 use async_trait::async_trait;
-use caelumora_model::confidentiality::Publication;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
 use serde::de::DeserializeOwned;
@@ -69,11 +68,11 @@ fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
 
 /// What the model is given as the result of a call that succeeded: the
 /// tool's `value` - marked as the agent's alone if the channel does not see
-/// it (issue 66), i.e. if the turn may not publish the call's content label.
-/// The answer text is always published, so a result the channel does not
-/// see is worthless redacted if the model quotes it.
-pub fn successful_result(value: Value, confidentiality: ToolConfidentiality, publication: Publication) -> String {
-    if publication.allows(confidentiality.content) {
+/// it (issue 66), i.e. if the call's content is its owner's
+/// (`Visibility::Owner`). The answer text is always published, so a result
+/// the channel does not see is worthless redacted if the model quotes it.
+pub fn successful_result(value: Value, confidentiality: ToolConfidentiality) -> String {
+    if confidentiality.content.is_channel() {
         return value.to_string();
     }
     serde_json::json!({
@@ -388,15 +387,11 @@ mod tests {
     #[test]
     fn a_result_the_channel_does_not_see_is_marked_for_the_model() {
         let value = json!({"secret": 42});
-        let public = successful_result(value.clone(), ToolConfidentiality::PUBLIC, Publication::default());
+        let public = successful_result(value.clone(), ToolConfidentiality::PUBLIC);
         assert_eq!(parse(&public), value, "passed on unchanged");
 
-        let hidden = parse(&successful_result(value.clone(), ToolConfidentiality::CALL_ONLY, Publication::new(true, true)));
+        let hidden = parse(&successful_result(value.clone(), ToolConfidentiality::CALL_ONLY));
         assert_eq!(hidden["result"], value);
         assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
-
-        let session_content = ToolConfidentiality { call: caelumora_model::confidentiality::Confidentiality::Public, content: caelumora_model::confidentiality::Confidentiality::Session };
-        assert_eq!(parse(&successful_result(value.clone(), session_content, Publication::new(true, false))), value, "the channel sees it");
-        assert!(parse(&successful_result(value, session_content, Publication::default())).get("note").is_some(), "a public channel does not");
     }
 }

@@ -8,7 +8,7 @@ use crate::agent::PersonalityId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::channel::{participant_attributes, Channel, Participant};
 use crate::component::ComponentConfig;
-use crate::confidentiality::Confidentiality;
+use crate::confidentiality::Classification;
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
 use crate::session::{Session, SessionId};
@@ -30,9 +30,6 @@ pub enum TemplateError {
     /// fills.
     #[error("the template's user '{0}' is filled by nobody: only \"user\", the session's owner, is")]
     UnboundUser(String),
-    /// A channel of the template has a level only an actor may have.
-    #[error("channel '{channel}' cannot be {level}: that level is an actor's, not a channel's")]
-    InvalidConfidentiality { channel: String, level: Confidentiality },
     /// A scope that cannot be made yet.
     #[error("the scope '{0}' is not supported yet")]
     UnsupportedScope(&'static str),
@@ -74,10 +71,10 @@ pub struct ChannelTemplate {
     pub name: String,
     #[serde(default = "default_moderator")]
     pub moderator: String,
-    /// How far the channel's contents may travel (issue 61); `session`
-    /// unless named.
-    #[serde(default = "default_confidentiality")]
-    pub confidentiality: Confidentiality,
+    /// The classification of the channel's contents (issue 133);
+    /// `internal` without compartments unless named.
+    #[serde(default)]
+    pub classification: Classification,
     /// The session template's participants that take part, by their name in
     /// the template. A channel that names no approver gets one anyway
     /// (`Channel::build`).
@@ -88,10 +85,6 @@ fn default_moderator() -> String {
     crate::channel::DEFAULT_MODERATOR.to_string()
 }
 
-fn default_confidentiality() -> Confidentiality {
-    Confidentiality::CHANNEL_DEFAULT
-}
-
 impl ChannelTemplate {
     /// Builds the channel of session `session_id`, owned by `owner`.
     /// `session_participants` pairs each participant of the session with
@@ -99,16 +92,13 @@ impl ChannelTemplate {
     /// refers to - not the user's or agent's own name: the template's "user"
     /// is whoever the session was created for.
     pub fn instantiate(&self, session_id: SessionId, owner: UserId, session_participants: &[(String, Participant)]) -> TemplateResult<Channel> {
-        if !self.confidentiality.is_channel_level() {
-            return Err(TemplateError::InvalidConfidentiality { channel: self.name.clone(), level: self.confidentiality });
-        }
         let participants = self.participants.iter()
             .map(|name| session_participants.iter()
                 .find(|(template_name, _)| template_name == name)
                 .map(|(_, participant)| participant.clone())
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
-        Ok(Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.moderator.clone(), self.confidentiality, participants))
+        Ok(Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.moderator.clone(), self.classification.clone(), participants))
     }
 }
 
@@ -259,13 +249,13 @@ mod tests {
                 ChannelTemplate {
                     name: "main".to_string(),
                     moderator: "broadcast".to_string(),
-                    confidentiality: Confidentiality::CHANNEL_DEFAULT,
+                    classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
                 },
                 ChannelTemplate {
                     name: "side".to_string(),
                     moderator: "broadcast".to_string(),
-                    confidentiality: Confidentiality::CHANNEL_DEFAULT,
+                    classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string()],
                 },
             ],
@@ -316,20 +306,15 @@ mod tests {
         assert_eq!(approvers(&channels[1]), 1, "a channel that names none gets one");
         assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
         assert_eq!(session.commands.component_nodes.len(), 2, "the session keeps its template's commands");
-        assert_eq!(channels[0].confidentiality, Confidentiality::Session);
+        assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
 
         // A channel naming someone the template does not have.
         let mut stray = template.clone();
         stray.channels[1].participants.push("ghost".to_string());
         assert!(matches!(stray.build(id, owner, "x".to_string(), resolved(&stray, id, owner)), Err(TemplateError::ParticipantNotFound(_))));
 
-        // A channel cannot be private: that level is an actor's.
-        let mut private = template.clone();
-        private.channels[0].confidentiality = Confidentiality::Private;
-        let refused = private.build(id, owner, "p".to_string(), resolved(&private, id, owner)).expect_err("a private channel");
-        assert!(matches!(refused, TemplateError::InvalidConfidentiality { .. }), "{refused}");
         let unnamed: ChannelTemplate = serde_json::from_value(serde_json::json!({"name": "main", "participants": []})).unwrap();
-        assert_eq!(unnamed.confidentiality, Confidentiality::Session, "the default");
+        assert_eq!(unnamed.classification, Classification::general(crate::confidentiality::Confidentiality::Internal), "the default");
         let approver: ParticipantTemplate = serde_json::from_value(serde_json::json!({"Approver": {"name": "approval"}})).unwrap();
         assert!(matches!(approver, ParticipantTemplate::Approver { strategy: ApprovalStrategy::Any, .. }), "the default strategy");
 

@@ -1,4 +1,5 @@
 use crate::command::default_commands;
+use crate::confidentiality::Compartments;
 use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
 use crate::secret_impl::env::EnvSecretProvider;
@@ -213,6 +214,10 @@ pub struct AppConfig {
     pub component_defaults: ComponentConfig,
     /// The access policy; `ownership` unless configured otherwise.
     pub security: SecurityConfig,
+    /// The compartments of the classification (issue 133) and which may
+    /// read which. Checked when the configuration is read. None unless
+    /// configured: every classification is general.
+    pub compartments: Compartments,
     /// Files of demo data - personalities and session templates - put into
     /// the entity store at startup (issue 105, see `examples/seed.yaml`).
     /// None unless configured.
@@ -233,6 +238,7 @@ impl Default for AppConfig {
             commands: default_commands(),
             component_defaults: ComponentConfig::default(),
             security: SecurityConfig::default(),
+            compartments: Compartments::default(),
             seed: Vec::new(),
             server: ServerConfig::default(),
         }
@@ -274,10 +280,11 @@ impl AppConfig {
         parse_yaml(yaml)
     }
 
-    /// The one `SecurityManager` of the process, as configured.
+    /// The one `SecurityManager` of the process, as configured, with the
+    /// configured compartments.
     pub fn create_security_manager(&self) -> Arc<dyn SecurityManager> {
         match self.security {
-            SecurityConfig::Ownership => Arc::new(OwnershipSecurityManager::new()),
+            SecurityConfig::Ownership => Arc::new(OwnershipSecurityManager::with_compartments(self.compartments.clone())),
             SecurityConfig::AllowAll => {
                 tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
                 Arc::new(DummySecurityManager::new())
@@ -512,6 +519,16 @@ users:
         let config = AppConfig::from_yaml("server:\n  address: \"0.0.0.0:8080\"\n").unwrap();
         assert_eq!(config.server.address.to_string(), "0.0.0.0:8080");
         assert!(AppConfig::from_yaml("server:\n  address: nowhere\n").is_err(), "an address that is none");
+    }
+
+    #[test]
+    fn compartments_are_checked_when_the_configuration_is_read() {
+        use crate::confidentiality::Compartment;
+        let config = AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [finance]\n  - name: finance\n").unwrap();
+        assert!(config.compartments.may_read(&Compartment::new("hr"), &Compartment::new("finance")));
+        assert_eq!(AppConfig::default().compartments.names().count(), 0, "none unless configured");
+        assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    reads: [payroll]\n").is_err(), "reads what is not configured");
+        assert!(AppConfig::from_yaml("compartments:\n  - name: hr\n    read: [finance]\n").is_err(), "a misspelt key");
     }
 
     #[test]

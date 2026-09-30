@@ -51,8 +51,8 @@ between turns, five belong to a turn.
 
 Every message that leaves the agent passes its `EmitOutProcessor`s first,
 of which there is no implementation yet (issue 99), and is published
-through `Turn::send_event`, which redacts it by the channel's
-confidentiality (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+through `Turn::send_event`, which leaves out what only the agent's owner
+may see (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 When a plan is in progress (`create_plan`), the messages of its steps are
 *internal*: they are published as intermediate messages, kept in the
@@ -82,7 +82,6 @@ the turn is and what it has done so far:
 *   whose authority it acts with (`SecurityContext`),
 *   the channel as the confidentiality rules see it
     (`ChannelClassification`),
-*   what the `SecurityManager` lets it publish there (`Publication`),
 *   what its next message is produced from (see [The turn's context and
     the resolver](#the-turns-context-and-the-resolver)), the messages
     produced, each with what it was produced from,

@@ -11,6 +11,7 @@ import type {
   SessionResponse,
   SessionSnapshot,
   SessionTemplate,
+  Compartment,
   UserResponse
 } from '../types';
 
@@ -76,6 +77,12 @@ export const api = {
   async getTemplates(): Promise<SessionTemplate[]> {
     const res = await request(`/templates`);
     await ensureOk(res, 'Failed to fetch templates');
+    return res.json();
+  },
+
+  async getCompartments(): Promise<Compartment[]> {
+    const res = await request(`/compartments`);
+    await ensureOk(res, 'Failed to fetch compartments');
     return res.json();
   },
 

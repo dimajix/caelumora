@@ -62,10 +62,11 @@ logged-in user.
 | `GET /auth/me` | The logged-in user |
 | `POST /auth/refresh` | Renew the session |
 | `GET /templates` | The session templates a new session can be made from |
+| `GET /compartments` | The configured compartments a channel's classification may name (issue 133) |
 | `GET /sessions`, `POST /sessions` | List the user's sessions; create one from a template (`SessionManager::create_from_template`) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session |
-| `GET …/channels`, `POST …/channels` | List a session's channels; create one |
+| `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message |
 | `POST …/approvals` | Approve or deny a tool call |

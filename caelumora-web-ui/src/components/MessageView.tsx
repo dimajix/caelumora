@@ -24,14 +24,14 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
 };
 
 /**
- * How far a call that is not public may travel (issues 54, 61), or `null`
- * for a public one. Where its labels exceed a channel's level, the channel
- * shows the call without arguments and result, or not at all; the agent's
- * owner sees it in full in the context panel.
+ * What of a call only the agent's owner sees (issues 54, 133), or `null`
+ * if the channel sees all of it. The channel shows such a call without
+ * arguments and result, or not at all; the owner sees it in full in the
+ * context panel.
  */
 function confidentialityLabel(labels: ToolConfidentiality | undefined): string | null {
-  if (!labels || (labels.call === 'public' && labels.content === 'public')) return null;
-  return labels.call === 'public' ? `Arguments and result: ${labels.content}` : `Call: ${labels.call}`;
+  if (!labels || (labels.call === 'channel' && labels.content === 'channel')) return null;
+  return labels.call === 'channel' ? 'Arguments and result: owner only' : 'Call: owner only';
 }
 
 /** The text to show for a tool result: the message of an unsuccessful one, else the content. */
@@ -193,7 +193,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                   <Wrench size={12} className="text-blue-500" />
                   <span>{call.function_name}</span>
                   {confidentialityLabel(call.confidentiality) && (
-                    <span className="flex items-center gap-1 font-sans text-[11px] opacity-60" title="How far this call may travel">
+                    <span className="flex items-center gap-1 font-sans text-[11px] opacity-60" title="Who sees this call">
                       <EyeOff size={11} />
                       {confidentialityLabel(call.confidentiality)}
                     </span>
@@ -232,7 +232,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                     <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
                   )}
                 </div>
-                {result && result.content === '' && (result.confidentiality?.content ?? 'public') !== 'public' ? (
+                {result && result.content === '' && (result.confidentiality?.content ?? 'channel') !== 'channel' ? (
                   <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 text-[11px] italic opacity-60">
                     Result not shown
                   </div>

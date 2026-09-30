@@ -1,6 +1,6 @@
 # 133 — Confidentiality levels mix sensitivity with topology
 
-**Status:** open
+**Status:** in progress
 **Area:** Identity and access management
 
 ## The problem
@@ -251,3 +251,59 @@ message rendering, and the prompt notes of
   to a wider circle changes; an entity usually starts with the one
   compartment of its channel, and authorised actors widen it. The flow
   rule and the section on release record this.
+- **2026-09-30** — Questions before implementing, decided with the
+  maintainer:
+  - *General destinations.* As written, the flow rule let a destination
+    without compartments take in anything, since "every compartment of D is
+    covered" holds for an empty D. Corrected: a destination without
+    compartments admits only sources without compartments; information of a
+    compartment never flows into general destinations.
+  - *Session boundary.* 133 comes before [134](134-session-privacy.md). So
+    that step 1 changes no behaviour, the policy keeps answering
+    `ReadChannel` with "within the same session only" until 134 replaces it.
+  - *Where compartments live.* The compartment set and the read relation are
+    a section of `AppConfig`, given to the `DummySecurityManager`. Changing
+    compartments has far-reaching consequences; managing them at run time
+    (entities, REST) is not part of this issue.
+  - *Existing data.* No migration: stored data is test data and may be
+    deleted.
+  - *Reading another channel* is filtered per message, by each message's
+    classification. The reader still needs to be allowed to read the channel
+    at all; publishing beyond the channel (global knowledge, global notes)
+    is a separate mechanism and out of scope.
+  - *Tools that do not classify.* A classification can optionally be
+    configured per tool; a result that carries none takes the channel's.
+    Both are applied in the `GuardedToolExecutor`.
+  - *Results that may not flow into the channel.* The `GuardedToolExecutor`
+    replaces them by an error that reaches the model; this replaces the
+    per-level redaction and the "Only you see this result" wrapping of
+    [66](66-channel-level-in-prompt.md) for classification. What remains
+    for `Turn::send_event` is the ownership flag (`HIDDEN`, `CALL_ONLY`),
+    since the agent keeps the full call and only the published form is
+    redacted. Reasoning takes the channel's classification, and is
+    owner-only once the turn saw private knowledge or leads to an
+    owner-only call.
+- **2026-09-30** — Decided before step 1: the parts of a message carry the
+  ownership flag (`Visibility`: `channel` or `owner`) instead of a level
+  already now; `Publication` and `ActionType::Publish` go until step 3,
+  since what is not the owner's carries the channel's classification and
+  is always admitted. `ToolConfidentiality` keeps its name until step 3.
+  The compartments are a top-level section `compartments` of `AppConfig` -
+  not a parameter of a policy - handed to the ownership policy; that the
+  ownership policy applies the confidentiality rules at all is
+  [138](138-confidentiality-policy-in-ownership.md). Giving a
+  classification is asked as `ActionType::Classify`, which refuses
+  compartments that are not configured. The web UI's new-channel dialog
+  offers the compartments from `GET /compartments`.
+- **2026-09-30** — Step 1 done: `Classification` (level, compartments) with
+  `Classification::flows_to` and `Compartments` in
+  `caelumora_model::confidentiality`; the levels `public < internal <
+  confidential < strictly_confidential`; `Visibility` for what only the
+  owner sees. Channels and channel templates carry a classification
+  (default `internal`, general); `ReadChannel` follows the flow rule with
+  the configured compartments, and - until
+  [134](134-session-privacy.md) - only within the session or from `public`
+  channels. `Classify` is asked for every channel before it is stored, also
+  from a template. REST: `classification` on channels, `GET /compartments`.
+  `docs/CONFIDENTIALITY.md` rewritten. Resolves
+  [97](97-small-model-unifications.md) on the way.

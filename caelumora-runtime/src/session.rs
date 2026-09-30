@@ -4,7 +4,7 @@ use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, Participant, DEFAULT_MODERATOR};
-use caelumora_model::confidentiality::Confidentiality;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
@@ -36,8 +36,18 @@ pub enum SessionError {
     OwnerNotAUser(ActorId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
-    #[error("A channel cannot be {0}: that level is an actor's, not a channel's")]
-    InvalidConfidentiality(Confidentiality),
+    /// Refused by `ActionType::Classify`: a compartment that is not
+    /// configured, or one the policy does not let the creator give.
+    #[error("A channel cannot be classified {0}: a compartment is not configured or may not be given")]
+    ClassificationRefused(Classification),
+}
+
+/// Nothing if `context` may give a channel `classification`
+/// (`ActionType::Classify`, issue 133) - asked before anything is stored.
+async fn require_classification(runtime_manager: &RuntimeManager, context: &SecurityContext, classification: &Classification) -> Result<()> {
+    runtime_manager.security_manager()
+        .require(context, ActionType::Classify(classification), || SessionError::ClassificationRefused(classification.clone())).await?;
+    Ok(())
 }
 
 /// What a new channel should be (issue 09).
@@ -49,10 +59,10 @@ pub struct ChannelSpec {
     /// Who takes part, from the session's participants. Whoever creates the
     /// channel takes part anyway, if they are a participant of the session.
     pub participants: Vec<ActorId>,
-    /// How far the channel's contents may travel (issue 61); `None` for the
-    /// default, as in a template. Set by whoever may create the channel -
-    /// its owner.
-    pub confidentiality: Option<Confidentiality>,
+    /// The classification of the channel's contents (issue 133); `None`
+    /// for the default, as in a template. Set by whoever may create the
+    /// channel - its owner.
+    pub classification: Option<Classification>,
 }
 
 /// A channel of the session and, once `run` started it, its task.
@@ -189,10 +199,8 @@ impl SessionLoop {
         if self.channels.iter().any(|entry| entry.channel.name() == name) {
             return Err(SessionError::DuplicateChannelName { session: self.id, name }.into());
         }
-        let confidentiality = spec.confidentiality.unwrap_or(Confidentiality::CHANNEL_DEFAULT);
-        if !confidentiality.is_channel_level() {
-            return Err(SessionError::InvalidConfidentiality(confidentiality).into());
-        }
+        let classification = spec.classification.unwrap_or_default();
+        require_classification(&self.runtime_manager, context, &classification).await?;
         let moderator = spec.moderator.unwrap_or_else(|| DEFAULT_MODERATOR.to_string());
         // Asked for here, before anything is stored, rather than found out
         // when the channel is built.
@@ -213,7 +221,7 @@ impl SessionLoop {
             }
         }
 
-        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, moderator, confidentiality, participants);
+        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, moderator, classification, participants);
         drop(session);
         let store = self.runtime_manager.entity_store();
         store.create_channel(context, &channel).await?;
@@ -459,6 +467,9 @@ impl SessionManager {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
 
+        for channel in &channels {
+            require_classification(&self.runtime_manager, context, &channel.classification).await?;
+        }
         let store = self.runtime_manager.entity_store();
         store.create_session(context, &session).await?;
         for (index, channel) in channels.iter().enumerate() {
@@ -718,7 +729,7 @@ impl SessionManager {
             id: channel.id,
             name: channel.name.clone(),
             moderator: channel.moderator.clone(),
-            confidentiality: channel.confidentiality,
+            classification: channel.classification.clone(),
             can_change: security.may_change_channel(context, &channel.security_attributes).await,
             members,
         }
@@ -746,6 +757,7 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::{Classification, Visibility};
     use caelumora_model::command::default_commands;
     use caelumora_model::channel::Channel;
     use caelumora_model::meta::{Metadata, Scope};
@@ -797,7 +809,7 @@ mod tests {
             session_id: session.id,
             name: "main".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: session.security_attributes.clone(),
@@ -1010,7 +1022,7 @@ mod tests {
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
-        ChannelSpec { name: name.to_string(), moderator: None, participants, confidentiality: None }
+        ChannelSpec { name: name.to_string(), moderator: None, participants, classification: None }
     }
 
     #[tokio::test]
@@ -1037,7 +1049,7 @@ mod tests {
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
                 moderator: "broadcast".to_string(),
-                confidentiality: Confidentiality::CHANNEL_DEFAULT,
+                classification: Classification::CHANNEL_DEFAULT,
                 participants: vec!["user".to_string(), "approval".to_string()],
             }],
             security_attributes: Default::default(),
@@ -1299,7 +1311,7 @@ mod tests {
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
 
         let personality = Personality {
-            reasoning_confidentiality: Confidentiality::Public,
+            reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
             components: Default::default(),
@@ -1355,12 +1367,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_channel_reads_another_by_their_confidentiality_not_by_who_takes_part() {
+    async fn a_channel_reads_another_by_their_classification_not_by_who_takes_part() {
         use caelumora_model::actor::ActorId;
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::user::{User, UserId};
 
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
@@ -1376,10 +1390,12 @@ mod tests {
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
-        let with = |name: &str, level, participants| ChannelSpec { confidentiality: Some(level), ..spec(name, participants) };
-        let public = session.create_channel(&alice_ctx, with("public", Confidentiality::Public, vec![bob_id])).await.unwrap();
-        let team = session.create_channel(&alice_ctx, with("team", Confidentiality::Session, vec![bob_id])).await.unwrap();
-        let secret = session.create_channel(&alice_ctx, with("secret", Confidentiality::Channel, vec![])).await.unwrap();
+        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let with = |name: &str, classification, participants| ChannelSpec { classification: Some(classification), ..spec(name, participants) };
+        let public = session.create_channel(&alice_ctx, with("public", classified(Confidentiality::Public, &[]), vec![bob_id])).await.unwrap();
+        let team = session.create_channel(&alice_ctx, with("team", classified(Confidentiality::Internal, &[]), vec![bob_id])).await.unwrap();
+        let secret = session.create_channel(&alice_ctx, with("secret", classified(Confidentiality::Confidential, &[]), vec![])).await.unwrap();
+        let hr = session.create_channel(&alice_ctx, with("hr", classified(Confidentiality::Internal, &["hr"]), vec![])).await.unwrap();
 
         let security = runtime.security_manager();
         let may_read = |reader: &Arc<ChannelLoop>, source: &Arc<ChannelLoop>| {
@@ -1391,12 +1407,14 @@ mod tests {
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");
         assert!(may_read(&team, &public).await);
-        assert!(!may_read(&public, &team).await, "what public passes on may leave the session");
-        assert!(!may_read(&team, &secret).await, "secret stays in its channel");
+        assert!(!may_read(&public, &team).await, "a public channel reads only what is public");
+        assert!(!may_read(&team, &secret).await, "confidential is not read from internal");
         assert!(may_read(&secret, &team).await, "although bob, who is in team, is not in secret");
+        assert!(may_read(&hr, &team).await, "what is general flows into HR");
+        assert!(!may_read(&secret, &hr).await, "what is HR's never into a general channel");
 
-        let refused = session.create_channel(&alice_ctx, with("mine", Confidentiality::Private, vec![])).await.expect_err("private is an actor's");
-        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::InvalidConfidentiality(_))), "{refused}");
+        let refused = session.create_channel(&alice_ctx, with("typo", classified(Confidentiality::Internal, &["hrr"]), vec![])).await.expect_err("not configured");
+        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ClassificationRefused(_))), "{refused}");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

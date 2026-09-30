@@ -63,9 +63,9 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: String,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::confidentiality::Visibility;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Personality;
-    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::meta::Metadata;
     use caelumora_model::security::{ActionType, SecurityManager};
     use caelumora_model::store::StoreError;
@@ -107,7 +107,7 @@ mod tests {
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
             components: Default::default(),
             security_attributes: Default::default(),
-            reasoning_confidentiality: Confidentiality::Public,
+            reasoning_visibility: Visibility::Channel,
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         (Arc::new(store), personality.id)

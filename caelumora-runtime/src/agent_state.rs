@@ -145,12 +145,12 @@ impl AgentStates {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::{ChannelClassification, Confidentiality};
+    use caelumora_model::confidentiality::ChannelClassification;
     use caelumora_model::memory::MemoryChange;
     use caelumora_model::store_impl::memory::MemoryStore;
 
     fn remember(id: MemoryId, text: &str) -> AgentStateChange {
-        let origin = ChannelClassification { session_id: Default::default(), channel_id: Default::default(), level: Confidentiality::Session };
+        let origin = ChannelClassification::default();
         AgentStateChange::Memory { change: MemoryChange::Remember { id, text: text.to_string() }, origin }
     }
 

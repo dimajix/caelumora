@@ -1,6 +1,6 @@
 # 97 — Six default functions for `Confidentiality::Public`
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -34,3 +34,12 @@ confidentiality level.
   (`work/2026-09-28-code-review.md`, 3.2.10). Originally a collection of
   small model duplications; split the same day at the maintainer's request
   into this issue and [112](112-id-types.md)–[117](117-message-prev-id.md).
+- **2026-09-30** — Resolved by step 1 of
+  [133](133-classification-model.md), which replaced the levels on channels
+  by `Classification` and the labels on message parts by `Visibility`. Both
+  define their default in `confidentiality.rs` (`impl Default`, with
+  `Classification::CHANNEL_DEFAULT` for channels); the fields use
+  `#[serde(default)]`, and `default_confidentiality` (twice),
+  `public_reasoning` and `public`/`is_public` in `message.rs` are gone.
+  `ToolConfidentiality::is_public` remains as the test for the default
+  flags of a call; the type is renamed in step 3 of 133.

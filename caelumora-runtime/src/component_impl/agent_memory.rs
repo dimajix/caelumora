@@ -10,9 +10,9 @@
 //! part shows the entries that may be recalled in the current channel: those
 //! written in a channel it may read, as the policy decides when the
 //! component asks in the agent's name (`AccessQuestions::may_channel_read`,
-//! issue 131). Under the ownership policy that is rule 2 of issue 61 - an
-//! entry from a `public` channel everywhere, from a `session` channel within
-//! that session, from a `channel` channel only there. Only those can be
+//! issue 131). Under the ownership policy that is the flow rule of issue
+//! 133 - the entry's channel's classification must flow into this one's -
+//! within the session, and from public channels beyond it. Only those can be
 //! forgotten here. Both tools are
 //! `ToolConfidentiality::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only. Its entries are
@@ -161,7 +161,7 @@ mod tests {
     use crate::agent_state::{AgentStateHandle, AgentStates};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::confidentiality::{ChannelClassification, Confidentiality};
+    use caelumora_model::confidentiality::{ChannelClassification, Classification, Confidentiality};
     use caelumora_model::security::{ActionType, OwnershipSecurityManager};
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::store::StateStore;
@@ -169,7 +169,7 @@ mod tests {
     use caelumora_model::user::UserId;
 
     fn channel(session: SessionId, level: Confidentiality) -> ChannelClassification {
-        ChannelClassification { session_id: session, channel_id: ChannelId::new(), level }
+        ChannelClassification { session_id: session, channel_id: ChannelId::new(), classification: Classification::general(level) }
     }
 
     /// The component of an agent owned by `owner`, asking `policy`.
@@ -189,7 +189,7 @@ mod tests {
     async fn remember(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: ChannelClassification, text: &str) {
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), at, Default::default(), Vec::new());
+        turn.next_turn(Default::default(), Default::default(), at, Vec::new());
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), &mut turn).await.unwrap();
         turn.commit_turn().await;
     }
@@ -198,7 +198,7 @@ mod tests {
     async fn recall(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: ChannelClassification) -> Prompt {
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), at, Default::default(), Vec::new());
+        turn.next_turn(Default::default(), Default::default(), at, Vec::new());
         memory.get_prompt(&turn).await.unwrap()
     }
 
@@ -208,13 +208,13 @@ mod tests {
         let handle = handle(agent).await;
         let memory = component(Arc::new(OwnershipSecurityManager::new()), ActorId::User(UserId::new()));
         let (session, other_session) = (SessionId::new(), SessionId::new());
-        let (team, public, elsewhere) = (channel(session, Confidentiality::Session), channel(session, Confidentiality::Public), channel(other_session, Confidentiality::Session));
+        let (team, public, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Public), channel(other_session, Confidentiality::Internal));
 
-        // A turn in a session-level channel remembers something ...
+        // A turn in an internal channel remembers something ...
         let mut state = AgentChannelState::default();
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-            turn.next_turn(Default::default(), Default::default(), team, Default::default(), Vec::new());
+            turn.next_turn(Default::default(), Default::default(), team.clone(), Vec::new());
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
@@ -223,18 +223,18 @@ mod tests {
 
         // ... which another actor of the agent recalls in a channel that may
         // read that one, and not where it may not be known.
-        let same_session = recall(&memory, &handle, agent, channel(session, Confidentiality::Channel)).await;
+        let same_session = recall(&memory, &handle, agent, channel(session, Confidentiality::Confidential)).await;
         assert!(same_session.text.contains("#1: Kaya likes tea."), "{}", same_session.text);
         assert_eq!(same_session.knowledge.len(), 1, "recorded as knowledge read");
-        assert!(recall(&memory, &handle, agent, public).await.text.is_empty(), "a public channel may not read a session-level one");
-        assert!(recall(&memory, &handle, agent, elsewhere).await.text.is_empty(), "another session");
+        assert!(recall(&memory, &handle, agent, public).await.text.is_empty(), "a public channel may not read an internal one");
+        assert!(recall(&memory, &handle, agent, elsewhere.clone()).await.text.is_empty(), "another session");
 
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), elsewhere, Default::default(), Vec::new());
+        turn.next_turn(Default::default(), Default::default(), elsewhere, Vec::new());
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err());
-        turn.next_turn(Default::default(), Default::default(), team, Default::default(), Vec::new());
+        turn.next_turn(Default::default(), Default::default(), team, Vec::new());
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
         turn.commit_turn().await;
         assert!(handle.current().memory.current().is_empty());
@@ -258,10 +258,10 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OnlyFor(owner));
         let session = SessionId::new();
         // Public, so that the built-in rule would let every channel read it.
-        let (origin, reader) = (channel(session, Confidentiality::Public), channel(session, Confidentiality::Session));
-        remember(&component(policy.clone(), owner), &handle, agent, origin, "Kaya likes tea.").await;
+        let (origin, reader) = (channel(session, Confidentiality::Public), channel(session, Confidentiality::Internal));
+        remember(&component(policy.clone(), owner), &handle, agent, origin.clone(), "Kaya likes tea.").await;
 
-        let asked_by_owner = recall(&component(policy.clone(), owner), &handle, agent, reader).await;
+        let asked_by_owner = recall(&component(policy.clone(), owner), &handle, agent, reader.clone()).await;
         assert!(asked_by_owner.text.contains("Kaya likes tea."), "{}", asked_by_owner.text);
         let asked_by_stranger = recall(&component(policy.clone(), stranger), &handle, agent, reader).await;
         assert!(asked_by_stranger.text.is_empty(), "the policy refuses, whatever the levels say: {}", asked_by_stranger.text);

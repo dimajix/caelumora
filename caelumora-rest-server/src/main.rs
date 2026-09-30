@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         auth,
         runtime_manager,
         session_manager,
+        compartments: Arc::new(config.compartments.clone()),
     });
 
     // One span per request. `request_id` is filled in by `error::request_id`,

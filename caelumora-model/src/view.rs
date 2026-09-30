@@ -9,7 +9,7 @@
 //! checks its own permission when it acts, never by a view.
 
 use crate::actor::ActorId;
-use crate::confidentiality::Confidentiality;
+use crate::confidentiality::Classification;
 use crate::session::{ChannelId, SessionId};
 
 /// A session with its participants and the channels the viewer may read.
@@ -39,8 +39,8 @@ pub struct ChannelView {
     pub name: String,
     /// The kind of moderator, e.g. `round_robin` (issue 44).
     pub moderator: String,
-    /// How far the channel's contents may travel (issue 61).
-    pub confidentiality: Confidentiality,
+    /// The classification of the channel's contents (issue 133).
+    pub classification: Classification,
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,

@@ -12,6 +12,7 @@ use caelumora_runtime::session::SessionLoop;
 use std::sync::Arc;
 
 mod channels;
+mod compartments;
 mod events;
 mod sessions;
 mod templates;
@@ -55,6 +56,7 @@ pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 pub fn create_router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/templates", get(templates::list_templates))
+        .route("/compartments", get(compartments::list_compartments))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",

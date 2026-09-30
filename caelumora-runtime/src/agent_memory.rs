@@ -36,7 +36,7 @@ impl AgentMemory {
                 Some((_, readable)) => *readable,
                 None => {
                     let readable = security.may_channel_read(context, &here, &entry.origin).await;
-                    decided.push((entry.origin, readable));
+                    decided.push((entry.origin.clone(), readable));
                     readable
                 }
             };

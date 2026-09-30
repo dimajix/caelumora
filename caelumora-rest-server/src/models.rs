@@ -1,5 +1,5 @@
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Confidentiality;
+use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::Message;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -49,6 +49,18 @@ pub struct TemplateResponse {
 impl From<&SessionTemplate> for TemplateResponse {
     fn from(template: &SessionTemplate) -> Self {
         Self { id: template.id, name: template.metadata.name.clone(), description: template.metadata.description.clone() }
+    }
+}
+
+/// A compartment a classification may name (issue 133), as configured.
+#[derive(Debug, Serialize)]
+pub struct CompartmentResponse {
+    pub name: String,
+}
+
+impl From<&Compartment> for CompartmentResponse {
+    fn from(compartment: &Compartment) -> Self {
+        Self { name: compartment.name().to_string() }
     }
 }
 
@@ -181,9 +193,11 @@ pub struct CreateChannelRequest {
     /// part anyway.
     #[serde(default)]
     pub participants: Vec<ActorId>,
-    /// How far the channel's contents may travel (issue 61): `public`,
-    /// `session` or `channel`; `session` if absent.
-    pub confidentiality: Option<Confidentiality>,
+    /// The classification of the channel's contents (issue 133): a
+    /// `level` - `public`, `internal`, `confidential` or
+    /// `strictly_confidential` - and `compartments`, which must be
+    /// configured; `internal` without compartments if absent.
+    pub classification: Option<Classification>,
 }
 
 #[derive(Debug, Serialize)]
@@ -197,8 +211,8 @@ pub struct ChannelResponse {
     /// The kind of moderator, e.g. `round_robin` or `mentions_only` - who is
     /// asked to respond to a message (issue 44).
     pub moderator: String,
-    /// How far the channel's contents may travel (issue 61).
-    pub confidentiality: Confidentiality,
+    /// The classification of the channel's contents (issue 133).
+    pub classification: Classification,
     /// Whether the requesting user may rename the channel and add or remove
     /// its participants (issue 46).
     pub can_change: bool,
@@ -212,7 +226,7 @@ impl From<ChannelView> for ChannelResponse {
             // Every member is a user, an agent or an approver.
             members: view.members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
             moderator: view.moderator,
-            confidentiality: view.confidentiality,
+            classification: view.classification,
             can_change: view.can_change,
         }
     }
@@ -369,7 +383,7 @@ mod tests {
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            classification: Classification::CHANNEL_DEFAULT,
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
         };

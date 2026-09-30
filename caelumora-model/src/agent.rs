@@ -36,14 +36,11 @@ pub struct Personality {
     pub components: ComponentConfig,
     #[serde(default)]
     pub security_attributes: SecurityAttributes,
-    /// The least confidential label the reasoning of its agents gets
-    /// (issue 61); what a turn saw may raise it. `public` unless named.
-    #[serde(default = "public_reasoning")]
-    pub reasoning_confidentiality: crate::confidentiality::Confidentiality,
-}
-
-fn public_reasoning() -> crate::confidentiality::Confidentiality {
-    crate::confidentiality::Confidentiality::Public
+    /// Who sees the reasoning of its agents (issues 61, 133): `owner` keeps
+    /// it from the channel always; otherwise what a turn saw decides.
+    /// `channel` unless named.
+    #[serde(default)]
+    pub reasoning_visibility: crate::confidentiality::Visibility,
 }
 
 impl Secured for Personality {
@@ -136,12 +133,9 @@ pub struct TurnState {
     /// Whose authority the turn acts with.
     pub security_context: SecurityContext,
     /// The agent's channel as the confidentiality rules see it, as it was
-    /// when the turn began (issue 61): the turn is consistent in itself
-    /// should the channel's level change (issue 67).
+    /// when the turn began (issues 61, 133): the turn is consistent in
+    /// itself should the channel's classification change (issue 67).
     pub classification: crate::confidentiality::ChannelClassification,
-    /// Which labels the agent may publish to the channel in this turn, as
-    /// the `SecurityManager` decided when it began (issue 61).
-    pub publication: crate::confidentiality::Publication,
     /// The agent's tools as they were when the turn began (issue 137): what
     /// its model is offered for every call of the turn, and what its calls
     /// are labelled and put up for approval by - one set for the whole turn,

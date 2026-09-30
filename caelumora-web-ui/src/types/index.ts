@@ -1,4 +1,4 @@
-import type {ChannelConfidentiality} from '../confidentiality';
+import type {Classification} from '../confidentiality';
 
 export interface SessionId {
   0: string;
@@ -44,22 +44,22 @@ export interface ChannelResponse {
   members: ChannelMember[];
   /** The kind of moderator, e.g. `round_robin` or `mentions_only` (issue 44). */
   moderator: string;
-  /** How far the channel's contents may travel (issue 61). */
-  confidentiality: ChannelConfidentiality;
+  /** The classification of the channel's contents (issue 133). */
+  classification: Classification;
   /** Whether you may rename it and add or remove participants (issue 46). */
   can_change: boolean;
 }
 
-/** How far a piece of information may travel (issue 61), from the most open. */
-export type Confidentiality = 'public' | 'session' | 'channel' | 'private';
+/** Who sees a part of what an agent produces (issue 133): the channel, or only the agent's owner. */
+export type Visibility = 'channel' | 'owner';
 
 /**
- * The labels of a tool call (issues 54, 61): how far the call itself may
- * travel, and how far its arguments and result. Absent means both `public`.
+ * Who sees a tool call (issues 54, 133): the call itself, and its arguments
+ * and result. Absent means both `channel`.
  */
 export interface ToolConfidentiality {
-  call: Confidentiality;
-  content: Confidentiality;
+  call: Visibility;
+  content: Visibility;
 }
 
 export interface ToolCall {
@@ -230,6 +230,11 @@ export interface Envelope {
   security: unknown;
 }
 
+/** A compartment a classification may name, as `GET /compartments` offers it (issue 133). */
+export interface Compartment {
+  name: string;
+}
+
 /** A session template, as `GET /templates` offers it. */
 export interface SessionTemplate {
   id: string;
@@ -249,8 +254,8 @@ export interface CreateChannelRequest {
   moderator?: string;
   /** Participants of the session; you take part anyway. */
   participants: ActorId[];
-  /** How far the channel's contents may travel; the server's default if absent. */
-  confidentiality?: ChannelConfidentiality;
+  /** The classification of the channel's contents; the server's default if absent. */
+  classification?: Classification;
 }
 
 /**

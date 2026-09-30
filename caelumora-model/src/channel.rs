@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
-use crate::confidentiality::{ChannelClassification, Confidentiality};
+use crate::confidentiality::{ChannelClassification, Classification};
 use crate::message::{MessageHistory, MessageId};
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
@@ -27,9 +27,9 @@ pub struct Channel {
     pub moderator: String,
     pub participants: Vec<Participant>,
     pub security_attributes: SecurityAttributes,
-    /// How far the channel's contents may travel (issue 61); never
-    /// `Private`. Set by its owner when creating it.
-    pub confidentiality: Confidentiality,
+    /// The classification of the channel's contents (issue 133): what may
+    /// flow into it, and who may read it. Set by its owner when creating it.
+    pub classification: Classification,
     /// Where the view of the history begins for participants who joined
     /// later and may not see all of it (issue 46); everybody else sees all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,15 +75,15 @@ impl Secured for Channel {
 
 impl Channel {
     /// The channel as the confidentiality rules see it.
-    pub fn classification(&self) -> ChannelClassification {
-        ChannelClassification { session_id: self.session_id, channel_id: self.id, level: self.confidentiality }
+    pub fn channel_classification(&self) -> ChannelClassification {
+        ChannelClassification { session_id: self.session_id, channel_id: self.id, classification: self.classification.clone() }
     }
 
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and with every user and agent in it as a
     /// contributor (see `participant_attributes`).
-    pub fn build(session_id: SessionId, owner: ActorId, name: String, moderator: String, confidentiality: Confidentiality, mut participants: Vec<Participant>) -> Self {
+    pub fn build(session_id: SessionId, owner: ActorId, name: String, moderator: String, classification: Classification, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {
                 id: ApproverId(Uuid::new_v4()),
@@ -98,7 +98,7 @@ impl Channel {
             moderator,
             participants,
             security_attributes,
-            confidentiality,
+            classification,
             history_limits: Vec::new(),
         }
     }

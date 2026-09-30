@@ -31,7 +31,7 @@ use tracing::warn;
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::{ChannelClassification, Publication};
+use caelumora_model::confidentiality::ChannelClassification;
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnEntry;
 use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
@@ -46,14 +46,12 @@ use crate::tool_calls::ToolCalls;
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
 
 /// What is left of a turn once it ended - taken over or discarded: what its
-/// last event is sent with, the contexts and the publication the turn had
-/// (issue 85). Nothing else; the rest of the turn was used up in ending it.
+/// last event is sent with, the contexts the turn had (issue 85). Nothing else; the rest of the turn was used up in ending it.
 #[derive(Debug)]
 pub struct EndedTurn {
     agent_id: AgentId,
     event_context: EventContext,
     security_context: SecurityContext,
-    publication: Publication,
 }
 
 impl EndedTurn {
@@ -62,13 +60,12 @@ impl EndedTurn {
             agent_id,
             event_context: turn.event_context.clone(),
             security_context: turn.security_context.clone(),
-            publication: turn.publication,
         }
     }
 
     /// Sends `event` as the ended turn would have: see [`Turn::send_event`].
     pub(crate) async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        send(&self.event_context, &self.security_context, self.publication, self.agent_id, event, output).await
+        send(&self.event_context, &self.security_context, self.agent_id, event, output).await
     }
 }
 
@@ -152,7 +149,7 @@ impl<'a> Turn<'a> {
     /// The agent's channel as the confidentiality rules see it, as it was
     /// when the turn began (`next_turn`).
     pub fn classification(&self) -> ChannelClassification {
-        self.current().classification
+        self.current().classification.clone()
     }
 
     pub fn channel_id(&self) -> ChannelId {
@@ -222,7 +219,6 @@ impl<'a> Turn<'a> {
         event_context: EventContext,
         security_context: SecurityContext,
         classification: ChannelClassification,
-        publication: Publication,
         tools: Vec<Tool>,
     ) {
         let offered = self.keep_tools(&tools);
@@ -230,7 +226,6 @@ impl<'a> Turn<'a> {
             event_context,
             security_context,
             classification,
-            publication,
             tools,
             context: ContextRef {
                 transcript: self.agent_channel_state.transcript.digest(),
@@ -258,7 +253,7 @@ impl<'a> Turn<'a> {
     /// to work in one.
     #[cfg(test)]
     pub(crate) fn begin(&mut self) {
-        self.next_turn(EventContext::default(), SecurityContext::default(), ChannelClassification::default(), Publication::default(), Vec::new());
+        self.next_turn(EventContext::default(), SecurityContext::default(), ChannelClassification::default(), Vec::new());
     }
 
     /// The agent's tools as they were when the turn began: what its model
@@ -495,20 +490,14 @@ impl<'a> Turn<'a> {
         self.current().requested_state
     }
 
-    /// Which labels the agent may publish to its channel in this turn, as
-    /// the `SecurityManager` decided when it began (`next_turn`).
-    pub fn publication(&self) -> Publication {
-        self.current().publication
-    }
-
-    /// Sends `av` to the channel as the agent publishes it: messages redacted
-    /// by the labels of their parts against what the turn may publish
-    /// (issues 54, 61), in the turn's contexts. The agent keeps the full
+    /// Sends `av` to the channel as the agent publishes it: messages without
+    /// what only the agent's owner sees (issues 54, 133), in the turn's
+    /// contexts. The agent keeps the full
     /// messages in its context; an event with nothing left to show is not
     /// sent.
     pub async fn send_event(&self, av: ActorEvent, output: &dyn EventSender) -> Result<()> {
         let turn = self.current();
-        send(&turn.event_context, &turn.security_context, turn.publication, self.agent_id, av, output).await
+        send(&turn.event_context, &turn.security_context, self.agent_id, av, output).await
     }
 }
 
@@ -538,17 +527,16 @@ fn plan_finalize_instruction(plan: &Plan) -> String {
     )
 }
 
-/// Sends `av` as a turn of `agent_id` publishes it: redacted by what
-/// `publication` allows, in the turn's contexts.
+/// Sends `av` as a turn of `agent_id` publishes it: without what only its
+/// owner sees, in the turn's contexts.
 async fn send(
     event_context: &EventContext,
     security_context: &SecurityContext,
-    publication: Publication,
     agent_id: AgentId,
     av: ActorEvent,
     output: &dyn EventSender,
 ) -> Result<()> {
-    let Some(av) = av.published(&|label| publication.allows(label)) else { return Ok(()) };
+    let Some(av) = av.published() else { return Ok(()) };
     let ev = Envelope::new(security_context.clone(), event_context.clone(), av);
     output
         .send(ev)
@@ -709,7 +697,7 @@ mod tests {
         ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
 
-        ctx.next_turn(EventContext::default(), SecurityContext::default(), Default::default(), Default::default(), Vec::new());
+        ctx.next_turn(EventContext::default(), SecurityContext::default(), Default::default(), Vec::new());
         assert!(ctx.plan().is_none());
     }
 
@@ -848,7 +836,7 @@ mod tests {
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let mut turn = Turn::new(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.next_turn(Default::default(), Default::default(), Default::default(), Default::default(), tools.clone());
+            turn.next_turn(Default::default(), Default::default(), Default::default(), tools.clone());
             let offered = turn.full_context().unwrap().tools;
             assert_eq!(offered, tools.iter().map(Tool::definition).collect::<Vec<_>>(), "the model is offered what the turn began with");
             for message in messages {
@@ -872,13 +860,13 @@ mod tests {
 
     #[tokio::test]
     async fn events_leave_the_agent_redacted_while_its_context_keeps_the_full_call() {
-        use caelumora_model::confidentiality::Confidentiality;
+        use caelumora_model::confidentiality::Visibility;
         use caelumora_model::tool::{ToolCall, ToolConfidentiality};
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, true), Vec::new());
+        turn.next_turn(Default::default(), Default::default(), Default::default(), Vec::new());
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::default() };
@@ -892,22 +880,21 @@ mod tests {
         }
         assert_eq!(turn.messages()[0].tool_calls.len(), 1, "the agent keeps it");
 
-        // Reasoning reaches the channel only as far as the turn may publish.
+        // Reasoning reaches the channel unless it is the owner's.
         let thinking = Message {
             role: MessageRole::Assistant,
             content: Some("done".to_string()),
             reasoning: Some("weighing".to_string()),
-            reasoning_confidentiality: Confidentiality::Channel,
             ..Message::default()
         };
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output).await.unwrap();
-        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, false), Vec::new());
-        turn.send_event(ActorEvent::CompleteMessageGenerated(thinking), &output).await.unwrap();
+        let owners = Message { reasoning_visibility: Visibility::Owner, ..thinking };
+        turn.send_event(ActorEvent::CompleteMessageGenerated(owners), &output).await.unwrap();
         let reasoning = |event: Option<Envelope>| match event.map(|e| e.event) {
             Some(ActorEvent::CompleteMessageGenerated(m)) => m.reasoning,
             other => panic!("expected a message, got {other:?}"),
         };
-        assert_eq!(reasoning(rx.recv().await).as_deref(), Some("weighing"), "a channel-level channel admits it");
-        assert!(reasoning(rx.recv().await).is_none(), "a session-level one does not");
+        assert_eq!(reasoning(rx.recv().await).as_deref(), Some("weighing"), "the channel's");
+        assert!(reasoning(rx.recv().await).is_none(), "the owner's is not published");
     }
 }

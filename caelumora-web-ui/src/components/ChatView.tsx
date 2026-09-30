@@ -27,7 +27,7 @@ import type {
 } from '../types';
 import {NotesList} from './NotesList';
 import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
-import {confidentialityInfo} from '../confidentiality';
+import {classificationDescription, classificationLabel} from '../confidentiality';
 import {changedChannel, membershipChangedChannel, onGlobalEvent} from '../globalEvents';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
@@ -712,11 +712,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           {channel && (
             <div
               className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
-              title={confidentialityInfo(channel.confidentiality).description}
+              title={classificationDescription(channel.classification)}
             >
               <Shield size={14} />
-              <span>Confidentiality:</span>
-              <span className="text-gray-700 dark:text-gray-300">{confidentialityInfo(channel.confidentiality).label}</span>
+              <span>Classification:</span>
+              <span className="text-gray-700 dark:text-gray-300">{classificationLabel(channel.classification)}</span>
             </div>
           )}
           <div className="space-y-2">

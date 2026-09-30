@@ -9,9 +9,9 @@
 //! and history are read only if the reading channel may read that channel
 //! (`ChannelSessionReader::may_read`, `AccessQuestions::may_channel_read`),
 //! asked as the agent that reads: decided by the two channels'
-//! confidentiality levels, not by who takes part in them, since an agent
-//! passes on what it reads to its channel (principle 11 in issue 19, as
-//! changed by issue 61).
+//! classifications, not by who takes part in them, since an agent passes on
+//! what it reads to its channel (principle 11 in issue 19, as changed by
+//! issues 61 and 133).
 
 use crate::channel::ChannelLoop;
 use crate::runtime::ActorRuntime;

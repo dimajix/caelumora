@@ -51,7 +51,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
-| `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of moderators and confidentiality levels |
+| `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of moderators and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `NewChannelDialog`, `AddParticipantDialog`, `ErrorBanner` |
 
@@ -110,7 +110,9 @@ ignored.
 
 A new session is created from a template; the one used last in this browser
 is preselected (issue 40). A new channel is created with its name, moderator,
-confidentiality level and participants (`NewChannelDialog`, issue 09).
+classification - a level and, if any are configured, compartments from
+`GET /compartments` (issue 133) - and participants (`NewChannelDialog`,
+issue 09).
 
 ### A channel
 

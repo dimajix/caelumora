@@ -6,9 +6,10 @@
 //! private notes in the current channel - taken over when the turn
 //! completes, like public notes (`notes`). Its prompt part gives the model
 //! its private notes from this channel and from every other channel of the
-//! session that this channel may read by their confidentiality levels
-//! (`AccessQuestions::may_channel_read`, issue 61): a note carries the confidentiality of the
-//! channel it was written in, checked when it is read. It is a
+//! session that this channel may read by their classifications
+//! (`AccessQuestions::may_channel_read`, issue 133): a note carries the
+//! classification of the channel it was written in, checked when it is
+//! read. It is a
 //! `BeforeTurnInput` part, and every chain it shows is recorded as a
 //! `KnowledgeRef`.
 //!

@@ -63,11 +63,14 @@ every user and agent in the channel a contributor.
 
 The participants of a requested channel come from the session's
 participants, the creator always among them. Its moderator defaults to
-`round_robin` and its confidentiality level to `session`, as in a template.
+`round_robin` and its classification to `internal` without compartments, as
+in a template (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 A request that cannot be met is a `SessionError`, refused before anything is
 stored: no name, a name the session already has, an unknown moderator,
-someone who is not a participant of the session, or the level `private`.
+someone who is not a participant of the session, or a classification the
+policy refuses (`ActionType::Classify`: a compartment that is not configured).
+The last is asked for channels from a template too.
 
 ### Running channels
 

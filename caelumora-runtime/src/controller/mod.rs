@@ -190,7 +190,7 @@ mod tests {
             metadata: Metadata::default(),
             components: Default::default(),
             security_attributes: Default::default(),
-            reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
+            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
         };
         let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, ActorId::None);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();

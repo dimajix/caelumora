@@ -542,7 +542,7 @@ mod tests {
             session_id,
             name: "general".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: crate::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),

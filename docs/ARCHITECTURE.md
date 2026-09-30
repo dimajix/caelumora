@@ -34,8 +34,8 @@ The project is a Rust workspace, with a web UI next to it:
 A **session** is one piece of work, such as a conversation about a topic. It
 has participants - users and agents - and one or more **channels**, in which
 some of them talk. A channel is a chat room with its own history, its own
-confidentiality level and its own **moderator**, which decides who is asked
-to respond to a message.
+classification and its own **moderator**, which decides who is asked to
+respond to a message.
 
 Everything that takes part in a channel is an **actor**: a user (`UserActor`),
 an agent (`AgentActor`), or the channel's approver (`ApproverActor`), which
@@ -91,8 +91,8 @@ The path of one message shows how the parts fit together:
     agent's transcript), the model answers, and tool calls in the answer are
     run - after approval, where a tool requires it - and their results fed
     back, until the model answers without calling a tool.
-4.  **The answer is published.** What the agent sends is redacted by the
-    channel's confidentiality, delivered to the others through the channel,
+4.  **The answer is published.** What the agent sends is stripped of what
+    only its owner may see, delivered to the others through the channel,
     and the turn is committed: the messages go into the agent's transcript
     and the history, staged changes to the agent's state are applied, and
     everything is stored.
@@ -172,11 +172,12 @@ Two questions are kept apart:
     may see with a **view** built for that viewer; frontends never ask the
     policy themselves. Users come from a chain of user providers, and the
     REST server authenticates them with a short-lived signed token.
-*   **What may travel where** is decided by confidentiality levels, not by
-    who takes part. Every channel has a level (`public`, `session`,
-    `channel`), and the parts of a message carry labels. An agent publishes
-    to its channel only what the level admits, and a channel reads another
-    only if what it reads may reach it.
+*   **What may flow where** is decided by classifications, not by who takes
+    part. Every channel has a classification - a level from `public` to
+    `strictly_confidential` and an audience of compartments, which the
+    administrator configures - and one flow rule decides whether a channel
+    may read another. Apart from that, the parts of a message are flagged
+    if only the agent's owner may see them, and are never published then.
 
 Details: [SECURITY.md](SECURITY.md), [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
@@ -224,8 +225,8 @@ The design repeats a few decisions; new code follows them.
     instances.
 *   [SECURITY.md](SECURITY.md) - the security manager, ownership, views,
     users, authentication, secrets.
-*   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - confidentiality levels and
-    labels, and what is still open.
+*   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - classifications, compartments
+    and the flow rule, what only an owner sees, and what is still open.
 *   [CONFIGURATION.md](CONFIGURATION.md) - the sections of the configuration
     file.
 *   [CODING-GUIDELINES.md](CODING-GUIDELINES.md) - coding style, error

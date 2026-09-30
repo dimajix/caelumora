@@ -37,13 +37,13 @@ impl<'t> ToolCalls<'t> {
     /// answered already (issue 118) - and returns the approval requests for
     /// those that wait for a decision.
     pub(crate) fn register(&mut self, calls: Vec<ToolCallState>) -> Vec<ApprovalRequest> {
-        let classification = self.turn.classification;
+        let (session_id, channel_id) = (self.turn.classification.session_id, self.turn.classification.channel_id);
         let requests = calls.iter()
             .filter(|c| c.status == ApprovalStatus::Pending)
             .map(|c| ApprovalRequest {
                 id: c.id,
-                session_id: classification.session_id,
-                channel_id: classification.channel_id,
+                session_id,
+                channel_id,
                 agent_id: self.agent_id,
                 tool_call: c.tool_call.clone(),
                 description: c.description.clone(),

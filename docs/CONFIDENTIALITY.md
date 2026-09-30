@@ -1,105 +1,172 @@
 # Confidentiality
 
-This document describes how far information may travel in Caelumora: the
-confidentiality levels of channels, the labels on the parts of a message, and
-the two rules that decide what may be published to a channel and what one
-channel may read of another. Who may do what is a separate question, answered
-in [SECURITY.md](SECURITY.md); the notes and memory these rules apply to are
-described in [MEMORY.md](MEMORY.md). The model is not finished - see [Open
-questions](#open-questions) at the end.
+This document describes how sensitive information in Caelumora is and for
+whom it is meant: the classification of channels, the flow rule that decides
+what one channel may read of another, and which parts of what an agent
+produces only its owner sees. Who may do what is a separate question,
+answered in [SECURITY.md](SECURITY.md); the notes and memory these rules
+apply to are described in [MEMORY.md](MEMORY.md). The model is introduced in
+steps ([133](../issues/133-classification-model.md)); what is not done yet is
+listed under [Open questions](#open-questions) at the end.
 
-## Levels
+## Classification
 
-What may travel from one channel to another is decided by confidentiality
-levels (`caelumora_model::confidentiality`, issue 61), not by who takes part
-in the channels. A channel is a construct of a certain trustworthiness, and
-the decision must not change when someone joins or leaves.
+What may flow from one channel to another is decided by classifications
+(`caelumora_model::confidentiality`, issue 133), not by who takes part in the
+channels. A channel is a construct of a certain trustworthiness, and the
+decision must not change when someone joins or leaves.
 
-A level (`Confidentiality`) is a reach. The levels are ordered, from the least
-to the most confidential:
+A `Classification` is a **level** and a set of **compartments**.
 
-| Level | Reach |
+The levels (`Confidentiality`) say how sensitive information is. They are
+ordered, from the least to the most sensitive:
+
+| Level | Meaning |
 |---|---|
-| `public` | anywhere, beyond the session too |
-| `session` | the channels of the same session |
-| `channel` | only the one channel |
-| `private` | never beyond the actor |
+| `public` | anyone may read it |
+| `internal` | for the organisation |
+| `confidential` | |
+| `strictly_confidential` | |
 
-Every channel has one of the first three (`Channel::confidentiality`, default
-`session`). Its owner sets it when creating the channel, in the session
-template or the request; `private` is refused, because it is an actor's level,
-not a channel's. As the level of a channel, a level says how far the channel's
-contents may travel. The rules see a channel as a `ChannelClassification`: its
-session, its id and its level.
+A **compartment** (`Compartment`) is an area information belongs to - a
+topic, a group, a customer. The compartments of a classification are its
+**audience**: who may read it. Adding one widens the audience. A
+classification without compartments is **general**: readable by everyone of
+a sufficient level. `public` takes no compartment; a classification that
+pairs them is refused, also when it is read from a file or a request.
 
-## Labels
+Written down, a classification is an object with a `level` and, if there are
+any, its `compartments`:
 
-Labels on the parts of a message say how far each part may travel. There are
-two kinds.
+```yaml
+classification:
+  level: confidential
+  compartments: [hr]
+```
+
+### Compartments are configured
+
+Which compartments exist, and which may read which, is configured by the
+administrator in the top-level section `compartments` of the configuration
+(`Compartments`, see [CONFIGURATION.md](CONFIGURATION.md)):
+
+```yaml
+compartments:
+  - name: management
+    reads: [hr]
+  - name: hr
+    reads: [finance]
+  - name: finance
+```
+
+Every compartment reads itself. The read relation is **closed transitively**
+when the configuration is read: what HR wrote may contain what HR read from
+finance, so management, which reads HR, reads finance too. A compartment
+that reads one that is not defined, or is defined twice, is a configuration
+error.
+
+### Channels
+
+Every channel has a classification (`Channel::classification`), set by its
+owner when creating it, in the session template or the request; the default
+is `internal` without compartments (`Classification::CHANNEL_DEFAULT`).
+Giving a channel a classification is asked as `ActionType::Classify`, before
+anything is stored; the ownership policy refuses a compartment that is not
+configured, so that a typo does not go unnoticed. The rules see a channel as
+a `ChannelClassification`: its session, its id and its classification.
+
+## The flow rule
+
+One relation decides everything (`Classification::flows_to`): information
+classified S may flow into a destination classified D if
+
+*   D's level is at least S's, and
+*   S has no compartments, or D has at least one and every compartment of D
+    is covered by one of S's - the same, or one it may read.
+
+For a destination with one compartment this reads "any of the source's
+compartments will do"; for a channel with two, what flows into it must be
+meant for both, since both audiences see it. What is general flows into any
+destination of a sufficient level; what has an audience never flows into a
+general one.
+
+## Reading another channel
+
+Reading another channel's notes and history is `ActionType::ReadChannel {
+source, reader }`, with both channels' `ChannelClassification`
+(`AccessQuestions::may_channel_read`). It is asked in the name of the agent
+that reads - the security context it acts in, its owner's - because the agent
+passes on what it reads (issue 131). A channel may always read itself.
+Otherwise the ownership policy allows it if
+
+*   the source's classification flows into the reader's, and
+*   both belong to the same session, or the source is `public`.
+
+The second condition keeps sessions apart until reading across sessions is a
+question of the participants' consent
+([134](../issues/134-session-privacy.md)): with classifications alone, two
+`internal` channels of different sessions could read each other.
+
+How an agent reads other channels - the `SessionReader`, `read_notes`,
+`read_history` - is described in [MEMORY.md](MEMORY.md).
+
+## What only the owner sees
+
+Beside the classification there is a second axis: whether anyone but the
+agent's owner sees something at all. That is ownership, not sensitivity,
+and it is a flag of its own (`Visibility`): `channel` - published to the
+channel - or `owner` - never published; the agent sees it, and its owner in
+the context panel.
 
 ### Tool calls
 
-A `Tool` declares its `ToolConfidentiality` (issues 54, 61): two labels for
-its calls - `call`, how far the call itself may travel, and `content`, how far
-its arguments and its result may.
+A `Tool` declares its `ToolConfidentiality` (issues 54, 133): two flags for
+its calls - `call`, whether the call itself - that the tool was called - is
+published, and `content`, whether its arguments and its result are.
 
 | Constant | `call` | `content` | Meaning |
 |---|---|---|---|
-| `PUBLIC` | public | public | the default |
-| `CALL_ONLY` | public | private | others see that the tool was called, but not with what |
-| `HIDDEN` | private | private | the whole call stays with the agent |
+| `PUBLIC` | channel | channel | the default |
+| `CALL_ONLY` | channel | owner | others see that the tool was called, but not with what |
+| `HIDDEN` | owner | owner | the whole call stays with the agent |
 
-The agent stamps every call with the labels its tool declares at that moment,
+The agent stamps every call with the flags its tool declares at that moment,
 and the result takes them over from the call. Both are stored with what
-applied then. Which built-in tools use which labels is listed in
+applied then. Which built-in tools use which flags is listed in
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
 
 ### Reasoning
 
-`Message::reasoning_confidentiality` labels a message's reasoning. The agent
-sets it to the most confidential of:
+`Message::reasoning_visibility` says who sees a message's reasoning. It is
+`owner` if
 
-*   the personality's `reasoning_confidentiality` (default `public`);
-*   `private`, once the turn has seen the agent's private knowledge - its
-    private notes or its agent memory (`Turn::saw_private_knowledge`);
-*   the content labels of the calls the reasoning leads to: of the message's
-    own calls once it is complete, and, while it streams, of every tool the
+*   the personality's `reasoning_visibility` is `owner` (default `channel`),
+*   the turn has seen the agent's private knowledge - its private notes or
+    its agent memory (`Turn::saw_private_knowledge`), or
+*   a call the reasoning leads to has `owner` content: of the message's own
+    calls once it is complete, and, while it streams, of every tool the
     agent could still call - because reasoning comes before the call.
 
-Knowledge read from other channels adds nothing: the [reading
-rule](#reading-another-channel) lets a channel read only what reaches no
-further than its own contents.
+Otherwise the reasoning is published and carries the channel's
+classification, as everything the agent derives does. Knowledge read from
+other channels adds nothing: a channel reads only what may flow into it.
 
-The answer text itself is not labelled.
+The answer text itself carries no flag.
 
 What a model is given of reasoning is a separate question from who may
 read it: no model is given another actor's reasoning, and of the agent's
 own only what its model's rule keeps (issue 63, see
 [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)).
 
-## Publishing to a channel
-
-Publishing a labelled part to a channel is `ActionType::Publish { label,
-actor, channel }`. The ownership policy allows it if the channel admits the
-label (`ChannelClassification::admits`): if the label reaches no further than
-the channel's contents may travel anyway. This is rule 1 of issue 61.
-
-*   **Once per turn.** The agent asks once per turn and level, in its owner's
-    name, when the turn begins, and keeps the answer as the turn's
-    `Publication`. Without a decision, only `public` is published.
-*   **Never `private`.** `private` is never published, whatever a policy says;
-    it is not even asked for.
-*   **Stable.** The decision depends only on the label, the actor and the
-    channel, so it holds for everyone who joins later.
-
 ### Redaction
 
 The agent keeps the full calls in its context. What it publishes is redacted
-in one place, `Turn::send_event`, by the turn's `Publication`:
+in one place, `Turn::send_event` (`Message::published`):
 
-*   a call whose `call` label is not admitted is left out;
-*   a call whose `content` label is not admitted has its arguments set to
-    `null` and its result emptied;
+*   a call whose `call` is the owner's is left out;
+*   a call whose `content` is the owner's has its arguments set to `null` and
+    its result emptied;
+*   reasoning that is the owner's is dropped;
 *   a message with nothing left is not sent.
 
 The channel history is built from these events. History, REST, the event
@@ -114,41 +181,22 @@ they are asked to decide.
 Since the answer text is always published, the model is told what it must not
 quote (issue 66):
 
-*   A successful result whose content label the turn may not publish reaches
-    the model wrapped as `{"result": ..., "note": "Only you see this result
-    ..."}` (`tool::successful_result`).
+*   A successful result whose content is the owner's reaches the model
+    wrapped as `{"result": ..., "note": "Only you see this result ..."}`
+    (`tool::successful_result`).
 *   The private notes' prompt part and tool descriptions say not to reveal
     them.
 
-## Reading another channel
-
-Reading another channel's notes and history is `ActionType::ReadChannel {
-source, reader }`, with both channels' `ChannelClassification`
-(`AccessQuestions::may_channel_read`). It is asked in the name of the agent
-that reads - the security context it acts in, its owner's - because the agent
-passes on what it reads (issue 131). The ownership policy allows it if
-(`ChannelClassification::readable_from`, rule 2 of issue 61):
-
-*   the reader lies within the source's reach, and
-*   the reader's level is at least the source's.
-
-The second condition exists because an agent passes on what it reads to its
-channel. So a `public` channel reads only public contents, and a
-`channel`-level channel is read by no other. A channel may always read itself.
-
-How an agent reads other channels - the `SessionReader`, `read_notes`,
-`read_history` - is described in [MEMORY.md](MEMORY.md).
-
 ## Knowledge that carries its channel
 
-What an agent keeps privately is labelled with the channel it was written in,
-so that the reading rule can follow it into other channels:
+What an agent keeps privately carries the classification of the channel it
+was written in, so that the reading rule can follow it into other channels:
 
-*   **Private notes** (issue 51) carry the confidentiality of the channel they
-    were written in. The agent is shown the private notes of every other
-    channel of the session that its current channel may read
+*   **Private notes** (issue 51) carry the classification of the channel
+    they were written in. The agent is shown the private notes of every
+    other channel of the session that its current channel may read
     (`AccessQuestions::may_channel_read`), checked against that channel's
-    current level at every read.
+    current classification at every read.
 *   **Agent memory** (issue 62) entries carry the classification of the
     channel they were written in, and are recalled only in channels that may
     read it (`AgentMemory::recalled`, which asks
@@ -156,49 +204,57 @@ so that the reading rule can follow it into other channels:
     The reading channel is judged by the classification the turn began
     with.
 
+This is sound because an agent never sees anything that may not flow into
+its channel: everything it wrote may be read by the channel's audience and
+no wider.
+
 "Private" means private from other agents and other users, not from the
 agent's owner: the owner sees private notes in the context panel, which is
 theirs alone (issue 54).
 
 ## Open questions
 
-The model is a first step. Not decided yet:
+The classification model is introduced in steps
+([133](../issues/133-classification-model.md)); only the first is done.
+Still to come:
 
-*   **Sensitivity, not reach.** The levels say how far information may
-    travel, not how sensitive it is; topics cannot be told apart and a tool
-    cannot classify its results one by one. The model is to be replaced by a
-    classification of level and compartment
-    ([133](../issues/133-classification-model.md), which decides
-    [64](../issues/64-confidentiality-compartments.md)); what then keeps
-    sessions apart is privacy ([134](../issues/134-session-privacy.md)).
+*   **Messages, notes and memory entries.** Only channels carry a
+    classification of their own yet; a message a user writes cannot be
+    classified differently from its channel, and reading is decided per
+    channel, not per message (step 2).
+*   **Tool results.** A tool cannot classify its results one by one; every
+    result carries the channel's classification. Results that may not flow
+    into the channel are to be withheld from the model by the
+    `GuardedToolExecutor` (step 3).
+*   **Release.** An authorised actor cannot yet widen an entity's audience or
+    lower its level (step 4), and a channel's classification can only be set
+    when it is created ([67](../issues/67-change-channel-level.md)).
 *   **Clearances.** Who may join a channel is asked as
     `ActionType::JoinChannel` with the channel's classification
-    ([46](../issues/46-channel-participants.md)), so that a policy can hold
-    the channel's level against the newcomer. The ownership policy allows
-    every join: clearances of users and agents are not modelled. Yet the
-    guarantees above are only as good as the control over who joins.
-*   **Changing a channel's level.** A level can only be set when the channel
-    is created ([67](../issues/67-change-channel-level.md)). Reading would
-    follow a change at once; a running turn keeps its `Publication` until it
-    ends.
+    ([46](../issues/46-channel-participants.md)). The ownership policy
+    allows every join: clearances of users and agents are not modelled
+    (step 5). Yet the guarantees above are only as good as the control over
+    who joins.
+*   **Sessions.** Reading across sessions is refused except for `public`
+    channels until it becomes a question of consent
+    ([134](../issues/134-session-privacy.md)).
+*   **Where the rules live.** The flow rule is applied by the ownership
+    policy; any other policy would have to apply it too
+    ([138](../issues/138-confidentiality-policy-in-ownership.md)).
 *   **The answer text.** It carries no label and is always published; the
     model is only told what not to quote
     ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge
     out of it relies on the model.
-*   **Whose rights.** Publishing and reading are asked in the name of the
-    agent's owner. How an agent's rights combine with those
-    of the user it acts for is open
+*   **Whose rights.** Reading is asked in the name of the agent's owner. How
+    an agent's rights combine with those of the user it acts for is open
     ([12](../issues/12-user-and-agent-permissions.md)).
 *   **Knowledge beyond the session.** Knowledge kept across sessions or shared
     between agents ([18](../issues/18-knowledge-sharing.md)) and retrieval of
     notes ([59](../issues/59-retrieval-of-notes.md)) will have to carry and
     respect the classification of where it came from; a search index must not
-    become a way around the reading rule.
+    become a way around the flow rule.
 *   **One enforcement for component state.** When the state of notes becomes
     generic component state ([65](../issues/65-generic-component-state.md)),
     the rules are to be applied by the core, not re-implemented per component.
     Today every component that reads across channels asks
     `AccessQuestions::may_channel_read` itself (issue 131).
-*   **One default level.** Six helper functions in five modules define the
-    default confidentiality level
-    ([97](../issues/97-small-model-unifications.md)).

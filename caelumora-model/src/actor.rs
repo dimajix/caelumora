@@ -112,20 +112,20 @@ pub enum ActorEvent {
 }
 
 impl ActorEvent {
-    /// The event as it leaves its sender for the channel (issues 54, 61): the
-    /// messages it carries redacted by the labels `may_publish` refuses
+    /// The event as it leaves its sender for the channel (issues 54, 133):
+    /// the messages it carries without what only their owner sees
     /// (`Message::published`). `None` if it carried a single message of which
     /// nothing is left to show. Approval requests are left as they are: the
     /// approvers see the arguments of a call they are asked to decide.
-    pub fn published(self, may_publish: &dyn Fn(crate::confidentiality::Confidentiality) -> bool) -> Option<ActorEvent> {
-        let publish = |message: Message, wrap: fn(Message) -> ActorEvent| message.published(may_publish).map(wrap);
+    pub fn published(self) -> Option<ActorEvent> {
+        let publish = |message: Message, wrap: fn(Message) -> ActorEvent| message.published().map(wrap);
         match self {
             ActorEvent::PartialMessageGenerated(m) => publish(m, ActorEvent::PartialMessageGenerated),
             ActorEvent::CompleteMessageGenerated(m) => publish(m, ActorEvent::CompleteMessageGenerated),
             ActorEvent::IntermediatePartialGenerated(m) => publish(m, ActorEvent::IntermediatePartialGenerated),
             ActorEvent::IntermediateMessageGenerated(m) => publish(m, ActorEvent::IntermediateMessageGenerated),
             ActorEvent::FullResponseGenerated(messages) => Some(ActorEvent::FullResponseGenerated(
-                messages.iter().filter_map(|m| m.published(may_publish)).collect(),
+                messages.iter().filter_map(Message::published).collect(),
             )),
             other => Some(other),
         }
@@ -400,18 +400,16 @@ mod tests {
 
     #[test]
     fn published_events_carry_redacted_messages() {
-        use crate::confidentiality::Confidentiality;
         use crate::tool::{ToolCall, ToolConfidentiality};
         let hidden = Message {
             tool_calls: vec![ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::HIDDEN }],
             ..Message::default()
         };
         let text = Message { content: Some("hi".to_string()), ..Message::default() };
-        let public_only = |label: Confidentiality| label == Confidentiality::Public;
 
-        assert!(ActorEvent::CompleteMessageGenerated(hidden.clone()).published(&public_only).is_none(), "nothing left to show");
-        assert!(ActorEvent::PartialMessageGenerated(hidden.clone()).published(&public_only).is_none());
-        match ActorEvent::FullResponseGenerated(vec![hidden.clone(), text.clone()]).published(&public_only) {
+        assert!(ActorEvent::CompleteMessageGenerated(hidden.clone()).published().is_none(), "nothing left to show");
+        assert!(ActorEvent::PartialMessageGenerated(hidden.clone()).published().is_none());
+        match ActorEvent::FullResponseGenerated(vec![hidden.clone(), text.clone()]).published() {
             Some(ActorEvent::FullResponseGenerated(messages)) => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, text.id);
@@ -419,7 +417,7 @@ mod tests {
             other => panic!("expected the response, got {other:?}"),
         }
         assert!(
-            matches!(ActorEvent::FullResponseGenerated(vec![hidden]).published(&public_only), Some(ActorEvent::FullResponseGenerated(m)) if m.is_empty()),
+            matches!(ActorEvent::FullResponseGenerated(vec![hidden]).published(), Some(ActorEvent::FullResponseGenerated(m)) if m.is_empty()),
             "the end of the turn is still announced"
         );
     }

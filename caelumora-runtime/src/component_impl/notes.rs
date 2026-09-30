@@ -261,7 +261,7 @@ mod tests {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
-            turn.next_turn(Default::default(), Default::default(), Default::default(), Default::default(), Vec::new());
+            turn.next_turn(Default::default(), Default::default(), Default::default(), Vec::new());
             assert!(!turn.commit_turn().await.channel_state_changed);
         }
     }

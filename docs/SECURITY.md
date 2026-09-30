@@ -4,7 +4,7 @@ This document describes who may do what in Caelumora: the `SecurityManager`
 and the policies it applies, ownership of stored entities, where permission
 checks belong in the code, and where users, logins and secrets come from. How
 far *information* may travel between channels is a separate question, answered
-by confidentiality levels in [CONFIDENTIALITY.md](CONFIDENTIALITY.md). The
+by classifications in [CONFIDENTIALITY.md](CONFIDENTIALITY.md). The
 settings mentioned here are listed in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The security model
@@ -70,9 +70,11 @@ initiator:
     (`ActorId::System`), which may do everything. This is deliberate and never
     a default: an empty context has no rights.
 
-The confidentiality actions (`Publish`, `ReadChannel`, `JoinChannel`) are
-decided by the channels' levels, not by ownership; see
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md).
+The confidentiality actions (`ReadChannel`, `Classify`, `JoinChannel`) are
+decided by classifications and the configured compartments, not by
+ownership; see [CONFIDENTIALITY.md](CONFIDENTIALITY.md). That the ownership
+policy decides them is issue
+[138](../issues/138-confidentiality-policy-in-ownership.md).
 
 ### How stores check
 
@@ -123,11 +125,10 @@ They are asked:
     read of other channels or recall (see [MEMORY.md](MEMORY.md)); a
     component asks with the `SecurityManager` and `SecurityContext` of its
     `ComponentContext` (issue 131);
-*   by an agent, deciding what it may publish or put up for approval.
+*   by an agent, deciding what it may put up for approval.
 
 The questions are `may_read_channel`, `may_change_channel`,
-`may_channel_read`, `may_read_agent_context`, `may_publish` and
-`may_call_tool`.
+`may_channel_read`, `may_read_agent_context` and `may_call_tool`.
 
 `AccessQuestions` is an extension trait on every `SecurityManager`, by blanket
 implementation. Each question gets a name and one place, but only translates

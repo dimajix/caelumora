@@ -402,7 +402,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
                 Participant::User(user1.id),
@@ -496,7 +496,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
                 Participant::Approver(approver.clone()),
@@ -612,7 +612,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
                 Participant::Approver(approver.clone()),
@@ -688,7 +688,7 @@ mod tests {
             session_id,
             name: "test".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: caelumora_model::confidentiality::Confidentiality::CHANNEL_DEFAULT,
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![Participant::Approver(approver.clone()), Participant::User(user.id)],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),

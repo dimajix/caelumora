@@ -6,7 +6,7 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId, TurnState};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
-use crate::confidentiality::Confidentiality;
+use crate::confidentiality::{Classification, Visibility};
 use crate::meta::{Metadata, Scope};
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
@@ -60,7 +60,7 @@ fn metadata(name: &str) -> Metadata {
 
 fn personality() -> Personality {
     Personality {
-        reasoning_confidentiality: Confidentiality::Public,
+        reasoning_visibility: Visibility::Channel,
         security_attributes: Default::default(),
         id: PersonalityId(Uuid::new_v4()),
         metadata: metadata("assistant"),
@@ -79,7 +79,7 @@ fn session_template() -> SessionTemplate {
         channels: vec![ChannelTemplate {
             name: "general".to_string(),
             moderator: "broadcast".to_string(),
-            confidentiality: Confidentiality::CHANNEL_DEFAULT,
+            classification: Classification::CHANNEL_DEFAULT,
             participants: vec!["user".to_string()],
         }],
     }
@@ -104,7 +104,7 @@ fn channel() -> Channel {
         session_id: SessionId(Uuid::new_v4()),
         name: "general".to_string(),
         moderator: "broadcast".to_string(),
-        confidentiality: Confidentiality::CHANNEL_DEFAULT,
+        classification: Classification::CHANNEL_DEFAULT,
         history_limits: Vec::new(),
         participants: Vec::new(),
         security_attributes: Default::default(),

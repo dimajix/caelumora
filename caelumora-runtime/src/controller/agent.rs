@@ -95,7 +95,7 @@ mod tests {
             metadata: Metadata::default(),
             components: Default::default(),
             security_attributes: Default::default(),
-            reasoning_confidentiality: caelumora_model::confidentiality::Confidentiality::Public,
+            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
         };
         let agent = Agent::new("assistant".to_string(), Scope::GlobalScope, &personality, caelumora_model::actor::ActorId::None);
         let store = Arc::new(MemoryStore::new());
