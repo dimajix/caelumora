@@ -1,5 +1,5 @@
-use crate::actor::{Actor, MessageContextError};
-use crate::agent_turn::{CommittedTurn, Turn};
+use crate::actor::{Actor, GivenUpTurnsError, MessageContextError};
+use crate::agent_turn::{CarriedCalls, CommittedTurn, Turn};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
@@ -18,7 +18,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::Visibility;
-use caelumora_model::message::{Message, MessageEvent, MessageId};
+use caelumora_model::message::{GivenUpReason, GivenUpTurn, Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
@@ -62,7 +62,7 @@ pub struct AgentActor {
     /// chunk. A `std` mutex, because `cancel` is synchronous.
     turn_cancel: std::sync::Mutex<CancellationToken>,
     /// Set by `stop`: the actor left the channel, and its run loop ends at
-    /// the next step boundary, abandoning a turn under way.
+    /// the next step boundary, giving up a turn under way.
     stopping: AtomicBool,
     loop_count: AtomicI32,
     max_iterations: i32,
@@ -475,20 +475,40 @@ impl AgentActor {
         )
     }
 
-    /// Ends the current turn after `error`: logs the full error, discards the
-    /// turn's unfinished work (pending tool calls, plan, messages not yet
-    /// sent as a final response) and tells the channel with `TurnFailed`, so
-    /// that users see what went wrong instead of a turn that never ends.
+    /// Ends the current turn after `error`: logs the full error, gives the
+    /// turn up (issue 145) - its messages stay as a branch no longer active,
+    /// nothing it staged is applied - and tells the channel with
+    /// `TurnFailed`, so that users see what went wrong instead of a turn that
+    /// never ends.
     async fn fail_turn<'a>(&self, turn: &mut Turn<'a>, error: &anyhow::Error, output: &dyn EventSender) {
         let agent_name = self.agent_controller.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id, agent_name, error);
 
-        let ended = turn.abandon_turn();
-
         let message = crate::error::user_message(error)
             .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
+        let carried = self.carried_calls(turn).await;
+        let ended = turn.give_up_turn(GivenUpReason::Failed { message: message.clone() }, carried);
         if let Err(e) = ended.send_event(ActorEvent::TurnFailed { message }, output).await {
             warn!("Agent {} {} cannot report its failed turn: {:#}", self.id, agent_name, e);
+        }
+    }
+
+    /// How the tool calls that ran in `turn` are told when it is given up
+    /// (issue 145): in full while what the turn saw may still flow into
+    /// the channel (`ActionType::Publish`, in the agent's name, as its
+    /// tools' results are admitted), else - the channel was lowered
+    /// meanwhile, or is gone - only which tools ran.
+    async fn carried_calls(&self, turn: &Turn<'_>) -> CarriedCalls {
+        let turn_classification = turn.classification();
+        let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else {
+            return CarriedCalls::NamesOnly { classification: turn_classification };
+        };
+        let context = turn.security_context();
+        let action = ActionType::Publish { classification: &turn_classification, actor: context.caller_id, channel: &channel };
+        if self.actor_runtime.security_manager().check(context, action).await {
+            CarriedCalls::InFull
+        } else {
+            CarriedCalls::NamesOnly { classification: channel }
         }
     }
 
@@ -929,10 +949,11 @@ impl Actor for AgentActor {
             };
 
             // Told to stop, the actor is leaving the channel: a turn under
-            // way is not resumed later, so it is abandoned rather than
-            // stored (issue 75).
+            // way is not resumed later, so it is given up rather than
+            // stored to be resumed (issues 75, 145).
             if self.stopping.load(Ordering::SeqCst) {
-                turn.abandon_turn();
+                let carried = self.carried_calls(&turn).await;
+                turn.give_up_turn(GivenUpReason::Stopped, carried);
                 self.processing_state.store(ActorState::Idle);
                 self.store_channel_state(&mut turn).await;
                 break;
@@ -992,6 +1013,19 @@ impl Actor for AgentActor {
                 MessageContextError::Failed { actor: self.id, message }
             })?;
         context_of(&state, self.id, message)
+    }
+
+    async fn given_up_turns(&self, caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, GivenUpTurnsError> {
+        // Read from the store, as `message_context` does.
+        let attributes = self.agent_controller.load().security_attributes.clone();
+        self.actor_runtime.security_manager()
+            .require(caller, ActionType::ReadAgentContext(&attributes), || GivenUpTurnsError::Forbidden { actor: self.id }).await?;
+        let state = self.actor_runtime.load_channel_state().await
+            .map_err(|e| {
+                warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);
+                GivenUpTurnsError::Failed { actor: self.id }
+            })?;
+        Ok(state.transcript.given_up_turns())
     }
 
     fn cancel(&self) {

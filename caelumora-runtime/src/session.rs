@@ -321,7 +321,7 @@ impl SessionLoop {
         }
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
         self.runtime_manager.state_store().delete_channel_state(channel_id).await?;
-        info!("Channel {}/{} deleted from session {}", channel.name, channel_id, self.id);
+        info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
     }
 

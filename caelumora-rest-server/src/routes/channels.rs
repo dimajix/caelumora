@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -326,6 +326,22 @@ pub async fn message_context(
         tools_digest: seen.reference.tools,
         tools: seen.tools,
     }))
+}
+
+/// The turns actor `aid` gave up in the channel (issue 145), oldest first,
+/// for whoever may read what it saw.
+pub async fn given_up_turns(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<GivenUpTurnResponse>>, ApiError> {
+    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let actor = actor_in(&channel, aid)
+        .and_then(|actor| channel.actor_by_id(actor))
+        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
+    let turns = actor.given_up_turns(&user.security_context()).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?;
+    Ok(Json(turns.into_iter().map(Into::into).collect()))
 }
 
 pub async fn send_approval(

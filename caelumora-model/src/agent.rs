@@ -177,7 +177,7 @@ impl TurnState {
         let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
         self.context.transcript = Some(digest);
         self.context.turn_entries += 1;
-        self.entries.push(TurnEntry { entry: TranscriptEntry { message, digest }, context });
+        self.entries.push(TurnEntry { entry: TranscriptEntry { message, digest, given_up: None }, context });
     }
 
     /// The messages the turn produced so far.

@@ -64,3 +64,9 @@ did.
   more kinds of effect leave the reversible zone: another channel reading a
   channel's notes, and committing knowledge beyond the session
   ([18](18-knowledge-sharing.md)).
+- **2026-09-30** — A turn that fails or is stopped no longer loses its
+  tool calls ([145](145-ended-turns-leave-a-record.md)): they stay in the
+  agent's transcript on a dead branch, and the calls that ran are told on
+  the active branch. What is told as having run is what has a
+  `started_at`; the call a crash cut off (`prepare_resume`) has none and
+  stays the open case of this issue.

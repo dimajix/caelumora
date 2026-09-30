@@ -55,3 +55,7 @@ messages are classified below the channel and admitted.
   does - its messages are classified above the channel now - but given up
   as a dead branch of the agent's transcript, which depends on
   [145](145-ended-turns-leave-a-record.md).
+- **2026-09-30** — [145](145-ended-turns-leave-a-record.md) is done:
+  `Turn::give_up_turn` keeps a turn as a dead branch and tells the agent,
+  by name only, which tools ran once the turn no longer flows into the
+  channel. Cancelling on a lowering needs a reason of its own for it.

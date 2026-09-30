@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorId, ActorState, Envelope};
 use caelumora_model::context::ResolvedContext;
-use caelumora_model::message::MessageId;
+use caelumora_model::message::{GivenUpTurn, MessageId};
 use caelumora_model::security::SecurityContext;
 
 #[async_trait]
@@ -38,11 +38,14 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// model call without waiting for anything.
     fn cancel(&self) {}
 
-    /// Ends the actor for good, because it left the channel (issue 75): a
-    /// turn under way is abandoned, not kept for a resume. Synchronous like
-    /// `cancel`; an actor with state ends its own task once that state is
-    /// stored consistent, the channel closes its inbox and aborts it only
-    /// if it does not end by itself.
+    /// Ends the actor for good, because it left the channel (issue 75) -
+    /// removed from it, or the channel deleted: a turn under way is given
+    /// up, not kept for a resume (issue 145). The act that removed it
+    /// checked its permission and is who did it; stopping is its
+    /// consequence, and like `cancel` and `wakeup` knows no caller.
+    /// Synchronous like `cancel`; an actor with state ends its own task once
+    /// that state is stored consistent, the channel closes its inbox and
+    /// aborts it only if it does not end by itself.
     fn stop(&self) {}
 
     /// What this actor's model saw when it produced the message `message`:
@@ -55,6 +58,18 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// `Unavailable` if what was recorded cannot be resolved any more.
     async fn message_context(&self, _caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
         Err(MessageContextError::NotRecorded { actor: self.id(), message })
+    }
+
+    /// The turns this actor gave up in its channel, with their messages
+    /// (issue 145), for `caller` - who may read them where they may read
+    /// the actor's context. Only agents take turns; every other actor has
+    /// none.
+    ///
+    /// # Errors
+    /// `GivenUpTurnsError::Forbidden` if `caller` may not read them,
+    /// `Failed` if the actor's state cannot be read.
+    async fn given_up_turns(&self, _caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, GivenUpTurnsError> {
+        Ok(Vec::new())
     }
 }
 
@@ -71,4 +86,15 @@ pub enum MessageContextError {
     /// Reading the actor's state failed; the cause is in the log.
     #[error("The context of message {message} by {actor} cannot be read")]
     Failed { actor: ActorId, message: MessageId },
+}
+
+/// Why the turns an actor gave up cannot be shown. The messages are meant
+/// for users (see `crate::error::user_message`).
+#[derive(Debug, thiserror::Error)]
+pub enum GivenUpTurnsError {
+    #[error("You are not permitted to see what {actor} saw")]
+    Forbidden { actor: ActorId },
+    /// Reading the actor's state failed; the cause is in the log.
+    #[error("The turns {actor} gave up cannot be read")]
+    Failed { actor: ActorId },
 }

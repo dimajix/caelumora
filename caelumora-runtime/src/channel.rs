@@ -472,7 +472,7 @@ impl ChannelLoop {
         self.rebuild_mentions();
         actor.stop();
         let _ = self.changes_tx.send(ActorChange::Stop(participant));
-        info!("{} left channel {}", participant, self.id);
+        info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
         Ok(())
     }
 
@@ -1630,6 +1630,127 @@ mod tests {
             }
         }).await.expect("stored in Planning, with the tool's result");
         assert!(stored.turn.is_some_and(|t| t.tool_calls.is_empty()), "the calls of the step are done");
+        running.abort();
+    }
+
+    /// A model that gives the answers it was given, one per call, and then
+    /// fails.
+    #[derive(Debug)]
+    struct FailsAfter(std::sync::Mutex<std::collections::VecDeque<Message>>);
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for FailsAfter {
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::ToolDefinition])
+            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+        {
+            match self.0.lock().unwrap().pop_front() {
+                Some(answer) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
+                None => Box::pin(futures::stream::iter([Err(crate::llm::LLMError::Backend {
+                    endpoint: "test".to_string(), model: "test".to_string(), message: "gone".to_string(),
+                })])),
+            }
+        }
+
+        fn profile(&self) -> caelumora_model::context::ModelProfile {
+            Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_turn_that_fails_after_a_tool_ran_stays_as_a_branch_and_the_agent_is_told() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::{GivenUpReason, MessageRole};
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        // The model calls a tool that needs no approval, and fails when
+        // asked about its result.
+        let calculate = Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "calculator".to_string(),
+            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { channel, context, agent, helper, mut events, running } =
+            with_an_agent(Arc::new(FailsAfter(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnFailed { .. }) { break }
+            }
+        }).await.expect("the turn fails");
+        settled(&helper, ActorState::Idle).await;
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+
+        // The turn's messages are a branch no longer active, marked as given
+        // up; what the model saw for them can still be told.
+        let turns = helper.given_up_turns(&context).await.expect("permitted");
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(turns[0].given_up.reason, GivenUpReason::Failed { .. }));
+        let roles: Vec<_> = turns[0].messages.iter().map(|m| m.role).collect();
+        assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
+        assert!(helper.message_context(&context, calculate.id).await.is_ok(), "the call's context is resolved on its branch");
+
+        // On the active branch the agent is told what ran, and nothing else
+        // of the turn is there - neither in its transcript nor its history.
+        let transcript = stored.transcript.messages();
+        assert!(transcript.iter().all(|m| m.id != calculate.id), "{transcript:?}");
+        let told = transcript.last().expect("the agent is told");
+        assert!((told.role, told.internal) == (MessageRole::System, true), "{told:?}");
+        let text = told.content.as_deref().unwrap_or_default();
+        assert!(text.contains("calculate") && text.contains("1+1"), "in full: {text}");
+        assert!(stored.history.messages().iter().all(|m| m.id != calculate.id && m.id != told.id));
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_agent_removed_during_a_turn_gives_it_up_naming_who_removed_it() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::{GivenUpReason, MessageRole};
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        // The model calls a tool, and never answers again.
+        let calculate = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "calculator".to_string(),
+            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { channel, context, agent, running, .. } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+                if state.turn.as_ref().is_some_and(|t| t.messages().any(|m| !m.tool_results.is_empty())) { break }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the tool ran");
+
+        channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
+
+        let turns = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let turns = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap().transcript.given_up_turns();
+                if !turns.is_empty() { break turns }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the turn is given up");
+        assert_eq!(turns[0].given_up.reason, GivenUpReason::Stopped);
         running.abort();
     }
 

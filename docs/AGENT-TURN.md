@@ -62,7 +62,7 @@ answer, are prompt parts placed among the turn's messages, not messages
 (see [Instructions within a turn](#instructions-within-a-turn)).
 
 An error in one of the turn's states ends the turn, not the agent: the
-agent logs it, discards the turn (`Turn::abandon_turn`), emits
+agent logs it, gives the turn up (`Turn::give_up_turn`), emits
 `TurnFailed` and returns to `Idle` (see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md)).
 
@@ -111,8 +111,30 @@ the transcript and the history.
     It returns a `CommittedTurn`: the final messages for
     `FullResponseGenerated`, whether the channel state changed, and the
     ended turn.
-*   **`Turn::abandon_turn`** discards a turn that failed or was stopped.
-    Nothing it produced, staged or read is taken over.
+*   **`Turn::give_up_turn`** gives up a turn that failed or was stopped
+    (issue 145). No end of a turn loses its messages:
+    *   its messages are appended to the transcript and the history as by
+        `commit_turn`, each with its `ContextRef`, and both heads go back to
+        where the turn began: the messages stay as a branch no longer
+        active (see [The transcript as a chain](#the-transcript-as-a-chain)).
+        So the agent's model does not see them, nor does the channel,
+        while what they were produced from can still be asked for;
+    *   the transcript's last message of the turn is marked `given_up`,
+        with the reason (failed, with what its users were told; stopped),
+        the
+        time and how many messages were the turn's;
+    *   nothing it staged is applied - no note, nothing remembered;
+    *   what its tools did stays done. If a call ran (its result has a
+        start), the agent is told on the active branch, in an internal
+        system message of the runtime in its transcript - with arguments
+        and results, classified as the turn, while the turn may still flow
+        into the channel (`ActionType::Publish`); only the names of the
+        tools, classified as the channel, once the channel was lowered
+        below the turn (issue 141) or is gone. A call that did not run -
+        denied, or given up while waiting for approval - is not told.
+
+    A turn that produced no message leaves nothing: there is nothing to
+    keep. `cancel` does not give a turn up; it takes it over.
 
 Both end the turn as an `EndedTurn`, which sends the turn's last event -
 `FullResponseGenerated` or `TurnFailed` - with the contexts and the
@@ -140,7 +162,7 @@ agent starts `Idle`.
 
 A deliberate end never leaves a turn in the store. `cancel` and the stop
 tool commit the turn. An agent removed from its channel is told to `stop`:
-it abandons a turn under way, stores itself idle and ends its task. The
+it gives up a turn under way, stores itself idle and ends its task. The
 channel aborts it only if it does not - a tool that hangs, say.
 
 ## What an agent saw
@@ -199,9 +221,10 @@ A chain is a tree with a head
 *   An entry pushed with the digest of one already there - the same
     predecessor, the same content - is that entry: the head moves to it.
 
-Nothing moves a head yet; giving up a turn
-([145](../issues/145-ended-turns-leave-a-record.md)) and regenerating an
-answer (08) will.
+Giving up a turn ([145](../issues/145-ended-turns-leave-a-record.md), see
+[Beginning and ending a turn](#beginning-and-ending-a-turn)) moves the
+heads of the transcript and the history back; regenerating an answer (08)
+will move them too.
 
 ### What is recorded
 
@@ -434,6 +457,10 @@ participant's history, but only one of them produced it.
     than the conversation: the system prompt, internal steps, tool results.
 *   It reads its state from the `StateStore`, where it is written after
     every step; the running loop holds the in-memory state.
+*   `Actor::given_up_turns(caller)` answers, under the same question, with
+    the turns the agent gave up in the channel (issue 145): each with its
+    reason, time and messages. The context of each of those messages is
+    asked for like that of any other.
 
 REST exposes it as
 `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
@@ -441,7 +468,8 @@ answers `403 context_forbidden`, `404 context_not_recorded` (not produced
 by that actor) or `404 context_unavailable` (recorded, but no longer
 resolvable). The response lists the knowledge read with channel and agent
 names - a channel of another session is not named - and the tools offered
-with the digest of their set.
+with the digest of their set. `GET …/actors/{aid}/given-up-turns` lists the
+turns given up, oldest first, and answers `403 context_forbidden` alike.
 
 So that a client offers this only where it works, every member of a channel
 response carries `can_read_context`, decided for the requesting user when

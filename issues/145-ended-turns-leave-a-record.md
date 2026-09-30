@@ -1,6 +1,6 @@
 # 145 — A turn that does not end regularly leaves no record of its tool calls
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -129,3 +129,34 @@ conversation.
   tools declare whether they have an effect
   ([20](20-transactional-effects.md)), every executed call is carried
   over.
+- **2026-09-30** — Decided in the discussion before implementing: no type
+  of its own for a given-up turn. Almost everything it would have held is
+  in the tree or the messages already - where the branch forked, the
+  classification, the calls and their results; what is new is only that
+  and how the branch ended, and that is a mark on its last node.
+- **2026-09-30** — Done. `Turn::abandon_turn` is `give_up_turn`: the
+  turn's messages go into the transcript and the agent's history as
+  `commit_turn` would put them, each with its `ContextRef`, and both heads
+  go back to where the turn began. The transcript's last message of the
+  turn carries `given_up` (`GivenUp`: the reason, `Failed { message }` with
+  what the users were told or `Stopped`), the
+  time, and how many messages were the turn's), outside the digest.
+  Nothing the turn staged is applied. Calls that ran (their result has a
+  `started_at`) are told on the active branch in an internal system
+  message of the runtime in the transcript: with arguments and results,
+  classified as the turn, while the turn may still flow into the channel
+  (`ActionType::Publish`), else only by name, classified as the channel.
+  `Actor::given_up_turns` (under `ReadAgentContext`) and
+  `GET …/actors/{aid}/given-up-turns` list the turns; the context of their
+  messages is resolved on their branch by the existing endpoint. The web
+  UI is [146](146-show-given-up-turns.md). Deviations from "done when":
+  who approved a call is not recorded - `ToolCallState` never held it, a
+  gap left to [140](140-audit-log.md) as noted above - and a turn that
+  produced no message leaves nothing, since there is nothing to keep.
+- **2026-09-30** — `Stopped` briefly carried the `SecurityContext` of the
+  act that stopped the agent, and was taken back: `stop`, `cancel` and
+  `wakeup` are to be alike, and none of them knows its caller. Who removed
+  the agent or deleted the channel belongs to that act, in the audit log
+  ([140](140-audit-log.md)); until then `remove_participant` and
+  `delete_channel` log it. That the three can be called without a check
+  is [147](147-actor-control-unchecked.md).

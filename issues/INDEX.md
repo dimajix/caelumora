@@ -141,7 +141,7 @@ against it, and what came out of the last attempt.
 | [126](126-mcp-tools-discovered-once.md) | open | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
 | [127](127-tool-executor-not-replaceable.md) | done | The tool executor is fixed in the runtime, so how tools are executed cannot be tried out by configuring a different component. |
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
-| [145](145-ended-turns-leave-a-record.md) | open | A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain. |
+| [145](145-ended-turns-leave-a-record.md) | done | A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain. |
 
 ## User interaction
 
@@ -161,6 +161,7 @@ against it, and what came out of the last attempt.
 | [103](103-rest-error-mappers.md) | done | Six REST functions map runtime errors to problem details with the same pattern. |
 | [104](104-sse-stream-and-subscribe.md) | done | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
 | [106](106-rest-small-findings.md) | done | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
+| [146](146-show-given-up-turns.md) | open | The web UI does not show the turns an agent gave up, so what their tools did can be read only through the API. |
 
 ## Context and knowledge
 
@@ -233,6 +234,7 @@ against it, and what came out of the last attempt.
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 | [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |
 | [144](144-runtime-and-entity-accessors.md) | done | Runtimes forward attributes of their own and of the entity above in several ways, with no rule for what the runtime answers and what the entity answers itself. |
+| [147](147-actor-control-unchecked.md) | open | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
 
 ## Open architecture questions
 

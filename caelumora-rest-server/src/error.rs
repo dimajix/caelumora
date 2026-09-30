@@ -162,7 +162,7 @@ impl ApiError {
     ///   `<subject>_forbidden`, saying what was refused and not why;
     /// - anything else is a server error, `<subject>_failed`.
     pub fn from_runtime(error: anyhow::Error, subject: Subject, action: &str) -> Self {
-        use caelumora_runtime::actor::MessageContextError;
+        use caelumora_runtime::actor::{GivenUpTurnsError, MessageContextError};
         use caelumora_runtime::channel::ChannelError;
         use caelumora_runtime::command::CommandError;
         use caelumora_runtime::error::{is_forbidden, is_not_found, user_message};
@@ -178,6 +178,9 @@ impl ApiError {
                 MessageContextError::Unavailable { .. } => return Self::not_found("context_unavailable", detail),
                 MessageContextError::Failed { .. } => {}
             }
+        }
+        if let Some(GivenUpTurnsError::Forbidden { .. }) = error.downcast_ref::<GivenUpTurnsError>() {
+            return Self::forbidden(Subject::Context.forbidden(), detail);
         }
         if let Some(e) = error.downcast_ref::<SessionError>() {
             match e {

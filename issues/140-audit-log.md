@@ -52,3 +52,11 @@ session ([07](07-session-deletion-audit.md)).
   [133](133-classification-model.md): the maintainer set a release protocol
   in `ChannelState` aside, since what it would be is an entry in an audit
   log, which does not exist yet.
+- **2026-09-30** — [145](145-ended-turns-leave-a-record.md): an agent
+  removed from its channel, or whose channel is deleted, gives up a turn
+  under way; the turn is marked `Stopped` with the time, but not with who
+  stopped it. The maintainer decided that `Actor::stop`, like `cancel` and
+  `wakeup`, knows no caller: who removed the agent or deleted the channel
+  is recorded with that act, here, and found for a stopped turn by channel,
+  agent and time. Until then it is only in the log
+  (`remove_participant`, `delete_channel`).

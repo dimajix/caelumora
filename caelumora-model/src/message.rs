@@ -153,6 +153,41 @@ pub enum MessageEvent {
 pub struct TranscriptEntry {
     pub message: Message,
     pub digest: Digest,
+    /// Set on the last message of a turn that was given up (issue 145):
+    /// what the branch ending here is. Not covered by the digest - it says
+    /// something about the branch, not what a model saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub given_up: Option<GivenUp>,
+}
+
+/// That a turn was given up rather than taken over (issue 145): its
+/// messages stay in the agent's transcript as a branch that is no longer
+/// active, ending in the message this is set on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GivenUp {
+    pub reason: GivenUpReason,
+    pub at: DateTime<Utc>,
+    /// How many of the messages up to this one are the turn's.
+    pub turn_entries: usize,
+}
+
+/// Why a turn was given up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GivenUpReason {
+    /// It failed; `message` is what its users were told.
+    Failed { message: String },
+    /// The agent was stopped, leaving the channel: removed from it, or the
+    /// channel deleted. Who did that is a matter of that act, not of its
+    /// consequence - the audit log's (issue 140).
+    Stopped,
+}
+
+/// A turn that was given up: the mark, and the turn's messages.
+#[derive(Debug, Clone)]
+pub struct GivenUpTurn {
+    pub given_up: GivenUp,
+    pub messages: Vec<Message>,
 }
 
 impl ChainEntry for TranscriptEntry {
@@ -235,7 +270,39 @@ impl Transcript {
 
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        push_message(&mut self.messages, msg, |message, digest| TranscriptEntry { message, digest })
+        push_message(&mut self.messages, msg, |message, digest| TranscriptEntry { message, digest, given_up: None })
+    }
+
+    /// Moves the head to the entry with `digest` - `None`: before every
+    /// entry - to go on from there (issue 08). `false` if there is none.
+    pub fn move_head(&mut self, digest: Option<&Digest>) -> bool {
+        self.messages.move_head(digest)
+    }
+
+    /// Marks the entry with `digest` as the end of a turn given up (issue
+    /// 145). `false` if there is none.
+    pub fn mark_given_up(&mut self, digest: &Digest, given_up: GivenUp) -> bool {
+        match self.messages.entries_mut().find(|e| &e.digest == digest) {
+            Some(entry) => {
+                entry.given_up = Some(given_up);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The turns given up, in the order they ended in the transcript, each
+    /// with its messages.
+    pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
+        self.messages.all_entries()
+            .filter_map(|entry| {
+                let given_up = entry.given_up.clone()?;
+                let path = self.messages.prefix(&entry.digest)?;
+                let start = path.len().saturating_sub(given_up.turn_entries);
+                let messages = path[start..].iter().map(|e| e.message.clone()).collect();
+                Some(GivenUpTurn { given_up, messages })
+            })
+            .collect()
     }
 
     /// The entries of the active branch.
@@ -318,6 +385,12 @@ impl MessageHistory {
     /// Appends `msg` with what it was produced from, if known.
     pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
         push_message(&mut self.messages, msg, |message, digest| HistoryEntry { message, context, digest });
+    }
+
+    /// Moves the head to the entry with `digest` - `None`: before every
+    /// entry - to go on from there (issue 08). `false` if there is none.
+    pub fn move_head(&mut self, digest: Option<&Digest>) -> bool {
+        self.messages.move_head(digest)
     }
 
     /// Reclassifies message `id` - on whichever branch - as
@@ -441,6 +514,28 @@ mod tests {
         let loaded: Transcript = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.digest(), Some(recorded));
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
+    }
+
+    #[test]
+    fn a_turn_given_up_is_a_marked_branch_with_its_messages() {
+        let mut transcript = Transcript::new();
+        transcript.push(make_message(id(1)));
+        let before = transcript.digest();
+        transcript.extend(vec![make_message(id(2)), make_message(id(3))]);
+        let last = transcript.digest().unwrap();
+        let given_up = GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: Utc::now(), turn_entries: 2 };
+        assert!(transcript.mark_given_up(&last, given_up.clone()));
+        assert_eq!(transcript.digest(), Some(last), "the mark is no part of the digest");
+        transcript.move_head(before.as_ref());
+        transcript.push(make_message(id(4)));
+
+        let loaded: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        let turns = loaded.given_up_turns();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].given_up, given_up);
+        assert_eq!(turns[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)], "the turn's, not what came before");
+        assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
+        assert!(!transcript.mark_given_up(&crate::digest::prompt("elsewhere"), given_up), "no such entry");
     }
 
     #[test]

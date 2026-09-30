@@ -77,6 +77,7 @@ logged-in user.
 | `GET …/notes` | The notes the channel's agents published |
 | `POST …/participants`, `DELETE …/participants/{aid}` | Add a participant (with `history`), remove one; `not_cleared` if they are not cleared for the channel (issue 133) |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
+| `GET …/actors/{aid}/given-up-turns` | The turns an agent gave up - failed or stopped - with their reason and messages (issue 145) |
 | `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
 | `GET …/channels/{cid}/events` | The channel's stream |
 | `GET /events` | The global stream |

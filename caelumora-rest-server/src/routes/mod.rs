@@ -80,6 +80,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context",
             get(channels::message_context),
         )
+        .route("/sessions/{id}/channels/{cid}/actors/{aid}/given-up-turns", get(channels::given_up_turns))
         .route(
             "/sessions/{id}/channels/{cid}/commands",
             get(channels::list_commands).post(channels::execute_command),

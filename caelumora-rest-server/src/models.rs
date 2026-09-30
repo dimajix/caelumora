@@ -307,6 +307,23 @@ pub struct CommandReplyResponse {
     pub output: Option<String>,
 }
 
+/// A turn an agent gave up (issue 145): why and when, and the messages it
+/// had produced, which stay in the agent's transcript as a branch no longer
+/// active. What each of them was produced from is its context, as for any
+/// message of the agent.
+#[derive(Debug, Serialize)]
+pub struct GivenUpTurnResponse {
+    pub reason: caelumora_model::message::GivenUpReason,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub messages: Vec<Message>,
+}
+
+impl From<caelumora_model::message::GivenUpTurn> for GivenUpTurnResponse {
+    fn from(turn: caelumora_model::message::GivenUpTurn) -> Self {
+        Self { reason: turn.given_up.reason, at: turn.given_up.at, messages: turn.messages }
+    }
+}
+
 /// What an agent's model saw when it produced a message (issues 06, 47):
 /// the messages of its transcript and the prompt parts of that turn, in the
 /// order the model was given them, with the digest of the context, and the
@@ -401,6 +418,18 @@ mod tests {
     use super::*;
     use caelumora_model::approval::ApproverId;
     use caelumora_model::user::UserId;
+
+    #[test]
+    fn a_turn_given_up_is_answered_with_its_reason_and_messages() {
+        use caelumora_model::message::{GivenUp, GivenUpReason, GivenUpTurn};
+        let turn = GivenUpTurn {
+            given_up: GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: chrono::Utc::now(), turn_entries: 1 },
+            messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+        };
+        let json = serde_json::to_value(GivenUpTurnResponse::from(turn)).unwrap();
+        assert_eq!(json["reason"], serde_json::json!({ "kind": "failed", "message": "boom" }));
+        assert_eq!(json["messages"].as_array().map(Vec::len), Some(1));
+    }
 
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
