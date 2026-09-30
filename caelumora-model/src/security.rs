@@ -317,6 +317,13 @@ pub trait AccessQuestions {
     /// before a call is put up for approval.
     async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool;
 
+    /// Whether `actor` may put what is classified `classification` into a
+    /// channel classified `channel` (`Publish`, issue 133), asked in
+    /// `context`: a message or a tool result entering the channel, a tool
+    /// result entering the context of an agent in it, or a turn that began
+    /// under another classification of the channel going on in it.
+    async fn may_publish(&self, context: &SecurityContext, actor: ActorId, classification: &Classification, channel: &Classification) -> bool;
+
     /// Whether the user `context` acts for, with `roles`, is cleared for
     /// `channel` (`JoinChannel`, issue 133) - what decides, besides
     /// `GetChannel`, which channels they are shown.
@@ -350,6 +357,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_call_tool(&self, context: &SecurityContext, call: &ToolCall) -> bool {
         self.check(context, ActionType::CallTool(call)).await
+    }
+
+    async fn may_publish(&self, context: &SecurityContext, actor: ActorId, classification: &Classification, channel: &Classification) -> bool {
+        self.check(context, ActionType::Publish { classification, actor, channel }).await
     }
 
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {

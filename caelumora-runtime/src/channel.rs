@@ -17,7 +17,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
 use caelumora_model::user::UserId;
@@ -320,7 +320,7 @@ impl ChannelLoop {
     /// that its turn does not flow into the channel any more and gives it
     /// up (`GivenUpReason::Lowered`) instead of taking it over. Lowered
     /// means: what the channel held, classified as it was, may not be put
-    /// into it as it is now (`ActionType::Publish`, in `context`'s name).
+    /// into it as it is now (`AccessQuestions::may_publish`, in `context`'s name).
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if `context` may not reclassify the
@@ -343,8 +343,7 @@ impl ChannelLoop {
             }
         }
         self.channel.update_classification(context, classification.clone()).await?;
-        let lowered = !self.runtime.security_manager()
-            .check(context, ActionType::Publish { classification: &channel, actor: context.caller_id, channel: &classification }).await;
+        let lowered = !self.runtime.security_manager().may_publish(context, context.caller_id, &channel, &classification).await;
         if lowered {
             self.cancel_actors();
         }
@@ -827,7 +826,7 @@ impl ChannelLoop {
 
     /// Whether every message `event` carries may enter the channel as its
     /// sender classified it, and every tool result in them as it is
-    /// classified (`ActionType::Publish`, issue 133): the gate for every
+    /// classified (`AccessQuestions::may_publish`, issue 133): the gate for every
     /// actor, whatever it checked itself. An event with a part that may not
     /// is dropped whole, and logged: its sender misclassified it.
     async fn admits(&self, event: &Envelope) -> bool {
@@ -844,8 +843,7 @@ impl ChannelLoop {
         for message in messages {
             let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
             for classification in parts {
-                let action = ActionType::Publish { classification, actor: event.context.sender_id, channel: &channel };
-                if !security.check(&event.security, action).await {
+                if !security.may_publish(&event.security, event.context.sender_id, classification, &channel).await {
                     warn!("Dropped {}: a part of its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, classification, self.id);
                     return false;
                 }

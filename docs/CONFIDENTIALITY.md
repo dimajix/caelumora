@@ -92,7 +92,9 @@ message classified by accident.
 *   **The channel admits it.** Putting a message into a channel is
     `ActionType::Publish { classification, actor, channel }`, asked by the
     `ChannelLoop` for every message of every event that enters it
-    (`ChannelLoop::admits`) - the gate for every actor. An event with a
+    (`ChannelLoop::admits`) - the gate for every actor. Wherever it is only
+    a question, it is asked as `AccessQuestions::may_publish` (issue 158);
+    `UserActor::send_message` requires it as part of sending. An event with a
     message it may not admit is dropped and logged. The ownership policy
     allows it if the actor is the one acting (the context's caller), every
     compartment is configured, and the classification flows into the

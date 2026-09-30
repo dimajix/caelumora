@@ -304,15 +304,14 @@ impl GuardedToolExecutor {
     /// The result for `call`, whose tool gave `output`: classified as the
     /// tool classified it, else as the tool is configured - as the turn
     /// began with its tools - else as the channel, and withheld if that may
-    /// not flow into the channel (`ActionType::Publish`, in the agent's
+    /// not flow into the channel (`AccessQuestions::may_publish`, in the agent's
     /// name: the result enters its context in the channel).
     async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
         let channel = turn.classification();
         let configured = turn.tools().iter().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
         let classification = output.classification.or(configured).unwrap_or_else(|| channel.clone());
         let context = turn.security_context();
-        let action = ActionType::Publish { classification: &classification, actor: context.caller_id, channel: &channel };
-        if !self.security_manager.check(context, action).await {
+        if !self.security_manager.may_publish(context, context.caller_id, &classification, &channel).await {
             debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
             return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&classification), channel);
         }

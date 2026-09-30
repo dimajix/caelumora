@@ -1,6 +1,6 @@
 # 158 — Whether something may flow into a channel is asked in five places by hand
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -32,3 +32,12 @@ rule behind it.
   (`work/2026-09-30-code-review-agent.md`, A9), epic
   [151](151-agent-refactoring-epic.md). Beyond the review's subject, but
   found there.
+- **2026-09-30** — Done. `AccessQuestions::may_publish(context, actor,
+  classification, channel)`; `AgentActor::turn_flow`,
+  `GuardedToolExecutor::admitted`, `ChannelLoop::reclassify` and
+  `ChannelLoop::admits` ask it. Of the five places, four were questions;
+  `UserActor::send_message` is an operation that checks its own
+  permission and refuses with its own error (`ClassificationRefused`), so
+  it keeps building the action for `Enforcement::require`, as AGENTS.md
+  says an operation does. "Done when" therefore holds for every question,
+  not for that one requirement. CONFIDENTIALITY.md names the question.

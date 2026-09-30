@@ -122,7 +122,7 @@ against it, and what came out of the last attempt.
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [149](149-special-tokens-in-content.md) | open | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
 | [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
-| [158](158-publish-question-built-five-times.md) | open | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
+| [158](158-publish-question-built-five-times.md) | done | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
 
 ## Tools and approvals
 

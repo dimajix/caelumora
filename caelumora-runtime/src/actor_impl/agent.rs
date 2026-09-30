@@ -21,7 +21,7 @@ use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::transcript::{GivenUpReason, GivenUpTurn};
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -499,7 +499,7 @@ impl AgentActor {
     }
 
     /// Whether what `turn` saw may still flow into the channel as it is
-    /// now (`ActionType::Publish`, in the agent's name, as its tools'
+    /// now (`AccessQuestions::may_publish`, in the agent's name, as its tools'
     /// results are admitted) - which it may not once the channel was
     /// lowered below the classification the turn began with (issue 141).
     async fn turn_flow(&self, turn: &Turn<'_>) -> TurnFlow {
@@ -507,8 +507,7 @@ impl AgentActor {
             return TurnFlow::NoChannel;
         };
         let context = turn.security_context();
-        let action = ActionType::Publish { classification: &turn.classification(), actor: context.caller_id, channel: &channel };
-        if self.actor_runtime.security_manager().check(context, action).await {
+        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &turn.classification(), &channel).await {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
