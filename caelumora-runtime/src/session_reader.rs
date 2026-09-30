@@ -193,8 +193,8 @@ impl ChannelSessionReader {
     /// `classification`, as the confidentiality rules decide
     /// (`AccessQuestions::may_channel_read`, issue 133).
     async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop, classification: &Classification) -> bool {
-        let (own_channel, own_classification, own_session) = (own.channel_ref(), own.classification(), own.session_privacy());
-        let (source_channel, source_session) = (source.channel_ref(), source.session_privacy());
+        let (own_channel, own_classification, own_session) = (own.channel_ref(), own.classification(), privacy_of(own));
+        let (source_channel, source_session) = (source.channel_ref(), privacy_of(source));
         let reader = Place { channel: &own_channel, classification: &own_classification, session: &own_session };
         let source = Place { channel: &source_channel, classification, session: &source_session };
         self.runtime.security_manager().may_channel_read(&self.context, reader, source).await
@@ -211,11 +211,11 @@ impl ChannelSessionReader {
     /// read entry by entry: only what was released to it.
     async fn find(&self, name: &str) -> ReadResult<(Arc<ChannelLoop>, Arc<ChannelLoop>, bool)> {
         let not_readable = || ReadError::NotReadable(name.to_string());
-        let own = self.runtime.channel().ok_or_else(not_readable)?;
+        let own = self.runtime.channel_loop().ok_or_else(not_readable)?;
         let source = if own.name() == name {
             own.clone()
         } else {
-            let session = own.session().ok_or_else(not_readable)?;
+            let session = own.session_loop().ok_or_else(not_readable)?;
             session.channel_by_name(name).ok_or_else(not_readable)?
         };
         let whole = self.may_read_all(&own, &source).await;
@@ -234,6 +234,13 @@ impl ChannelSessionReader {
     }
 }
 
+/// The session of `channel` as privacy sees it (issue 134): that of a
+/// channel of no session - or none at all - is private, which no other
+/// session reads.
+fn privacy_of(channel: &ChannelLoop) -> SessionPrivacy {
+    channel.session_loop().map(|session| session.privacy()).unwrap_or_default()
+}
+
 fn info(channel: &ChannelLoop) -> ChannelInfo {
     ChannelInfo { id: channel.id(), name: channel.name() }
 }
@@ -241,17 +248,17 @@ fn info(channel: &ChannelLoop) -> ChannelInfo {
 #[async_trait]
 impl SessionReader for ChannelSessionReader {
     fn own_channel(&self) -> Option<ChannelInfo> {
-        self.runtime.channel().map(|c| info(&c))
+        self.runtime.channel_loop().map(|c| info(&c))
     }
 
     fn own_privacy(&self) -> SessionPrivacy {
-        self.runtime.channel().map(|c| c.session_privacy()).unwrap_or_default()
+        self.runtime.channel_loop().map(|c| privacy_of(&c)).unwrap_or_default()
     }
 
     async fn privacy_of(&self, id: SessionId) -> ReadResult<Option<SessionPrivacy>> {
         // Changes to a session are stored before they take effect, so the
         // stored one is the current one, running or not.
-        match self.runtime.session(&SecurityContext::system(), id).await {
+        match self.runtime.load_session(&SecurityContext::system(), id).await {
             Ok(session) => Ok(Some(SessionPrivacy::of(&session))),
             Err(StoreError::NotFound { .. }) => Ok(None),
             Err(e) => Err(ReadError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}")))),
@@ -259,7 +266,7 @@ impl SessionReader for ChannelSessionReader {
     }
 
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {
-        match self.runtime.channel() {
+        match self.runtime.channel_loop() {
             Some(channel) => Ok(channel.published_notes().await?),
             // Not attached to a channel (yet): nothing is published.
             None => Ok(Vec::new()),
@@ -267,8 +274,8 @@ impl SessionReader for ChannelSessionReader {
     }
 
     async fn readable_channels(&self) -> ReadResult<Vec<ChannelInfo>> {
-        let Some(own) = self.runtime.channel() else { return Ok(Vec::new()) };
-        let channels = match own.session() {
+        let Some(own) = self.runtime.channel_loop() else { return Ok(Vec::new()) };
+        let channels = match own.session_loop() {
             Some(session) => session.channels(),
             None => vec![own.clone()],
         };
@@ -315,8 +322,8 @@ impl SessionReader for ChannelSessionReader {
     }
 
     async fn private_notes(&self, agent: AgentId) -> ReadResult<Vec<ChannelNotes>> {
-        let Some(own) = self.runtime.channel() else { return Ok(Vec::new()) };
-        let Some(session) = own.session() else { return Ok(Vec::new()) };
+        let Some(own) = self.runtime.channel_loop() else { return Ok(Vec::new()) };
+        let Some(session) = own.session_loop() else { return Ok(Vec::new()) };
         let mut found = Vec::new();
         for channel in session.channels() {
             if channel.id() == own.id() {

@@ -289,7 +289,8 @@ only what concerns that actor (issue 69):
     (`load_channel_state` / `store_channel_state`);
 *   its own event subscription (`subscribe_channel` - its channel, nothing
     else) and announcement (`announce_channel_state_changed`);
-*   a narrow view of its channel: `classification`, `channel_attributes`;
+*   the loop of its channel (`channel_loop`, `pub(crate)`), and a stored
+    session as a given context may read it (`load_session`);
 *   a `SessionReader` that enforces the confidentiality rules (see
     [MEMORY.md](MEMORY.md)).
 

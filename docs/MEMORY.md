@@ -142,7 +142,7 @@ nothing.
 
 *   **Through the own channel.** The reader reaches the other channels of
     the session through its own channel: a `ChannelLoop` knows its session
-    (`ChannelLoop::session()`, a weak handle the `SessionLoop` sets on each
+    (`ChannelLoop::session_loop()`, a weak handle the `SessionLoop` sets on each
     of its channels with `ChannelLoop::attach`, issue 123). The actors'
     runtimes carry no session.
 *   **Who may read what.** What another channel holds is read entry by

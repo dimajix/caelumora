@@ -27,6 +27,30 @@ the overall picture.
     `ComponentRegistry`; where it goes and how it is named is described in
     [COMPONENTS.md](COMPONENTS.md).
 
+### Runtimes and their entities
+
+A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the
+stored entity it holds (`Session`, `Channel`) share their work by three
+rules (issue 144):
+
+*   **The model derives.** A value derived from an entity is computed in
+    `caelumora-model` - a method of the entity (`Channel::channel_ref`) or a
+    constructor of the derived type (`SessionPrivacy::of(&Session)`) - never
+    in the runtime, so that the stored document and the running object
+    cannot disagree about it.
+*   **A runtime answers about its own entity, not about the one above.** A
+    loop may have getters for attributes of its own entity that callers
+    need often; they return owned values, so that no `arc_swap::Guard` is
+    held across an `await`. Everything else is read from its snapshot. The
+    entity above is reached through the parent - `runtime.channel_loop()`,
+    `channel.session_loop()` - never through a forwarder such as a
+    `channel_classification()` on the actor's runtime. What holds when the
+    parent is missing is the caller's to decide.
+*   **One name, one kind of thing.** `channel()` and `session()` return the
+    entity's document as it is now; `channel_loop()` and `session_loop()`
+    the running object above; loading any stored entity is `load_…`
+    (`ActorRuntime::load_session`).
+
 ## Error handling
 
 Errors carry what failed, and only what may be shown goes to users (issue 02).

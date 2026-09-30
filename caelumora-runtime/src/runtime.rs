@@ -139,7 +139,7 @@ impl ActorRuntime {
     }
 
     /// The session `id` as stored, as `security` may read it.
-    pub async fn session(&self, security: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+    pub async fn load_session(&self, security: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         self.runtime.runtime_manager.entity_store().get_session(security, id).await
     }
 
@@ -183,20 +183,10 @@ impl ActorRuntime {
     /// stored (issue 65), with the channel's attributes and without content.
     /// Nothing once the channel is gone.
     pub fn announce_channel_state_changed(&self) {
-        let (Ok(agent), Some(attributes)) = (self.agent_id(), self.channel_attributes()) else { return };
+        let (Ok(agent), Some(channel)) = (self.agent_id(), self.channel_loop()) else { return };
+        let attributes = channel.security_attributes();
         self.runtime.runtime_manager.event_bus()
             .publish(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes);
-    }
-
-    /// The classification of the actor's channel (issue 133); `None` while
-    /// the channel is being built or once it is gone.
-    pub fn channel_classification(&self) -> Option<Classification> {
-        self.channel().map(|c| c.classification())
-    }
-
-    /// Who the actor's channel belongs to and who contributes to it.
-    pub fn channel_attributes(&self) -> Option<SecurityAttributes> {
-        self.channel().map(|c| c.security_attributes())
     }
 
     /// What the actor may read of the session's other channels: their notes
@@ -208,7 +198,7 @@ impl ActorRuntime {
 
     /// The channel the actor is in, or `None` while the channel is still
     /// being built or once it is gone.
-    pub(crate) fn channel(&self) -> Option<Arc<ChannelLoop>> {
+    pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
         self.runtime.channel.get().and_then(Weak::upgrade)
     }
 

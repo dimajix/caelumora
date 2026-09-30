@@ -101,7 +101,7 @@ impl UserActor {
     /// `ChannelError::ClassificationRefused` if the message may not enter
     /// the channel as classified; an error if the channel is gone.
     pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
-        let channel = self.actor_runtime.channel_classification()
+        let channel = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
         let classification = classification.unwrap_or_else(|| channel.clone());
         let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
@@ -152,7 +152,7 @@ impl UserActor {
     /// A `CommandError` if the command is unknown, refused or fails; an error
     /// if the channel no longer exists.
     pub async fn execute_command(&self, name: &str, args: &str) -> anyhow::Result<CommandReply> {
-        let channel = self.actor_runtime.channel()
+        let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
         let executor = self.actor_runtime.command_executor();
         let context = CommandContext { issuer: &self.security_context, channel: &channel, executor: &executor };
@@ -192,7 +192,7 @@ impl UserActor {
     /// # Errors
     /// If the channel is gone.
     pub fn watch(&self) -> Result<ChannelWatch> {
-        let channel = self.actor_runtime.channel()
+        let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
         // A child: whoever watches can end their own watch, not the actor.
         Ok(ChannelWatch { events: channel.subscribe(), ended: self.ended.child_token() })

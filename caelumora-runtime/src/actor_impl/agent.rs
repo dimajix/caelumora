@@ -330,7 +330,7 @@ impl AgentActor {
     /// `security_context`, with the channel as it is now. Fails without a
     /// channel, which happens only while it is being torn down.
     async fn begin_turn<'a>(&self, turn: &mut Turn<'a>, event_context: &EventContext, security_context: &SecurityContext) -> Result<()> {
-        let classification = self.actor_runtime.channel_classification()
+        let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id))?;
         turn.next_turn(
             event_context.next(self.id, self.agent_controller.name()),

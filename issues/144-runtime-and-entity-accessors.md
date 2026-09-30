@@ -1,6 +1,6 @@
 # 144 — What a runtime answers about its entity, and what the entity answers itself
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -76,3 +76,20 @@ it. How they do it, and how a caller reaches an attribute of the entity
   forwards an attribute of the session, `ActorRuntime::channel_classification`
   one of the channel, and the maintainer wants to discuss what belongs to
   the runtime and what to the entity.
+- **2026-09-30** — Correction: the `ChannelLoop` does hand out its
+  document (`ChannelLoop::channel()`); both loops offer the snapshot and
+  single getters alike.
+- **2026-09-30** — Decided and done, as three rules in
+  [CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md#runtimes-and-their-entities):
+  the model derives; a runtime answers about its own entity - getters for
+  what is needed often, since they return owned values and hold no
+  `arc_swap::Guard` across an `await`, the snapshot for the rest - and the
+  entity above is reached through the parent, whose absence the caller
+  decides about; one name means one kind of thing. Accordingly
+  `ActorRuntime::channel_classification`, `channel_attributes` and
+  `ChannelLoop::session_privacy` are gone (the `SessionReader` decides that
+  a channel of no session is private); `ActorRuntime::channel` is
+  `channel_loop`, `ChannelLoop::session` is `session_loop`, and
+  `ActorRuntime::session(security, id)` is `load_session`. Keeping only
+  snapshots was weighed and not taken: the getters are used in many places,
+  each of which would then have to handle a guard.

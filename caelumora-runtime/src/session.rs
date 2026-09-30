@@ -1492,8 +1492,8 @@ mod tests {
             async move {
                 use caelumora_model::security::AccessQuestions;
                 use caelumora_model::security::Place;
-                let (reader_channel, reader_classification, reader_session) = (reader.channel_ref(), reader.classification(), reader.session_privacy());
-                let (source_channel, source_classification, source_session) = (source.channel_ref(), source.classification(), source.session_privacy());
+                let (reader_channel, reader_classification, reader_session) = (reader.channel_ref(), reader.classification(), reader.session_loop().map(|s| s.privacy()).unwrap_or_default());
+                let (source_channel, source_classification, source_session) = (source.channel_ref(), source.classification(), source.session_loop().map(|s| s.privacy()).unwrap_or_default());
                 security.may_channel_read(
                     &context,
                     Place { channel: &reader_channel, classification: &reader_classification, session: &reader_session },
