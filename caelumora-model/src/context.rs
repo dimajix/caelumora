@@ -61,10 +61,11 @@ impl ContextItem {
 }
 
 /// Knowledge from another place an agent's model was given (issue 17): what
-/// was read, from which channel, as the digest of the state read.
+/// was read, from which channel - of which session (issue 134) - as the
+/// digest of the state read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeRef {
-    pub channel: crate::channel::ChannelId,
+    pub channel: crate::confidentiality::ChannelRef,
     pub source: KnowledgeSource,
 }
 
@@ -86,7 +87,9 @@ pub enum KnowledgeSource {
         start: Option<crate::channel::HistoryStart>,
     },
     /// An agent's memory (issue 62), read by that agent; the digest of its
-    /// memory chain. Recorded with the channel it was read in.
+    /// memory chain. Recorded once for every channel the entries recalled
+    /// were written in, so that knowledge from another session can be told
+    /// (issue 134).
     Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
 }
 

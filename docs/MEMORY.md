@@ -108,8 +108,14 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     classification - its channel's when it was written, unless it was
     reclassified - flows into the current channel's (the flow rule of issue
     133) - within the session, and beyond it only where the entry's session
-    permits it ([134](../issues/134-session-privacy.md)): for now, an
-    entry of another session is judged as written in a private one. Only
+    permits it ([134](../issues/134-session-privacy.md)). An entry keeps the
+    privacy its session had when it was written (`SessionPrivacy`); in
+    another session it is recalled only where both that and the privacy
+    the session has now permit it, so that what was said under a private
+    policy stays private and a session made private again takes back what
+    it let go. The current one is looked up through the `SessionReader`
+    (`privacy_of`), in the runtime's name; of a session that is gone, the
+    one kept decides, and one that cannot be looked up recalls nothing. Only
     entries recalled in a channel can be forgotten there, or reclassified
     (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
@@ -156,8 +162,9 @@ nothing.
 
 ## Recording what was read
 
-Every read is recorded as a `KnowledgeRef`: the channel, and what was read
-there (`KnowledgeSource`):
+Every read is recorded as a `KnowledgeRef`: the channel with its session
+(`ChannelRef`, so that knowledge from another session can be told, issue
+134), and what was read there (`KnowledgeSource`):
 
 *   `Notes { agent, digest }` - the notes an agent published in the
     channel;
@@ -165,8 +172,8 @@ there (`KnowledgeSource`):
     channel;
 *   `History { digest, start }` - the channel's history: up to where, and,
     for a reader who joined later with a limit, from where (issue 72);
-*   `Memory { agent, digest }` - the agent's memory, recorded with the
-    channel it was read in.
+*   `Memory { agent, digest }` - the agent's memory, recorded once for every
+    channel the entries recalled were written in.
 
 `Turn::record_knowledge` records a read together with the number of
 messages the turn had produced by then. `commit_turn` puts it into the

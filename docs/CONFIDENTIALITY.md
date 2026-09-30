@@ -390,10 +390,9 @@ still open:
     user providers, is [142](../issues/142-roles.md). Events about a
     channel without content - a reclassification, say - still reach
     whoever may read the channel, cleared or not.
-*   **Sessions.** An agent's memory is so far the one way across sessions,
-    and an entry of another session is judged as written in a private one:
-    that session's policy is not yet kept with the entry
-    ([134](../issues/134-session-privacy.md)).
+*   **Sessions.** An agent's memory is so far the one way across sessions;
+    whoever is added to a channel later sees what it drew from other
+    sessions ([143](../issues/143-joining-a-channel-with-foreign-knowledge.md)).
 *   **Where the rules live.** The flow rule and the clearances are applied
     by the ownership policy; any other policy would have to apply them too
     ([138](../issues/138-confidentiality-policy-in-ownership.md)).

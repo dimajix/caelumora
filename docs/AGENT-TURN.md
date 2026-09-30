@@ -417,7 +417,8 @@ REST exposes it as
 answers `403 context_forbidden`, `404 context_not_recorded` (not produced
 by that actor) or `404 context_unavailable` (recorded, but no longer
 resolvable). The response lists the knowledge read with channel and agent
-names, and the tools offered with the digest of their set.
+names - a channel of another session is not named - and the tools offered
+with the digest of their set.
 
 So that a client offers this only where it works, every member of a channel
 response carries `can_read_context`, decided for the requesting user when

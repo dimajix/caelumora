@@ -151,7 +151,7 @@ mod tests {
 
     fn remember(id: MemoryId, text: &str) -> AgentStateChange {
         let origin = ChannelRef::default();
-        AgentStateChange::Memory { change: MemoryChange::Remember { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, origin }
+        AgentStateChange::Memory { change: MemoryChange::Remember { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT, session: Default::default() }, origin }
     }
 
     #[tokio::test]

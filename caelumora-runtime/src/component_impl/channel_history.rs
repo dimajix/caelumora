@@ -10,6 +10,7 @@ use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::session_reader::SessionReader;
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::confidentiality::ChannelRef;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::message::Message;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
@@ -79,7 +80,7 @@ impl ToolProvider for ChannelHistoryComponent {
 
         let history = self.reader.history_of(channel).await?;
         let (channel, history) = (history.channel, history.history);
-        turn.record_knowledge(KnowledgeRef { channel: channel.id, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
+        turn.record_knowledge(KnowledgeRef { channel: ChannelRef { session_id: turn.session_id(), channel_id: channel.id }, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
 
         let (messages, more) = select(&history.messages, last, query);
         Ok(serde_json::json!({

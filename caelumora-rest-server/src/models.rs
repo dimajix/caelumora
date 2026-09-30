@@ -334,7 +334,10 @@ impl KnowledgeRefResponse {
     /// `knowledge` with the names of its channel and agent, as far as
     /// `session` still has them.
     pub fn describe(session: &SessionLoop, knowledge: &KnowledgeRef) -> Self {
-        let channel = session.channel_by_id(knowledge.channel);
+        // A channel of another session is not named here (issue 134).
+        let channel = (knowledge.channel.session_id == session.id())
+            .then(|| session.channel_by_id(knowledge.channel.channel_id))
+            .flatten();
         let (source, agent_id, digest, history_start) = match knowledge.source {
             KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
@@ -343,7 +346,7 @@ impl KnowledgeRefResponse {
         };
         let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
         Self {
-            channel_id: knowledge.channel,
+            channel_id: knowledge.channel.channel_id,
             channel_name: channel.map(|c| c.name()),
             source,
             agent_id,

@@ -23,6 +23,8 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
+use caelumora_model::session::SessionId;
+use caelumora_model::store::StoreError;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use std::fmt::Debug;
@@ -97,6 +99,14 @@ pub trait SessionReader: Send + Sync + Debug {
     /// The session of the turn's own channel as privacy sees it (issue
     /// 134): whom it lets read what was said in it, and who takes part.
     fn own_privacy(&self) -> SessionPrivacy;
+    /// The session `id` as privacy sees it now, or `None` if there is no
+    /// such session any more (issue 134). Looked up in the runtime's name:
+    /// it is asked to enforce what that session's people agreed to, and
+    /// nothing of it reaches the turn.
+    ///
+    /// # Errors
+    /// [`ReadError::Failed`] if it cannot be looked up.
+    async fn privacy_of(&self, id: SessionId) -> ReadResult<Option<SessionPrivacy>>;
     /// The notes every agent of the turn's own channel published, in no
     /// particular order.
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>>;
@@ -138,6 +148,10 @@ impl SessionReader for DetachedSessionReader {
 
     fn own_privacy(&self) -> SessionPrivacy {
         SessionPrivacy::default()
+    }
+
+    async fn privacy_of(&self, _id: SessionId) -> ReadResult<Option<SessionPrivacy>> {
+        Ok(None)
     }
 
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {
@@ -232,6 +246,16 @@ impl SessionReader for ChannelSessionReader {
 
     fn own_privacy(&self) -> SessionPrivacy {
         self.runtime.channel().map(|c| c.session_privacy()).unwrap_or_default()
+    }
+
+    async fn privacy_of(&self, id: SessionId) -> ReadResult<Option<SessionPrivacy>> {
+        // Changes to a session are stored before they take effect, so the
+        // stored one is the current one, running or not.
+        match self.runtime.session(&SecurityContext::system(), id).await {
+            Ok(session) => Ok(Some(SessionPrivacy::of(&session))),
+            Err(StoreError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(ReadError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}")))),
+        }
     }
 
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {

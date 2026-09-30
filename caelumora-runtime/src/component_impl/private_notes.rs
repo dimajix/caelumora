@@ -26,6 +26,7 @@ use crate::session_reader::{ChannelNotes, SessionReader};
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::confidentiality::ChannelRef;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -153,9 +154,9 @@ impl PromptProvider for PrivateNotesComponent {
         elsewhere.sort_by(|l, r| l.channel.name.cmp(&r.channel.name));
 
         let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest } };
-        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel.id, c.digest)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(ChannelRef { session_id: turn.session_id(), channel_id: c.channel.id }, c.digest)).collect();
         if !own.is_empty() {
-            knowledge.push(private(turn.channel_id(), AgentNotes::digest(turn, NoteKind::Private)));
+            knowledge.push(private(turn.channel(), AgentNotes::digest(turn, NoteKind::Private)));
         }
         Ok(Prompt { text: render(&own, &elsewhere), knowledge })
     }

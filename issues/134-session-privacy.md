@@ -90,3 +90,13 @@ agreed to be read by the other.
   is gone. Until the policy of an entry's session is kept with it (step 2),
   the agent's memory judges an entry of another session as written in a
   private one. The ids are ordered, so that a set of them is.
+- **2026-09-30** — Step 2: `MemoryChange::Remember` keeps the privacy of
+  its session (`SessionPrivacy`, also in `Memory`); an entry of another
+  session is recalled only where both that and the session's current
+  privacy permit it. The current one is looked up with
+  `SessionReader::privacy_of`, from the store in the runtime's name; of a
+  session that is gone, the one kept decides, and one that cannot be
+  looked up recalls nothing. `KnowledgeRef::channel` is a `ChannelRef`, and
+  what is recalled from memory is recorded once per channel it was written
+  in. The REST response does not name a channel of another session yet
+  (step 3).

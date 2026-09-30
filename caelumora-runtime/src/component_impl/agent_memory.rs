@@ -13,7 +13,7 @@
 //! issue 131). Under the ownership policy that is the flow rule of issue
 //! 133 - the entry's channel's classification must flow into this one's -
 //! within the session, and beyond it only where the entry's session permits
-//! it (issue 134). Only those can be
+//! it, then and now (issue 134). Only those can be
 //! forgotten here. Both tools are
 //! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only. Its entries are
@@ -116,7 +116,7 @@ impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
     fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentMemory::remember(turn, text_argument(params)?);
+        let id = AgentMemory::remember(turn, text_argument(params)?, self.session_reader.as_ref());
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }
 
@@ -125,14 +125,14 @@ impl AgentMemoryComponent {
     async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentMemory::reclassify(turn, id, classification.clone(), &self.session_reader.own_privacy(), self.security_manager.as_ref(), &self.security_context).await?;
+        AgentMemory::reclassify(turn, id, classification.clone(), self.session_reader.as_ref(), self.security_manager.as_ref(), &self.security_context).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
     async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
-        if AgentMemory::forget(turn, id, &self.session_reader.own_privacy(), self.security_manager.as_ref(), &self.security_context).await {
+        if AgentMemory::forget(turn, id, self.session_reader.as_ref(), self.security_manager.as_ref(), &self.security_context).await {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -147,14 +147,19 @@ impl PromptProvider for AgentMemoryComponent {
     }
 
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        let recalled = AgentMemory::recalled(turn, &self.session_reader.own_privacy(), self.security_manager.as_ref(), &self.security_context).await;
+        let recalled = AgentMemory::recalled(turn, self.session_reader.as_ref(), self.security_manager.as_ref(), &self.security_context).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
-        let knowledge = vec![KnowledgeRef {
-            channel: turn.channel_id(),
-            source: KnowledgeSource::Memory { agent: turn.agent_id(), digest: AgentMemory::digest(turn) },
-        }];
+        // Once for every channel the entries come from, so that knowledge
+        // from another session can be told (issue 134).
+        let source = KnowledgeSource::Memory { agent: turn.agent_id(), digest: AgentMemory::digest(turn) };
+        let mut knowledge: Vec<KnowledgeRef> = Vec::new();
+        for memory in &recalled {
+            if !knowledge.iter().any(|k| k.channel == memory.origin) {
+                knowledge.push(KnowledgeRef { channel: memory.origin, source });
+            }
+        }
         Ok(Prompt { text: render(&recalled), knowledge })
     }
 }
@@ -202,6 +207,8 @@ mod tests {
     use caelumora_model::store::StateStore;
     use caelumora_model::store_impl::memory::MemoryStore;
     use caelumora_model::user::UserId;
+    use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
+    use crate::session_reader::{ChannelHistory, ChannelInfo, ChannelNotes, PublishedNotes, ReadError, ReadResult};
 
     /// The context of an envelope routed in the channel `at`.
     fn in_channel(at: &At) -> caelumora_model::actor::EventContext {
@@ -345,5 +352,116 @@ mod tests {
         let there = recall(&memory, &handle, agent, finance).await;
         assert!(there.text.contains("The budget is tight."), "released to finance: {}", there.text);
         assert!(recall(&memory, &handle, agent, hr).await.text.contains("The budget is tight."), "and still HR's");
+    }
+
+    /// A session reader that knows only privacy: its own session's, and
+    /// that of others as `sessions` says - `None` for one that is gone. A
+    /// session it does not know cannot be looked up.
+    #[derive(Debug)]
+    struct Privacies {
+        own: SessionPrivacy,
+        sessions: std::sync::Mutex<Vec<(SessionId, Option<SessionPrivacy>)>>,
+    }
+
+    impl Privacies {
+        fn set(&self, id: SessionId, privacy: Option<SessionPrivacy>) {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.retain(|(s, _)| *s != id);
+            sessions.push((id, privacy));
+        }
+    }
+
+    #[async_trait]
+    impl SessionReader for Privacies {
+        fn own_channel(&self) -> Option<ChannelInfo> {
+            None
+        }
+
+        fn own_privacy(&self) -> SessionPrivacy {
+            self.own.clone()
+        }
+
+        async fn privacy_of(&self, id: SessionId) -> ReadResult<Option<SessionPrivacy>> {
+            let sessions = self.sessions.lock().unwrap();
+            match sessions.iter().find(|(s, _)| *s == id) {
+                Some((_, privacy)) => Ok(privacy.clone()),
+                None => Err(ReadError::Failed(anyhow::anyhow!("unknown session"))),
+            }
+        }
+
+        async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {
+            Ok(Vec::new())
+        }
+
+        async fn readable_channels(&self) -> ReadResult<Vec<ChannelInfo>> {
+            Ok(Vec::new())
+        }
+
+        async fn notes_of(&self, name: &str) -> ReadResult<(ChannelInfo, Vec<PublishedNotes>)> {
+            Err(ReadError::NotReadable(name.to_string()))
+        }
+
+        async fn history_of(&self, name: &str) -> ReadResult<ChannelHistory> {
+            Err(ReadError::NotReadable(name.to_string()))
+        }
+
+        async fn private_notes(&self, _agent: AgentId) -> ReadResult<Vec<ChannelNotes>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entry_is_recalled_in_another_session_where_its_session_agreed_then_and_now() {
+        let agent = AgentId::new();
+        let handle = handle(agent).await;
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let session_of = |policy, owner: UserId| SessionPrivacy { policy, owner: ActorId::User(owner), people: [owner].into_iter().collect() };
+        let (hers, other) = (SessionId::new(), SessionId::new());
+        let in_session = |own: SessionPrivacy| {
+            let reader = Arc::new(Privacies { own, sessions: std::sync::Mutex::new(Vec::new()) });
+            let memory = AgentMemoryComponent {
+                security_manager: Arc::new(OwnershipSecurityManager::new()),
+                security_context: SecurityContext::new(ActorId::User(alice), Default::default(), Default::default()),
+                session_reader: reader.clone(),
+            };
+            (memory, reader)
+        };
+
+        // Remembered in a session of hers that lets her other sessions read it ...
+        let (writer, _) = in_session(session_of(PrivacyConfig::SameOwner, alice));
+        let origin = channel(hers, Confidentiality::Internal);
+        remember(&writer, &handle, agent, origin.clone(), "Kaya likes tea.").await;
+        let remembered = handle.current().memory.current();
+        assert_eq!(remembered[0].session.policy, PrivacyConfig::SameOwner, "the entry keeps its session's privacy");
+
+        // ... and recalled in another of hers, while the session still agrees.
+        let (memory, reader) = in_session(session_of(PrivacyConfig::Private, alice));
+        let elsewhere = channel(other, Confidentiality::Internal);
+        reader.set(hers, Some(session_of(PrivacyConfig::SameOwner, alice)));
+        let recalled = recall(&memory, &handle, agent, elsewhere.clone()).await;
+        assert!(recalled.text.contains("Kaya likes tea."), "{}", recalled.text);
+        assert_eq!(recalled.knowledge.len(), 1);
+        assert_eq!(recalled.knowledge[0].channel, origin.0, "recorded with the channel it came from, of its session");
+
+        reader.set(hers, Some(session_of(PrivacyConfig::Private, alice)));
+        assert!(recall(&memory, &handle, agent, elsewhere.clone()).await.text.is_empty(), "no longer, once the session is private");
+        reader.set(hers, None);
+        assert!(recall(&memory, &handle, agent, elsewhere.clone()).await.text.contains("Kaya likes tea."), "of a session that is gone, what it agreed to then");
+        reader.sessions.lock().unwrap().clear();
+        assert!(recall(&memory, &handle, agent, elsewhere).await.text.is_empty(), "nothing, where the session cannot be looked up");
+
+        let (bobs, reader) = in_session(session_of(PrivacyConfig::Private, bob));
+        reader.set(hers, Some(session_of(PrivacyConfig::SameOwner, alice)));
+        assert!(recall(&bobs, &handle, agent, channel(SessionId::new(), Confidentiality::Internal)).await.text.is_empty(), "not in someone else's session");
+
+        // What was said while the session was private stays there, even
+        // after it lets others read.
+        let (private, _) = in_session(session_of(PrivacyConfig::Private, alice));
+        let quiet = channel(hers, Confidentiality::Internal);
+        remember(&private, &handle, agent, quiet, "Kaya is moving.").await;
+        let (memory, reader) = in_session(session_of(PrivacyConfig::Private, alice));
+        reader.set(hers, Some(session_of(PrivacyConfig::SameOwner, alice)));
+        let recalled = recall(&memory, &handle, agent, channel(other, Confidentiality::Internal)).await;
+        assert!(recalled.text.contains("Kaya likes tea.") && !recalled.text.contains("Kaya is moving."), "{}", recalled.text);
     }
 }

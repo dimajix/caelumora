@@ -19,7 +19,7 @@ use crate::tool::{arguments, classification_argument, id_argument, reclassify_pa
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::ChannelId;
+use caelumora_model::confidentiality::ChannelRef;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -164,7 +164,7 @@ impl NotesComponent {
         for (channel, published) in channels {
             let mut notes = Vec::new();
             for agent_notes in published {
-                if let Some(reference) = notes_ref(channel.id, &agent_notes) {
+                if let Some(reference) = notes_ref(ChannelRef { session_id: turn.session_id(), channel_id: channel.id }, &agent_notes) {
                     turn.record_knowledge(reference);
                 }
                 for note in agent_notes.notes {
@@ -178,7 +178,7 @@ impl NotesComponent {
 }
 
 /// What reading `published` in `channel` records.
-fn notes_ref(channel: ChannelId, published: &PublishedNotes) -> Option<KnowledgeRef> {
+fn notes_ref(channel: ChannelRef, published: &PublishedNotes) -> Option<KnowledgeRef> {
     let ActorId::Agent(agent) = published.agent else { return None };
     Some(KnowledgeRef { channel, source: KnowledgeSource::Notes { agent, digest: published.digest } })
 }
@@ -205,10 +205,10 @@ impl PromptProvider for NotesComponent {
         let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
 
         // What the part shows, as knowledge read (issue 17).
-        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel_id(), p)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel(), p)).collect();
         if !own_notes.is_empty() {
             let own_digest = AgentNotes::digest(turn, NoteKind::Public);
-            knowledge.push(KnowledgeRef { channel: turn.channel_id(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest } });
+            knowledge.push(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest } });
         }
         Ok(Prompt { text, knowledge })
     }

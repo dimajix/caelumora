@@ -1464,6 +1464,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reader_knows_the_privacy_of_its_session_and_looks_up_others() {
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::privacy::PrivacyConfig;
+        use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+        use caelumora_model::user::{User, UserId};
+
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let manager = SessionManager::new(runtime.clone());
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let (alice, carol) = (user("alice"), user("carol"));
+        let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
+        let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
+
+        let mut hers = make_session("hers");
+        hers.security_attributes = SecurityAttributes::owned_by(alice_id);
+        hers.participants = record_users(&manager, &[&alice]).await;
+        hers.privacy = PrivacyConfig::SameOwner;
+        let hers = create(&manager, &alice_ctx, hers).await.unwrap();
+        let mut theirs = make_session("theirs");
+        theirs.security_attributes = SecurityAttributes::owned_by(carol_id);
+        persist(&runtime, &SecurityContext::new(carol_id, Default::default(), Default::default()), &theirs).await;
+
+        let channel = hers.channels()[0].clone();
+        let channel_runtime = ChannelRuntime::new(runtime.clone(), hers.commands.clone());
+        channel_runtime.attach(&channel);
+        let reader = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).session_reader(alice_ctx.clone());
+
+        let own = reader.own_privacy();
+        assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
+        assert_eq!(own.people, [alice.id].into_iter().collect(), "its users and its owner");
+        let other = reader.privacy_of(theirs.id).await.unwrap().expect("stored, running or not");
+        assert_eq!((other.policy, other.owner), (PrivacyConfig::Private, carol_id), "even a session the reader may not read");
+        assert!(reader.privacy_of(SessionId::new()).await.unwrap().is_none(), "one that is gone");
+        manager.stop_session(&SecurityContext::system(), hers.id()).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn a_released_message_is_read_where_its_channel_is_not() {
         use crate::channel::ChannelError;
         use crate::session_reader::ReadError;

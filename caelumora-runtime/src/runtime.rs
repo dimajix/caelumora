@@ -138,6 +138,11 @@ impl ActorRuntime {
         self.runtime.runtime_manager.entity_store().get_personality(security, id).await
     }
 
+    /// The session `id` as stored, as `security` may read it.
+    pub async fn session(&self, security: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+        self.runtime.runtime_manager.entity_store().get_session(security, id).await
+    }
+
     /// The agent's own state, shared with its actors in other channels and
     /// sessions (issue 62); `attributes` are the agent's.
     ///

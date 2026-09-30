@@ -8,12 +8,15 @@
 //! branch with a channel's history (principle 7 in issue 19), and every entry
 //! carries the classification of the channel it was written in, so that it
 //! is recalled only where that channel's contents may be read (the flow
-//! rule of issue 133, `Classification::flows_to`).
+//! rule of issue 133, `Classification::flows_to`), and the privacy of its
+//! session as it was then, so that it is recalled in another session only
+//! where that session's people agreed to it (issue 134).
 
 use crate::chain::{Chain, ChainEntry};
 use crate::confidentiality::{ChannelRef, Classification};
 use crate::digest::Digest;
 use crate::message::MessageId;
+use crate::privacy::SessionPrivacy;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -35,8 +38,16 @@ impl fmt::Display for MemoryId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemoryChange {
     /// Remembers `text`, classified as the channel it was written in was
-    /// then (issue 133).
-    Remember { id: MemoryId, text: String, classification: Classification },
+    /// then (issue 133), in a session as privacy saw it then (issue 134):
+    /// what its people agreed to when it was said holds, whatever the
+    /// session's policy becomes.
+    Remember {
+        id: MemoryId,
+        text: String,
+        classification: Classification,
+        #[serde(default)]
+        session: SessionPrivacy,
+    },
     Forget { id: MemoryId },
     /// The entry `id` is classified `classification` from now on (issue
     /// 133): recalled where that may be read, wherever it was written.
@@ -74,6 +85,8 @@ pub struct Memory {
     pub classification: Classification,
     /// The channel it was written in.
     pub origin: ChannelRef,
+    /// The session of `origin` as privacy saw it when it was written.
+    pub session: SessionPrivacy,
     pub after: MessageId,
     pub written_at: DateTime<Utc>,
 }
@@ -113,11 +126,12 @@ impl MemoryChain {
         let mut memories: Vec<Memory> = Vec::new();
         for entry in self.changes.entries() {
             match &entry.change {
-                MemoryChange::Remember { id, text, classification } => memories.push(Memory {
+                MemoryChange::Remember { id, text, classification, session } => memories.push(Memory {
                     id: *id,
                     text: text.clone(),
                     classification: classification.clone(),
                     origin: entry.origin,
+                    session: session.clone(),
                     after: entry.after,
                     written_at: entry.written_at,
                 }),
@@ -157,7 +171,12 @@ mod tests {
     fn what_is_remembered_is_the_chain_read_from_start_to_end() {
         let mut chain = MemoryChain::new();
         assert_eq!(chain.next_id(), MemoryId(1));
-        let remember = |id, text: &str| MemoryChange::Remember { id: MemoryId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT };
+        let remember = |id, text: &str| MemoryChange::Remember {
+            id: MemoryId(id),
+            text: text.to_string(),
+            classification: Classification::CHANNEL_DEFAULT,
+            session: SessionPrivacy::default(),
+        };
         chain.push(remember(1, "Kaya likes tea."), origin(), MessageId::new());
         chain.push(remember(2, "Kaya lives in Berlin."), origin(), MessageId::new());
         chain.push(MemoryChange::Forget { id: MemoryId(1) }, origin(), MessageId::new());
