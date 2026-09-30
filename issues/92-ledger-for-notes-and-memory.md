@@ -42,3 +42,9 @@ instantiations of it.
 
 - **2026-09-28** — From the structure review
   (`work/2026-09-28-code-review.md`, 3.2.1).
+- **2026-09-30** — Taken into the epic of the review of the agent actor
+  ([151](151-agent-refactoring-epic.md)), still with its architecture
+  decision open. The review proposes enums per kind that implement a
+  common `Change` trait (the added id, the fold) under one
+  `Ledger<C, X>`, rather than one enum for both. [156](156-notes-and-memory-staged-scans.md)
+  builds on the fold and should follow it.

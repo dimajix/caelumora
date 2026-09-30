@@ -122,6 +122,7 @@ against it, and what came out of the last attempt.
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [149](149-special-tokens-in-content.md) | open | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
 | [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
+| [158](158-publish-question-built-five-times.md) | open | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
 
 ## Tools and approvals
 
@@ -193,6 +194,7 @@ against it, and what came out of the last attempt.
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [92](92-ledger-for-notes-and-memory.md) | open | `NoteChain` and `MemoryChain` are the same type written twice. |
+| [156](156-notes-and-memory-staged-scans.md) | open | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
@@ -209,6 +211,8 @@ against it, and what came out of the last attempt.
 | [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
 | [74](74-refactoring-epic.md) | open | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
+| [151](151-agent-refactoring-epic.md) | open | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
+| [160](160-agent-small-cleanups.md) | open | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
 | [96](96-config-unification.md) | done | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
 | [97](97-small-model-unifications.md) | done | Six helper functions in five modules define the default confidentiality level. |
 | [112](112-id-types.md) | done | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
@@ -238,6 +242,12 @@ against it, and what came out of the last attempt.
 | [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |
 | [144](144-runtime-and-entity-accessors.md) | done | Runtimes forward attributes of their own and of the entity above in several ways, with no rule for what the runtime answers and what the entity answers itself. |
 | [147](147-actor-control-unchecked.md) | open | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
+| [152](152-three-signals-end-a-turn.md) | open | A turn is ended by three signals - a state switched from outside, a token and a flag - that the run loop reconciles with a precedence rule. |
+| [153](153-three-give-up-paths.md) | open | A turn is given up along three paths that do the same, with two enums carrying one classification. |
+| [154](154-model-step-mixes-four-things.md) | open | The model step mixes stamping messages, plan mode, streaming and plan progress in one function of 120 lines. |
+| [155](155-approval-admission-on-the-actor.md) | open | The actor decides how a tool call is admitted and builds its `ToolCallState` by hand, though everything the rule is made of is in the tool guard. |
+| [157](157-actor-holds-what-is-not-its-own.md) | open | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |
+| [159](159-split-agent-actor-file.md) | open | `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines. |
 
 ## Open architecture questions
 

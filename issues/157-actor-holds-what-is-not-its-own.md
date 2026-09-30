@@ -1,0 +1,46 @@
+# 157 — The actor holds turn state and a constant behind a mutex, and reads its state twice
+
+**Status:** open
+**Area:** Code structure
+
+## The problem
+
+- **`loop_count` and `max_iterations`** are two atomics on `AgentActor`,
+  reset when a turn begins and counted per model call. They are the
+  turn's: a turn resumed after a crash counts from 0 again, so the limit
+  of 25 model calls does not hold across a restart.
+- **`AgentActorState`** wraps `AgentChannelState` and an
+  `Arc<AgentStateHandle>` in one mutex; the handle is never replaced after
+  `new` and only cloned in the loop.
+- **`message_context` and `given_up_turns`** begin alike: load the agent's
+  attributes, require `ReadAgentContext`, load the state, map the errors.
+  `GivenUpTurnsError { Forbidden, Failed }` is a subset of
+  `MessageContextError`.
+
+## Why it matters
+
+The first is a behavioural gap; the other two are code that exists only
+because the right place was not used.
+
+## Considerations
+
+- `TurnState::model_calls`, stored with the turn, and
+  `Turn::count_model_call() -> bool`; the limit a constant in
+  `agent_turn.rs`. The stored form gains a field (serde `default`).
+- `agent_state` a field of the actor, `state: Mutex<AgentChannelState>`;
+  `AgentActorState` goes.
+- `readable_state(caller) -> Result<AgentChannelState, ReadStateError>`
+  for both reads; `GivenUpTurnsError` becomes `ReadStateError`, and
+  `MessageContextError` takes it over with `From`. The REST mapping stays.
+
+## Done when
+
+- A resumed turn keeps its count of model calls.
+- `AgentActorState` is gone, and the agent's state is read for others in
+  one place.
+
+## History
+
+- **2026-09-30** — From the review of the agent actor
+  (`work/2026-09-30-code-review-agent.md`, A5, A6, A7), epic
+  [151](151-agent-refactoring-epic.md).
