@@ -355,7 +355,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() });
-        let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
 
         assert!(!executor.is_permitted(&call("test_tool"), &context).await);
         let result = executor.execute(&call("test_tool"), &mut context).await;
@@ -369,7 +369,7 @@ mod tests {
         let executor = executor(Arc::new(DummySecurityManager::new()));
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() });
-        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
 
         let result = executor.execute(&call("test_tool"), &mut context).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");

@@ -150,7 +150,7 @@ mod tests {
     async fn a_call_runs_and_records_when() {
         let executor = DefaultToolExecutor::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
 
         let result = executor.execute(&call("test_tool"), &mut context).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
@@ -164,7 +164,7 @@ mod tests {
     async fn an_unknown_tool_is_reported_as_such() {
         let executor = DefaultToolExecutor::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
 
         let result = executor.execute(&call("does_not_exist"), &mut context).await;
         assert_eq!(result.status, ToolResultStatus::UnknownTool);

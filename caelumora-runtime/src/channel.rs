@@ -1281,6 +1281,10 @@ mod tests {
         {
             Box::pin(futures::stream::pending())
         }
+
+        fn reasoning_history(&self) -> caelumora_model::message::ReasoningHistory {
+            Default::default()
+        }
     }
 
     /// A running channel with alice and an agent whose model never answers,
@@ -1388,6 +1392,10 @@ mod tests {
                 Some(answer) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
                 None => Box::pin(futures::stream::pending()),
             }
+        }
+
+        fn reasoning_history(&self) -> caelumora_model::message::ReasoningHistory {
+            Default::default()
         }
     }
 

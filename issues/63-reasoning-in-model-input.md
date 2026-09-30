@@ -1,6 +1,6 @@
 # 63 — Earlier reasoning is always given back to the model
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -65,3 +65,19 @@ around tool use), but not the reasoning of earlier turns.
   see their reasoning in later calls, according to their documentation.
   Found while writing it up: the Ollama adapter passes every message's
   reasoning back, other agents' included.
+- **2026-09-30** — Decided with the maintainer, after the model became a
+  component (130): the rule is a parameter of the model component, not a
+  facade around it (a second `LLMClient` in a container would collide with
+  the single facet), and it is applied once in the `Turn`, not by every
+  backend. Done: `ReasoningHistory` (`never`, `current_turn` - the default -
+  `always`) in `caelumora_model::message`; `LLMClient::reasoning_history`
+  declares it, `ollama_client` takes it as the parameter
+  `reasoning_history`. `Turn::new` receives it, and `Turn::full_context`
+  gives the model each message with its reasoning only where the rule keeps
+  it - never another actor's. The `ContextRef` records the rule and how many
+  of the transcript's last entries were the turn's own (`turn_entries`), and
+  `AgentChannelState::resolve` applies it again, so that the context panel
+  shows what the model was given; the digests still name the stored
+  transcript, which keeps every reasoning. `AgentActorState::turn` and
+  `AgentActorState::agent_id` are gone: the run loop builds the `Turn`
+  itself, with the rule from the agent's model.

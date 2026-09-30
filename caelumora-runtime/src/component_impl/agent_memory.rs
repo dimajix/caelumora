@@ -188,7 +188,7 @@ mod tests {
     /// Remembers `text` in a turn in channel `at`, and completes the turn.
     async fn remember(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: ChannelClassification, text: &str) {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
         turn.next_turn(Default::default(), Default::default(), at, Default::default());
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), &mut turn).await.unwrap();
         turn.commit_turn().await;
@@ -197,7 +197,7 @@ mod tests {
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
     async fn recall(memory: &AgentMemoryComponent, handle: &Arc<AgentStateHandle>, agent: AgentId, at: ChannelClassification) -> Prompt {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
         turn.next_turn(Default::default(), Default::default(), at, Default::default());
         memory.get_prompt(&turn).await.unwrap()
     }
@@ -213,7 +213,7 @@ mod tests {
         // A turn in a session-level channel remembers something ...
         let mut state = AgentChannelState::default();
         {
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
             turn.next_turn(Default::default(), Default::default(), team, Default::default());
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result["id"], 1);
@@ -231,7 +231,7 @@ mod tests {
 
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone());
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
         turn.next_turn(Default::default(), Default::default(), elsewhere, Default::default());
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err());
         turn.next_turn(Default::default(), Default::default(), team, Default::default());

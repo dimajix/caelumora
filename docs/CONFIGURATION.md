@@ -39,6 +39,7 @@ component_defaults:
         base_url: "http://127.0.0.1:11434"
         model: "gemma4:26b"
         think: true
+        reasoning_history: current_turn
 ```
 
 | Parameter of `ollama_client` | Meaning | Default |
@@ -46,5 +47,6 @@ component_defaults:
 | `base_url` | The Ollama server | `http://127.0.0.1:11434` |
 | `model` | The model | `gemma4:26b` |
 | `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
+| `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (issue 63, see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
 
 An unknown parameter is refused, and the agent does not start.

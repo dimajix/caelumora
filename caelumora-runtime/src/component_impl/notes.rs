@@ -236,7 +236,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let tools = NotesComponent { reader: crate::session_reader::detached() };
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
             assert_eq!(noted["id"], 1);
@@ -247,7 +247,7 @@ mod tests {
             assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), &mut turn).await.unwrap();
@@ -258,7 +258,7 @@ mod tests {
         {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
             turn.next_turn(Default::default(), Default::default(), Default::default(), Default::default());

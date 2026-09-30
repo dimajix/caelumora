@@ -70,6 +70,7 @@ users:
 #        base_url: "http://127.0.0.1:11434"
 #        model: "gemma4:26b"
 #        think: true
+#        reasoning_history: current_turn
 #    - id: context
 #      kind: state_context_provider
 

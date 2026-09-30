@@ -203,12 +203,14 @@ impl AgentChannelState {
         }
     }
 
-    /// Resolves `reference` in this state: the context prefix it names, with
-    /// every prompt part inserted after the entry it followed. `None` if what
-    /// it names is not here - a context that is not a prefix of this one, a
+    /// Resolves `reference`, recorded for a message of `agent`, in this
+    /// state: the context prefix it names, with every prompt part inserted
+    /// after the entry it followed, and each message's reasoning only where
+    /// the recorded rule gave it to the model (issue 63). `None` if what it
+    /// names is not here - a context that is not a prefix of this one, a
     /// prompt that was never recorded, or one whose entry is not in the
     /// prefix.
-    pub fn resolve(&self, reference: &ContextRef) -> Option<SeenContext> {
+    pub fn resolve(&self, reference: &ContextRef, agent: ActorId) -> Option<SeenContext> {
         let entries = match &reference.transcript {
             Some(digest) => self.transcript.prefix(digest)?,
             None => &[],
@@ -220,8 +222,11 @@ impl AgentChannelState {
         for p in reference.prompts.iter().filter(|p| p.after.is_none()) {
             items.push(prompt(p)?);
         }
-        for entry in entries {
-            items.push(ContextItem::Conversation { message: entry.message.clone(), digest: entry.digest });
+        // The last entries are the turn's own, produced before the message.
+        let turn_start = entries.len().checked_sub(reference.turn_entries)?;
+        for (index, entry) in entries.iter().enumerate() {
+            let message = reference.reasoning.given(entry.message.clone(), agent, index >= turn_start);
+            items.push(ContextItem::Conversation { message, digest: entry.digest });
             for p in reference.prompts.iter().filter(|p| p.after == Some(entry.digest)) {
                 items.push(prompt(p)?);
             }
@@ -242,7 +247,8 @@ impl AgentChannelState {
     /// What the agent saw when it produced the message `id` of its history,
     /// or `None` if it did not produce it or it cannot be resolved.
     pub fn seen_context_of(&self, id: MessageId) -> Option<SeenContext> {
-        self.resolve(&self.recorded_context_of(id)?)
+        let entry = self.history.entries().iter().find(|e| e.message.id == id)?;
+        self.resolve(entry.context.as_ref()?, entry.message.sender_id)
     }
 }
 
@@ -319,9 +325,11 @@ mod tests {
                 PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },
             ],
             knowledge: Vec::new(),
+            reasoning: Default::default(),
+            turn_entries: 0,
         };
 
-        let seen = state.resolve(&reference).expect("everything it names is here");
+        let seen = state.resolve(&reference, ActorId::None).expect("everything it names is here");
         let order: Vec<String> = seen.items.iter().map(|item| match item {
             ContextItem::Prompt { text, .. } => format!("prompt:{text}"),
             ContextItem::Conversation { message, .. } => message.content.clone().unwrap_or_default(),
@@ -330,10 +338,10 @@ mod tests {
 
         let mut elsewhere = reference.clone();
         elsewhere.prompts[1].after = Some(prompt("not an entry"));
-        assert!(state.resolve(&elsewhere).is_none(), "a part after an entry that is not in the prefix");
+        assert!(state.resolve(&elsewhere, ActorId::None).is_none(), "a part after an entry that is not in the prefix");
         let mut forgotten = reference;
         forgotten.prompts[0].text = prompt("never recorded");
-        assert!(state.resolve(&forgotten).is_none(), "a part whose text was not kept");
+        assert!(state.resolve(&forgotten, ActorId::None).is_none(), "a part whose text was not kept");
     }
 
     #[test]

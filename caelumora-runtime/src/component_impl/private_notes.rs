@@ -189,7 +189,7 @@ mod tests {
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
         let tools = PrivateNotesComponent { reader: crate::session_reader::detached() };
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();

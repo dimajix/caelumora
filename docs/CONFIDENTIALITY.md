@@ -72,6 +72,11 @@ further than its own contents.
 
 The answer text itself is not labelled.
 
+What a model is given of reasoning is a separate question from who may
+read it: no model is given another actor's reasoning, and of the agent's
+own only what its model's rule keeps (issue 63, see
+[AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)).
+
 ## Publishing to a channel
 
 Publishing a labelled part to a channel is `ActionType::Publish { label,

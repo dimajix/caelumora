@@ -313,11 +313,50 @@ pub enum KnowledgeSource {
     Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
 }
 
+/// Which reasoning of the messages in its context a model is given back
+/// (issue 63). A property of the model - some must not see earlier
+/// reasoning again, others need the reasoning that led to a tool call
+/// within the same turn - so it is declared by the agent's `LLMClient` and
+/// applied where the model's input is assembled. Stored reasoning is not
+/// touched: this decides only what a model call is given.
+///
+/// Whatever the rule, a model is never given another actor's reasoning.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningHistory {
+    /// No reasoning at all, not even of the turn under way.
+    Never,
+    /// The agent's own reasoning of the turn under way, not that of earlier
+    /// turns - what reasoning models document. The default.
+    #[default]
+    CurrentTurn,
+    /// The agent's own reasoning of every turn.
+    Always,
+}
+
+impl ReasoningHistory {
+    /// `message` as the model of `agent` is given it: without its reasoning
+    /// unless the rule keeps it. `in_turn` says whether the turn under way
+    /// produced the message.
+    pub fn given(self, mut message: Message, agent: ActorId, in_turn: bool) -> Message {
+        let keeps = message.sender_id == agent && match self {
+            Self::Never => false,
+            Self::CurrentTurn => in_turn,
+            Self::Always => true,
+        };
+        if !keeps {
+            message.reasoning = None;
+        }
+        message
+    }
+}
+
 /// What an agent's model saw when it produced a message (issue 06): the
 /// digest of its `Transcript` before the message - `None` if it was
 /// empty - the prompt parts of that turn, each where it was placed (issue
-/// 47), and the knowledge from other places read before the message was
-/// produced (issue 17). Resolved in the agent's `AgentChannelState`.
+/// 47), the knowledge from other places read before the message was
+/// produced (issue 17), and which reasoning of it the model was given
+/// (issue 63). Resolved in the agent's `AgentChannelState`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
     /// The digest of the agent's transcript before the message.
@@ -325,6 +364,12 @@ pub struct ContextRef {
     pub prompts: Vec<PromptRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub knowledge: Vec<KnowledgeRef>,
+    /// The rule the reasoning of the transcript was given by.
+    pub reasoning: ReasoningHistory,
+    /// How many of the transcript's last entries the turn that produced the
+    /// message had produced before it: the ones `CurrentTurn` keeps the
+    /// reasoning of.
+    pub turn_entries: usize,
 }
 
 /// A message of a `MessageHistory`: with the digest of the history up to and
@@ -484,8 +529,26 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_is_given_back_as_the_models_rule_says() {
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let other = ActorId::Agent(crate::agent::AgentId::new());
+        let thought = |sender: ActorId| Message { sender_id: sender, reasoning: Some("thinking".to_string()), ..make_message(id(1)) };
+        let kept = |rule: ReasoningHistory, sender: ActorId, in_turn: bool| rule.given(thought(sender), agent, in_turn).reasoning.is_some();
+
+        assert!(!kept(ReasoningHistory::Never, agent, true), "never: not even the turn's own");
+        assert!(kept(ReasoningHistory::CurrentTurn, agent, true), "the turn under way");
+        assert!(!kept(ReasoningHistory::CurrentTurn, agent, false), "not of earlier turns");
+        assert!(kept(ReasoningHistory::Always, agent, false), "always: every turn's");
+        for rule in [ReasoningHistory::Never, ReasoningHistory::CurrentTurn, ReasoningHistory::Always] {
+            assert!(!kept(rule, other, true), "{rule:?}: never another actor's");
+        }
+        assert_eq!(ReasoningHistory::given(ReasoningHistory::Never, thought(agent), agent, true).content, thought(agent).content, "only the reasoning goes");
+        assert_eq!(ReasoningHistory::default(), ReasoningHistory::CurrentTurn);
+    }
+
+    #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new() };
+        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new(), reasoning: ReasoningHistory::CurrentTurn, turn_entries: 0 };
         let mut history = MessageHistory::new();
         history.extend(vec![make_message(id(1))]);
         history.push(make_message(id(2)), Some(reference.clone()));

@@ -185,11 +185,44 @@ history:
 *   the digest of the transcript before the message,
 *   the turn's prompt parts, each as a `PromptRef`,
 *   the knowledge read before the message (`ContextRef::knowledge`, see
-    [MEMORY.md](MEMORY.md)).
+    [MEMORY.md](MEMORY.md)),
+*   which reasoning the model was given: the rule (`ContextRef::reasoning`)
+    and how many of the transcript's last entries the turn itself had
+    produced before the message (`ContextRef::turn_entries`) - see
+    [Reasoning given back](#reasoning-given-back).
 
 `AgentChannelState::seen_context_of(message)` resolves such a reference to
 the messages and prompt parts the model saw, in the order it was given
-them. The channel's history identifies the agent by the message's sender.
+them, each message with its reasoning only where the model was given it.
+The channel's history identifies the agent by the message's sender.
+
+### Reasoning given back
+
+Which reasoning of earlier messages a model is given again is a property of
+the model (issue 63): some must not see earlier reasoning, others need the
+reasoning that led to a tool call within the same turn. The agent's
+`LLMClient` declares it as a `ReasoningHistory`
+(`caelumora_model::message`):
+
+| Rule | The model is given |
+|---|---|
+| `never` | no reasoning at all |
+| `current_turn` | the agent's own reasoning of the turn under way - the default |
+| `always` | the agent's own reasoning of every turn |
+
+Whatever the rule, a model is never given another actor's reasoning.
+
+The rule is handed to every `Turn` in `Turn::new`, from the agent's model,
+and applied in one place: `Turn::full_context`, which assembles what the
+model is given - the context the turn began with, then the messages the
+turn produced (`ReasoningHistory::given`). A backend therefore gets only
+what its model may see and implements no rule of its own. The stored
+transcript keeps all reasoning; only the model's input leaves it out.
+
+Since what the model was given is less than the transcript holds, the
+`ContextRef` records the rule and the turn's share of the transcript, and
+`resolve` applies the same rule again. The digests are unchanged: they name
+the stored transcript, not a filtered copy of it.
 
 ### Digests are stored, not recomputed
 

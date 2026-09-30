@@ -108,7 +108,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let mut turn = caelumora_runtime::agent_turn::Turn::new(
         caelumora_model::agent::AgentId::default(),
         "test-agent".to_string(),
-        &mut agent_channel_state, caelumora_runtime::agent_state::AgentStateHandle::detached());
+        &mut agent_channel_state, caelumora_runtime::agent_state::AgentStateHandle::detached(), Default::default());
 
     let result = provider
         .execute("test-echo__echo", &json!({ "message": "hello mcp" }), &mut turn)

@@ -69,19 +69,10 @@ pub struct AgentActor {
 
 #[derive(Debug)]
 struct AgentActorState {
-    agent_id: AgentId,
     agent_channel_state: AgentChannelState,
     /// The agent's own state, shared with its actors in other channels and
     /// sessions (issue 62).
     agent_state: Arc<AgentStateHandle>,
-}
-
-impl AgentActorState {
-    /// The handle to the agent's state for one step of the run loop, for
-    /// the agent named `agent_name` - as its controller has it now.
-    fn turn<'a>(&'a mut self, agent_name: String) -> Turn<'a> {
-        Turn::new(self.agent_id, agent_name, &mut self.agent_channel_state, self.agent_state.clone())
-    }
 }
 
 impl AgentActor {
@@ -124,7 +115,6 @@ impl AgentActor {
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let processing_state = Arc::new(ProcessingStateHolder::new(agent_channel_state.processing_state));
         let state = Mutex::new(AgentActorState {
-            agent_id,
             agent_channel_state,
             agent_state,
         });
@@ -858,7 +848,7 @@ impl AgentActor {
 fn context_of(state: &AgentChannelState, actor: ActorId, message: MessageId) -> Result<SeenContext, MessageContextError> {
     let reference = state.recorded_context_of(message)
         .ok_or(MessageContextError::NotRecorded { actor, message })?;
-    state.resolve(&reference).ok_or(MessageContextError::Unavailable { actor, message })
+    state.resolve(&reference, actor).ok_or(MessageContextError::Unavailable { actor, message })
 }
 
 #[async_trait]
@@ -903,7 +893,15 @@ impl Actor for AgentActor {
 
         loop {
             let current_state = self.processing_state.load();
-            let mut turn = state.turn(self.agent_controller.name());
+            // The name as the agent's controller has it now.
+            let AgentActorState { agent_channel_state, agent_state } = &mut *state;
+            let mut turn = Turn::new(
+                self.agent_id,
+                self.agent_controller.name(),
+                agent_channel_state,
+                agent_state.clone(),
+                self.llm_client.facet.reasoning_history(),
+            );
 
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
@@ -1111,7 +1109,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(
             AgentId::default(),
-            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         let processor = StateHistoryAppender {};
         let input = vec![make_message("hello")];
 
@@ -1133,7 +1131,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(
             AgentId::default(),
-            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
         let appender = TranscriptAppender {};
         let provider = StateContextProvider {
@@ -1176,7 +1174,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
         let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
 
@@ -1203,7 +1201,7 @@ mod tests {
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 
-        let mut turn = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
         let mut earlier = make_message("earlier");
         earlier.role = MessageRole::User;
@@ -1226,7 +1224,7 @@ mod tests {
     #[tokio::test]
     async fn committing_a_turn_answers_with_its_final_messages_and_clears_its_work() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.begin();
 
         let mut internal = make_message("working on it");
@@ -1257,7 +1255,7 @@ mod tests {
         state.history.extend(vec![question.clone()]);
         let answer = text("answer");
         let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), knowledge: Vec::new() }));
+        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), knowledge: Vec::new(), reasoning: Default::default(), turn_entries: 0 }));
 
         let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
@@ -1270,7 +1268,7 @@ mod tests {
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
-        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], knowledge: Vec::new() }));
+        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], knowledge: Vec::new(), reasoning: Default::default(), turn_entries: 0 }));
         assert!(matches!(context_of(&state, actor, lost.id), Err(MessageContextError::Unavailable { .. })));
     }
 }
