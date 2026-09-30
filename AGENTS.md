@@ -103,6 +103,11 @@ the two that have no reason — naming, construction, error handling — and
 propose aligning them, in whichever direction is the better one. A deliberate
 difference is fine, but say why it exists.
 
-### Branches
-Until further notice, work and commit directly on `main`. Do not create
-feature branches unless asked to.
+### Branches and commits
+Until further notice, work directly on `main`. Do not create feature
+branches unless asked to.
+
+Do not commit on your own: leave the changes in the working tree and say
+what they are, so that the maintainer can review them first. Commit only
+when explicitly asked to - and then only what was reviewed. The same holds
+for pushing.
