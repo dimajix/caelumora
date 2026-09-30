@@ -45,6 +45,9 @@ use crate::tool_calls::ToolCalls;
 /// What a turn reads as when none runs.
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
 
+/// How many times a turn may ask its model; then it ends with what it has.
+pub(crate) const MAX_MODEL_CALLS: u32 = 25;
+
 /// What is left of a turn once it ended - taken over or discarded: what its
 /// last event is sent with, the contexts the turn had (issue 85). Nothing else; the rest of the turn was used up in ending it.
 #[derive(Debug)]
@@ -394,6 +397,18 @@ impl<'a> Turn<'a> {
         self.current_mut().push(message);
     }
 
+    /// Counts a call of the model, if the turn may still make one: `false`
+    /// once it made `MAX_MODEL_CALLS`. The count is the turn's and is stored
+    /// with it, a resumed turn goes on from where it was (issue 157).
+    pub(crate) fn count_model_call(&mut self) -> bool {
+        let turn = self.current_mut();
+        if turn.model_calls >= MAX_MODEL_CALLS {
+            return false;
+        }
+        turn.model_calls += 1;
+        true
+    }
+
     /// The tool calls of the current step (issue 83): a view that keeps
     /// their bookkeeping off `Turn`. Short-lived on purpose - running a call
     /// needs the whole turn in between.
@@ -733,6 +748,28 @@ mod tests {
         turn.give_up_turn(GivenUpReason::Stopped, None);
         assert!(state.transcript.given_up_turns().is_empty());
         assert_eq!(state.transcript.entries().len(), 1);
+    }
+
+    #[test]
+    fn a_resumed_turn_keeps_its_count_of_model_calls() {
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        turn.begin();
+        for _ in 1..MAX_MODEL_CALLS {
+            assert!(turn.count_model_call());
+        }
+
+        // Stored and loaded again, as after a restart.
+        let stored = serde_json::to_value(&state).unwrap();
+        let mut state: AgentChannelState = serde_json::from_value(stored).unwrap();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        assert!(turn.count_model_call(), "the last one it may make");
+        assert!(!turn.count_model_call(), "the limit holds across the restart");
+
+        let mut stored = serde_json::to_value(&state).unwrap();
+        stored["turn"].as_object_mut().unwrap().remove("model_calls");
+        let state: AgentChannelState = serde_json::from_value(stored).unwrap();
+        assert_eq!(state.turn.unwrap().model_calls, 0, "a turn stored before the count was kept starts from 0");
     }
 
     #[test]

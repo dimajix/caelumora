@@ -1,5 +1,5 @@
-use crate::actor::{Actor, GivenUpTurnsError, MessageContextError};
-use crate::agent_turn::{CommittedTurn, Turn};
+use crate::actor::{Actor, MessageContextError, ReadStateError};
+use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
@@ -26,7 +26,7 @@ use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
-use std::sync::atomic::{AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -53,7 +53,12 @@ pub struct AgentActor {
     reasoning_visibility: Visibility,
 
     // State
-    state: Mutex<AgentActorState>,
+    /// The agent's own state, shared with its actors in other channels and
+    /// sessions (issue 62).
+    agent_state: Arc<AgentStateHandle>,
+    /// Its state in this channel, held by the run loop for as long as it
+    /// runs.
+    state: Mutex<AgentChannelState>,
     processing_state: Arc<ProcessingStateHolder>,
     /// Cancelled by `cancel` and `stop` while a turn runs, replaced when the
     /// next one begins: the streaming loop waits on it next to the model's
@@ -64,16 +69,6 @@ pub struct AgentActor {
     /// What `cancel` or `stop` asked of the run loop (an `Interrupt`, or
     /// `NO_INTERRUPT`), taken after every step (issue 152).
     interrupt: AtomicU8,
-    loop_count: AtomicI32,
-    max_iterations: i32,
-}
-
-#[derive(Debug)]
-struct AgentActorState {
-    agent_channel_state: AgentChannelState,
-    /// The agent's own state, shared with its actors in other channels and
-    /// sessions (issue 62).
-    agent_state: Arc<AgentStateHandle>,
 }
 
 impl AgentActor {
@@ -115,10 +110,6 @@ impl AgentActor {
         }
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let processing_state = Arc::new(ProcessingStateHolder::new(agent_channel_state.processing_state));
-        let state = Mutex::new(AgentActorState {
-            agent_channel_state,
-            agent_state,
-        });
 
         Ok(AgentActor {
             agent_id,
@@ -131,12 +122,11 @@ impl AgentActor {
             emit_out_processors,
             tool_executor,
             reasoning_visibility: personality.reasoning_visibility,
-            state,
+            agent_state,
+            state: Mutex::new(agent_channel_state),
             processing_state,
             turn_cancel: std::sync::Mutex::new(CancellationToken::new()),
             interrupt: AtomicU8::new(NO_INTERRUPT),
-            loop_count: AtomicI32::new(0),
-            max_iterations: 25,
         })
     }
 
@@ -216,7 +206,6 @@ impl AgentActor {
         security_context: &SecurityContext,
         output: &dyn EventSender,
     ) -> Result<()> {
-        self.loop_count.store(0, Ordering::SeqCst);
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
         turn.next_turn(
@@ -657,7 +646,7 @@ impl AgentActor {
     /// Calls the LLM and streams its response for a single turn step. Loops
     /// back to itself (via the run loop, after a trip through
     /// `ExecutingTools`) as long as the model keeps making tool calls, up to
-    /// `max_iterations`.
+    /// `MAX_MODEL_CALLS` in a turn.
     ///
     /// A message is "final" (shown to the user, kept in `history`) exactly
     /// when it isn't part of executing an in-progress plan
@@ -675,11 +664,10 @@ impl AgentActor {
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
 
-        if self.loop_count.load(Ordering::SeqCst) >= self.max_iterations {
-            warn!("Too many iterations, stopping agent {} {}", self.id(), agent_name);
+        if !turn.count_model_call() {
+            warn!("Agent {} {} asked its model {} times in one turn; the turn ends", self.id(), agent_name, MAX_MODEL_CALLS);
             return Ok(ActorState::Reflecting);
         }
-        self.loop_count.fetch_add(1, Ordering::SeqCst);
 
         let cancelled = self.turn_token();
         let mut response = self.call_llm(turn).await?;
@@ -778,6 +766,20 @@ impl AgentActor {
         }
     }
 
+    /// The agent's state in this channel, for `caller` to read who may read
+    /// the agent's context (`ReadAgentContext`): from the store, where it is
+    /// written after every step - the running loop holds the in-memory state
+    /// for as long as it runs.
+    async fn readable_state(&self, caller: &SecurityContext) -> Result<AgentChannelState, ReadStateError> {
+        let attributes = self.agent_controller.load().security_attributes.clone();
+        self.actor_runtime.security_manager()
+            .require(caller, ActionType::ReadAgentContext(&attributes), || ReadStateError::Forbidden { actor: self.id() }).await?;
+        self.actor_runtime.load_channel_state().await
+            .map_err(|e| {
+                warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);
+                ReadStateError::Failed { actor: self.id() }
+            })
+    }
 }
 
 
@@ -856,12 +858,11 @@ impl Actor for AgentActor {
         loop {
             let current_state = self.processing_state.load();
             // The name as the agent's controller has it now.
-            let AgentActorState { agent_channel_state, agent_state } = &mut *state;
             let mut turn = Turn::new(
                 self.agent_id,
                 self.agent_controller.name(),
-                agent_channel_state,
-                agent_state.clone(),
+                &mut state,
+                self.agent_state.clone(),
                 self.llm_client.facet.profile(),
             );
 
@@ -962,30 +963,11 @@ impl Actor for AgentActor {
     }
 
     async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
-        // Read from the store, where the state is written after every step:
-        // the running loop holds the in-memory state for as long as it runs.
-        let attributes = self.agent_controller.load().security_attributes.clone();
-        self.actor_runtime.security_manager()
-            .require(caller, ActionType::ReadAgentContext(&attributes), || MessageContextError::Forbidden { actor: self.id() }).await?;
-        let state = self.actor_runtime.load_channel_state().await
-            .map_err(|e| {
-                warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);
-                MessageContextError::Failed { actor: self.id(), message }
-            })?;
-        context_of(&state, self.id(), message)
+        context_of(&self.readable_state(caller).await?, self.id(), message)
     }
 
-    async fn given_up_turns(&self, caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, GivenUpTurnsError> {
-        // Read from the store, as `message_context` does.
-        let attributes = self.agent_controller.load().security_attributes.clone();
-        self.actor_runtime.security_manager()
-            .require(caller, ActionType::ReadAgentContext(&attributes), || GivenUpTurnsError::Forbidden { actor: self.id() }).await?;
-        let state = self.actor_runtime.load_channel_state().await
-            .map_err(|e| {
-                warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);
-                GivenUpTurnsError::Failed { actor: self.id() }
-            })?;
-        Ok(state.transcript.given_up_turns())
+    async fn given_up_turns(&self, caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, ReadStateError> {
+        Ok(self.readable_state(caller).await?.transcript.given_up_turns())
     }
 
     fn cancel(&self) {

@@ -7,7 +7,7 @@
 //! store backend failure, may carry file paths or other internals and belong
 //! in the log only.
 
-use crate::actor::{GivenUpTurnsError, MessageContextError};
+use crate::actor::{MessageContextError, ReadStateError};
 use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::llm::LLMError;
@@ -33,7 +33,7 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<MessageContextError>() {
             Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<GivenUpTurnsError>() {
+        } else if let Some(e) = e.downcast_ref::<ReadStateError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ChannelError>() {
             Some(e.to_string())

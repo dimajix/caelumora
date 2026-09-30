@@ -31,7 +31,9 @@ between turns, five belong to a turn.
     When the complete message contains tool calls, the agent registers them
     for approval where their tool requires it and goes to `ExecutingTools`;
     otherwise to `Reflecting`. A turn makes at most 25 model calls
-    (`max_iterations`), then it goes to `Reflecting`.
+    (`MAX_MODEL_CALLS`), then it goes to `Reflecting`. The count
+    (`TurnState::model_calls`, `Turn::count_model_call`) is stored with
+    the turn, so a turn resumed after a restart goes on counting.
 *   **`ExecutingTools`** runs the approved calls that have no result yet.
     Once every call of the step has a result, the tool message goes into the
     turn and the agent returns to `Planning` - or to `Reflecting` if a tool
@@ -464,7 +466,10 @@ participant's history, but only one of them produced it.
     ownership policy only the agent's owner may, since a context holds more
     than the conversation: the system prompt, internal steps, tool results.
 *   It reads its state from the `StateStore`, where it is written after
-    every step; the running loop holds the in-memory state.
+    every step; the running loop holds the in-memory state. Both reads
+    below go through `AgentActor::readable_state`, which asks the question
+    and loads the state; its `ReadStateError` (`Forbidden`, `Failed`) is
+    what `MessageContextError` takes over.
 *   `Actor::given_up_turns(caller)` answers, under the same question, with
     the turns the agent gave up in the channel (issue 145): each with its
     reason, time and messages. The context of each of those messages is

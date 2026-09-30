@@ -67,9 +67,9 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// none.
     ///
     /// # Errors
-    /// `GivenUpTurnsError::Forbidden` if `caller` may not read them,
+    /// `ReadStateError::Forbidden` if `caller` may not read them,
     /// `Failed` if the actor's state cannot be read.
-    async fn given_up_turns(&self, _caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, GivenUpTurnsError> {
+    async fn given_up_turns(&self, _caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, ReadStateError> {
         Ok(Vec::new())
     }
 }
@@ -85,17 +85,27 @@ pub enum MessageContextError {
     #[error("The context of message {message} by {actor} is no longer available")]
     Unavailable { actor: ActorId, message: MessageId },
     /// Reading the actor's state failed; the cause is in the log.
-    #[error("The context of message {message} by {actor} cannot be read")]
-    Failed { actor: ActorId, message: MessageId },
+    #[error("What {actor} saw cannot be read")]
+    Failed { actor: ActorId },
 }
 
-/// Why the turns an actor gave up cannot be shown. The messages are meant
-/// for users (see `crate::error::user_message`).
+/// Why an actor's state cannot be read for someone else - its context
+/// (`MessageContextError` takes it over), the turns it gave up. The messages
+/// are meant for users (see `crate::error::user_message`).
 #[derive(Debug, thiserror::Error)]
-pub enum GivenUpTurnsError {
+pub enum ReadStateError {
     #[error("You are not permitted to see what {actor} saw")]
     Forbidden { actor: ActorId },
     /// Reading the actor's state failed; the cause is in the log.
-    #[error("The turns {actor} gave up cannot be read")]
+    #[error("What {actor} saw cannot be read")]
     Failed { actor: ActorId },
+}
+
+impl From<ReadStateError> for MessageContextError {
+    fn from(error: ReadStateError) -> Self {
+        match error {
+            ReadStateError::Forbidden { actor } => Self::Forbidden { actor },
+            ReadStateError::Failed { actor } => Self::Failed { actor },
+        }
+    }
 }

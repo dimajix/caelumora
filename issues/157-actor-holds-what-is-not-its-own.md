@@ -1,6 +1,6 @@
 # 157 — The actor holds turn state and a constant behind a mutex, and reads its state twice
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -44,3 +44,18 @@ because the right place was not used.
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, A5, A6, A7), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-09-30** — Done, as considered.
+  - `TurnState::model_calls` (serde `default`: a turn stored before counts
+    from 0) is counted by `Turn::count_model_call`, against
+    `MAX_MODEL_CALLS` (25) in `agent_turn.rs`. `loop_count` and
+    `max_iterations` are gone from the actor.
+  - `AgentActor` holds `agent_state: Arc<AgentStateHandle>` and
+    `state: Mutex<AgentChannelState>`; `AgentActorState` is gone.
+  - `AgentActor::readable_state(caller)` asks `ReadAgentContext` and loads
+    the state for `message_context` and `given_up_turns`.
+    `GivenUpTurnsError` is `ReadStateError`, and `MessageContextError`
+    takes it over with `From`. For that, `MessageContextError::Failed`
+    no longer names the message (it is in the request anyway); both say
+    "What {actor} saw cannot be read". The REST mapping is unchanged.
+  - Test: a turn stored after 24 model calls and loaded again may make one
+    more, not 26.

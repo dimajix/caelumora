@@ -420,6 +420,6 @@ mod tests {
         assert_eq!(status(MessageContextError::Forbidden { actor }), StatusCode::FORBIDDEN);
         assert_eq!(status(MessageContextError::NotRecorded { actor, message }), StatusCode::NOT_FOUND);
         assert_eq!(status(MessageContextError::Unavailable { actor, message }), StatusCode::NOT_FOUND);
-        assert_eq!(status(MessageContextError::Failed { actor, message }), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(status(MessageContextError::Failed { actor }), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

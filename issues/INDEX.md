@@ -248,7 +248,7 @@ against it, and what came out of the last attempt.
 | [153](153-three-give-up-paths.md) | done | A turn is given up along three paths that do the same, with two enums carrying one classification. |
 | [154](154-model-step-mixes-four-things.md) | done | The model step mixes stamping messages, plan mode, streaming and plan progress in one function of 120 lines. |
 | [155](155-approval-admission-on-the-actor.md) | done | The actor decides how a tool call is admitted and builds its `ToolCallState` by hand, though everything the rule is made of is in the tool guard. |
-| [157](157-actor-holds-what-is-not-its-own.md) | open | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |
+| [157](157-actor-holds-what-is-not-its-own.md) | done | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |
 | [159](159-split-agent-actor-file.md) | open | `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines. |
 
 ## Open architecture questions

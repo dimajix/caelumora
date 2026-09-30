@@ -169,6 +169,11 @@ pub struct TurnState {
     /// Set by a tool (the stop tool): the turn ends with this tool step, and
     /// the agent lands in this state instead of `Idle`.
     pub requested_state: Option<ActorState>,
+    /// How many times the turn asked its model so far - kept with the turn,
+    /// so that its limit holds for a turn resumed after a restart too
+    /// (issue 157).
+    #[serde(default)]
+    pub model_calls: u32,
 }
 
 impl TurnState {
