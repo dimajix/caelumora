@@ -114,20 +114,27 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
         .execute("test-echo__echo", &json!({ "message": "hello mcp" }), &mut turn)
         .await
         .unwrap();
-    assert_eq!(result, json!("hello mcp"));
+    assert_eq!(result.value, json!("hello mcp"));
+    assert!(result.classification.is_none(), "an MCP server does not classify its results");
 }
 
 #[tokio::test]
-async fn a_configured_approval_reaches_every_discovered_tool() {
+async fn a_configured_approval_and_classification_reach_every_discovered_tool() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(json!({ "url": url, "requires_approval": true })).await;
+    let container = build_container(json!({
+        "url": url,
+        "requires_approval": true,
+        "classification": { "level": "confidential" },
+    })).await;
     let provider = container.get_all::<dyn ToolProvider>(None)[0].facet.clone();
 
     let tools = provider.tools();
     assert!(!tools.is_empty(), "the server's tools are discovered");
     assert!(tools.iter().all(|t| t.requires_approval), "every tool of this server needs approval: {tools:?}");
+    let confidential = caelumora_model::confidentiality::Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+    assert!(tools.iter().all(|t| t.classification.as_ref() == Some(&confidential)), "and so does the classification: {tools:?}");
 }
 
 #[tokio::test]

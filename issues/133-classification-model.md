@@ -332,3 +332,19 @@ message rendering, and the prompt notes of
   only some entries of it were readable; and a model's messages are built
   on a placeholder classification (`llm::unlabelled_message`) until the
   agent labels them.
+- **2026-09-30** — Decided before step 3: a tool returns a `ToolOutput`
+  (value and an optional classification), and so does the `ToolExecutor`,
+  which only runs the call; the `GuardedToolExecutor` makes the result for
+  the model - timing, errors, classification (the tool's, else the one
+  configured on the `Tool`, else the channel's), the flow check and the
+  owner-only wrapping - so that no configured component decides what the
+  model sees. A classification configured on a tool is trusted, not asked
+  as `Classify`. The flow check is `ActionType::Publish` in the agent's
+  name; a result that may not flow is replaced by the status `withheld`
+  with a message naming the classification, and kept nowhere. The channel's
+  gate checks tool results as parts of their own, and `send_event` only
+  redacts by visibility. `ToolConfidentiality` becomes `ToolVisibility`
+  (`SHOWN`, `CALL_ONLY`, `HIDDEN`; JSON `visibility`).
+- **2026-09-30** — Step 3 done as decided; `mcp_tool` takes a
+  `classification` parameter for all tools of its server. That a server
+  classifies its results itself is [139](139-mcp-result-classification.md).

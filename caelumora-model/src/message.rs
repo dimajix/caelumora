@@ -118,15 +118,15 @@ impl Message {
         if !message.reasoning_visibility.is_channel() {
             message.reasoning = None;
         }
-        message.tool_calls.retain(|c| c.confidentiality.call.is_channel());
+        message.tool_calls.retain(|c| c.visibility.call.is_channel());
         for call in &mut message.tool_calls {
-            if !call.confidentiality.content.is_channel() {
+            if !call.visibility.content.is_channel() {
                 call.arguments = serde_json::Value::Null;
             }
         }
-        message.tool_results.retain(|r| r.confidentiality.call.is_channel());
+        message.tool_results.retain(|r| r.visibility.call.is_channel());
         for result in &mut message.tool_results {
-            if !result.confidentiality.content.is_channel() {
+            if !result.visibility.content.is_channel() {
                 result.content.clear();
             }
         }
@@ -322,7 +322,7 @@ impl MessageHistory {
 mod tests {
     use super::*;
     use crate::digest::message_chain;
-    use crate::tool::ToolConfidentiality;
+    use crate::tool::ToolVisibility;
     use uuid::Uuid;
 
     fn make_message(id: MessageId) -> Message {
@@ -442,14 +442,14 @@ mod tests {
         assert_eq!(messages[2].prev_id, id(2));
     }
 
-    fn call(id: &str, confidentiality: ToolConfidentiality) -> ToolCall {
-        ToolCall { id: Some(id.to_string()), function_name: "f".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality }
+    fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
+        ToolCall { id: Some(id.to_string()), function_name: "f".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility }
     }
 
-    fn result(id: &str, confidentiality: ToolConfidentiality) -> ToolCallResult {
+    fn result(id: &str, visibility: ToolVisibility) -> ToolCallResult {
         let started_at = chrono::Utc::now();
         ToolCallResult {
-            id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), confidentiality,
+            id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             started_at: Some(started_at), finished_at: Some(started_at + chrono::Duration::milliseconds(250)),
         }
     }
@@ -458,7 +458,7 @@ mod tests {
     fn a_message_is_published_without_what_only_its_owner_sees() {
         let message = Message {
             content: None,
-            tool_calls: vec![call("1", ToolConfidentiality::PUBLIC), call("2", ToolConfidentiality::CALL_ONLY), call("3", ToolConfidentiality::HIDDEN)],
+            tool_calls: vec![call("1", ToolVisibility::SHOWN), call("2", ToolVisibility::CALL_ONLY), call("3", ToolVisibility::HIDDEN)],
             ..make_message(MessageId::new())
         };
         let published = message.published().expect("public and call-only calls are left");
@@ -471,7 +471,7 @@ mod tests {
         let results = Message {
             role: MessageRole::Tool,
             content: None,
-            tool_results: vec![result("1", ToolConfidentiality::PUBLIC), result("2", ToolConfidentiality::CALL_ONLY), result("3", ToolConfidentiality::HIDDEN)],
+            tool_results: vec![result("1", ToolVisibility::SHOWN), result("2", ToolVisibility::CALL_ONLY), result("3", ToolVisibility::HIDDEN)],
             ..make_message(MessageId::new())
         };
         let published = results.published().expect("public and call-only results are left");
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn a_message_with_nothing_left_to_show_is_not_published() {
-        let hidden_only = Message { content: None, tool_calls: vec![call("1", ToolConfidentiality::HIDDEN)], ..make_message(MessageId::new()) };
+        let hidden_only = Message { content: None, tool_calls: vec![call("1", ToolVisibility::HIDDEN)], ..make_message(MessageId::new()) };
         assert!(hidden_only.published().is_none());
         let private_reasoning = Message {
             content: None,
@@ -492,7 +492,7 @@ mod tests {
             ..make_message(MessageId::new())
         };
         assert!(private_reasoning.published().is_none(), "private reasoning alone is nothing to show");
-        let with_text = Message { tool_calls: vec![call("1", ToolConfidentiality::HIDDEN)], ..make_message(MessageId::new()) };
+        let with_text = Message { tool_calls: vec![call("1", ToolVisibility::HIDDEN)], ..make_message(MessageId::new()) };
         let published = with_text.published().expect("the text is left");
         assert!(published.tool_calls.is_empty());
         assert_eq!(published.content.as_deref(), Some("hello"));
@@ -500,12 +500,12 @@ mod tests {
 
     #[test]
     fn labels_are_stored_only_where_they_are_not_public() {
-        let public = serde_json::to_value(call("1", ToolConfidentiality::PUBLIC)).unwrap();
-        assert!(public.get("confidentiality").is_none());
-        let hidden = serde_json::to_value(call("1", ToolConfidentiality::HIDDEN)).unwrap();
-        assert_eq!(hidden["confidentiality"], serde_json::json!({"call": "owner", "content": "owner"}));
+        let public = serde_json::to_value(call("1", ToolVisibility::SHOWN)).unwrap();
+        assert!(public.get("visibility").is_none());
+        let hidden = serde_json::to_value(call("1", ToolVisibility::HIDDEN)).unwrap();
+        assert_eq!(hidden["visibility"], serde_json::json!({"call": "owner", "content": "owner"}));
         let stored: ToolCall = serde_json::from_value(serde_json::json!({"id": "1", "function_name": "f", "arguments": {}})).unwrap();
-        assert!(stored.confidentiality.is_public(), "a call without labels is public");
+        assert!(stored.visibility.is_shown(), "a call without labels is public");
         let plain = serde_json::to_value(make_message(MessageId::new())).unwrap();
         assert!(plain.get("reasoning_visibility").is_none());
     }

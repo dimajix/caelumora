@@ -829,7 +829,8 @@ mod tests {
             description: format!("does {name}"),
             parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
             requires_approval,
-            confidentiality: Default::default(),
+            visibility: Default::default(),
+            classification: None,
         };
         let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
@@ -861,14 +862,14 @@ mod tests {
     #[tokio::test]
     async fn events_leave_the_agent_redacted_while_its_context_keeps_the_full_call() {
         use caelumora_model::confidentiality::Visibility;
-        use caelumora_model::tool::{ToolCall, ToolConfidentiality};
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
         turn.next_turn(Default::default(), Default::default(), Default::default(), Vec::new());
 
-        let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         turn.push_message(message.clone());
         turn.send_event(ActorEvent::CompleteMessageGenerated(message.clone()), &output).await.unwrap();

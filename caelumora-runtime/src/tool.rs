@@ -1,13 +1,15 @@
 use crate::agent_turn::Turn;
 use crate::component::ComponentImpl;
 use async_trait::async_trait;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityManager};
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolConfidentiality, ToolResultStatus};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
+use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -22,6 +24,30 @@ pub enum ToolError {
 }
 
 pub type ToolResult<T> = Result<T, ToolError>;
+
+/// What a tool gives back (issue 133): its value and, if the tool
+/// classifies it - by its input, by what it read, by the source it drew
+/// on - how sensitive it is. `None` leaves it to the tool's configuration
+/// or the channel (`GuardedToolExecutor`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolOutput {
+    pub value: Value,
+    pub classification: Option<Classification>,
+}
+
+impl ToolOutput {
+    /// `value`, classified `classification` by the tool.
+    pub fn classified(value: Value, classification: Classification) -> Self {
+        Self { value, classification: Some(classification) }
+    }
+}
+
+/// A value the tool does not classify.
+impl From<Value> for ToolOutput {
+    fn from(value: Value) -> Self {
+        Self { value, classification: None }
+    }
+}
 
 /// The arguments of a tool call read as `T`, the struct that names the
 /// tool's parameters - the one way built-in tools read their parameters
@@ -71,8 +97,8 @@ fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
 /// it (issue 66), i.e. if the call's content is its owner's
 /// (`Visibility::Owner`). The answer text is always published, so a result
 /// the channel does not see is worthless redacted if the model quotes it.
-pub fn successful_result(value: Value, confidentiality: ToolConfidentiality) -> String {
-    if confidentiality.content.is_channel() {
+pub fn successful_result(value: Value, visibility: ToolVisibility) -> String {
+    if visibility.content.is_channel() {
         return value.to_string();
     }
     serde_json::json!({
@@ -105,6 +131,17 @@ pub(crate) fn not_executed_result() -> String {
     unsuccessful_result(
         ToolResultStatus::Failed,
         "This tool call was not executed: the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
+    )
+}
+
+/// The result for a call whose result is classified `classification`, which
+/// may not flow into the channel (issue 133). The model is told the
+/// classification, so that it can tell the user why, and not to look for
+/// the result elsewhere.
+pub(crate) fn withheld_result(classification: &Classification) -> String {
+    unsuccessful_result(
+        ToolResultStatus::Withheld,
+        &format!("The result of this tool call is classified {classification}, which may not be shown in this channel; it was withheld. Do not try to obtain it another way; tell the user if it matters."),
     )
 }
 
@@ -148,7 +185,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 
     /// Executes a specific tool by name.
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value>;
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput>;
     /// Provides a textual description for a specific tool call
     fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
         let tools = self.tools();
@@ -166,15 +203,16 @@ pub trait ToolProvider: Send + Sync + Debug {
 /// has exactly one (issue 127): the component of its personality that
 /// provides it, or the default `default_tool_executor`, unless the
 /// configuration names another (`AppConfig::component_defaults`). It decides
-/// how a tool is run, never whether: the runtime checks the permission
-/// before it delegates ([`GuardedToolExecutor`]), so that no configured
-/// component can run a call the policy refuses.
+/// how a tool is run, never whether, and not what the model is told: the
+/// runtime checks the permission before it delegates, and makes the result
+/// ([`GuardedToolExecutor`]), so that no configured component can run a
+/// call the policy refuses or hand the model what it may not see.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + Debug {
-    /// Runs `call` and answers it - always with a result for the model: what
-    /// the tool gave, or what went wrong and what to do next (issue 15).
+    /// Runs `call` with the tool that provides it: what the tool gave, or
+    /// what went wrong (`ToolError::UnknownTool` if no tool has the name).
     /// Called only for calls the policy permits.
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult;
+    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolOutput>;
     fn describe(&self, call: &ToolCall) -> ToolResult<String>;
     /// The tools there are now, for the model and for labelling its calls.
     /// Asked of the providers each time: a provider's tools may change while
@@ -183,11 +221,16 @@ pub trait ToolExecutor: Send + Sync + Debug {
     fn tools(&self) -> Vec<Tool>;
 }
 
-/// An agent's [`ToolExecutor`] with the checks the runtime keeps (issue
-/// 127): only an agent calls tools, and only what the policy permits
-/// (`CallTool`) - asked before a call is put up for approval
-/// (`is_permitted`) and again when it is run. Whatever executor a
-/// personality configures, it only ever sees permitted calls.
+/// An agent's [`ToolExecutor`] with what the runtime keeps to itself
+/// (issues 127, 133): only an agent calls tools, and only what the policy
+/// permits (`CallTool`) - asked before a call is put up for approval
+/// (`is_permitted`) and again when it is run. And the result the model is
+/// given is made here, the one place: what the tool gave, or what went
+/// wrong and what to do next (issue 15), classified - as the tool
+/// classified it, else as the tool is configured, else as the channel -
+/// and withheld if that may not flow into the channel, before the model
+/// sees it. Whatever executor a personality configures, it only ever sees
+/// permitted calls, and never decides what the model is told.
 #[derive(Debug)]
 pub struct GuardedToolExecutor {
     security_manager: Arc<dyn SecurityManager>,
@@ -202,11 +245,53 @@ impl GuardedToolExecutor {
     /// Runs `call` if it may be run now, and answers it either way.
     pub async fn execute(&self, call: &ToolCall, turn: &mut Turn<'_>) -> ToolCallResult {
         if let Err(e) = self.check(call, turn).await {
-            let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
-            let (status, content) = e.to_result(&available);
-            return ToolCallResult::of(call, status, content);
+            return self.failed(call, e, turn);
         }
-        self.executor.facet.execute(call, turn).await
+        let started_at = chrono::Utc::now();
+        let outcome = self.executor.facet.execute(call, turn).await;
+        let finished_at = chrono::Utc::now();
+        // A call of a tool that does not exist never ran: no timing.
+        if matches!(outcome, Err(ToolError::UnknownTool(_))) {
+            return self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn);
+        }
+        // Session, channel and agent are on the turn's span.
+        debug!(tool = %call.function_name, duration_ms = (finished_at - started_at).num_milliseconds(), ok = outcome.is_ok(), "Tool ran");
+        let mut result = match outcome {
+            Ok(output) => self.admitted(call, output, turn).await,
+            Err(e) => {
+                warn!("Tool call '{}' failed: {}", call.function_name, e);
+                self.failed(call, e, turn)
+            }
+        };
+        result.started_at = Some(started_at);
+        result.finished_at = Some(finished_at);
+        result
+    }
+
+    /// The result for `call`, which failed with `error`: what went wrong and
+    /// what to do next, classified as the channel.
+    fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
+        let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
+        let (status, content) = error.to_result(&available);
+        ToolCallResult::of(call, status, content, turn.classification().classification)
+    }
+
+    /// The result for `call`, whose tool gave `output`: classified as the
+    /// tool classified it, else as the tool is configured - as the turn
+    /// began with its tools - else as the channel, and withheld if that may
+    /// not flow into the channel (`ActionType::Publish`, in the agent's
+    /// name: the result enters its context in the channel).
+    async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
+        let channel = turn.classification();
+        let configured = turn.tools().iter().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
+        let classification = output.classification.or(configured).unwrap_or_else(|| channel.classification.clone());
+        let context = turn.security_context();
+        let action = ActionType::Publish { classification: &classification, actor: context.caller_id, channel: &channel };
+        if !self.security_manager.check(context, action).await {
+            debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
+            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&classification), channel.classification);
+        }
+        ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(output.value, call.visibility), classification)
     }
 
     /// Whether the policy permits `call` in the turn. Checked before asking
@@ -244,6 +329,7 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
 
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::tool::ToolResultStatus;
     use serde_json::json;
 
     #[test]
@@ -268,24 +354,43 @@ mod tests {
         assert!(matches!(text_argument(&json!({ "text": " " })), Err(ToolError::InvalidParameter(_))), "empty is no text");
     }
 
+    /// `test_tool` does not classify its result; `hr_tool` classifies it as
+    /// HR's; `configured_tool` does not classify, but is configured as HR's.
     #[derive(Debug)]
     struct MockToolProvider {
         requires_approval: bool,
     }
 
+    fn hr() -> Classification {
+        Classification::new(caelumora_model::confidentiality::Confidentiality::Internal, [caelumora_model::confidentiality::Compartment::new("hr")]).unwrap()
+    }
+
+    fn tool(name: &str, requires_approval: bool, classification: Option<Classification>) -> Tool {
+        Tool {
+            name: name.to_string(),
+            description: "desc".to_string(),
+            parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval,
+            visibility: Default::default(),
+            classification,
+        }
+    }
+
     #[async_trait]
     impl ToolProvider for MockToolProvider {
         fn tools(&self) -> Vec<Tool> {
-            vec![Tool {
-                name: "test_tool".to_string(),
-                description: "desc".to_string(),
-                parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
-                requires_approval: self.requires_approval,
-                confidentiality: Default::default(),
-            }]
+            vec![
+                tool("test_tool", self.requires_approval, None),
+                tool("hr_tool", self.requires_approval, None),
+                tool("configured_tool", self.requires_approval, Some(hr())),
+            ]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
-            Ok(json!({"result": "ok"}))
+        async fn execute(&self, name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+            match name {
+                "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
+                "configured_tool" => Ok(json!({"salary": 2}).into()),
+                _ => Ok(json!({"result": "ok"}).into()),
+            }
         }
     }
 
@@ -300,7 +405,7 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), confidentiality: Default::default() }
+        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default() }
     }
 
     fn parse(result: &str) -> Value {
@@ -374,9 +479,76 @@ mod tests {
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
+    /// A turn of an agent in a general internal channel, with the tools of
+    /// `executor` as it began with them.
+    fn agent_turn(executor: &GuardedToolExecutor) -> AgentChannelState {
+        let mut agent_channel_state = AgentChannelState::default();
+        agent_channel_state.turn = Some(caelumora_model::agent::TurnState {
+            security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() },
+            tools: executor.tools(),
+            ..Default::default()
+        });
+        agent_channel_state
+    }
+
+    fn with_hr() -> Arc<dyn SecurityManager> {
+        let compartments = caelumora_model::confidentiality::Compartments::new([(caelumora_model::confidentiality::Compartment::new("hr"), vec![])]).unwrap();
+        Arc::new(caelumora_model::security::OwnershipSecurityManager::with_compartments(compartments))
+    }
+
+    #[tokio::test]
+    async fn a_call_runs_is_timed_and_classified_as_the_channel_unless_it_says_otherwise() {
+        let executor = executor(with_hr());
+        let mut agent_channel_state = agent_turn(&executor);
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+
+        let result = executor.execute(&call("test_tool"), &mut turn).await;
+        assert_eq!(result.status, ToolResultStatus::Ok);
+        assert_eq!(result.content, "{\"result\":\"ok\"}");
+        assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "the channel's");
+        let (started_at, finished_at) = (result.started_at.expect("a call that ran has its start"), result.finished_at.expect("and its end"));
+        assert!(finished_at >= started_at);
+        assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
+
+        let unknown = executor.execute(&call("does_not_exist"), &mut turn).await;
+        assert_eq!(unknown.status, ToolResultStatus::UnknownTool);
+        assert!(unknown.content.contains("Available tools: test_tool"), "{}", unknown.content);
+        assert_eq!((unknown.id.as_deref(), unknown.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
+        assert!(unknown.started_at.is_none(), "it never ran");
+    }
+
+    #[tokio::test]
+    async fn a_result_that_may_not_flow_into_the_channel_never_reaches_the_model() {
+        let executor = executor(with_hr());
+        let mut agent_channel_state = agent_turn(&executor);
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+
+        for name in ["hr_tool", "configured_tool"] {
+            let result = executor.execute(&call(name), &mut turn).await;
+            assert_eq!(result.status, ToolResultStatus::Withheld, "{name}: HR's, and the channel is general");
+            assert!(!result.content.contains("salary"), "{name}: {}", result.content);
+            assert!(result.content.contains("internal {hr}"), "the model is told why: {}", result.content);
+            assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "what the model is told is the channel's");
+            assert!(result.started_at.is_some(), "it ran");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_result_classified_by_the_tool_is_kept_where_the_channel_admits_it() {
+        let executor = executor(with_hr());
+        let mut agent_channel_state = agent_turn(&executor);
+        if let Some(turn) = agent_channel_state.turn.as_mut() {
+            turn.classification.classification = hr();
+        }
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let result = executor.execute(&call("hr_tool"), &mut turn).await;
+        assert_eq!(result.status, ToolResultStatus::Ok);
+        assert_eq!(result.classification, hr(), "as the tool classified it");
+    }
+
     #[test]
     fn a_result_is_written_without_its_status_when_ok_and_read_back() {
-        let result: ToolCallResult = serde_json::from_value(json!({"id": "1", "tool_name": "echo", "content": "hi"})).unwrap();
+        let result: ToolCallResult = serde_json::from_value(json!({"id": "1", "tool_name": "echo", "content": "hi", "classification": {"level": "internal"}})).unwrap();
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert!(!serde_json::to_string(&result).unwrap().contains("status"), "Ok is not written");
 
@@ -387,10 +559,10 @@ mod tests {
     #[test]
     fn a_result_the_channel_does_not_see_is_marked_for_the_model() {
         let value = json!({"secret": 42});
-        let public = successful_result(value.clone(), ToolConfidentiality::PUBLIC);
+        let public = successful_result(value.clone(), ToolVisibility::SHOWN);
         assert_eq!(parse(&public), value, "passed on unchanged");
 
-        let hidden = parse(&successful_result(value.clone(), ToolConfidentiality::CALL_ONLY));
+        let hidden = parse(&successful_result(value.clone(), ToolVisibility::CALL_ONLY));
         assert_eq!(hidden["result"], value);
         assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
     }

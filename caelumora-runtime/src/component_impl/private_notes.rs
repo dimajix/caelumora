@@ -23,12 +23,12 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::session_reader::{ChannelNotes, SessionReader};
-use crate::tool::{id_argument, text_argument, ToolError, ToolProvider, ToolResult};
+use crate::tool::{id_argument, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::warn;
@@ -61,7 +61,8 @@ impl ToolProvider for PrivateNotesComponent {
                     ["text"],
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::HIDDEN,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
             },
             Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -72,17 +73,19 @@ impl ToolProvider for PrivateNotesComponent {
                     ["id"],
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::HIDDEN,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
             },
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
-        match name {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+        let value = match name {
             NOTE_PRIVATE_TOOL_NAME => self.execute_note_private(params, turn),
             REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, turn),
             _ => Err(ToolError::UnknownTool(name.to_string())),
-        }
+        }?;
+        Ok(value.into())
     }
 }
 
@@ -194,7 +197,7 @@ mod tests {
         turn.begin();
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
-        assert_eq!(noted["id"], 1, "its own numbering");
+        assert_eq!(noted.value["id"], 1, "its own numbering");
         assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty(), "not before the turn completes");
         assert!(turn.commit_turn().await.channel_state_changed, "the channel state changed");
         assert_eq!(AgentNotes::current(&turn, NoteKind::Private).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);

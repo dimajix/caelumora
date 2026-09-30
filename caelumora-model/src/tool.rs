@@ -1,5 +1,5 @@
 use crate::approval::{ApprovalId, ApprovalStatus};
-use crate::confidentiality::Visibility;
+use crate::confidentiality::{Classification, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -76,31 +76,31 @@ impl ToolParameters {
 /// tool was called - and its content, the arguments and the result. The
 /// content is never seen by more than the call. The agent keeps every call
 /// in full; what it publishes to its channel is redacted by these flags
-/// (`Message::published`). How sensitive a result is, is its
-/// classification - issue 133, step 3; the name of this type is too.
+/// (`Message::published`). How sensitive a result is, is another question:
+/// its classification (`ToolCallResult::classification`, issue 133).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolConfidentiality {
+pub struct ToolVisibility {
     pub call: Visibility,
     pub content: Visibility,
 }
 
-impl ToolConfidentiality {
+impl ToolVisibility {
     /// Call, arguments and result are published to the channel.
-    pub const PUBLIC: ToolConfidentiality = ToolConfidentiality { call: Visibility::Channel, content: Visibility::Channel };
+    pub const SHOWN: ToolVisibility = ToolVisibility { call: Visibility::Channel, content: Visibility::Channel };
     /// Others may see that the tool was called, but not with what or what
     /// it returned.
-    pub const CALL_ONLY: ToolConfidentiality = ToolConfidentiality { call: Visibility::Channel, content: Visibility::Owner };
+    pub const CALL_ONLY: ToolVisibility = ToolVisibility { call: Visibility::Channel, content: Visibility::Owner };
     /// Nothing of the call leaves the agent.
-    pub const HIDDEN: ToolConfidentiality = ToolConfidentiality { call: Visibility::Owner, content: Visibility::Owner };
+    pub const HIDDEN: ToolVisibility = ToolVisibility { call: Visibility::Owner, content: Visibility::Owner };
 
-    pub fn is_public(&self) -> bool {
-        *self == Self::PUBLIC
+    pub fn is_shown(&self) -> bool {
+        *self == Self::SHOWN
     }
 }
 
-impl Default for ToolConfidentiality {
+impl Default for ToolVisibility {
     fn default() -> Self {
-        Self::PUBLIC
+        Self::SHOWN
     }
 }
 
@@ -112,8 +112,13 @@ pub struct Tool {
     pub requires_approval: bool,
     /// Who sees its calls. Approvers see the arguments of a call that needs
     /// approval regardless: they cannot decide otherwise.
-    #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
-    pub confidentiality: ToolConfidentiality,
+    #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
+    pub visibility: ToolVisibility,
+    /// How its results are classified where they do not classify
+    /// themselves (issue 133) - configured with the tool, e.g. for an MCP
+    /// server. `None`: as the channel the call is made in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<Classification>,
 }
 
 impl Tool {
@@ -142,8 +147,8 @@ pub struct ToolCall {
     pub arguments: Value,
     /// The labels of the tool at the time of the call, stamped by the agent:
     /// what applied then counts, even if the tool changes later.
-    #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
-    pub confidentiality: ToolConfidentiality,
+    #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
+    pub visibility: ToolVisibility,
 }
 
 /// How a tool call ended (issue 15). Everything but `Ok` means the tool did
@@ -166,6 +171,9 @@ pub enum ToolResultStatus {
     Failed,
     /// No tool of that name exists.
     UnknownTool,
+    /// The tool ran, but its result is classified so that it may not flow
+    /// into the channel (issue 133); the model is told so instead.
+    Withheld,
 }
 
 impl ToolResultStatus {
@@ -182,10 +190,15 @@ pub struct ToolCallResult {
     /// Omitted when `Ok`.
     #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
     pub status: ToolResultStatus,
-    /// The labels of the call this is the result of; `content` is empty
-    /// where it was published without its content.
-    #[serde(default, skip_serializing_if = "ToolConfidentiality::is_public")]
-    pub confidentiality: ToolConfidentiality,
+    /// Who sees it: the call's flags; `content` is empty where it was
+    /// published without its content.
+    #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
+    pub visibility: ToolVisibility,
+    /// How sensitive `content` is and for whom (issue 133): as the tool
+    /// classified its result, else as the tool is configured, else as the
+    /// channel. Never above the channel: what may not flow into it is
+    /// withheld.
+    pub classification: Classification,
     /// When the tool started and finished running - only for a call that
     /// ran, not for one a decision or a check answered. Stored with the
     /// history; published with the call, even where its content is
@@ -197,16 +210,17 @@ pub struct ToolCallResult {
 }
 
 impl ToolCallResult {
-    /// How `call` ended: `status`, and `content` for the model. Carries the
-    /// call's id, tool and labels, so that the result is published by what
-    /// applied to the call.
-    pub fn of(call: &ToolCall, status: ToolResultStatus, content: String) -> Self {
+    /// How `call` ended: `status`, and `content` for the model, classified
+    /// `classification`. Carries the call's id, tool and flags, so that the
+    /// result is published by what applied to the call.
+    pub fn of(call: &ToolCall, status: ToolResultStatus, content: String, classification: Classification) -> Self {
         Self {
             id: call.id.clone(),
             tool_name: call.function_name.clone(),
             content,
             status,
-            confidentiality: call.confidentiality,
+            visibility: call.visibility,
+            classification,
             started_at: None,
             finished_at: None,
         }

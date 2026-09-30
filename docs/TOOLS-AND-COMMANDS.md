@@ -19,25 +19,42 @@ expose several `Tool`s. The trait has three methods:
     default the tool's description.
 
 A `Tool` declares its `name`, `description` and `parameters`, whether it
-`requires_approval`, and its `confidentiality`. Approval is decided per
-tool by its provider, not by the personality; `mcp_tool` takes it from its
-parameter `requires_approval` for every tool of its server.
+`requires_approval`, its `visibility`, and optionally the `classification`
+of its results. Approval and classification are decided per tool by its
+provider, not by the personality; `mcp_tool` takes them from its parameters
+`requires_approval` and `classification` for every tool of its server.
 
-### Tool confidentiality
+`execute` answers with a `ToolOutput`: the tool's value and, if the tool
+classifies it - by its input, by what it read, by the source it drew on -
+its classification. A tool that does not classify returns a plain value
+(`Ok(value.into())`).
 
-Every tool declares a `ToolConfidentiality` (issues 54, 133): whether the
-call itself is published to the channel, and whether its content -
-arguments and result - is, or only the agent's owner sees it. How
-sensitive a result is - its classification - is the channel's for now; a
-tool classifying each result is step 3 of issue 133.
+### Tool visibility
 
-*   `PUBLIC`, the default: others see the call in full.
+Every tool declares a `ToolVisibility` (issues 54, 133): whether the call
+itself is published to the channel, and whether its content - arguments
+and result - is, or only the agent's owner sees it.
+
+*   `SHOWN`, the default: others see the call in full.
 *   `CALL_ONLY`: others see that the tool was called, but not with what.
 *   `HIDDEN`: the whole call stays with the agent.
 
 How these flags are stamped on calls, how published messages are redacted,
 and what the model is told about results it must not quote is described in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
+
+### Classified results
+
+How sensitive a result is, is its classification (issue 133). The
+`GuardedToolExecutor` gives every result one: as the tool classified it,
+else as the tool is configured (`Tool::classification`, as the turn began
+with its tools), else as the channel. A result that may not flow into the
+channel (`ActionType::Publish`, in the agent's name) never reaches the
+model: it is replaced by the status `withheld` and a message that names the
+classification and asks the model not to obtain it another way. The value
+is not kept anywhere. Results that did not come from the tool - refused,
+denied, timed out, failed - are the channel's. See
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 
 ### Running tool calls
 
@@ -49,20 +66,25 @@ How an agent runs its tool calls is a component too (issue 127): the
 another way of running tools - in parallel, with retries, cached - can be
 tried by configuration.
 
-The executor decides *how* a call runs, never *whether*. The agent holds
-it behind the runtime's `GuardedToolExecutor`, which checks before it
+The executor decides *how* a call runs, never *whether*, and not what the
+model is told. It answers with what the tool gave (`ToolOutput`) or a
+`ToolError` - `UnknownTool` if no tool has the name. The agent holds it
+behind the runtime's `GuardedToolExecutor`, which checks before it
 delegates:
 
 *   that the caller is an agent - only agents call tools;
-*   that the policy permits the call (`ActionType::CallTool`).
+*   that the policy permits the call (`ActionType::CallTool`);
 
-The code that decides about permissions is thus never the choice of
+and makes the result for the model afterwards: it times the call, turns an
+error into a status and a next step (issue 15), classifies the result and
+withholds what may not flow into the channel (issue 133), and marks what
+only the owner sees (`successful_result`). The code that decides about
+permissions and about what the model sees is thus never the choice of
 whoever may write a personality.
 
 The default executor has the `ToolProvider`s of the agent's components
 injected, with their component ids. It runs a call on the provider that
-has the tool, times it, and turns its outcome into a result for the model;
-it checks no permissions itself.
+has the tool - no more.
 
 ### Two tools of the same name
 
@@ -246,23 +268,23 @@ A command answers the issuer alone (`/help`) or the whole channel
 
 ### Tools
 
-| Tool | Component | Parameters | Approval | Confidentiality | What it does |
+| Tool | Component | Parameters | Approval | Visibility | What it does |
 |---|---|---|---|---|---|
-| `echo` | `echo_tool` | `message` | no | `PUBLIC` | Returns its arguments unchanged. |
-| `calculate` | `calculator_tool` | `expression` | no | `PUBLIC` | Evaluates a mathematical expression. |
-| `stop` | `stop_tool` | - | yes | `PUBLIC` | Ends the turn: the agent has finished its task and goes to sleep. |
-| `bye` | `stop_tool` | - | yes | `PUBLIC` | Ends the turn: the agent says good-bye and goes to sleep. |
-| `silence` | `stop_tool` | - | yes | `PUBLIC` | Ends the turn without an answer; the agent stays idle. |
-| `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | yes | `PUBLIC` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
-| `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval` | `PUBLIC` | A tool of a remote MCP server. |
-| `note` | `notes` | `text` | no | `PUBLIC` | Notes something in the channel, visible to every participant. |
-| `revoke_note` | `notes` | `id` | no | `PUBLIC` | Revokes one of the agent's own notes. |
-| `read_notes` | `notes` | `channel` (optional) | no | `PUBLIC` | Reads the notes of another channel, or of every readable channel. |
+| `echo` | `echo_tool` | `message` | no | `SHOWN` | Returns its arguments unchanged. |
+| `calculate` | `calculator_tool` | `expression` | no | `SHOWN` | Evaluates a mathematical expression. |
+| `stop` | `stop_tool` | - | yes | `SHOWN` | Ends the turn: the agent has finished its task and goes to sleep. |
+| `bye` | `stop_tool` | - | yes | `SHOWN` | Ends the turn: the agent says good-bye and goes to sleep. |
+| `silence` | `stop_tool` | - | yes | `SHOWN` | Ends the turn without an answer; the agent stays idle. |
+| `create_plan` | `create_plan_tool` | `summary`, `steps` (each with `description`) | yes | `SHOWN` | Submits a multi-step plan; a plan in progress is extended, not replaced. |
+| `{id}__{name}` | `mcp_tool` | as the server declares | per `requires_approval` | `SHOWN` | A tool of a remote MCP server. |
+| `note` | `notes` | `text` | no | `SHOWN` | Notes something in the channel, visible to every participant. |
+| `revoke_note` | `notes` | `id` | no | `SHOWN` | Revokes one of the agent's own notes. |
+| `read_notes` | `notes` | `channel` (optional) | no | `SHOWN` | Reads the notes of another channel, or of every readable channel. |
 | `note_private` | `private_notes` | `text` | no | `HIDDEN` | Notes something only the agent (and its owner) sees. |
 | `revoke_private_note` | `private_notes` | `id` | no | `HIDDEN` | Revokes one of the agent's private notes. |
 | `remember` | `agent_memory` | `text` | no | `HIDDEN` | Remembers something across channels and sessions. |
 | `forget` | `agent_memory` | `id` | no | `HIDDEN` | Forgets something remembered. |
-| `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `PUBLIC` | Reads the latest messages of another channel, or those containing a text. |
+| `read_history` | `channel_history` | `channel`, `last` (optional, default 20, at most 100), `query` (optional) | no | `SHOWN` | Reads the latest messages of another channel, or those containing a text. |
 
 `stop`, `bye` and `silence` end the turn with the current tool step
 (`Turn::request_state`). Notes, private notes and agent memory are

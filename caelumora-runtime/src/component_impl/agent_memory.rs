@@ -22,13 +22,13 @@ use crate::agent_memory::AgentMemory;
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::tool::{id_argument, text_argument, ToolError, ToolProvider, ToolResult};
+use crate::tool::{id_argument, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::security::{SecurityContext, SecurityManager};
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -67,7 +67,8 @@ impl ToolProvider for AgentMemoryComponent {
                     ["text"],
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::HIDDEN,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
             },
             Tool {
                 name: FORGET_TOOL_NAME.to_string(),
@@ -77,17 +78,19 @@ impl ToolProvider for AgentMemoryComponent {
                     ["id"],
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::HIDDEN,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
             },
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
-        match name {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+        let value = match name {
             REMEMBER_TOOL_NAME => self.execute_remember(params, turn),
             FORGET_TOOL_NAME => self.execute_forget(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
-        }
+        }?;
+        Ok(value.into())
     }
 }
 
@@ -216,7 +219,7 @@ mod tests {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
             turn.next_turn(Default::default(), Default::default(), team.clone(), Vec::new());
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
-            assert_eq!(result["id"], 1);
+            assert_eq!(result.value["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
             turn.commit_turn().await;
         }

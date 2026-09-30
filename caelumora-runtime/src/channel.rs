@@ -723,9 +723,10 @@ impl ChannelLoop {
     }
 
     /// Whether every message `event` carries may enter the channel as its
-    /// sender classified it (`ActionType::Publish`, issue 133): the gate for
-    /// every actor, whatever it checked itself. An event with a message that
-    /// may not is dropped whole, and logged: its sender misclassified it.
+    /// sender classified it, and every tool result in them as it is
+    /// classified (`ActionType::Publish`, issue 133): the gate for every
+    /// actor, whatever it checked itself. An event with a part that may not
+    /// is dropped whole, and logged: its sender misclassified it.
     async fn admits(&self, event: &Envelope) -> bool {
         let messages: Vec<&Message> = match &event.event {
             ActorEvent::PartialMessageGenerated(m)
@@ -738,10 +739,13 @@ impl ChannelLoop {
         let channel = self.classification();
         let security = self.runtime.security_manager();
         for message in messages {
-            let action = ActionType::Publish { classification: &message.classification, actor: event.context.sender_id, channel: &channel };
-            if !security.check(&event.security, action).await {
-                warn!("Dropped {}: its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, message.classification, self.id);
-                return false;
+            let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
+            for classification in parts {
+                let action = ActionType::Publish { classification, actor: event.context.sender_id, channel: &channel };
+                if !security.check(&event.security, action).await {
+                    warn!("Dropped {}: a part of its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, classification, self.id);
+                    return false;
+                }
             }
         }
         true
@@ -1299,8 +1303,18 @@ mod tests {
         let actors = HashMap::new();
         channel.process_envelope(from(alice_id, alice_id, internal.clone()), &actors).await;
         channel.process_envelope(from(alice_id, alice_id, Classification::general(Confidentiality::Confidential)), &actors).await;
-        channel.process_envelope(from(alice_id, bob_id, internal), &actors).await;
+        channel.process_envelope(from(alice_id, bob_id, internal.clone()), &actors).await;
         assert_eq!(channel.history().await.len(), 1, "neither above the channel nor in another's name");
+
+        // A tool result is a part of its own.
+        let call = caelumora_model::tool::ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
+        let result = caelumora_model::tool::ToolCallResult::of(&call, Default::default(), "secret".to_string(), Classification::general(Confidentiality::Confidential));
+        let mut with_result = from(alice_id, alice_id, internal);
+        if let ActorEvent::FullResponseGenerated(messages) = &mut with_result.event {
+            messages[0].tool_results.push(result);
+        }
+        channel.process_envelope(with_result, &actors).await;
+        assert_eq!(channel.history().await.len(), 1, "nor with a result above the channel");
     }
 
     #[tokio::test]
@@ -1457,13 +1471,13 @@ mod tests {
         use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolConfidentiality};
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         // One answer only: a second call of the model would never return.
         let bye = Message {
             role: MessageRole::Assistant,
             content: Some("Good bye.".to_string()),
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -1501,13 +1515,13 @@ mod tests {
     async fn a_turn_is_stored_with_the_step_that_comes_next() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolConfidentiality};
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
 
         // The model calls a tool that needs no approval, and then never
         // answers again: the agent waits in `Planning` with the result.
         let calculate = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), confidentiality: ToolConfidentiality::PUBLIC }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
@@ -1540,12 +1554,12 @@ mod tests {
     async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
-        use caelumora_model::tool::{ToolCall, ToolConfidentiality, ToolResultStatus};
+        use caelumora_model::tool::{ToolCall, ToolVisibility, ToolResultStatus};
 
         // `create_plan` needs approval; this call's arguments are no plan.
         let not_a_plan = Message {
             role: MessageRole::Assistant,
-            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC }],
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
             ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };

@@ -3,7 +3,7 @@
 
 import React, {useState} from 'react';
 import {Check, CheckCircle2, Copy, EyeOff, Info, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {ChannelMember, Message, ToolConfidentiality, ToolResult, ToolResultStatus} from '../types';
+import type {ChannelMember, Message, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
@@ -21,6 +21,7 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   invalid_arguments: 'Invalid arguments',
   failed: 'Failed',
   unknown_tool: 'Unknown tool',
+  withheld: 'Withheld',
 };
 
 /**
@@ -29,7 +30,7 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
  * arguments and result, or not at all; the owner sees it in full in the
  * context panel.
  */
-function confidentialityLabel(labels: ToolConfidentiality | undefined): string | null {
+function visibilityLabel(labels: ToolVisibility | undefined): string | null {
   if (!labels || (labels.call === 'channel' && labels.content === 'channel')) return null;
   return labels.call === 'channel' ? 'Arguments and result: owner only' : 'Call: owner only';
 }
@@ -192,10 +193,10 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                 <div className="flex items-center gap-2 text-xs font-mono">
                   <Wrench size={12} className="text-blue-500" />
                   <span>{call.function_name}</span>
-                  {confidentialityLabel(call.confidentiality) && (
+                  {visibilityLabel(call.visibility) && (
                     <span className="flex items-center gap-1 font-sans text-[11px] opacity-60" title="Who sees this call">
                       <EyeOff size={11} />
-                      {confidentialityLabel(call.confidentiality)}
+                      {visibilityLabel(call.visibility)}
                     </span>
                   )}
                 </div>
@@ -232,7 +233,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                     <code className="text-[11px] font-mono break-all">{formatArguments(call.arguments)}</code>
                   )}
                 </div>
-                {result && result.content === '' && (result.confidentiality?.content ?? 'channel') !== 'channel' ? (
+                {result && result.content === '' && (result.visibility?.content ?? 'channel') !== 'channel' ? (
                   <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700 text-[11px] italic opacity-60">
                     Result not shown
                   </div>

@@ -8,11 +8,11 @@
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::session_reader::SessionReader;
-use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::message::Message;
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -52,11 +52,12 @@ impl ToolProvider for ChannelHistoryComponent {
                 ["channel"],
             ),
             requires_approval: false,
-            confidentiality: ToolConfidentiality::PUBLIC,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name != READ_HISTORY_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
@@ -89,7 +90,7 @@ impl ToolProvider for ChannelHistoryComponent {
                 "text": m.content.clone().unwrap_or_default(),
             })).collect::<Vec<_>>(),
             "more": more,
-        }))
+        }).into())
     }
 }
 

@@ -399,9 +399,9 @@ mod tests {
 
     #[test]
     fn published_events_carry_redacted_messages() {
-        use crate::tool::{ToolCall, ToolConfidentiality};
+        use crate::tool::{ToolCall, ToolVisibility};
         let hidden = Message {
-            tool_calls: vec![ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::HIDDEN }],
+            tool_calls: vec![ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN }],
             ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT)
         };
         let text = Message { content: Some("hi".to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) };

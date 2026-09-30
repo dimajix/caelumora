@@ -15,14 +15,14 @@ use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::session_reader::{PublishedNotes, SessionReader};
-use crate::tool::{arguments, id_argument, text_argument, ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, id_argument, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -56,7 +56,8 @@ impl ToolProvider for NotesComponent {
                     ["text"],
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
             },
             Tool {
                 name: REVOKE_NOTE_TOOL_NAME.to_string(),
@@ -68,7 +69,8 @@ impl ToolProvider for NotesComponent {
                     ["id"],
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
             },
             Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
@@ -81,18 +83,20 @@ impl ToolProvider for NotesComponent {
                     Vec::<&str>::new(),
                 ),
                 requires_approval: false,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
             },
         ]
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
-        match name {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
+        let value = match name {
             NOTE_TOOL_NAME => self.execute_note(params, turn),
             REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, turn),
             READ_NOTES_TOOL_NAME => self.execute_read_notes(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
-        }
+        }?;
+        Ok(value.into())
     }
 }
 
@@ -239,7 +243,7 @@ mod tests {
             let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
-            assert_eq!(noted["id"], 1);
+            assert_eq!(noted.value["id"], 1);
             assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), &mut turn).await;
             assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");

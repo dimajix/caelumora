@@ -2,9 +2,9 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -26,13 +26,14 @@ impl ToolProvider for EchoToolProvider {
                 vec!["message"],
             ),
             requires_approval: false,
-            confidentiality: ToolConfidentiality::PUBLIC,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == ECHO_TOOL_NAME {
-            Ok(params.clone())
+            Ok(params.clone().into())
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }

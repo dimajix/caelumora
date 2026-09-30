@@ -262,18 +262,18 @@ impl AgentActor {
     /// was offered (issue 137).
     fn label(&self, message: &mut Message, turn: &Turn, complete: bool) {
         let tools = turn.tools();
-        let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.confidentiality).unwrap_or_default();
+        let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.visibility).unwrap_or_default();
         for call in &mut message.tool_calls {
-            call.confidentiality = declared(&call.function_name);
+            call.visibility = declared(&call.function_name);
         }
         // What the model produces is derived in the channel: it carries
         // the channel's classification, as the turn began with it.
         message.classification = turn.classification().classification;
 
         let owners_call = if complete {
-            message.tool_calls.iter().any(|c| !c.confidentiality.content.is_channel())
+            message.tool_calls.iter().any(|c| !c.visibility.content.is_channel())
         } else {
-            tools.iter().any(|t| !t.confidentiality.content.is_channel())
+            tools.iter().any(|t| !t.visibility.content.is_channel())
         };
         let owners = !self.reasoning_visibility.is_channel() || turn.saw_private_knowledge() || owners_call;
         message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };
@@ -316,9 +316,10 @@ impl AgentActor {
             return 0;
         };
         let mut answered = 0;
+        let classification = turn.classification.classification.clone();
         for call in &mut turn.tool_calls {
             if call.status == ApprovalStatus::Approved && call.result.is_none() {
-                call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result()));
+                call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result(), classification.clone()));
                 answered += 1;
             }
         }
@@ -627,7 +628,7 @@ impl AgentActor {
             };
             if let Some((status, content)) = answer {
                 state.status = ApprovalStatus::Approved;
-                state.result = Some(ToolCallResult::of(tc, status, content));
+                state.result = Some(ToolCallResult::of(tc, status, content, turn.classification().classification));
             }
             states.push(state);
         }
@@ -1037,13 +1038,13 @@ mod tests {
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
         use caelumora_model::approval::ApprovalId;
-        use caelumora_model::tool::ToolConfidentiality;
+        use caelumora_model::tool::ToolVisibility;
         let call = |status: ApprovalStatus, result: Option<&str>| {
-            let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC };
+            let tool_call = ToolCall { id: None, function_name: "note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
             ToolCallState {
                 id: ApprovalId::new(),
                 status,
-                result: result.map(|r| ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string())),
+                result: result.map(|r| ToolCallResult::of(&tool_call, ToolResultStatus::Ok, r.to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)),
                 tool_call,
                 description: String::new(),
             }

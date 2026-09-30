@@ -3,9 +3,9 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{arguments, ToolError, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::tool::{Tool, ToolParameters, ToolConfidentiality};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -28,11 +28,12 @@ impl ToolProvider for CalculatorToolProvider {
                 vec!["expression"],
             ),
             requires_approval: false,
-            confidentiality: ToolConfidentiality::PUBLIC,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == CALCULATE_TOOL_NAME {
             #[derive(Deserialize)]
             struct Calculate { expression: String }
@@ -41,7 +42,7 @@ impl ToolProvider for CalculatorToolProvider {
             let result = meval::eval_str(&expression)
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e)))?;
 
-            serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))
+            Ok(serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?.into())
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }
@@ -83,7 +84,7 @@ mod tests {
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
             let result = provider.execute(CALCULATE_TOOL_NAME, &params, &mut turn).await.unwrap();
-            let val = result.as_f64().unwrap();
+            let val = result.value.as_f64().unwrap();
             assert!((val - expected).abs() < 1e-10, "Expression {} failed: expected {}, got {}", expr, expected, val);
         }
     }

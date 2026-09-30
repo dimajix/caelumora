@@ -3,10 +3,10 @@
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorState;
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -31,36 +31,39 @@ impl ToolProvider for StopToolProvider {
                 description: "Signal that you have finished your task and have no further input.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
             },
             Tool {
                 name: BYE_TOOL_NAME.to_string(),
                 description: "Signal that you want to say good-bye and stop the conversation.".to_string(),
                 parameters: ToolParameters::object(properties.clone(), required.clone()),
                 requires_approval: true,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
             },
             Tool {
                 name: SILENCE_TOOL_NAME.to_string(),
                 description: "Signal that you do not want to respond to the last message and stay silent instead.".to_string(),
                 parameters: ToolParameters::object(properties, required),
                 requires_approval: true,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
             }
         ]
     }
 
-    async fn execute(&self, name: &str, _params: &Value, turn: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, _params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         match name {
             STOP_TOOL_NAME | BYE_TOOL_NAME => {
                 info!("Stopping agent {} {}", turn.agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Sleeping);
-                Ok(serde_json::json!({ "status": "stopped" }))
+                Ok(serde_json::json!({ "status": "stopped" }).into())
             },
             SILENCE_TOOL_NAME => {
                 info!("Silencing agent {} {}", turn.agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Idle);
-                Ok(serde_json::json!({ "status": "silent" }))
+                Ok(serde_json::json!({ "status": "silent" }).into())
             },
             &_ => {
                 Err(ToolError::UnknownTool(name.to_string()))
@@ -94,7 +97,7 @@ mod tests {
         turn.begin();
 
         let result = provider.execute(STOP_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
-        assert_eq!(result["status"], "stopped");
+        assert_eq!(result.value["status"], "stopped");
         assert_eq!(turn.requested_state(), Some(ActorState::Sleeping), "the turn ends, the agent sleeps");
         provider.execute(SILENCE_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
         assert_eq!(turn.requested_state(), Some(ActorState::Idle), "the turn ends, the agent waits");

@@ -167,7 +167,7 @@ passes on with `?`.
 | `calculator_tool` | `ToolProvider` | - | The tool `calculate`. |
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
-| `mcp_tool` | `ToolProvider` | `url`, `auth`, `timeout_secs` (10), `requires_approval` (`false`) | The tools of a remote MCP server. |
+| `mcp_tool` | `ToolProvider` | `url`, `auth`, `timeout_secs` (10), `requires_approval` (`false`), `classification` (the channel's) | The tools of a remote MCP server; `classification` is how their results are classified (issue 133). |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `note`, `revoke_note`, `read_notes` and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `note_private`, `revoke_private_note` and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `forget` and a prompt part ([MEMORY.md](MEMORY.md)). |

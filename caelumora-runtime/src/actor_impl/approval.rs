@@ -437,7 +437,7 @@ mod tests {
                 id: Some("call_1".to_string()),
                 function_name: "test_tool".to_string(),
                 arguments: json!("{}".to_string()),
-                confidentiality: Default::default(),
+                visibility: Default::default(),
             },
             description: "test".to_string(),
         };
@@ -553,7 +553,7 @@ mod tests {
                 id: Some("call_1".to_string()),
                 function_name: "test_tool".to_string(),
                 arguments: json!("{}".to_string()),
-                confidentiality: Default::default(),
+                visibility: Default::default(),
             },
             description: "test".to_string(),
         };
@@ -647,7 +647,7 @@ mod tests {
             session_id,
             channel_id,
             agent_id,
-            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), confidentiality: Default::default() },
+            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), visibility: Default::default() },
             description: "test".to_string(),
         };
         tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ApprovalRequested(request))).await.unwrap();
@@ -713,7 +713,7 @@ mod tests {
             session_id,
             channel_id,
             agent_id,
-            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), confidentiality: Default::default() },
+            tool_call: ToolCall { id: None, function_name: "f".to_string(), arguments: json!("".to_string()), visibility: Default::default() },
             description: "test".to_string(),
         };
         tx.send(Envelope::new(Default::default(), EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string()), ActorEvent::ApprovalRequested(request))).await.unwrap();

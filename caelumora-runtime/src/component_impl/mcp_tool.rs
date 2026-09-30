@@ -1,10 +1,11 @@
 use crate::agent_turn::Turn;
+use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{ToolError, ToolProvider, ToolResult};
+use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -54,6 +55,11 @@ struct McpToolConfig {
     /// Whether calls to this MCP server's tools require human approval.
     #[serde(default)]
     pub requires_approval: bool,
+    /// How the results of this server's tools are classified (issue 133):
+    /// a result that may not flow into the agent's channel is withheld
+    /// from the agent. Left out, as the channel.
+    #[serde(default)]
+    pub classification: Option<Classification>,
 }
 
 /// Exposes the tools of a single remote MCP server (reached over the
@@ -135,7 +141,8 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
                 description,
                 parameters: schema_to_tool_parameters(&schema),
                 requires_approval: config.requires_approval,
-                confidentiality: ToolConfidentiality::PUBLIC,
+                visibility: ToolVisibility::SHOWN,
+                classification: config.classification.clone(),
             }
         })
         .collect())
@@ -225,7 +232,7 @@ impl ToolProvider for McpToolProvider {
         self.cached_tools.clone()
     }
 
-    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let remote_name = self.strip_prefix(name)?.to_string();
         let security_context = turn.security_context().clone();
 
@@ -248,7 +255,7 @@ impl ToolProvider for McpToolProvider {
             call_tool_result_to_value(name, result)
         }.await;
 
-        call_result.map_err(|e| ToolError::ExecutionFailed(e.to_string()))
+        call_result.map(ToolOutput::from).map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }
 }
 
@@ -332,6 +339,7 @@ mod tests {
                 auth: None,
                 timeout_secs: 10,
                 requires_approval: false,
+                classification: None,
             },
             cached_tools: vec![],
             secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),

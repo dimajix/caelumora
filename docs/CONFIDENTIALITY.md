@@ -159,13 +159,13 @@ the context panel.
 
 ### Tool calls
 
-A `Tool` declares its `ToolConfidentiality` (issues 54, 133): two flags for
+A `Tool` declares its `ToolVisibility` (issues 54, 133): two flags for
 its calls - `call`, whether the call itself - that the tool was called - is
 published, and `content`, whether its arguments and its result are.
 
 | Constant | `call` | `content` | Meaning |
 |---|---|---|---|
-| `PUBLIC` | channel | channel | the default |
+| `SHOWN` | channel | channel | the default |
 | `CALL_ONLY` | channel | owner | others see that the tool was called, but not with what |
 | `HIDDEN` | owner | owner | the whole call stays with the agent |
 
@@ -173,6 +173,28 @@ The agent stamps every call with the flags its tool declares at that moment,
 and the result takes them over from the call. Both are stored with what
 applied then. Which built-in tools use which flags is listed in
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).
+
+### Tool results
+
+A tool result carries a classification of its own
+(`ToolCallResult::classification`, issue 133): a tool classifies each of
+its results by what it read or the source it drew on (`ToolOutput`), a tool
+can be configured with one for all of its results (`Tool::classification`,
+e.g. the `classification` of an `mcp_tool`), and otherwise a result is the
+channel's. The `GuardedToolExecutor` applies them in this order.
+
+**Before the model, not after it.** A result that may not flow into the
+channel - asked as `ActionType::Publish`, in the agent's name, since the
+result enters its context in the channel - is withheld from the agent: the
+model is given the status `withheld` and a message that names the
+classification instead, and the value is kept nowhere. So the answer text,
+which carries no label, cannot quote it. A result that may flow keeps its
+classification: below the channel's, it is released.
+
+The channel admits a message only if its tool results may enter it too
+(`ChannelLoop::admits`). Another channel reads a message by the message's
+classification; a released result in a message it may not read stays
+unread.
 
 ### Reasoning
 
@@ -255,13 +277,14 @@ theirs alone (issue 54).
 ## Open questions
 
 The classification model is introduced in steps
-([133](../issues/133-classification-model.md)); steps 1 and 2 are done.
+([133](../issues/133-classification-model.md)); steps 1 to 3 are done.
 Still to come:
 
-*   **Tool results.** A tool cannot classify its results one by one; every
-    result carries the channel's classification. Results that may not flow
-    into the channel are to be withheld from the model by the
-    `GuardedToolExecutor` (step 3).
+*   **Sources that classify.** No built-in tool classifies its results, and
+    an MCP server cannot yet say how its results are classified, only be
+    configured with one classification for all of them
+    ([139](../issues/139-mcp-result-classification.md)). Configuring a tool
+    with a classification is trusted: it is not asked as `Classify`.
 *   **Release.** An authorised actor cannot yet widen an entity's audience or
     lower its level (step 4), and a channel's classification can only be set
     when it is created ([67](../issues/67-change-channel-level.md)).

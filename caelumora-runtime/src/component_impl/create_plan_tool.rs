@@ -4,11 +4,11 @@
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{Prompt, PromptProvider};
-use crate::tool::{arguments, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
-use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
+use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -108,11 +108,12 @@ impl ToolProvider for CreatePlanToolProvider {
                 ["summary", "steps"],
             ),
             requires_approval: true,
-            confidentiality: ToolConfidentiality::PUBLIC,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
         }]
     }
 
-    async fn execute(&self, _name: &str, params: &Value, turn: &mut Turn) -> ToolResult<Value> {
+    async fn execute(&self, _name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let incoming = parse_plan(params)?;
         match turn.take_plan() {
             Some(mut state) => {
@@ -129,11 +130,11 @@ impl ToolProvider for CreatePlanToolProvider {
                 // untouched - the current step continues uninterrupted, and
                 // the new steps get picked up once it converges.
                 turn.set_plan(state);
-                Ok(serde_json::json!({ "status": "steps_added" }))
+                Ok(serde_json::json!({ "status": "steps_added" }).into())
             }
             None => {
                 turn.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
-                Ok(serde_json::json!({ "status": "accepted" }))
+                Ok(serde_json::json!({ "status": "accepted" }).into())
             }
         }
     }

@@ -1,16 +1,15 @@
 //! The `default_tool_executor` component: runs an agent's tool calls with
 //! the tools of every `ToolProvider` of the agent (issues 100, 127) - the
-//! default `ToolExecutor`. It checks no permissions: the runtime's
-//! `GuardedToolExecutor` hands it only calls the policy permits.
+//! default `ToolExecutor`. It only finds the tool and runs it: the runtime's
+//! `GuardedToolExecutor` hands it only calls the policy permits, and makes
+//! what the model is told of the result.
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry, ComponentResult};
-use crate::tool::{successful_result, ToolError, ToolExecutor, ToolProvider, ToolResult};
+use crate::tool::{ToolError, ToolExecutor, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolResultStatus};
-use chrono::Utc;
+use caelumora_model::tool::{Tool, ToolCall};
 use std::sync::Arc;
-use tracing::{debug, warn};
 
 pub const DEFAULT_TOOL_EXECUTOR_KIND: &str = "default_tool_executor";
 
@@ -55,32 +54,8 @@ impl DefaultToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DefaultToolExecutor {
-    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolCallResult {
-        // Only the tool's own run is timed, not the lookup before it: a call
-        // that never ran has no timing.
-        let (outcome, ran) = match self.provider_of(&call.function_name) {
-            Err(e) => (Err(e), None),
-            Ok(provider) => {
-                let started_at = Utc::now();
-                let outcome = provider.execute(&call.function_name, &call.arguments, turn).await;
-                let finished_at = Utc::now();
-                // Session, channel and agent are on the turn's span.
-                debug!(tool = %call.function_name, duration_ms = (finished_at - started_at).num_milliseconds(), ok = outcome.is_ok(), "Tool ran");
-                (outcome, Some((started_at, finished_at)))
-            }
-        };
-        let mut result = match outcome {
-            Ok(value) => ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(value, call.confidentiality)),
-            Err(e) => {
-                warn!("Tool call '{}' failed: {}", call.function_name, e);
-                let available: Vec<String> = self.tools().into_iter().map(|t| t.name).collect();
-                let (status, content) = e.to_result(&available);
-                ToolCallResult::of(call, status, content)
-            }
-        };
-        result.started_at = ran.map(|(started_at, _)| started_at);
-        result.finished_at = ran.map(|(_, finished_at)| finished_at);
-        result
+    async fn execute(&self, call: &ToolCall, turn: &mut Turn) -> ToolResult<ToolOutput> {
+        self.provider_of(&call.function_name)?.execute(&call.function_name, &call.arguments, turn).await
     }
 
     fn describe(&self, call: &ToolCall) -> ToolResult<String> {
@@ -124,11 +99,12 @@ mod tests {
                 description: "desc".to_string(),
                 parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
                 requires_approval: false,
-                confidentiality: Default::default(),
+                visibility: Default::default(),
+                classification: None,
             }]
         }
-        async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<Value> {
-            Ok(json!({"result": "ok"}))
+        async fn execute(&self, _name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+            Ok(json!({"result": "ok"}).into())
         }
     }
 
@@ -137,7 +113,7 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), confidentiality: Default::default() }
+        ToolCall { id: Some("call_1".to_string()), function_name: name.to_string(), arguments: json!({}), visibility: Default::default() }
     }
 
     fn agent_state() -> AgentChannelState {
@@ -147,30 +123,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_call_runs_and_records_when() {
+    async fn a_call_runs_with_the_tool_that_provides_it_and_an_unknown_one_is_reported() {
         let executor = DefaultToolExecutor::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
         let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
 
-        let result = executor.execute(&call("test_tool"), &mut context).await;
-        assert_eq!(result.status, ToolResultStatus::Ok);
-        assert_eq!(result.content, "{\"result\":\"ok\"}");
-        let (started_at, finished_at) = (result.started_at.expect("a call that ran has its start"), result.finished_at.expect("and its end"));
-        assert!(finished_at >= started_at);
-        assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
-    }
-
-    #[tokio::test]
-    async fn an_unknown_tool_is_reported_as_such() {
-        let executor = DefaultToolExecutor::new(vec![component("tools")]).unwrap();
-        let mut agent_channel_state = agent_state();
-        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-
-        let result = executor.execute(&call("does_not_exist"), &mut context).await;
-        assert_eq!(result.status, ToolResultStatus::UnknownTool);
-        assert!(result.content.contains("Available tools: test_tool"), "{}", result.content);
-        assert_eq!((result.id.as_deref(), result.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
-        assert!(result.started_at.is_none(), "it never ran");
+        let output = executor.execute(&call("test_tool"), &mut context).await.unwrap();
+        assert_eq!(output.value, json!({"result": "ok"}));
+        let unknown = executor.execute(&call("does_not_exist"), &mut context).await;
+        assert!(matches!(unknown, Err(ToolError::UnknownTool(name)) if name == "does_not_exist"));
     }
 
     #[test]

@@ -81,9 +81,11 @@ pub enum ActionType<'a> {
     /// entry released below its channel's classification may be read where
     /// the channel as a whole may not.
     ReadChannel { source: &'a ChannelClassification, classification: &'a Classification, reader: &'a ChannelClassification },
-    /// `actor` putting a message classified `classification` into `channel`
-    /// (issue 133) - asked by the channel for every message that enters it.
-    /// A classification other than the channel's releases the message to a
+    /// `actor` putting what is classified `classification` into `channel`
+    /// (issue 133): a message or a tool result into its history - asked by
+    /// the channel for every one that enters it - or a tool result into the
+    /// context of an agent in it, asked before the agent's model sees it. A
+    /// classification other than the channel's releases a message to a
     /// wider audience or a lower level.
     Publish { classification: &'a Classification, actor: ActorId, channel: &'a ChannelClassification },
     /// Giving something a classification - a channel when it is created
@@ -659,7 +661,7 @@ mod tests {
             id: None,
             function_name: "web_search".to_string(),
             arguments: serde_json::json!({ "query": "secret plans" }),
-            confidentiality: Default::default(),
+            visibility: Default::default(),
         };
         let described = ActionType::CallTool(&call).describe();
         assert_eq!(described, "CallTool(web_search)");

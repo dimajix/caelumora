@@ -57,7 +57,7 @@ export type Visibility = 'channel' | 'owner';
  * Who sees a tool call (issues 54, 133): the call itself, and its arguments
  * and result. Absent means both `channel`.
  */
-export interface ToolConfidentiality {
+export interface ToolVisibility {
   call: Visibility;
   content: Visibility;
 }
@@ -67,12 +67,12 @@ export interface ToolCall {
   function_name: string;
   /** `null` where the call was published without its content. */
   arguments: unknown;
-  confidentiality?: ToolConfidentiality;
+  visibility?: ToolVisibility;
 }
 
 /** How a tool call ended; absent means `ok`. */
 export type ToolResultStatus =
-  | 'ok' | 'denied' | 'forbidden' | 'timed_out' | 'invalid_arguments' | 'failed' | 'unknown_tool';
+  | 'ok' | 'denied' | 'forbidden' | 'timed_out' | 'invalid_arguments' | 'failed' | 'unknown_tool' | 'withheld';
 
 export interface ToolResult {
   id?: string;
@@ -81,7 +81,9 @@ export interface ToolResult {
   content: string;
   status?: ToolResultStatus;
   /** Empty `content` where the call was published without its content. */
-  confidentiality?: ToolConfidentiality;
+  visibility?: ToolVisibility;
+  /** How sensitive `content` is and for whom (issue 133). */
+  classification: Classification;
   /** When the tool started and finished running; absent for a call that did not run. */
   started_at?: string;
   finished_at?: string;

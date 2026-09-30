@@ -82,7 +82,7 @@ impl<'t> ToolCalls<'t> {
                 ApprovalStatus::Pending => None,
             };
             if let Some((status, content)) = answer {
-                call.result = Some(ToolCallResult::of(&call.tool_call, status, content));
+                call.result = Some(ToolCallResult::of(&call.tool_call, status, content, self.turn.classification.classification.clone()));
             }
         }
         to_run
@@ -127,13 +127,13 @@ impl<'t> ToolCalls<'t> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::tool::ToolConfidentiality;
+    use caelumora_model::tool::ToolVisibility;
 
     fn call(name: &str, status: ApprovalStatus) -> ToolCallState {
         ToolCallState {
             id: ApprovalId::new(),
             status,
-            tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), confidentiality: ToolConfidentiality::PUBLIC },
+            tool_call: ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN },
             description: String::new(),
             result: None,
         }
@@ -153,7 +153,7 @@ mod tests {
         // Waiting for one of them, there is no tool message yet.
         let to_run = view(&mut turn).to_run();
         assert_eq!(to_run.iter().map(|(_, c)| c.function_name.as_str()).collect::<Vec<_>>(), ["run"]);
-        view(&mut turn).record(to_run[0].0, ToolCallResult::of(&to_run[0].1, ToolResultStatus::Ok, "ran".to_string()));
+        view(&mut turn).record(to_run[0].0, ToolCallResult::of(&to_run[0].1, ToolResultStatus::Ok, "ran".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
         assert!(view(&mut turn).collect(false).is_none(), "one call still waits");
 
         // A denial answers the other without running it.
