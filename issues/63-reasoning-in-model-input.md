@@ -81,3 +81,9 @@ around tool use), but not the reasoning of earlier turns.
   transcript, which keeps every reasoning. `AgentActorState::turn` and
   `AgentActorState::agent_id` are gone: the run loop builds the `Turn`
   itself, with the rule from the agent's model.
+- **2026-09-30** — Considered replacing `ReasoningHistory` by an open
+  filter function of the `LLMClient`; kept as data, because only data can
+  be recorded and resolved without the code that applied it. The option is
+  recorded in [16](16-context-compression.md), where storing a context that
+  differs from the transcript will be needed anyway.
+

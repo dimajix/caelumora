@@ -57,3 +57,19 @@ context is re-sent on every turn.
   new one. The new context's origin is recorded as a relation of its own
   (not the chain's predecessor link, not part of its digest). Details in
   06's history.
+- **2026-09-30** — From [63](63-reasoning-in-model-input.md), decided with
+  the maintainer: what a model call is given differs from the transcript
+  since 63 - reasoning the model's rule leaves out. It is not stored; the
+  `ContextRef` records the rule and the turn's share of the transcript
+  (`reasoning`, `turn_entries`) as data, and `resolve` derives the given
+  input again. An open filter function on the `LLMClient`
+  (`fn(Message) -> Option<Message>`, per model, for any adaptation) was
+  considered and not done: a function cannot be recorded, so either the
+  context panel would recompute with today's client (against "records are
+  not recomputed"), or the given input would have to be stored - with a
+  reference per differing entry in every `ContextRef`, quadratic in the
+  transcript's length. Compression will have to store a context that is not
+  the transcript anyway; once that mechanism exists, a filter function's
+  result is one more such stored context, and the open function becomes
+  cheap. Reconsider it here.
+
