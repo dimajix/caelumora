@@ -99,6 +99,249 @@ From a discussion with the maintainer (2026-09-30); nothing decided yet.
   `NoteOrigin::transcript` (issue 92) redundant. Not for a turn that
   produced no message.
 
+## Plan (draft, 2026-09-30)
+
+Drawn up for the work to begin on 2026-10-01. It sketches the interface,
+the steps and what each step replaces. What it decides ahead is marked as
+a proposal; the open decisions are listed at the end.
+
+### Names
+
+- **Views** are the navigation: `caelumora-runtime/src/view/` (`mod.rs`,
+  `session.rs`, `channel.rs`, `member.rs`, `agent.rs`). A view is a node
+  the viewer stands on; its methods are the edges, and each edge asks its
+  own access question.
+- Today's `caelumora_model::view` (`SessionView`, `ChannelView`,
+  `MemberView`, `ParticipantView`) becomes `caelumora_model::snapshot`
+  (`SessionSnapshot`, ...) in step 1, so that the name is free; whether it
+  survives step 3 is decided there (History, 2026-09-30).
+- `SessionReader` and its types (`PublishedNotes`, `ChannelInfo`,
+  `ChannelHistory`, `ChannelNotes`, `ReadError`) go up in the views (steps
+  4-5).
+
+### The viewer
+
+Who walks the graph, and from where. Two kinds of viewer read by two
+different rules today, and the difference is real:
+
+- A **user** reads a channel if they may read its document and are
+  cleared for it (`may_read_channel` and `may_see_channel` with their
+  roles, issues 70, 133) - all of it, as far as their history limit
+  reaches (issue 46).
+- An **agent** reads *from its channel*: another channel as a whole if
+  its channel may read it (`may_channel_read(reader, source)`, issue
+  133), else entry by entry - only what was released to it; and a channel
+  it may not read at all is one that does not exist (no probing, issue
+  17).
+
+```rust
+/// Who reads, and from where.
+pub struct Viewer {
+    /// In whose name every question is asked (issue 131).
+    context: SecurityContext,
+    /// For an agent: the place it reads from - its channel, that channel's
+    /// classification and its session's privacy. `None` for a user.
+    from: Option<ReaderPlace>,   // owned counterpart of `security::Place`
+}
+```
+
+Proposal: one `Viewer` type with an optional place, not two navigations.
+The edges differ in the question they ask, not in shape. An agent's
+`context` is its actor's; `from` is filled where its `SessionReader` is
+built today (`ActorRuntime::session_reader`, `AgentActor::new`).
+
+### The interface (sketch)
+
+```rust
+// Root: SessionManager::views(viewer) -> Views
+impl Views {
+    pub async fn sessions(&self) -> Result<Vec<SessionView>>;          // those the viewer may read
+    pub async fn session(&self, id: SessionId) -> ViewResult<SessionView>;
+    pub async fn agent(&self, id: AgentId) -> ViewResult<AgentView>;   // the agent itself, off any channel
+}
+
+// A session, running or stored (`Found`, as `SessionManager` finds it today).
+impl SessionView {
+    pub fn id(&self) -> SessionId;
+    pub fn name(&self) -> &str;
+    pub fn privacy(&self) -> SessionPrivacy;                           // issue 134
+    pub fn participants(&self) -> &[Participant];
+    pub async fn may_change(&self) -> bool;                            // UpdateSession
+    pub async fn channels(&self) -> Vec<ChannelView>;                  // only what the viewer may read
+    pub async fn channel(&self, id: ChannelId) -> ViewResult<ChannelView>;
+    pub async fn channel_named(&self, name: &str) -> ViewResult<ChannelView>; // for agents' tools
+}
+
+// A channel; holds the running loop if there is one, the document either way.
+impl ChannelView {
+    pub fn id(&self) -> ChannelId;
+    pub fn name(&self) -> &str;
+    pub fn moderator(&self) -> &str;
+    pub fn classification(&self) -> Classification;
+    pub fn channel_ref(&self) -> ChannelRef;
+    pub async fn may_change(&self) -> bool;                            // UpdateChannel
+    pub async fn members(&self) -> Vec<MemberView>;
+    pub async fn member(&self, actor: ActorId) -> ViewResult<MemberView>;
+    pub async fn history(&self) -> ViewResult<VisibleHistory>;         // limits (46); per message for an agent
+    pub async fn notes(&self) -> ViewResult<Vec<PublishedNotes>>;      // every agent's; per note for an agent
+}
+
+// A participant of the channel - a user, an agent, an approver.
+impl MemberView {
+    pub fn id(&self) -> ActorId;
+    pub fn name(&self) -> Option<&str>;                                // None: no longer exists
+    pub fn handle(&self) -> Option<&str>;                              // crate::mention
+    pub async fn may_read_context(&self) -> bool;                      // ReadAgentContext; agents only
+    pub async fn notes(&self) -> ViewResult<AgentNotes>;               // its published notes + digest
+    pub async fn context(&self) -> ViewResult<AgentContextView>;       // requires ReadAgentContext
+}
+
+// What an agent saw in a channel: its `AgentChannelState`, from the store.
+impl AgentContextView {
+    pub fn transcript(&self) -> &Transcript;
+    pub fn private_notes(&self) -> (Vec<Note>, Option<Digest>);       // per note for an agent reading another channel
+    pub fn context_of(&self, message: MessageId) -> Result<ResolvedContext, ContextError>; // NotRecorded | Unavailable
+    pub fn given_up_turns(&self) -> Vec<GivenUpTurn>;                  // issue 145
+}
+
+// The agent itself, across channels.
+impl AgentView {
+    pub async fn memory(&self) -> ViewResult<Vec<Memory>>;            // owner (ReadAgentContext); as it is
+    pub async fn recalled_in(&self, channel: &ChannelView) -> ViewResult<Vec<Memory>>; // what may be recalled there (AgentMemory::recalled)
+}
+
+pub enum ViewError {
+    /// Does not exist, or the viewer may not read it - one case, so that
+    /// nothing can be probed (as `SessionError::ChannelNotFound` and
+    /// `ReadError::NotReadable` are today).
+    NotFound,
+    /// Exists and is the viewer's to see that it exists, but not to read
+    /// (a member's context).
+    Forbidden,
+    Failed(anyhow::Error),
+}
+```
+
+Rules that hold throughout:
+
+- A node is data the viewer was allowed to reach; it decides nothing. An
+  operation - sending, approving, adding a participant - still checks its
+  own permission and still goes through the running loop
+  (`routes::open_channel` stays for operations; reads no longer use it).
+- Every edge asks exactly one question, in the viewer's `context`. The
+  questions are the `AccessQuestions` that exist; no new ones are
+  expected except `ReadAgentContext` being asked for a *former* member
+  (below).
+- Where a node reads: the session and channel documents from the
+  `EntityStore` (in the runtime's name, as `describe_session` does
+  today), an agent's channel state and memory from the `StateStore`
+  (as `AgentActor::readable_state` does today, running or not), the
+  channel's history from the running loop when there is one - the loop
+  holds the truth in memory and writes the store after - and from the
+  store with the channel's `history_limits` applied otherwise. `Found`
+  (running/stored) in `SessionManager` is the switch, already there.
+
+### Steps
+
+Each step compiles, passes and can be committed on its own.
+
+1. **The nodes and the snapshots.** `view/` with `Viewer`, `Views`,
+   `SessionView`, `ChannelView`, `MemberView` and the questions
+   `may_change`, `may_read_context`; `SessionManager::views(viewer)`.
+   `caelumora_model::view` renamed to `snapshot`; `describe_session` and
+   `describe_channel` become `SessionView::snapshot()` and
+   `ChannelView::snapshot()`, so that `session_view(s)`/`channel_view`
+   are thin and the REST server changes nothing yet. The tests of
+   `session.rs` on views (`a_view_shows_what_its_viewer_may_read_and_do…`,
+   `a_channel_its_viewer_may_not_read…`, `…handles…`) move to `view/`.
+2. **Reads on the nodes.** `ChannelView::history` and `notes`,
+   `MemberView::notes` and `context`, `AgentContextView`, `AgentView`.
+   Moves: `AgentActor::readable_state`/`context_of` → `AgentContextView`;
+   `ChannelLoop::published_notes`/`private_notes` → views;
+   `AgentMemory::recalled`/`may_recall` → `AgentView::recalled_in`
+   (its `privacy_of` lookup becomes internal to that edge). Removed from
+   the `Actor` trait: `message_context`, `given_up_turns`, and with them
+   `MessageContextError`/`ReadStateError` (→ `ViewError`, `ContextError`).
+   Tests: with `MemoryStore`, stored and running.
+3. **REST reads through the views.** Handler by handler:
+
+   | Route | Today | Then |
+   |---|---|---|
+   | `GET /sessions` | `session_views` | `views.sessions()` |
+   | `GET /sessions/{id}` | `session_view` | `views.session(id)` |
+   | `GET …/channels`, `…/channels/{cid}` | `session_view`, `channel_view` | `session.channels()`, `session.channel(cid)` |
+   | `GET …/messages` | `open_channel` → `visible_history` (starts the session) | `channel.history()` |
+   | `GET …/notes` | `open_channel` → `published_notes` | `channel.notes()` |
+   | `GET …/actors/{aid}/messages/{mid}/context` | `open_channel` → actor → `message_context` | `channel.member(aid).context().context_of(mid)` |
+   | `GET …/actors/{aid}/given-up-turns` | likewise | `….context().given_up_turns()` |
+   | channel snapshot of the event stream | `channel_view` + loop | `channel.snapshot()`, `history()`, `notes()` (the subscription stays on the loop) |
+
+   `ApiError::from_runtime` maps `ViewError` (`NotFound` → 404,
+   `Forbidden` → 403 `<subject>_forbidden`) and `ContextError`. The
+   response types in `models.rs` are built from the nodes; if after this
+   nothing but REST uses the snapshots, `caelumora_model::snapshot` goes
+   (see History). The web UI needs no change unless step 6 changes what a
+   route answers; verified in the browser.
+4. **The agent as viewer.** The `from` place and the edges it changes:
+   `SessionView::channels()` lists what the agent's channel may read as a
+   whole; `channel_named` applies the no-probing rule (a channel not
+   readable as a whole and with nothing released is `NotFound`);
+   `history()` and `notes()` filter per entry by `may_channel_read`;
+   `MemberView::context().private_notes()` likewise. `ComponentContext`
+   gets `views: Views` and `channel: Option<ChannelView>` (the agent's
+   own; `None` for the commands of a session) in place of
+   `session_reader`. Components move one by one, each with its tests:
+
+   | `SessionReader` today | Component | Then |
+   |---|---|---|
+   | `own_channel`, `own_privacy` | notes, memory | `context.channel`, `session.privacy()` |
+   | `channel_notes` | notes | `channel.notes()` |
+   | `readable_channels` | notes | `session.channels()` |
+   | `notes_of(name)`, `history_of(name)` | notes, channel_history | `session.channel_named(name)?.notes()` / `.history()` |
+   | `private_notes(agent)` | private_notes | `channel.member(me)?.context()?.private_notes()` per channel |
+   | `privacy_of(session)` | agent_memory | inside `AgentView::recalled_in` |
+
+   The tests that fake a `SessionReader` (`Privacies` in the memory
+   component) become tests over a `MemoryStore` with two sessions.
+5. **`SessionReader` goes.** `session_reader.rs`, `detached()`,
+   `ActorRuntime::session_reader`, and the tests of `session.rs` that
+   test the reader (`a_channel_reads_another_by_their_classification…`,
+   `a_reader_knows_the_privacy…`, `a_released_message_is_read…`) become
+   tests of the agent viewer in `view/`.
+6. **Edges that need a decision** (each small, after the above):
+   - *Former members.* An agent removed from a channel: its state is in
+     the store, its messages in the history. Proposal:
+     `ChannelView::member(aid)` finds it by the history it left, marked
+     as former, so that its context stays readable; `members()` lists
+     the current ones only.
+   - *Edges into nothing.* `Memory::origin.channel` of a deleted channel,
+     a `KnowledgeRef` into one: `Views::channel_of(ChannelRef) ->
+     Option<ChannelView>`.
+   - *Points in time.* `AgentContextView::at(digest)` and
+     `ChannelView::history_at(digest)` over the chains' `prefix`, for
+     "as the agent saw them when it produced message Z". Not needed by
+     any caller yet; only if 08 or the UI asks for it.
+7. **Documentation.** A section *Views* in CHANNELS.md (or a VIEWS.md of
+   its own, listed in AGENTS.md), and the changes in ARCHITECTURE.md,
+   REST-SERVER.md, MEMORY.md (reading other channels), COMPONENTS.md
+   (`ComponentContext`), SECURITY.md (the views are where a frontend's
+   access questions are asked).
+
+### Open decisions, to take before step 1
+
+- One `Viewer` with an optional place, or a user navigation and an agent
+  navigation as two types (proposal: one).
+- Whether the running loop or the store is the source of a channel's
+  history while the session runs (proposal: the loop, through `Found`).
+- Whether `Views` hangs on `SessionManager` or is built from the
+  `RuntimeManager` directly (proposal: `SessionManager::views`, since it
+  owns `Found`).
+- Whether `caelumora_model::snapshot` is kept after step 3.
+- Where the agent's reading classification comes from: its channel's now
+  (`SessionReader`) or the turn's snapshot (`AgentMemory::recalled`) -
+  the views see no turn, so the channel's now, unless the caller passes
+  one.
+
 ## Done when
 
 To be decided with the design: at least, the reads of the REST server and
@@ -142,3 +385,7 @@ each step, for running and stopped sessions alike.
   `channel_notes`, `privacy_of`) they read through the navigation, with the
   agent as viewer, starting in its channel; the component gets that view
   where it gets its `SessionReader` today (`ComponentContext`, issue 128).
+- **2026-09-30** — A plan added (the section *Plan*): the viewer, the
+  interface of the views, seven steps from the nodes over the REST reads
+  and the agent as viewer to the removal of `SessionReader`, and the
+  decisions still open. To be taken up on 2026-10-01.
