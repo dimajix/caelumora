@@ -188,6 +188,8 @@ history:
 
 *   the digest of the transcript before the message,
 *   the turn's prompt parts, each as a `PromptRef`,
+*   the tools the model was offered, as the digest of the set
+    (`ContextRef::tools`, see [Tools offered](#tools-offered)),
 *   the knowledge read before the message (`ContextRef::knowledge`, see
     [MEMORY.md](MEMORY.md)),
 *   how the model was given its context: its profile
@@ -200,8 +202,29 @@ history:
 and the `ContextResolver` resolves it (see [The turn's context and the
 resolver](#the-turns-context-and-the-resolver)) to a `ResolvedContext`: the
 messages and prompt parts the model saw, in the order it was given them,
-each message with its reasoning only where the model was given it. The
+each message with its reasoning only where the model was given it, and the
+tools it was offered. The
 channel's history identifies the agent by the message's sender.
+
+### Tools offered
+
+A turn offers its model the agent's tools as they were when it began: they
+are asked for once, in `AgentActor::begin_turn`, and fixed in the turn
+(`TurnState::tools`, issue 137) like its classification and publication - a
+resumed turn keeps them. The model is told of a tool only its name,
+description and parameters - a `ToolDefinition` (`Tool::definition`);
+whether its calls need approval and how far they may travel stay with the
+runtime, which labels the model's answer (`AgentActor::label`) and puts its
+calls up for approval (`request_approvals`) by the same `Tool`s. A tool that
+changes or disappears during a turn is offered as it is from the next turn
+on; a call of one that is gone fails as unknown.
+
+`Turn::next_turn` keeps the set in `AgentChannelState::tool_sets`, once per
+digest (`digest::tools`, in the order offered), and puts its digest into
+the turn's context, so that every message of the turn records it; no tools
+are recorded as `None`. `LLMClient::chat_completion` gets the tools from the
+resolved context, like the messages, so what the model was offered and what
+is recorded as offered are the same.
 
 ### Reasoning given back
 
@@ -340,8 +363,8 @@ What the model is given is not stored; it is resolved from what is (issues
 
 *   **The turn's context.** A turn holds the `ContextRef` of its next
     message (`TurnState::context`): the digest of the transcript so far,
-    a `PromptRef` for every prompt part, the knowledge read, the model's
-    profile, and how many of the transcript's last entries are the turn's
+    a `PromptRef` for every prompt part, the digest of the tools offered,
+    the knowledge read, the model's profile, and how many of the transcript's last entries are the turn's
     own. References only - the turn keeps no copy of the transcript.
     `Turn::next_turn` begins it on the transcript as it stands.
 *   **The turn's messages.** `Turn::push_message` gives a message the
@@ -361,11 +384,11 @@ What the model is given is not stored; it is resolved from what is (issues
     reference goes into the turn's context, where it counts for the
     messages produced from then on - like knowledge read.
 *   **Resolving.** The `ContextResolver` resolves a `ContextRef` against
-    the view and the prompt texts: the transcript it names, of which the
-    last `turn_entries` are the turn's own, with every part after its
-    entry, each as the profile gives it. `Turn::full_context` resolves the
-    turn's context and gives the model the result, a prompt part as a
-    message in its role.
+    the view, the prompt texts and the tool sets: the transcript it names,
+    of which the last `turn_entries` are the turn's own, with every part
+    after its entry, each as the profile gives it, and the tools offered.
+    `Turn::full_context` resolves the turn's context and gives the model the
+    result, a prompt part as a message in its role.
 *   **Recording.** `commit_turn` appends the turn's messages to the
     transcript and records with each the context it was produced from.
     The same resolver resolves that `ContextRef` when what the agent saw is
@@ -395,7 +418,7 @@ REST exposes it as
 answers `403 context_forbidden`, `404 context_not_recorded` (not produced
 by that actor) or `404 context_unavailable` (recorded, but no longer
 resolvable). The response lists the knowledge read with channel and agent
-names.
+names, and the tools offered with the digest of their set.
 
 So that a client offers this only where it works, every member of a channel
 response carries `can_read_context`, decided for the requesting user when
@@ -404,5 +427,5 @@ agents only, the same policy question `message_context` checks, whether the
 channel runs or not.
 
 The web UI shows it in its context panel (issue 41), with the prompt parts
-where they were given and the knowledge read; see
+where they were given, the knowledge read and the tools offered; see
 [WEB-UI.md](WEB-UI.md#what-an-agent-saw).

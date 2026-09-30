@@ -1,11 +1,11 @@
 // What an agent's model saw when it produced a message (issue 41): the
 // messages of its context and the prompt parts of that turn, in the order the
 // model was given them (issue 47) - including internal steps and tool
-// results the chat hides.
+// results the chat hides - and the tools it was offered (issue 137).
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenPrompt} from '../types';
+import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenPrompt, ToolDefinition} from '../types';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
@@ -118,6 +118,27 @@ const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]}> = ({knowledge}) => (
   </details>
 );
 
+const ToolList: React.FC<{tools: ToolDefinition[]}> = ({tools}) => (
+  <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm">
+    <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
+      Tools offered ({tools.length})
+    </summary>
+    <div className="px-3 pb-2 space-y-2">
+      {tools.map(tool => (
+        <details key={tool.name}>
+          <summary className="cursor-pointer text-xs">
+            <code className="font-mono font-semibold text-gray-800 dark:text-gray-100">{tool.name}</code>
+            <span className="text-gray-500 dark:text-gray-400"> - {tool.description}</span>
+          </summary>
+          <pre className="mt-1 whitespace-pre-wrap text-[11px] text-gray-600 dark:text-gray-300">
+            {JSON.stringify(tool.parameters, null, 2)}
+          </pre>
+        </details>
+      ))}
+    </div>
+  </details>
+);
+
 interface ContextPanelProps {
   sessionId: string;
   channelId: string;
@@ -174,6 +195,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {context && (
           <div className="space-y-0.5">
             <DigestLine label="Transcript" digest={context.transcript_digest} />
+            <DigestLine label="Tools" digest={context.tools_digest} />
           </div>
         )}
       </div>
@@ -184,6 +206,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {context && (
           <>
             {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} />}
+            {context.tools?.length > 0 && <ToolList tools={context.tools} />}
             {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
               <PromptView key={row.digest} prompt={row} leading />
             ))}

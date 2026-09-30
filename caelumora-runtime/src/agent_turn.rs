@@ -39,6 +39,7 @@ use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
+use caelumora_model::tool::{Tool, ToolDefinition};
 use crate::tool_calls::ToolCalls;
 
 /// What a turn reads as when none runs.
@@ -82,6 +83,14 @@ pub struct CommittedTurn {
     pub channel_state_changed: bool,
     /// The turn itself, to send its answer with.
     pub ended: EndedTurn,
+}
+
+/// What the model is given for a step of the turn (`Turn::full_context`):
+/// the messages of its context and the tools it is offered.
+#[derive(Debug)]
+pub(crate) struct FullContext {
+    pub messages: Vec<Message>,
+    pub tools: Vec<ToolDefinition>,
 }
 
 #[derive(Debug)]
@@ -202,10 +211,11 @@ impl<'a> Turn<'a> {
     /// Begins a turn: fixes what it is - the envelope it answers, whose
     /// authority it acts with, the channel as the confidentiality rules see
     /// it now, what the `SecurityManager` lets it publish there (issue 61),
-    /// and how the agent's model is given its context (the profile, issues
-    /// 49, 63). The last three hold for the whole turn - also one resumed
-    /// after the model's configuration changed - so that what it reads,
-    /// publishes and remembers is judged alike, and what its model is given
+    /// how the agent's model is given its context (the profile, issues 49,
+    /// 63), and the agent's `tools` (issue 137). All but the first two hold
+    /// for the whole turn - also one resumed after the model's configuration
+    /// or the agent's tools changed - so that what it reads, publishes and
+    /// remembers is judged alike, and what its model is given and offered
     /// too. Whatever a previous turn left behind is gone.
     pub(crate) fn next_turn(
         &mut self,
@@ -213,14 +223,18 @@ impl<'a> Turn<'a> {
         security_context: SecurityContext,
         classification: ChannelClassification,
         publication: Publication,
+        tools: Vec<Tool>,
     ) {
+        let offered = self.keep_tools(&tools);
         self.agent_channel_state.turn = Some(TurnState {
             event_context,
             security_context,
             classification,
             publication,
+            tools,
             context: ContextRef {
                 transcript: self.agent_channel_state.transcript.digest(),
+                tools: offered,
                 profile: self.profile,
                 ..ContextRef::default()
             },
@@ -228,11 +242,30 @@ impl<'a> Turn<'a> {
         });
     }
 
-    /// Begins a turn with default contexts - what a test needs to work in
-    /// one.
+    /// Keeps the set of `tools` as the model is offered them once by digest
+    /// (issue 137), and returns the digest - `None` for no tools.
+    fn keep_tools(&mut self, tools: &[Tool]) -> Option<caelumora_model::digest::Digest> {
+        if tools.is_empty() {
+            return None;
+        }
+        let definitions: Vec<ToolDefinition> = tools.iter().map(Tool::definition).collect();
+        let digest = caelumora_model::digest::tools(&definitions);
+        self.agent_channel_state.tool_sets.entry(digest).or_insert(definitions);
+        Some(digest)
+    }
+
+    /// Begins a turn with default contexts and no tools - what a test needs
+    /// to work in one.
     #[cfg(test)]
     pub(crate) fn begin(&mut self) {
-        self.next_turn(EventContext::default(), SecurityContext::default(), ChannelClassification::default(), Publication::default());
+        self.next_turn(EventContext::default(), SecurityContext::default(), ChannelClassification::default(), Publication::default(), Vec::new());
+    }
+
+    /// The agent's tools as they were when the turn began: what its model
+    /// is offered, and what its calls are labelled and put up for approval
+    /// by (issue 137).
+    pub(crate) fn tools(&self) -> &[Tool] {
+        &self.current().tools
     }
 
     /// The event context of the current turn: carries the ids (`span_id`,
@@ -244,14 +277,15 @@ impl<'a> Turn<'a> {
     /// What the model is given for the next step: the transcript, continued
     /// by the messages the turn produced so far, with the prompt parts where
     /// they were placed - each as the model's profile gives it (issue 63),
-    /// every prompt part as a message of the agent in its role. Resolved
-    /// from the turn's context the way a recorded message's context is
-    /// (`ContextResolver`, issue 136), so the two cannot diverge.
-    pub(crate) fn full_context(&self) -> Result<Vec<Message>> {
+    /// every prompt part as a message of the agent in its role - and the
+    /// tools the turn offers (issue 137). Resolved from the turn's context the
+    /// way a recorded message's context is (`ContextResolver`, issue 136),
+    /// so the two cannot diverge.
+    pub(crate) fn full_context(&self) -> Result<FullContext> {
         let resolved = ContextResolver::of(self.agent_channel_state)
             .resolve(&self.current().context, ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
-        Ok(resolved.items.into_iter()
+        let messages = resolved.items.into_iter()
             .map(|item| match item {
                 ContextItem::Conversation { message } => message,
                 ContextItem::Prompt { role, text, .. } => Message {
@@ -262,7 +296,8 @@ impl<'a> Turn<'a> {
                     ..Default::default()
                 },
             })
-            .collect())
+            .collect();
+        Ok(FullContext { messages, tools: resolved.tools })
     }
 
     /// Sets the prompt parts the model of the turn is given besides the
@@ -552,7 +587,7 @@ mod tests {
 
     /// What the model of `turn` is given, as role and text.
     fn given(turn: &Turn) -> Vec<(MessageRole, String)> {
-        turn.full_context().unwrap().into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
+        turn.full_context().unwrap().messages.into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
     }
 
     #[test]
@@ -674,7 +709,7 @@ mod tests {
         ctx.set_plan(make_plan_state());
         assert!(ctx.plan().is_some());
 
-        ctx.next_turn(EventContext::default(), SecurityContext::default(), Default::default(), Default::default());
+        ctx.next_turn(EventContext::default(), SecurityContext::default(), Default::default(), Default::default(), Vec::new());
         assert!(ctx.plan().is_none());
     }
 
@@ -712,7 +747,7 @@ mod tests {
             turn.begin();
             turn.set_context(Vec::new());
             turn.push_message(first.clone());
-            assert_eq!(reasoning_of(&turn.full_context().unwrap()), [false, false, true], "only the turn's own reasoning");
+            assert_eq!(reasoning_of(&turn.full_context().unwrap().messages), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
             turn.commit_turn().await;
         }
@@ -734,7 +769,7 @@ mod tests {
         turn.begin();
         turn.set_context(Vec::new());
         turn.push_message(third);
-        assert_eq!(reasoning_of(&turn.full_context().unwrap()), [true, false, true, true, true]);
+        assert_eq!(reasoning_of(&turn.full_context().unwrap().messages), [true, false, true, true, true]);
     }
 
     #[tokio::test]
@@ -755,7 +790,7 @@ mod tests {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             turn.set_context(vec![system()]);
-            let given = turn.full_context().unwrap();
+            let given = turn.full_context().unwrap().messages;
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
             turn.push_message(first.clone());
@@ -798,6 +833,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_tools_a_turn_began_with_are_offered_and_recorded_for_each_message() {
+        use caelumora_model::tool::ToolParameters;
+        let agent = AgentId::new();
+        let tool = |name: &str, requires_approval| Tool {
+            name: name.to_string(),
+            description: format!("does {name}"),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval,
+            confidentiality: Default::default(),
+        };
+        let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::default() };
+        let mut state = AgentChannelState::default();
+        let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
+        let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
+            let mut turn = Turn::new(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+            turn.next_turn(Default::default(), Default::default(), Default::default(), Default::default(), tools.clone());
+            let offered = turn.full_context().unwrap().tools;
+            assert_eq!(offered, tools.iter().map(Tool::definition).collect::<Vec<_>>(), "the model is offered what the turn began with");
+            for message in messages {
+                turn.push_message((*message).clone());
+            }
+            futures::executor::block_on(turn.commit_turn());
+        };
+        take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
+        take_turn(&mut state, Vec::new(), &[&third]);
+        // Only what the model is told of a tool counts for its set.
+        take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
+
+        let offered = |id| ContextResolver::of(&state).resolve(&state.recorded_context_of(id).unwrap(), ActorId::Agent(agent))
+            .expect("everything it names is here").tools.into_iter().map(|t| t.name).collect::<Vec<_>>();
+        assert_eq!(offered(first.id), ["echo", "notes"]);
+        assert_eq!(offered(second.id), ["echo", "notes"], "the whole turn offers the same tools");
+        assert!(offered(third.id).is_empty(), "none were offered");
+        assert_eq!(offered(fourth.id), ["echo", "notes"]);
+        assert_eq!(state.tool_sets.len(), 1, "a set offered again is kept once");
+    }
+
+    #[tokio::test]
     async fn events_leave_the_agent_redacted_while_its_context_keeps_the_full_call() {
         use caelumora_model::confidentiality::Confidentiality;
         use caelumora_model::tool::{ToolCall, ToolConfidentiality};
@@ -805,7 +878,7 @@ mod tests {
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, true));
+        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, true), Vec::new());
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), confidentiality: ToolConfidentiality::HIDDEN };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::default() };
@@ -828,7 +901,7 @@ mod tests {
             ..Message::default()
         };
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking.clone()), &output).await.unwrap();
-        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, false));
+        turn.next_turn(Default::default(), Default::default(), Default::default(), Publication::new(true, false), Vec::new());
         turn.send_event(ActorEvent::CompleteMessageGenerated(thinking), &output).await.unwrap();
         let reasoning = |event: Option<Envelope>| match event.map(|e| e.event) {
             Some(ActorEvent::CompleteMessageGenerated(m)) => m.reasoning,

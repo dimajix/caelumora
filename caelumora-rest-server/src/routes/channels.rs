@@ -294,6 +294,8 @@ pub async fn message_context(
         transcript_digest: seen.reference.transcript,
         items: seen.items.into_iter().map(Into::into).collect(),
         knowledge,
+        tools_digest: seen.reference.tools,
+        tools: seen.tools,
     }))
 }
 

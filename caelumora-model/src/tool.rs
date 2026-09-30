@@ -116,6 +116,24 @@ pub struct Tool {
     pub confidentiality: ToolConfidentiality,
 }
 
+impl Tool {
+    /// The tool as its model is offered it (issue 137).
+    pub fn definition(&self) -> ToolDefinition {
+        ToolDefinition { name: self.name.clone(), description: self.description.clone(), parameters: self.parameters.clone() }
+    }
+}
+
+/// A tool as a model is offered it (issue 137): what the model is told of
+/// it - its name, what it does, its parameters - and nothing of what only
+/// the runtime acts on, whether its calls need approval or how far they may
+/// travel. What a backend sends, and what is recorded as offered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: ToolParameters,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: Option<String>,

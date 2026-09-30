@@ -293,7 +293,7 @@ impl LLMClient for OllamaClient {
     async fn chat_completion(
         &self,
         context: &[Message],
-        tools: &[caelumora_model::tool::Tool],
+        tools: &[caelumora_model::tool::ToolDefinition],
     ) -> BoxStream<'static, LLMResult<MessageEvent>> {
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
         let message_count = context.len();

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::tool::Tool;
+use caelumora_model::tool::ToolDefinition;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -59,10 +59,11 @@ pub type LLMResult<T> = Result<T, LLMError>;
 
 #[async_trait]
 pub trait LLMClient: Send + Sync + Debug {
-    /// Sends `context` and the `tools` the model may call, and streams its
-    /// answer as `MessageEvent`s: partial messages as they arrive, then the
-    /// complete ones. The stream owns the request; dropping it abandons it.
-    async fn chat_completion(&self, context: &[Message], tools: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>>;
+    /// Sends `context` and the `tools` the model may call, as the model is
+    /// offered them (issue 137), and streams its answer as `MessageEvent`s:
+    /// partial messages as they arrive, then the complete ones. The stream
+    /// owns the request; dropping it abandons it.
+    async fn chat_completion(&self, context: &[Message], tools: &[ToolDefinition]) -> BoxStream<'static, LLMResult<MessageEvent>>;
 
     /// How the model is to be given its context - which reasoning of
     /// earlier messages, say (issue 63). A property of the model, fixed in

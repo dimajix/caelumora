@@ -157,8 +157,9 @@ fetched again (`GET …/notes`) when the global stream announces
 Stored messages of agents whose context the user may read (`can_read_context`)
 carry an eye icon. It opens the context panel (`ContextPanel`, issue 41):
 the messages of the context and the prompt parts where they were given, a
-leading system prompt on top (issue 47), and the knowledge the turn read as
-"Knowledge read". The panel shows internal messages and tool results, which
+leading system prompt on top (issue 47), the knowledge the turn read as
+"Knowledge read", and - collapsed - the tools the model was offered as
+"Tools offered", each with its description and parameters (issue 137). The panel shows internal messages and tool results, which
 the chat hides; `MessageView` renders a message the same way in both. A
 context never changes, so what was fetched once is kept. See
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).

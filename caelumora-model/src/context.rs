@@ -2,12 +2,12 @@
 //! 47, 49, 63; see `docs/AGENT-TURN.md`).
 //!
 //! What is stored are facts: the agent's `Transcript`, and the text of every
-//! prompt part once by digest. What the model is given is not stored but
+//! prompt part and every set of tools offered once by digest. What the model is given is not stored but
 //! resolved from them:
 //!
 //! - A turn holds a [`ContextRef`] for its next message: the transcript so
-//!   far, the prompt parts placed in it, the knowledge read and the rules of
-//!   the agent's model ([`ModelProfile`]). With every message it produces,
+//!   far, the prompt parts placed in it, the tools offered, the knowledge
+//!   read and the rules of the agent's model ([`ModelProfile`]). With every message it produces,
 //!   the reference as it stood for that message is kept and, when the turn
 //!   is taken over, recorded in the history.
 //! - The messages of a turn under way are not in the transcript yet, but
@@ -22,6 +22,7 @@ use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, TurnEntry};
 use crate::digest::Digest;
 use crate::message::{Message, MessageRole, Transcript, TranscriptEntry};
+use crate::tool::ToolDefinition;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -194,8 +195,9 @@ pub struct PromptPart {
 /// What an agent's model saw when it produced a message (issue 06): the
 /// digest of its `Transcript` before the message - `None` if it was
 /// empty - the prompt parts of that turn, each where it was placed (issue
-/// 47), the knowledge from other places read before the message was
-/// produced (issue 17), and the rules of the model (issue 63). A turn keeps
+/// 47), the tools it was offered (issue 137), the knowledge from other
+/// places read before the message was produced (issue 17), and the rules of
+/// the model (issue 63). A turn keeps
 /// one for its next message (`TurnState::context`); resolved by the
 /// [`ContextResolver`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +205,9 @@ pub struct ContextRef {
     /// The digest of the agent's transcript before the message.
     pub transcript: Option<Digest>,
     pub prompts: Vec<PromptRef>,
+    /// The digest of the set of tools the model was offered
+    /// (`crate::digest::tools`), `None` if it was offered none.
+    pub tools: Option<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub knowledge: Vec<KnowledgeRef>,
     /// The rules the model was given its context by.
@@ -213,13 +218,14 @@ pub struct ContextRef {
 }
 
 /// A context resolved (issues 06, 47): what the model of an agent was given
-/// for a message, in the order it was given it, with the reference it was
-/// resolved from (issue 119).
+/// for a message, in the order it was given it, and the tools it was offered
+/// (issue 137), with the reference it was resolved from (issue 119).
 #[derive(Debug, Clone)]
 pub struct ResolvedContext {
     /// What the history recorded for the message.
     pub reference: ContextRef,
     pub items: Vec<ContextItem>,
+    pub tools: Vec<ToolDefinition>,
 }
 
 /// An agent's transcript continued by the messages of its turn under way
@@ -252,35 +258,41 @@ impl<'a> TranscriptView<'a> {
 }
 
 /// Resolves references against an agent's data in a channel - its
-/// transcript, continued by its turn under way, and the texts of its prompt
-/// parts - into what its model is given. One implementation for the model
+/// transcript, continued by its turn under way, the texts of its prompt
+/// parts and the sets of tools it was offered - into what its model is
+/// given. One implementation for the model
 /// call and for telling afterwards what the model saw.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
     transcript: TranscriptView<'a>,
     prompts: &'a BTreeMap<Digest, String>,
+    tool_sets: &'a BTreeMap<Digest, Vec<ToolDefinition>>,
 }
 
 impl<'a> ContextResolver<'a> {
     /// The resolver over the data of `state`.
     pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: TranscriptView::of(state), prompts: &state.prompts }
+        Self { transcript: TranscriptView::of(state), prompts: &state.prompts, tool_sets: &state.tool_sets }
     }
 
     /// What the model of `agent` is given, or was given, for the message
     /// `reference` is for - the next one of the turn under way
     /// (`TurnState::context`) or one recorded in the history: the
     /// transcript it names, of which the last `turn_entries` are the turn's
-    /// own, with the prompt parts where they were placed. `None` if what it
-    /// names is not here - a transcript that is not a prefix of this one, a
-    /// prompt that was never recorded, or one whose entry is not in the
-    /// prefix.
+    /// own, with the prompt parts where they were placed, and the tools it
+    /// was offered. `None` if what it names is not here - a transcript that
+    /// is not a prefix of this one, a prompt or a set of tools that was
+    /// never recorded, or a prompt whose entry is not in the prefix.
     pub fn resolve(&self, reference: &ContextRef, agent: ActorId) -> Option<ResolvedContext> {
         let entries = self.transcript.prefix(reference.transcript.as_ref())?;
         let turn_start = entries.len().checked_sub(reference.turn_entries)?;
         let (before, during) = entries.split_at(turn_start);
         let items = self.assemble(&reference.prompts, &reference.profile, agent, before, during)?;
-        Some(ResolvedContext { reference: reference.clone(), items })
+        let tools = match &reference.tools {
+            Some(digest) => self.tool_sets.get(digest)?.clone(),
+            None => Vec::new(),
+        };
+        Some(ResolvedContext { reference: reference.clone(), items, tools })
     }
 
     /// The items the model of `agent` is given: the entries `before` the
@@ -370,6 +382,7 @@ mod tests {
                 PromptRef { text: prompt("system"), role: MessageRole::System, after: None },
                 PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },
             ],
+            tools: None,
             knowledge: Vec::new(),
             profile: ModelProfile::default(),
             turn_entries: 0,
@@ -435,6 +448,21 @@ mod tests {
         assert_eq!(state.transcript.digest(), turn.context.transcript, "the turn's digests are those of the transcript");
         assert_eq!(seen(&state, 0), ["earlier", "question", "prompt:step 1"]);
         assert_eq!(seen(&state, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
+    }
+
+    #[test]
+    fn the_tools_offered_are_resolved_from_their_set() {
+        use crate::tool::ToolParameters;
+        let mut state = AgentChannelState::default();
+        let offered = vec![ToolDefinition { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]) }];
+        let digest = crate::digest::tools(&offered);
+        state.tool_sets.insert(digest, offered.clone());
+
+        let resolver = ContextResolver::of(&state);
+        let with = |tools| ContextRef { tools, ..ContextRef::default() };
+        assert_eq!(resolver.resolve(&with(Some(digest)), ActorId::None).expect("the set is kept").tools, offered);
+        assert!(resolver.resolve(&with(None), ActorId::None).expect("no tools offered").tools.is_empty());
+        assert!(resolver.resolve(&with(Some(prompt("never recorded"))), ActorId::None).is_none(), "a set that was not kept");
     }
 
     #[test]

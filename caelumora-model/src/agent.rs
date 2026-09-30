@@ -7,7 +7,7 @@ use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::tool::ToolCallState;
+use crate::tool::{Tool, ToolCallState, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -114,6 +114,10 @@ pub struct AgentChannelState {
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
     pub prompts: BTreeMap<Digest, String>,
+    /// Every set of tools the agent's model was offered in this channel, by
+    /// digest, each kept once: what the `ContextRef`s in the history point
+    /// to (issue 137).
+    pub tool_sets: BTreeMap<Digest, Vec<ToolDefinition>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
@@ -138,10 +142,15 @@ pub struct TurnState {
     /// Which labels the agent may publish to the channel in this turn, as
     /// the `SecurityManager` decided when it began (issue 61).
     pub publication: crate::confidentiality::Publication,
+    /// The agent's tools as they were when the turn began (issue 137): what
+    /// its model is offered for every call of the turn, and what its calls
+    /// are labelled and put up for approval by - one set for the whole turn,
+    /// a resumed one included.
+    pub tools: Vec<Tool>,
     /// What the next message of the turn is produced from, as references
-    /// (issues 47, 49, 136): the transcript so far - the agent's, continued
-    /// by the turn's own messages - the prompt parts placed in it, the
-    /// knowledge read, the rules of the model. Resolved by
+    /// (issues 47, 49, 136, 137): the transcript so far - the agent's,
+    /// continued by the turn's own messages - the prompt parts placed in it,
+    /// the tools offered, the knowledge read, the rules of the model. Resolved by
     /// `crate::context::ContextResolver`; what is recorded with each
     /// message.
     pub context: ContextRef,

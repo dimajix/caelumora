@@ -21,7 +21,7 @@ use caelumora_model::confidentiality::{ChannelClassification, Confidentiality, P
 use caelumora_model::message::{Message, MessageEvent, MessageId};
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
 use std::mem;
@@ -229,16 +229,16 @@ impl AgentActor {
     /// Calls the LLM for one turn step. `create_plan_tool` (when wired in)
     /// contributes its own planning nudge to the turn's context as a
     /// `PromptProvider`, composed by `StateContextProvider` once per
-    /// turn - nothing plan-specific needs handling here. Fails if the
+    /// turn - nothing plan-specific needs handling here. The model is
+    /// offered the tools the turn began with (issue 137). Fails if the
     /// turn's context cannot be resolved.
     async fn call_llm<'a>(
         &self,
         turn: &mut Turn<'a>,
     ) -> Result<BoxStream<'static, crate::llm::LLMResult<MessageEvent>>> {
         let context = turn.full_context()?;
-        let tools = self.tool_executor.tools();
         Ok(self.llm_client.facet
-            .chat_completion(context.as_slice(), tools.as_slice())
+            .chat_completion(&context.messages, &context.tools)
             .await)
     }
 
@@ -254,9 +254,10 @@ impl AgentActor {
     /// could still call, since reasoning comes before the call it leads to.
     /// Knowledge read from other channels adds nothing: a channel reads only
     /// what reaches no further than its own contents (rule 2), so the
-    /// channel admits it anyway. `tools` are the agent's tools, fetched once
-    /// per model call rather than per streamed chunk.
-    fn label(&self, message: &mut Message, turn: &Turn, tools: &[Tool], complete: bool) {
+    /// channel admits it anyway. The tools are those the turn began with,
+    /// which the model was offered (issue 137).
+    fn label(&self, message: &mut Message, turn: &Turn, complete: bool) {
+        let tools = turn.tools();
         let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.confidentiality).unwrap_or_default();
         for call in &mut message.tool_calls {
             call.confidentiality = declared(&call.function_name);
@@ -333,6 +334,7 @@ impl AgentActor {
             security_context.next(self.id),
             classification,
             publication,
+            self.tool_executor.tools(),
         );
         *self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = CancellationToken::new();
         Ok(())
@@ -596,7 +598,9 @@ impl AgentActor {
         turn: &mut Turn<'a>,
         output: &dyn EventSender,
     ) -> Result<()> {
-        let tools = self.tool_executor.tools();
+        // The tools the model was offered: a call is put up for approval by
+        // what its tool declared then (issue 137).
+        let tools = turn.tools().to_vec();
         let mut states: Vec<ToolCallState> = Vec::with_capacity(tool_calls.len());
         for tc in tool_calls {
             let tool = tools.iter().find(|t| t.name == tc.function_name);
@@ -694,7 +698,6 @@ impl AgentActor {
 
         let cancelled = self.turn_token();
         let mut response = self.call_llm(turn).await?;
-        let tools = self.tool_executor.tools();
         use futures::stream::TryStreamExt;
         loop {
             // A cancel wins over the next chunk, and returning drops the
@@ -713,7 +716,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    self.label(&mut message, turn, &tools, false);
+                    self.label(&mut message, turn, false);
                     message.internal = internal_message;
                     if let Some(msg) = self.respond_partial(message, turn).await {
                         turn.send_event(Self::event_for(msg, true), output).await?;
@@ -722,7 +725,7 @@ impl AgentActor {
                 MessageEvent::Complete(mut message) => {
                     message.sender_name = agent_name.clone();
                     message.sender_id = self.id;
-                    self.label(&mut message, turn, &tools, true);
+                    self.label(&mut message, turn, true);
                     message.internal = internal_message;
 
                     self.request_approvals(&message.tool_calls, turn, output).await?;
@@ -1154,7 +1157,7 @@ mod tests {
             .current_context(&mut turn)
             .await
             .expect("context provider should succeed");
-        let given = turn.full_context().unwrap();
+        let given = turn.full_context().unwrap().messages;
         assert_eq!(given.len(), 1);
         assert_eq!(given[0].id, input[0].id);
     }
@@ -1184,7 +1187,7 @@ mod tests {
 
         let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         open.current_context(&mut turn).await.expect("a part that fails open is left out");
-        assert_eq!(turn.full_context().unwrap()[0].content.as_deref(), Some("Be brief."), "the others are given");
+        assert_eq!(turn.full_context().unwrap().messages[0].content.as_deref(), Some("Be brief."), "the others are given");
 
         let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
         let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
@@ -1201,7 +1204,7 @@ mod tests {
                 part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
             ],
         };
-        let contents = |turn: &Turn| turn.full_context().unwrap().iter()
+        let contents = |turn: &Turn| turn.full_context().unwrap().messages.iter()
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 
@@ -1261,7 +1264,7 @@ mod tests {
         state.history.extend(vec![question.clone()]);
         let answer = text("answer");
         let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
+        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
 
         let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
@@ -1274,7 +1277,7 @@ mod tests {
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
-        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
+        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
         assert!(matches!(context_of(&state, actor, lost.id), Err(MessageContextError::Unavailable { .. })));
     }
 }

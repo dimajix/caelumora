@@ -302,6 +302,18 @@ export interface MessageContextResponse {
   items: (SeenPrompt | {kind: 'message'; message: Message})[];
   /** What was read from notes and histories before the message was produced (issue 17). */
   knowledge: KnowledgeRef[];
+  /** The digest of the set of tools the model was offered, null if none (issue 137). */
+  tools_digest: string | null;
+  /** The tools the model was offered, as it was told of them. */
+  tools: ToolDefinition[];
+}
+
+/** A tool as a model is offered it (issue 137). */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  /** Its parameters, as the model was told of them (`ToolParameters`). */
+  parameters: unknown;
 }
 
 /** Knowledge a message was produced with (issue 17). */

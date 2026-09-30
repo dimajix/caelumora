@@ -1,6 +1,6 @@
 # 137 — What tools a model was offered is not recorded
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -70,3 +70,25 @@ and their results are in the transcript; the choice it had is not.
   the whole context can be reconstructed from what is stored, after
   [136](136-virtual-transcript.md): messages, prompt parts, knowledge and
   profile can; the tools offered cannot.
+- **2026-09-30** — Done as decided by the maintainer: what the model is
+  told of a tool is a `ToolDefinition` of its own (`Tool::definition`:
+  name, description, parameters), which `LLMClient::chat_completion` now
+  takes instead of `Tool`. Kept per set, not per tool - the history grows
+  with every message, the set rarely changes - in
+  `AgentChannelState::tool_sets` under `digest::tools`
+  (`caelumora.tools.v1`, in the order offered); `ContextRef::tools` refers
+  to it, `None` for no tools. REST answers `tools` and `tools_digest` with
+  the context; the context panel shows "Tools offered" collapsed.
+
+  Unlike considered above, the set is taken once per turn, not per model
+  call (maintainer's proposal): `AgentActor::begin_turn` asks the executor
+  and passes the tools to `Turn::next_turn`, which fixes them in
+  `TurnState::tools` - the full `Tool`s - like classification and
+  publication (issue 67). The model is offered them through the resolved
+  context (`Turn::full_context`), and `label` and `request_approvals` read
+  the same set, so a call is no longer put up for approval by a tool other
+  than the one the model was offered. The cost: a tool that changes during
+  a turn is offered anew only from the next turn; a skill that adds tools
+  within a turn ([22](22-skill-management.md)) will need an explicit,
+  recorded change of the turn's set. Model and parameters remain
+  unrecorded, as noted above.

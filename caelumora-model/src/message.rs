@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 };
+        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 };
         let mut history = MessageHistory::new();
         history.extend(vec![make_message(id(1))]);
         history.push(make_message(id(2)), Some(reference.clone()));

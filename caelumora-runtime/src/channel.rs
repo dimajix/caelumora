@@ -1276,7 +1276,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::llm::LLMClient for NeverAnswers {
-        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::ToolDefinition])
             -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
         {
             Box::pin(futures::stream::pending())
@@ -1385,7 +1385,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::llm::LLMClient for Scripted {
-        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::ToolDefinition])
             -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
         {
             match self.0.lock().unwrap().pop_front() {

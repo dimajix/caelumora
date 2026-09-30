@@ -218,6 +218,20 @@ pub fn prompt(prompt: &str) -> Digest {
     e.finish()
 }
 
+/// The digest of the tools a model is offered, in the order it is offered
+/// them (issue 137): what the model is told of each - name, description,
+/// parameters.
+pub fn tools(tools: &[crate::tool::ToolDefinition]) -> Digest {
+    let mut e = Encoder::new("caelumora.tools.v1");
+    e.bytes(&(tools.len() as u64).to_le_bytes());
+    for tool in tools {
+        e.str(&tool.name);
+        e.str(&tool.description);
+        e.json(&to_json(&tool.parameters));
+    }
+    e.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +284,20 @@ mod tests {
         m2.id = m1.id;
         m1.timestamp = m2.timestamp;
         assert_eq!(message_chain(None, &m1), message_chain(None, &m2));
+    }
+
+    #[test]
+    fn the_tools_offered_are_told_apart_by_what_the_model_is_told() {
+        use crate::tool::{ToolDefinition, ToolParameters};
+        let tool = |name: &str, description: &str| ToolDefinition {
+            name: name.to_string(),
+            description: description.to_string(),
+            parameters: ToolParameters::object([("a", ToolParameters::string("x")), ("b", ToolParameters::number("y"))], ["a"]),
+        };
+        let (a, b) = (tool("a", "does a"), tool("b", "does b"));
+        assert_eq!(tools(&[a.clone(), b.clone()]), tools(&[a.clone(), b.clone()]), "the order of parameters in a map does not matter");
+        assert_ne!(tools(&[a.clone(), b.clone()]), tools(&[b.clone(), a.clone()]), "the order they are offered in does");
+        assert_ne!(tools(&[a.clone()]), tools(&[tool("a", "does something else")]), "the description does");
+        assert_ne!(tools(&[]), prompt(""), "no tools is not an empty prompt");
     }
 }
