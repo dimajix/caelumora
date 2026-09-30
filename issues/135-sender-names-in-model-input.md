@@ -67,3 +67,13 @@ user it does not matter, which is why it went unnoticed.
   [49](49-plan-step-system-messages.md): the role of other participants'
   messages is already rewritten to `user` by the moderator, but their
   sender is lost on the way to the model.
+- **2026-09-30** — Tried with eight models behind Ollama
+  (`work/sender_names/`, findings in `RESULTS.md`). The agent's own messages
+  must not carry the marker, or models imitate it and continue the chat as a
+  transcript; with the format explained in the system prompt no model tagged
+  its answer. Ollama drops a `name` field, so for it the name has to be in
+  the content; the format matters little (XML helps gemma4, hurts gpt-oss
+  and llama3.1), and a name in the turn header needs raw prompts and gains
+  little. Two problems found on the way are their own issues:
+  [149](149-special-tokens-in-content.md) (special tokens in content) and
+  [150](150-impersonation-towards-the-agent.md) (faked sender markers).
