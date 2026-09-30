@@ -11,7 +11,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::agent::{AgentChannelState, AgentId, SeenContext};
+use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::context::{ContextResolver, ResolvedContext};
 use crate::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::channel::{Channel, ChannelId};
@@ -226,18 +227,19 @@ impl AgentActor {
     }
 
     /// Calls the LLM for one turn step. `create_plan_tool` (when wired in)
-    /// contributes its own planning nudge into `turn.context` as a
+    /// contributes its own planning nudge to the turn's context as a
     /// `PromptProvider`, composed by `StateContextProvider` once per
-    /// turn - nothing plan-specific needs handling here.
+    /// turn - nothing plan-specific needs handling here. Fails if the
+    /// turn's context cannot be resolved.
     async fn call_llm<'a>(
         &self,
         turn: &mut Turn<'a>,
-    ) -> BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
-        let context = turn.full_context();
+    ) -> Result<BoxStream<'static, crate::llm::LLMResult<MessageEvent>>> {
+        let context = turn.full_context()?;
         let tools = self.tool_executor.tools();
-        self.llm_client.facet
+        Ok(self.llm_client.facet
             .chat_completion(context.as_slice(), tools.as_slice())
-            .await
+            .await)
     }
 
     /// Labels the parts of `message` (issues 54, 61). Every tool call gets
@@ -691,7 +693,7 @@ impl AgentActor {
         let internal_message = executing_plan && !finalizing_plan;
 
         let cancelled = self.turn_token();
-        let mut response = self.call_llm(turn).await;
+        let mut response = self.call_llm(turn).await?;
         let tools = self.tool_executor.tools();
         use futures::stream::TryStreamExt;
         loop {
@@ -845,10 +847,10 @@ impl AgentActor {
 
 
 /// What `state` says the agent saw when it produced `message`.
-fn context_of(state: &AgentChannelState, actor: ActorId, message: MessageId) -> Result<SeenContext, MessageContextError> {
+fn context_of(state: &AgentChannelState, actor: ActorId, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
     let reference = state.recorded_context_of(message)
         .ok_or(MessageContextError::NotRecorded { actor, message })?;
-    state.resolve(&reference, actor).ok_or(MessageContextError::Unavailable { actor, message })
+    ContextResolver::of(state).resolve(&reference, actor).ok_or(MessageContextError::Unavailable { actor, message })
 }
 
 #[async_trait]
@@ -900,7 +902,7 @@ impl Actor for AgentActor {
                 self.agent_controller.name(),
                 agent_channel_state,
                 agent_state.clone(),
-                self.llm_client.facet.reasoning_history(),
+                self.llm_client.facet.profile(),
             );
 
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
@@ -987,7 +989,7 @@ impl Actor for AgentActor {
         });
     }
 
-    async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
+    async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
         // Read from the store, where the state is written after every step:
         // the running loop holds the in-memory state for as long as it runs.
         let attributes = self.agent_controller.load().security_attributes.clone();
@@ -1151,8 +1153,9 @@ mod tests {
             .current_context(&mut turn)
             .await
             .expect("context provider should succeed");
-        assert_eq!(turn.context().len(), 1);
-        assert_eq!(turn.context()[0].id, input[0].id);
+        let given = turn.full_context().unwrap();
+        assert_eq!(given.len(), 1);
+        assert_eq!(given[0].id, input[0].id);
     }
 
     /// `provider` as a component with `fail_policy`.
@@ -1180,7 +1183,7 @@ mod tests {
 
         let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         open.current_context(&mut turn).await.expect("a part that fails open is left out");
-        assert_eq!(turn.context()[0].content.as_deref(), Some("Be brief."), "the others are given");
+        assert_eq!(turn.full_context().unwrap()[0].content.as_deref(), Some("Be brief."), "the others are given");
 
         let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
         let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
@@ -1197,7 +1200,7 @@ mod tests {
                 part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
             ],
         };
-        let contents = |turn: &Turn| turn.context().iter()
+        let contents = |turn: &Turn| turn.full_context().unwrap().iter()
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 
@@ -1239,13 +1242,14 @@ mod tests {
         assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
         assert_eq!(committed.final_messages[0].id, final_answer.id);
         assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "but of the transcript");
-        assert!(turn.messages().is_empty() && turn.context().is_empty(), "nothing of the turn's work is stored with the state");
+        assert!(turn.messages().is_empty() && turn.agent_channel_state().turn.is_none(), "nothing of the turn's work is stored with the state");
     }
 
     #[test]
     fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_resolve() {
         use caelumora_model::digest::prompt;
-        use caelumora_model::message::{ContextItem, ContextRef, MessageRole, PromptRef};
+        use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
+        use caelumora_model::message::MessageRole;
 
         let actor = ActorId::Agent(AgentId::new());
         let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
@@ -1255,11 +1259,11 @@ mod tests {
         state.history.extend(vec![question.clone()]);
         let answer = text("answer");
         let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), knowledge: Vec::new(), reasoning: Default::default(), turn_entries: 0 }));
+        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
 
         let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
-            ContextItem::Conversation { message, .. } => Some(message.id),
+            ContextItem::Conversation { message } => Some(message.id),
             ContextItem::Prompt { .. } => None,
         }).collect();
         assert_eq!(ids, vec![question.id]);
@@ -1268,7 +1272,7 @@ mod tests {
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
-        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], knowledge: Vec::new(), reasoning: Default::default(), turn_entries: 0 }));
+        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
         assert!(matches!(context_of(&state, actor, lost.id), Err(MessageContextError::Unavailable { .. })));
     }
 }

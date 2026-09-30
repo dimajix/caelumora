@@ -124,7 +124,7 @@ against it, and what came out of the last attempt.
 | [14](14-approval-privilege.md) | open | Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist. |
 | [15](15-disallowed-tool-errors-to-llm.md) | done | A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded. |
 | [32](32-unavailable-tools-invisible-to-model.md) | open | A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed. |
-| [49](49-plan-step-system-messages.md) | open | Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache. |
+| [49](49-plan-step-system-messages.md) | in progress | Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache. |
 | [52](52-split-tool-providers.md) | done | All built-in tool providers live in one file, and tools added later went to other places, so there is no rule for where a tool goes. |
 | [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
 | [78](78-mcp-requires-approval-ignored.md) | done | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |

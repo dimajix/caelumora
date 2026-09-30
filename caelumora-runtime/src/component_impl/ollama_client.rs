@@ -16,7 +16,8 @@ use crate::llm::{LLMClient, LLMError, LLMResult};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole, ReasoningHistory};
+use caelumora_model::context::{ModelProfile, ReasoningHistory};
+use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolConfidentiality};
 use chrono::Utc;
 use futures::stream::{BoxStream, StreamExt};
@@ -267,8 +268,8 @@ pub struct OllamaClient {
     /// Whether to request thinking/reasoning output from the model.
     /// `None` leaves the decision to Ollama's per-model default.
     think: Option<bool>,
-    /// Which earlier reasoning the model is given back (issue 63).
-    reasoning_history: ReasoningHistory,
+    /// How the model is given its context (issue 63).
+    profile: ModelProfile,
 }
 
 impl OllamaClient {
@@ -278,7 +279,7 @@ impl OllamaClient {
             base_url: config.base_url,
             model: config.model,
             think: config.think,
-            reasoning_history: config.reasoning_history,
+            profile: ModelProfile { reasoning_history: config.reasoning_history },
         }
     }
 }
@@ -449,8 +450,8 @@ impl LLMClient for OllamaClient {
         Box::pin(output)
     }
 
-    fn reasoning_history(&self) -> ReasoningHistory {
-        self.reasoning_history
+    fn profile(&self) -> ModelProfile {
+        self.profile
     }
 }
 

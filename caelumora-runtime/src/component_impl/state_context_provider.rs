@@ -2,7 +2,7 @@
 //! the prompt parts of every `PromptProvider` of the agent (issues 47, 99).
 
 use crate::agent_turn::Turn;
-use caelumora_model::message::ContextItem;
+use caelumora_model::context::PromptPart;
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use caelumora_model::component::ComponentFailPolicy;
 use tracing::warn;
@@ -58,27 +58,27 @@ impl ContextProvider for StateContextProvider {
             }
         }
 
-        // The transcript, each entry with its digest for `set_context`.
-        let mut conversation: Vec<ContextItem> = state.agent_channel_state().transcript.entries().iter()
-            .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest })
-            .collect();
-        if !before_input.is_empty() {
-            // The newest message is the turn's input - unless the agent wrote
-            // it itself, in a turn that has none (e.g. after `/wakeup`).
-            let own = ActorId::Agent(state.agent_id());
-            let at = match conversation.last() {
-                Some(ContextItem::Conversation { message, .. }) if message.sender_id != own => conversation.len() - 1,
-                _ => conversation.len(),
-            };
-            conversation.insert(at, ContextItem::prompt(MessageRole::User, before_input.join("\n\n")));
-        }
-
-        let mut items = Vec::with_capacity(conversation.len() + 1);
+        // The whole transcript, the system prompt before everything.
+        let transcript = &state.agent_channel_state().transcript;
+        let mut parts = Vec::with_capacity(2);
         if !start.is_empty() {
-            items.push(ContextItem::prompt(MessageRole::System, start.join("\n\n")));
+            parts.push(PromptPart { role: MessageRole::System, text: start.join("\n\n"), after: None });
         }
-        items.extend(conversation);
-        state.set_context(items);
+        if !before_input.is_empty() {
+            // Before the newest message, which is the turn's input - unless
+            // the agent wrote it itself, in a turn that has none (e.g. after
+            // `/wakeup`): then at the end.
+            let entries = transcript.entries();
+            let own = ActorId::Agent(state.agent_id());
+            let after = match entries.split_last() {
+                Some((input, earlier)) if input.message.sender_id != own => earlier.last().map(|e| e.digest),
+                Some((own_message, _)) => Some(own_message.digest),
+                None => None,
+            };
+            parts.push(PromptPart { role: MessageRole::User, text: before_input.join("\n\n"), after });
+        }
+        let digest = transcript.digest();
+        state.set_context(digest, parts);
 
         Ok(())
     }

@@ -8,7 +8,7 @@
 use crate::agent_turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::message::KnowledgeRef;
+use caelumora_model::context::KnowledgeRef;
 use serde::Deserialize;
 
 /// Where a prompt part goes in the context (issue 47).

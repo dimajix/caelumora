@@ -4,6 +4,7 @@ use crate::tool::{ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use crate::chain::{Chain, ChainEntry};
+use crate::context::ContextRef;
 use crate::digest::Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -249,129 +250,6 @@ impl Transcript {
     }
 }
 
-/// A prompt part an agent's model was given besides the conversation - the
-/// system prompt, notes, ... (issue 47): the digest of its text, the role it
-/// was given as, and the entry of the transcript it followed, `None` if it
-/// came before everything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PromptRef {
-    pub text: Digest,
-    pub role: MessageRole,
-    pub after: Option<Digest>,
-}
-
-/// An element of what an agent's model is given (issue 47): the
-/// conversation, with the prompt parts placed where the `ContextProvider`
-/// wants them. The turn keeps the items as given and derives from them both
-/// what the model is sent and where each prompt part was placed
-/// (`PromptRef`); resolving a `ContextRef` later gives the same items back -
-/// what the model saw is told in the shape it was given (issue 119).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ContextItem {
-    /// An entry of the transcript, with the digest it has there.
-    Conversation { message: Message, digest: Digest },
-    /// A prompt part - the system prompt, notes, ... - that is not part of
-    /// the conversation, given to the model in `role`; `digest` is the
-    /// digest of `text`, by which the part is kept once and referred to.
-    Prompt { digest: Digest, role: MessageRole, text: String },
-}
-
-impl ContextItem {
-    /// The prompt part `text`, given in `role`.
-    pub fn prompt(role: MessageRole, text: String) -> Self {
-        ContextItem::Prompt { digest: crate::digest::prompt(&text), role, text }
-    }
-}
-
-/// Knowledge from another place an agent's model was given (issue 17): what
-/// was read, from which channel, as the digest of the state read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KnowledgeRef {
-    pub channel: crate::channel::ChannelId,
-    pub source: KnowledgeSource,
-}
-
-/// What a [`KnowledgeRef`] read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KnowledgeSource {
-    /// The notes an agent published in the channel; the digest of its note
-    /// chain, `None` while it had none.
-    Notes { agent: crate::agent::AgentId, digest: Option<Digest> },
-    /// An agent's private notes in the channel (issue 51), read by that
-    /// agent; the digest of its private note chain.
-    PrivateNotes { agent: crate::agent::AgentId, digest: Option<Digest> },
-    /// The channel's history; the digest of it when it was read - up to
-    /// where - and, for a reader who joined later with a limit, where their
-    /// view began (issue 72). `None`: all of it.
-    History {
-        digest: Option<Digest>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        start: Option<crate::channel::HistoryStart>,
-    },
-    /// An agent's memory (issue 62), read by that agent; the digest of its
-    /// memory chain. Recorded with the channel it was read in.
-    Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
-}
-
-/// Which reasoning of the messages in its context a model is given back
-/// (issue 63). A property of the model - some must not see earlier
-/// reasoning again, others need the reasoning that led to a tool call
-/// within the same turn - so it is declared by the agent's `LLMClient` and
-/// applied where the model's input is assembled. Stored reasoning is not
-/// touched: this decides only what a model call is given.
-///
-/// Whatever the rule, a model is never given another actor's reasoning.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReasoningHistory {
-    /// No reasoning at all, not even of the turn under way.
-    Never,
-    /// The agent's own reasoning of the turn under way, not that of earlier
-    /// turns - what reasoning models document. The default.
-    #[default]
-    CurrentTurn,
-    /// The agent's own reasoning of every turn.
-    Always,
-}
-
-impl ReasoningHistory {
-    /// `message` as the model of `agent` is given it: without its reasoning
-    /// unless the rule keeps it. `in_turn` says whether the turn under way
-    /// produced the message.
-    pub fn given(self, mut message: Message, agent: ActorId, in_turn: bool) -> Message {
-        let keeps = message.sender_id == agent && match self {
-            Self::Never => false,
-            Self::CurrentTurn => in_turn,
-            Self::Always => true,
-        };
-        if !keeps {
-            message.reasoning = None;
-        }
-        message
-    }
-}
-
-/// What an agent's model saw when it produced a message (issue 06): the
-/// digest of its `Transcript` before the message - `None` if it was
-/// empty - the prompt parts of that turn, each where it was placed (issue
-/// 47), the knowledge from other places read before the message was
-/// produced (issue 17), and which reasoning of it the model was given
-/// (issue 63). Resolved in the agent's `AgentChannelState`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextRef {
-    /// The digest of the agent's transcript before the message.
-    pub transcript: Option<Digest>,
-    pub prompts: Vec<PromptRef>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub knowledge: Vec<KnowledgeRef>,
-    /// The rule the reasoning of the transcript was given by.
-    pub reasoning: ReasoningHistory,
-    /// How many of the transcript's last entries the turn that produced the
-    /// message had produced before it: the ones `CurrentTurn` keeps the
-    /// reasoning of.
-    pub turn_entries: usize,
-}
-
 /// A message of a `MessageHistory`: with the digest of the history up to and
 /// including it and, for a message this agent produced, what it was produced
 /// from.
@@ -529,26 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_is_given_back_as_the_models_rule_says() {
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
-        let other = ActorId::Agent(crate::agent::AgentId::new());
-        let thought = |sender: ActorId| Message { sender_id: sender, reasoning: Some("thinking".to_string()), ..make_message(id(1)) };
-        let kept = |rule: ReasoningHistory, sender: ActorId, in_turn: bool| rule.given(thought(sender), agent, in_turn).reasoning.is_some();
-
-        assert!(!kept(ReasoningHistory::Never, agent, true), "never: not even the turn's own");
-        assert!(kept(ReasoningHistory::CurrentTurn, agent, true), "the turn under way");
-        assert!(!kept(ReasoningHistory::CurrentTurn, agent, false), "not of earlier turns");
-        assert!(kept(ReasoningHistory::Always, agent, false), "always: every turn's");
-        for rule in [ReasoningHistory::Never, ReasoningHistory::CurrentTurn, ReasoningHistory::Always] {
-            assert!(!kept(rule, other, true), "{rule:?}: never another actor's");
-        }
-        assert_eq!(ReasoningHistory::given(ReasoningHistory::Never, thought(agent), agent, true).content, thought(agent).content, "only the reasoning goes");
-        assert_eq!(ReasoningHistory::default(), ReasoningHistory::CurrentTurn);
-    }
-
-    #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new(), reasoning: ReasoningHistory::CurrentTurn, turn_entries: 0 };
+        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 };
         let mut history = MessageHistory::new();
         history.extend(vec![make_message(id(1))]);
         history.push(make_message(id(2)), Some(reference.clone()));

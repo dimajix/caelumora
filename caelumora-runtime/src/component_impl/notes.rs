@@ -20,7 +20,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde::Deserialize;

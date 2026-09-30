@@ -1282,7 +1282,7 @@ mod tests {
             Box::pin(futures::stream::pending())
         }
 
-        fn reasoning_history(&self) -> caelumora_model::message::ReasoningHistory {
+        fn profile(&self) -> caelumora_model::context::ModelProfile {
             Default::default()
         }
     }
@@ -1394,7 +1394,7 @@ mod tests {
             }
         }
 
-        fn reasoning_history(&self) -> caelumora_model::message::ReasoningHistory {
+        fn profile(&self) -> caelumora_model::context::ModelProfile {
             Default::default()
         }
     }

@@ -34,7 +34,9 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{ChannelClassification, Publication};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnKnowledge;
-use caelumora_model::message::{ContextItem, ContextRef, KnowledgeRef, Message, MessageId, MessageRole, PromptRef, ReasoningHistory};
+use caelumora_model::context::{ContextFrame, ContextItem, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
+use caelumora_model::digest::Digest;
+use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -91,21 +93,22 @@ pub struct Turn<'a> {
     /// The agent's own state, shared by all its actors (issue 62). The turn
     /// reads it and stages changes, never holds it.
     agent_state: Arc<AgentStateHandle>,
-    /// Which reasoning the agent's model is given back (issue 63): a
-    /// property of that model (`LLMClient::reasoning_history`).
-    reasoning_history: ReasoningHistory,
+    /// How the agent's model is given its context (issues 49, 63): a
+    /// property of that model (`LLMClient::profile`), fixed in the frame of
+    /// every turn that begins (`next_turn`).
+    profile: ModelProfile,
 }
 
 impl<'a> Turn<'a> {
     /// The handle for one step of the agent `agent_id`'s run loop, whose
-    /// model is given reasoning back by `reasoning_history`.
-    pub fn new(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, reasoning_history: ReasoningHistory) -> Self {
+    /// model is given its context by `profile`.
+    pub fn new(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, profile: ModelProfile) -> Self {
         Self {
             agent_id,
             agent_name,
             agent_channel_state,
             agent_state,
-            reasoning_history,
+            profile,
         }
     }
 
@@ -181,9 +184,9 @@ impl<'a> Turn<'a> {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
         // Every part is used up exactly once.
-        let TurnState { context, messages, knowledge, agent_changes, channel_changes, .. } = turn;
+        let TurnState { frame, messages, knowledge, agent_changes, channel_changes, .. } = turn;
         let final_messages = messages.iter().filter(|m| !m.internal).cloned().collect();
-        let channel_state_changed = self.record_turn(&context, messages, knowledge, channel_changes);
+        let channel_state_changed = self.record_turn(&frame, messages, knowledge, channel_changes);
         if let Err(e) = self.agent_state.apply(agent_changes, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
@@ -199,10 +202,12 @@ impl<'a> Turn<'a> {
 
     /// Begins a turn: fixes what it is - the envelope it answers, whose
     /// authority it acts with, the channel as the confidentiality rules see
-    /// it now, and what the `SecurityManager` lets it publish there (issue
-    /// 61). The last two hold for the whole turn, so that what it reads,
-    /// publishes and remembers is judged alike. Whatever a previous turn
-    /// left behind is gone.
+    /// it now, what the `SecurityManager` lets it publish there (issue 61),
+    /// and how the agent's model is given its context (the profile, issues
+    /// 49, 63). The last three hold for the whole turn - also one resumed
+    /// after the model's configuration changed - so that what it reads,
+    /// publishes and remembers is judged alike, and what its model is given
+    /// too. Whatever a previous turn left behind is gone.
     pub(crate) fn next_turn(
         &mut self,
         event_context: EventContext,
@@ -215,6 +220,7 @@ impl<'a> Turn<'a> {
             security_context,
             classification,
             publication,
+            frame: ContextFrame { profile: self.profile, ..ContextFrame::default() },
             ..TurnState::default()
         });
     }
@@ -232,45 +238,44 @@ impl<'a> Turn<'a> {
         &self.current().event_context
     }
 
-    /// The context the turn began with: the conversation, with every prompt
-    /// part as a message of the agent in its role - as recorded, before
-    /// `full_context` decides which reasoning the model is given.
-    pub fn context(&self) -> Vec<Message> {
-        self.current().context.iter()
+    /// What the model is given for the next step: the transcript and the
+    /// prompt parts the turn's `ContextProvider` gave it, then the messages
+    /// the turn produced so far - each as the model's profile gives it
+    /// (issue 63), every prompt part as a message of the agent in its role.
+    /// Resolved from the turn's frame the way a recorded message's context
+    /// is (`ContextResolver`), so the two cannot diverge.
+    pub(crate) fn full_context(&self) -> Result<Vec<Message>> {
+        let items = ContextResolver::of(self.agent_channel_state)
+            .current(self.current(), ActorId::Agent(self.agent_id))
+            .context("the context of the turn names what the agent's state does not hold")?;
+        Ok(items.into_iter()
             .map(|item| match item {
-                ContextItem::Conversation { message, .. } => message.clone(),
+                ContextItem::Conversation { message } => message,
                 ContextItem::Prompt { role, text, .. } => Message {
-                    role: *role,
-                    content: Some(text.clone()),
+                    role,
+                    content: Some(text),
                     sender_id: ActorId::Agent(self.agent_id),
                     sender_name: self.agent_name.clone(),
                     ..Default::default()
                 },
             })
-            .collect()
+            .collect())
     }
 
-    /// What the model is given for the next step: the context the turn
-    /// began with and the messages the turn produced so far, each with its
-    /// reasoning only where the model's rule keeps it - never another
-    /// actor's, and of the agent's own by `reasoning_history` (issue 63).
-    pub(crate) fn full_context(&self) -> Vec<Message> {
-        let (agent, rule) = (ActorId::Agent(self.agent_id), self.reasoning_history);
-        let before = self.context().into_iter().map(|m| rule.given(m, agent, false));
-        let during = self.current().messages.iter().map(|m| rule.given(m.clone(), agent, true));
-        before.chain(during).collect()
-    }
-
-    /// Sets the context of the turn: the conversation with the prompt parts
-    /// where the caller placed them. Every prompt part's text is kept once by
-    /// digest, so that what the agent saw can be told later (issues 06, 47).
-    pub fn set_context(&mut self, items: Vec<ContextItem>) {
-        for item in &items {
-            if let ContextItem::Prompt { digest, text, .. } = item {
-                self.agent_channel_state.prompts.entry(*digest).or_insert_with(|| text.clone());
-            }
+    /// Sets what the model of the turn is given: the transcript up to
+    /// `transcript`, with `parts` where the `ContextProvider` placed them.
+    /// Every part's text is kept once by digest, so that what the agent saw
+    /// can be told later (issues 06, 47).
+    pub fn set_context(&mut self, transcript: Option<Digest>, parts: Vec<PromptPart>) {
+        let mut prompts = Vec::with_capacity(parts.len());
+        for PromptPart { role, text, after } in parts {
+            let digest = caelumora_model::digest::prompt(&text);
+            self.agent_channel_state.prompts.entry(digest).or_insert(text);
+            prompts.push(PromptRef { text: digest, role, after });
         }
-        self.current_mut().context = items;
+        let frame = &mut self.current_mut().frame;
+        frame.transcript = transcript;
+        frame.prompts = prompts;
     }
 
     pub fn messages(&self) -> &Vec<Message> {
@@ -356,7 +361,7 @@ impl<'a> Turn<'a> {
     pub(crate) fn saw_private_knowledge(&self) -> bool {
         self.current().knowledge.iter()
             .any(|k| matches!(k.reference.source,
-                caelumora_model::message::KnowledgeSource::PrivateNotes { .. } | caelumora_model::message::KnowledgeSource::Memory { .. }))
+                caelumora_model::context::KnowledgeSource::PrivateNotes { .. } | caelumora_model::context::KnowledgeSource::Memory { .. }))
     }
 
     /// Records that the turn read `reference` (issue 17): it is recorded
@@ -395,19 +400,18 @@ impl<'a> Turn<'a> {
     }
 
     /// The part of `commit_turn` that concerns the agent's state in this
-    /// channel: the turn's `messages`, produced in `context` after reading
+    /// channel: the turn's `messages`, produced in `frame` after reading
     /// `knowledge`, and its `changes` to this state. Returns whether there
     /// were changes.
-    fn record_turn(&mut self, context: &[ContextItem], messages: Vec<Message>, knowledge: Vec<TurnKnowledge>, changes: Vec<AgentChannelChange>) -> bool {
+    fn record_turn(&mut self, frame: &ContextFrame, messages: Vec<Message>, knowledge: Vec<TurnKnowledge>, changes: Vec<AgentChannelChange>) -> bool {
         let before = self.agent_channel_state.transcript.extend(messages.clone());
-        let prompts = prompt_refs(context);
         for (index, (message, transcript)) in messages.into_iter().zip(before).enumerate() {
             if !message.internal {
                 // What was read before the message was produced; the turn
                 // had produced `index` messages by then, which are the last
                 // entries of the transcript before it.
                 let knowledge = knowledge.iter().filter(|k| k.before <= index).map(|k| k.reference).collect();
-                let reference = ContextRef { transcript, prompts: prompts.clone(), knowledge, reasoning: self.reasoning_history, turn_entries: index };
+                let reference = frame.reference(transcript, index, knowledge);
                 self.agent_channel_state.history.push(message, Some(reference));
             }
         }
@@ -496,22 +500,6 @@ fn plan_finalize_message(plan: &Plan) -> Message {
         internal: true,
         ..Message::default()
     }
-}
-
-/// Where the prompt parts of `context` were placed: each by the digest of
-/// its text, with the transcript entry it followed (issue 47).
-fn prompt_refs(context: &[ContextItem]) -> Vec<PromptRef> {
-    let mut after = None;
-    let mut prompts = Vec::new();
-    for item in context {
-        match item {
-            ContextItem::Conversation { digest, .. } => after = Some(*digest),
-            ContextItem::Prompt { digest, role, .. } => {
-                prompts.push(PromptRef { text: *digest, role: *role, after });
-            }
-        }
-    }
-    prompts
 }
 
 /// Sends `av` as a turn of `agent_id` publishes it: redacted by what
@@ -642,10 +630,15 @@ mod tests {
         assert!(ctx.plan().is_none());
     }
 
+    /// What `state` says its agent `agent` saw when it produced message `id`.
+    fn seen(state: &AgentChannelState, agent: AgentId, id: MessageId) -> Option<Vec<ContextItem>> {
+        let reference = state.recorded_context_of(id)?;
+        Some(ContextResolver::of(state).resolve(&reference, ActorId::Agent(agent))?.items)
+    }
+
     #[tokio::test]
     async fn the_model_is_given_reasoning_as_its_rule_says_and_that_is_recorded() {
-        use caelumora_model::agent::{AgentChannelState, AgentId};
-        use caelumora_model::message::{MessageId, MessageRole, ReasoningHistory};
+        use caelumora_model::context::ReasoningHistory;
 
         let agent = AgentId::new();
         let thought = |sender: ActorId, content: &str| Message {
@@ -663,93 +656,82 @@ mod tests {
         state.transcript.push(earlier.clone());
         state.transcript.push(theirs.clone());
 
+        let profile = |reasoning_history| ModelProfile { reasoning_history };
         let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         {
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), ReasoningHistory::CurrentTurn);
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), profile(ReasoningHistory::CurrentTurn));
             turn.begin();
-            let items = turn.agent_channel_state().transcript.entries().iter()
-                .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest }).collect();
-            turn.set_context(items);
+            let digest = turn.agent_channel_state().transcript.digest();
+            turn.set_context(digest, Vec::new());
             turn.push_message(first.clone());
-            assert_eq!(reasoning_of(&turn.full_context()), [false, false, true], "only the turn's own reasoning");
-            assert_eq!(reasoning_of(&turn.context()), [true, true], "the context itself keeps it");
+            assert_eq!(reasoning_of(&turn.full_context().unwrap()), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
             turn.commit_turn().await;
         }
 
         // What was recorded says what the model was given - not what the
         // transcript holds.
-        let seen = |id| state.seen_context_of(id).expect("the agent produced it").items.iter().map(|item| match item {
-            ContextItem::Conversation { message, .. } => message.reasoning.is_some(),
+        let reasoning_seen = |state: &AgentChannelState, id| seen(state, agent, id).expect("the agent produced it").iter().map(|item| match item {
+            ContextItem::Conversation { message } => message.reasoning.is_some(),
             ContextItem::Prompt { .. } => false,
         }).collect::<Vec<_>>();
-        assert_eq!(seen(first.id), [false, false]);
-        assert_eq!(seen(second.id), [false, false, true], "the first answer's reasoning, from the same turn");
+        assert_eq!(reasoning_seen(&state, first.id), [false, false]);
+        assert_eq!(reasoning_seen(&state, second.id), [false, false, true], "the first answer's reasoning, from the same turn");
         assert!(state.transcript.entries().iter().all(|e| e.message.reasoning.is_some()), "stored reasoning is untouched");
 
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), ReasoningHistory::Always);
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), profile(ReasoningHistory::Always));
         turn.begin();
-        let items = turn.agent_channel_state().transcript.entries().iter()
-            .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest }).collect();
-        turn.set_context(items);
+        let digest = turn.agent_channel_state().transcript.digest();
+        turn.set_context(digest, Vec::new());
         turn.push_message(third);
-        assert_eq!(reasoning_of(&turn.full_context()), [true, false, true, true, true]);
+        assert_eq!(reasoning_of(&turn.full_context().unwrap()), [true, false, true, true, true]);
     }
 
     #[tokio::test]
     async fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
-        use caelumora_model::agent::{AgentChannelState, AgentId};
-        use caelumora_model::message::{MessageId, MessageRole};
-
+        let agent = AgentId::new();
         let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::default() };
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
         state.transcript.push(question.clone());
 
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
-        let system = || ContextItem::prompt(MessageRole::System, "You are good at sums.".to_string());
-        // Items compare by kind and digest - what they are, not their text.
-        let key = |item: &ContextItem| match item {
-            ContextItem::Conversation { digest, .. } => (false, *digest),
-            ContextItem::Prompt { digest, .. } => (true, *digest),
-        };
-        let given;
+        let system = || PromptPart { role: MessageRole::System, text: "You are good at sums.".to_string(), after: None };
+        let order = |items: &[ContextItem]| items.iter().map(|item| match item {
+            ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
+            ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
+        }).collect::<Vec<_>>();
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
-            let mut items = vec![system()];
-            items.extend(turn.agent_channel_state().transcript.entries().iter()
-                .map(|e| ContextItem::Conversation { message: e.message.clone(), digest: e.digest }));
-            given = items.iter().map(key).collect::<Vec<_>>();
-            turn.set_context(items);
-            assert_eq!(turn.context().len(), 2, "the prompt is given to the model as a message");
+            let digest = turn.agent_channel_state().transcript.digest();
+            turn.set_context(digest, vec![system()]);
+            let given = turn.full_context().unwrap();
+            assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
+            assert_eq!(given[0].role, MessageRole::System);
             turn.push_message(first.clone());
             turn.push_message(second.clone());
             turn.commit_turn().await;
         }
 
-        let seen = state.seen_context_of(first.id).expect("the agent produced it");
-        assert_eq!(seen.items.iter().map(key).collect::<Vec<_>>(), given, "the first answer saw exactly what the turn gave the model");
-        let seen = state.seen_context_of(second.id).expect("the agent produced it");
-        let order: Vec<String> = seen.items.iter().map(|item| match item {
-            ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
-            ContextItem::Conversation { message, .. } => message.content.clone().unwrap_or_default(),
-        }).collect();
-        assert_eq!(order, ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
-        assert!(state.seen_context_of(question.id).is_none(), "not produced by the agent");
+        assert_eq!(order(&seen(&state, agent, first.id).expect("the agent produced it")),
+            ["System:You are good at sums.", "What is 2+2?"], "the first answer saw exactly what the turn gave the model");
+        assert_eq!(order(&seen(&state, agent, second.id).expect("the agent produced it")),
+            ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
+        assert!(state.recorded_context_of(question.id).is_none(), "not produced by the agent");
 
         // Knowledge read in a turn counts for the messages after it.
         let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
-        let read = caelumora_model::message::KnowledgeRef {
+        let read = KnowledgeRef {
             channel: Default::default(),
-            source: caelumora_model::message::KnowledgeSource::History { digest: None, start: None },
+            source: caelumora_model::context::KnowledgeSource::History { digest: None, start: None },
         };
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             turn.push_message(before.clone());
             turn.record_knowledge(read);
@@ -763,9 +745,9 @@ mod tests {
 
         // The same prompt in another turn is kept once.
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
-            turn.set_context(vec![system()]);
+            turn.set_context(None, vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
     }

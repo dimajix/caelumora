@@ -5,7 +5,7 @@ use std::fmt::Debug;
 
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorId, ActorState, Envelope};
-use caelumora_model::agent::SeenContext;
+use caelumora_model::context::ResolvedContext;
 use caelumora_model::message::MessageId;
 use caelumora_model::security::SecurityContext;
 
@@ -53,7 +53,7 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// `MessageContextError::Forbidden` if `caller` may not read it,
     /// `NotRecorded` if this actor did not produce the message,
     /// `Unavailable` if what was recorded cannot be resolved any more.
-    async fn message_context(&self, _caller: &SecurityContext, message: MessageId) -> Result<SeenContext, MessageContextError> {
+    async fn message_context(&self, _caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
         Err(MessageContextError::NotRecorded { actor: self.id(), message })
     }
 }

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use caelumora_model::message::{Message, MessageEvent, ReasoningHistory};
+use caelumora_model::context::ModelProfile;
+use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
@@ -63,9 +64,10 @@ pub trait LLMClient: Send + Sync + Debug {
     /// complete ones. The stream owns the request; dropping it abandons it.
     async fn chat_completion(&self, context: &[Message], tools: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>>;
 
-    /// Which reasoning of earlier messages the model is to be given back
-    /// (issue 63) - a property of the model, applied by the turn that
-    /// assembles its context (`Turn::full_context`), so that `context` holds
-    /// only what the model is to see.
-    fn reasoning_history(&self) -> ReasoningHistory;
+    /// How the model is to be given its context - which reasoning of
+    /// earlier messages, say (issue 63). A property of the model, fixed in
+    /// the frame of every turn and applied where the model's input is
+    /// resolved (`ContextResolver`), so that `context` holds only what the
+    /// model is to see.
+    fn profile(&self) -> ModelProfile;
 }

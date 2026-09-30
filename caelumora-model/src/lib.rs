@@ -7,6 +7,7 @@ pub mod command;
 pub mod config;
 pub mod confidentiality;
 pub mod chain;
+pub mod context;
 pub mod digest;
 pub mod tool;
 pub mod message;

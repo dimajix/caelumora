@@ -1,7 +1,8 @@
 use crate::actor::{ActorId, ActorState, EventContext};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
-use crate::message::{ContextItem, ContextRef, Message, Transcript, MessageHistory, MessageId, PromptRef};
+use crate::context::{ContextFrame, ContextRef};
+use crate::message::{Message, Transcript, MessageHistory, MessageId};
 use crate::note::{NoteChain, NoteChange};
 use crate::meta::{Metadata, Scope};
 use crate::plan::PlanState;
@@ -137,10 +138,11 @@ pub struct TurnState {
     /// Which labels the agent may publish to the channel in this turn, as
     /// the `SecurityManager` decided when it began (issue 61).
     pub publication: crate::confidentiality::Publication,
-    /// The context as its `ContextProvider` gave it: what the model is sent
-    /// and where the prompt parts were placed are both derived from it
-    /// (issue 47).
-    pub context: Vec<crate::message::ContextItem>,
+    /// What the model is given, as references: the transcript the turn
+    /// began with, the prompt parts its `ContextProvider` placed, the rules
+    /// of the model (issues 47, 49). Resolved by
+    /// `crate::context::ContextResolver`.
+    pub frame: ContextFrame,
     /// The messages the turn produced so far.
     pub messages: Vec<Message>,
     /// Knowledge read in the turn, each with the number of messages the
@@ -166,19 +168,8 @@ pub struct TurnState {
 /// before it was read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnKnowledge {
-    pub reference: crate::message::KnowledgeRef,
+    pub reference: crate::context::KnowledgeRef,
     pub before: usize,
-}
-
-/// What an agent's model saw when it produced a message (issues 06, 47):
-/// its context - the messages of its transcript and the prompt parts of that
-/// turn, in the order the model was given them, as the items it was given
-/// (issue 119).
-#[derive(Debug, Clone)]
-pub struct SeenContext {
-    /// The digests the history recorded for the message.
-    pub reference: ContextRef,
-    pub items: Vec<crate::message::ContextItem>,
 }
 
 /// A change to an [`AgentChannelState`], staged by a turn and applied when
@@ -203,52 +194,11 @@ impl AgentChannelState {
         }
     }
 
-    /// Resolves `reference`, recorded for a message of `agent`, in this
-    /// state: the context prefix it names, with every prompt part inserted
-    /// after the entry it followed, and each message's reasoning only where
-    /// the recorded rule gave it to the model (issue 63). `None` if what it
-    /// names is not here - a context that is not a prefix of this one, a
-    /// prompt that was never recorded, or one whose entry is not in the
-    /// prefix.
-    pub fn resolve(&self, reference: &ContextRef, agent: ActorId) -> Option<SeenContext> {
-        let entries = match &reference.transcript {
-            Some(digest) => self.transcript.prefix(digest)?,
-            None => &[],
-        };
-        let prompt = |p: &PromptRef| -> Option<ContextItem> {
-            Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone() })
-        };
-        let mut items = Vec::with_capacity(entries.len() + reference.prompts.len());
-        for p in reference.prompts.iter().filter(|p| p.after.is_none()) {
-            items.push(prompt(p)?);
-        }
-        // The last entries are the turn's own, produced before the message.
-        let turn_start = entries.len().checked_sub(reference.turn_entries)?;
-        for (index, entry) in entries.iter().enumerate() {
-            let message = reference.reasoning.given(entry.message.clone(), agent, index >= turn_start);
-            items.push(ContextItem::Conversation { message, digest: entry.digest });
-            for p in reference.prompts.iter().filter(|p| p.after == Some(entry.digest)) {
-                items.push(prompt(p)?);
-            }
-        }
-        if items.len() != entries.len() + reference.prompts.len() {
-            return None;
-        }
-        Some(SeenContext { reference: reference.clone(), items })
-    }
-
     /// What the history recorded the message `id` was produced from, or
     /// `None` if this agent did not produce it (or it was before references
     /// were recorded).
     pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
         self.history.entries().iter().find(|e| e.message.id == id)?.context.clone()
-    }
-
-    /// What the agent saw when it produced the message `id` of its history,
-    /// or `None` if it did not produce it or it cannot be resolved.
-    pub fn seen_context_of(&self, id: MessageId) -> Option<SeenContext> {
-        let entry = self.history.entries().iter().find(|e| e.message.id == id)?;
-        self.resolve(entry.context.as_ref()?, entry.message.sender_id)
     }
 }
 
@@ -302,46 +252,6 @@ mod tests {
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.processing_state, ActorState::WaitingForApproval);
         assert_eq!(decoded.turn.map(|t| t.messages.len()), Some(1), "the turn is resumed from what was stored");
-    }
-
-    #[test]
-    fn prompt_parts_are_resolved_where_they_were_placed() {
-        use crate::digest::prompt;
-        use crate::message::MessageRole;
-        let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::default() };
-        let mut state = AgentChannelState::default();
-        let (earlier, question) = (text("earlier"), text("question"));
-        let after_earlier = state.transcript.push(earlier.clone());
-        assert_eq!(after_earlier, None);
-        let before_question = state.transcript.push(question.clone());
-        let whole = state.transcript.digest();
-        for part in ["system", "notes"] {
-            state.prompts.insert(prompt(part), part.to_string());
-        }
-        let reference = ContextRef {
-            transcript: whole,
-            prompts: vec![
-                PromptRef { text: prompt("system"), role: MessageRole::System, after: None },
-                PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },
-            ],
-            knowledge: Vec::new(),
-            reasoning: Default::default(),
-            turn_entries: 0,
-        };
-
-        let seen = state.resolve(&reference, ActorId::None).expect("everything it names is here");
-        let order: Vec<String> = seen.items.iter().map(|item| match item {
-            ContextItem::Prompt { text, .. } => format!("prompt:{text}"),
-            ContextItem::Conversation { message, .. } => message.content.clone().unwrap_or_default(),
-        }).collect();
-        assert_eq!(order, ["prompt:system", "earlier", "prompt:notes", "question"]);
-
-        let mut elsewhere = reference.clone();
-        elsewhere.prompts[1].after = Some(prompt("not an entry"));
-        assert!(state.resolve(&elsewhere, ActorId::None).is_none(), "a part after an entry that is not in the prefix");
-        let mut forgotten = reference;
-        forgotten.prompts[0].text = prompt("never recorded");
-        assert!(state.resolve(&forgotten, ActorId::None).is_none(), "a part whose text was not kept");
     }
 
     #[test]

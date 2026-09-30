@@ -1,7 +1,7 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Confidentiality;
 use caelumora_model::message::Message;
-use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
@@ -340,11 +340,11 @@ pub enum SeenItemResponse {
     Message { message: Message },
 }
 
-impl From<caelumora_model::message::ContextItem> for SeenItemResponse {
-    fn from(item: caelumora_model::message::ContextItem) -> Self {
+impl From<caelumora_model::context::ContextItem> for SeenItemResponse {
+    fn from(item: caelumora_model::context::ContextItem) -> Self {
         match item {
-            caelumora_model::message::ContextItem::Prompt { digest, role, text } => SeenItemResponse::Prompt { digest, role, text },
-            caelumora_model::message::ContextItem::Conversation { message, .. } => SeenItemResponse::Message { message },
+            caelumora_model::context::ContextItem::Prompt { digest, role, text } => SeenItemResponse::Prompt { digest, role, text },
+            caelumora_model::context::ContextItem::Conversation { message, .. } => SeenItemResponse::Message { message },
         }
     }
 }

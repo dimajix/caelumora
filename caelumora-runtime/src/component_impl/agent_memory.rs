@@ -26,7 +26,7 @@ use crate::tool::{id_argument, text_argument, ToolError, ToolProvider, ToolResul
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::memory::{Memory, MemoryId};
-use caelumora_model::message::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::tool::{Tool, ToolConfidentiality, ToolParameters};
 use serde_json::Value;
