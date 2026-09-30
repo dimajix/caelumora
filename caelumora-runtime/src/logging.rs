@@ -8,7 +8,7 @@
 //! Operations that cross actors are tied together by the ids of their
 //! `EventContext`, which the spans carry as fields under the same names:
 //! `span_id` (shared by every envelope caused by one initial event),
-//! `event_id`, `correlation_id` and `depth` (`span_depth`). Searching the log
+//! `event_id`, `correlation_id` and `span_depth`. Searching the log
 //! for one `span_id` follows a message from the REST request through the
 //! channel into the agent's turn. Note that the `span_id` of an envelope chain
 //! is unrelated to `tracing`'s own spans, which only structure the log.

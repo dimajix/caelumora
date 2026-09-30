@@ -1,6 +1,6 @@
 # 129 — AGENTS.md and ARCHITECTURE.md hold everything in two files
 
-**Status:** in progress
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -55,3 +55,15 @@ described in both files. Configuration was spread over the whole of
   for issues moved into `issues/INDEX.md`; `docs/CONFIGURATION.md` and the
   section on the model's configuration are new. Found on the way:
   [130](130-llm-configuration.md).
+- **2026-09-30** — Done. Second step: every document in `docs/` rewritten
+  in short paragraphs with links between them; `ARCHITECTURE.md` rewritten
+  as an overview (crates, domain, how a message travels, principles);
+  `COMPONENTS.md` and `TOOLS-AND-COMMANDS.md` got tables of the built-in
+  components, tools and commands; `CONFIDENTIALITY.md` ends with the open
+  questions. Statements checked against the code on the way and corrected
+  where they no longer held (among them `SessionState` and
+  `delete_session_state`, which do not exist, the span field `span_depth`,
+  the states of the cognitive cycle, the kinds of `KnowledgeRef`, and that
+  the ownership policy allows every `JoinChannel`). The three client crates
+  are documented as empty. Found on the way:
+  [131](131-agent-memory-bypasses-policy.md).
