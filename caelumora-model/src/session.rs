@@ -1,6 +1,7 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::component::ComponentConfig;
 use crate::meta::Metadata;
+use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,9 @@ pub struct Session {
     /// The session's own user commands, copied from its template when it was
     /// created, so that a running session keeps its set (issue 28).
     pub commands: ComponentConfig,
+    /// Whom the session lets read what was said in it (issue 134).
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,

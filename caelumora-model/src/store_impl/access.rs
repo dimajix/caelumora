@@ -202,6 +202,7 @@ mod tests {
             participants: Vec::new(),
             channels: Vec::new(),
             commands: Default::default(),
+            privacy: Default::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: SecurityAttributes { owner_id: owner, contributors },

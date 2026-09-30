@@ -122,6 +122,7 @@ mod tests {
     async fn list_sessions_works() {
         let session1 = Session {
             commands: Default::default(),
+            privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session1".to_string(),
@@ -136,6 +137,7 @@ mod tests {
         };
         let session2 = Session {
             commands: Default::default(),
+            privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session2".to_string(),

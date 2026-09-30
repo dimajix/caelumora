@@ -17,6 +17,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
+use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{StateStore, StoreError};
@@ -609,6 +610,12 @@ impl ChannelLoop {
     /// Where the channel is.
     pub fn channel_ref(&self) -> ChannelRef {
         self.channel.load().channel_ref()
+    }
+
+    /// The session the channel belongs to, as privacy sees it (issue 134):
+    /// that of a channel of no session is private.
+    pub fn session_privacy(&self) -> SessionPrivacy {
+        self.session().map(|session| session.privacy()).unwrap_or_default()
     }
 
     /// The notes every agent of the channel published (issue 17), read from

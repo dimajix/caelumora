@@ -12,15 +12,17 @@
 //! component asks in the agent's name (`AccessQuestions::may_channel_read`,
 //! issue 131). Under the ownership policy that is the flow rule of issue
 //! 133 - the entry's channel's classification must flow into this one's -
-//! within the session, and from public channels beyond it. Only those can be
+//! within the session, and beyond it only where the entry's session permits
+//! it (issue 134). Only those can be
 //! forgotten here. Both tools are
-//! `ToolConfidentiality::HIDDEN`: like private notes, memory is the agent's
+//! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's
 //! own, seen by its owner in the context panel only. Its entries are
 //! numbered differently from notes, on purpose: see `AgentMemory::remember`.
 
 use crate::agent_memory::AgentMemory;
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::session_reader::SessionReader;
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
@@ -43,6 +45,9 @@ pub struct AgentMemoryComponent {
     /// `security_context` - the agent's (issue 131).
     security_manager: Arc<dyn SecurityManager>,
     security_context: SecurityContext,
+    /// The agent's window to its session: whose it is, and whom it lets
+    /// read what is remembered in it (issue 134).
+    session_reader: Arc<dyn SessionReader>,
 }
 
 impl std::fmt::Debug for AgentMemoryComponent {
@@ -120,14 +125,14 @@ impl AgentMemoryComponent {
     async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref(), &self.security_context).await?;
+        AgentMemory::reclassify(turn, id, classification.clone(), &self.session_reader.own_privacy(), self.security_manager.as_ref(), &self.security_context).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
     /// `forget(id)`: forgets an entry that may be recalled here.
     async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
-        if AgentMemory::forget(turn, id, self.security_manager.as_ref(), &self.security_context).await {
+        if AgentMemory::forget(turn, id, &self.session_reader.own_privacy(), self.security_manager.as_ref(), &self.security_context).await {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -142,7 +147,7 @@ impl PromptProvider for AgentMemoryComponent {
     }
 
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        let recalled = AgentMemory::recalled(turn, self.security_manager.as_ref(), &self.security_context).await;
+        let recalled = AgentMemory::recalled(turn, &self.session_reader.own_privacy(), self.security_manager.as_ref(), &self.security_context).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
@@ -171,6 +176,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let component = Arc::new(AgentMemoryComponent {
                 security_manager: context.security_manager.clone(),
                 security_context: context.security_context.clone(),
+                session_reader: context.session_reader.clone(),
             });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(component.clone());
@@ -211,6 +217,7 @@ mod tests {
         AgentMemoryComponent {
             security_manager: policy,
             security_context: SecurityContext::new(owner, Default::default(), Default::default()),
+            session_reader: crate::session_reader::detached(),
         }
     }
 
@@ -314,6 +321,7 @@ mod tests {
         let memory = AgentMemoryComponent {
             security_manager: policy,
             security_context: SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default()).next(ActorId::Agent(agent)),
+            session_reader: crate::session_reader::detached(),
         };
         let session = SessionId::new();
         let in_compartments = |names: &[&str]| -> At {

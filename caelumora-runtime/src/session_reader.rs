@@ -23,7 +23,8 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -93,6 +94,9 @@ impl From<ReadError> for ToolError {
 pub trait SessionReader: Send + Sync + Debug {
     /// The turn's own channel.
     fn own_channel(&self) -> Option<ChannelInfo>;
+    /// The session of the turn's own channel as privacy sees it (issue
+    /// 134): whom it lets read what was said in it, and who takes part.
+    fn own_privacy(&self) -> SessionPrivacy;
     /// The notes every agent of the turn's own channel published, in no
     /// particular order.
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>>;
@@ -130,6 +134,10 @@ struct DetachedSessionReader;
 impl SessionReader for DetachedSessionReader {
     fn own_channel(&self) -> Option<ChannelInfo> {
         None
+    }
+
+    fn own_privacy(&self) -> SessionPrivacy {
+        SessionPrivacy::default()
     }
 
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {
@@ -171,9 +179,11 @@ impl ChannelSessionReader {
     /// `classification`, as the confidentiality rules decide
     /// (`AccessQuestions::may_channel_read`, issue 133).
     async fn may_read(&self, own: &ChannelLoop, source: &ChannelLoop, classification: &Classification) -> bool {
-        self.runtime.security_manager()
-            .may_channel_read(&self.context, &own.channel_ref(), &own.classification(), &source.channel_ref(), classification)
-            .await
+        let (own_channel, own_classification, own_session) = (own.channel_ref(), own.classification(), own.session_privacy());
+        let (source_channel, source_session) = (source.channel_ref(), source.session_privacy());
+        let reader = Place { channel: &own_channel, classification: &own_classification, session: &own_session };
+        let source = Place { channel: &source_channel, classification, session: &source_session };
+        self.runtime.security_manager().may_channel_read(&self.context, reader, source).await
     }
 
     /// Whether the channel `own` may read `source` as a whole: everything
@@ -218,6 +228,10 @@ fn info(channel: &ChannelLoop) -> ChannelInfo {
 impl SessionReader for ChannelSessionReader {
     fn own_channel(&self) -> Option<ChannelInfo> {
         self.runtime.channel().map(|c| info(&c))
+    }
+
+    fn own_privacy(&self) -> SessionPrivacy {
+        self.runtime.channel().map(|c| c.session_privacy()).unwrap_or_default()
     }
 
     async fn channel_notes(&self) -> ReadResult<Vec<PublishedNotes>> {

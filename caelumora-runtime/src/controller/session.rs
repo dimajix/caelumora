@@ -129,6 +129,7 @@ mod tests {
     async fn a_renamed_session_is_stored_first() {
         let session = Session {
             commands: Default::default(),
+            privacy: Default::default(),
             id: SessionId::new(),
             metadata: Metadata { name: "session".to_string(), scope: Scope::GlobalScope, ..Metadata::default() },
             participants: Vec::new(),

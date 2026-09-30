@@ -94,6 +94,7 @@ mod tests {
             channels: Vec::new(),
             security_attributes: Default::default(),
             commands: Default::default(),
+            privacy: Default::default(),
         }
     }
 

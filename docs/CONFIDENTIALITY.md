@@ -205,15 +205,17 @@ them to clearances. It is asked
 
 Reading from another channel is decided per entry: per message of its
 history, per note, per memory entry. It is `ActionType::ReadChannel {
-source, classification, reader, reader_classification }`: where both
-channels are (`ChannelRef`), how the entry is classified, and how the
-reading channel is (`AccessQuestions::may_channel_read`). It is asked in the name of the agent
+reader, source }`, each side a `Place`: where the channel is (`ChannelRef`),
+how the entry - or the reading channel - is classified, and the channel's
+session as privacy sees it (`SessionPrivacy`, issue 134), asked with
+`AccessQuestions::may_channel_read`. It is asked in the name of the agent
 that reads - the security context it acts in, its owner's - because the agent
 passes on what it reads (issue 131). A channel may always read itself.
 Otherwise the ownership policy allows it if
 
 *   the entry's classification flows into the reader's, and
-*   both channels belong to the same session, or the entry is `public`.
+*   both channels belong to the same session, or the source's session lets
+    the reader's read it (`SessionPrivacy::permits`).
 
 So a channel reads the entries of another that were released to it, even
 where it may not read that channel as a whole. Whether it may, is the
@@ -222,10 +224,23 @@ listed among the readable ones (`SessionReader::readable_channels`) only
 then, and one that may not be read as a whole and of which nothing was
 released reads as absent, so that channels cannot be probed.
 
-The second condition keeps sessions apart until reading across sessions is a
-question of the participants' consent
+The second condition is privacy, not confidentiality
 ([134](../issues/134-session-privacy.md)): with classifications alone, two
-`internal` channels of different sessions could read each other.
+`internal` channels of different sessions could read each other, but whether
+the people of a session agreed to be read elsewhere is not a question of how
+sensitive something is. Every session has one privacy policy, stored with it
+as `PrivacyConfig` and taken over from its template:
+
+*   `private` - the default: what was said in it is read only within it;
+*   `same_owner` - other sessions of the same owner may read it;
+*   `shared_audience` - other sessions may read it whose people - their
+    users and owner - all take part in this one.
+
+It holds whatever the classification: even what is `public` does not leave a
+private session. A policy has to be transitive - what it lets one session
+read, that session passes on by its own policy without breaking the first
+one's promise; `same_owner` and `shared_audience` are, a grant to a named
+session would not be (`caelumora_model::privacy`).
 
 How an agent reads other channels - the `SessionReader`, `read_notes`,
 `read_history` - is described in [MEMORY.md](MEMORY.md).
@@ -375,8 +390,9 @@ still open:
     user providers, is [142](../issues/142-roles.md). Events about a
     channel without content - a reclassification, say - still reach
     whoever may read the channel, cleared or not.
-*   **Sessions.** Reading across sessions is refused except for `public`
-    channels until it becomes a question of consent
+*   **Sessions.** An agent's memory is so far the one way across sessions,
+    and an entry of another session is judged as written in a private one:
+    that session's policy is not yet kept with the entry
     ([134](../issues/134-session-privacy.md)).
 *   **Where the rules live.** The flow rule and the clearances are applied
     by the ownership policy; any other policy would have to apply them too

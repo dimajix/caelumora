@@ -16,20 +16,26 @@ use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::memory::{Memory, MemoryChange, MemoryId};
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
+use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place, Reclassified, SecurityContext, SecurityManager};
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub struct AgentMemory;
 
 impl AgentMemory {
-    /// What may be recalled in `turn`'s channel: entries written in a
-    /// channel it may read, as the memory is now - without the turn's own
-    /// changes. Whether it may is asked of `security` in `context`, the
-    /// agent's (`AccessQuestions::may_channel_read`, issue 131), once per
-    /// channel and classification the entries come with; the turn's channel
-    /// is judged by the classification the turn began with.
-    pub async fn recalled(turn: &Turn<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
+    /// What may be recalled in `turn`'s channel, of the session `session`:
+    /// entries written in a channel it may read, as the memory is now -
+    /// without the turn's own changes. Whether it may is asked of
+    /// `security` in `context`, the agent's
+    /// (`AccessQuestions::may_channel_read`, issue 131), once per channel
+    /// and classification the entries come with; the turn's channel is
+    /// judged by the classification the turn began with. An entry of
+    /// another session is judged as written in a private one, which no
+    /// other session reads (issue 134).
+    pub async fn recalled(turn: &Turn<'_>, session: &SessionPrivacy, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
         let (here, classification) = (turn.channel(), turn.classification());
+        let reader = Place { channel: &here, classification: &classification, session };
+        let elsewhere = SessionPrivacy::default();
         let memory = turn.agent_state().current().memory.current();
         let mut decided: Vec<(ChannelRef, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
@@ -37,7 +43,9 @@ impl AgentMemory {
             let readable = match decided.iter().find(|(origin, c, _)| *origin == entry.origin && *c == entry.classification) {
                 Some((_, _, readable)) => *readable,
                 None => {
-                    let readable = security.may_channel_read(context, &here, &classification, &entry.origin, &entry.classification).await;
+                    let origin_session = if entry.origin.session_id == here.session_id { session } else { &elsewhere };
+                    let source = Place { channel: &entry.origin, classification: &entry.classification, session: origin_session };
+                    let readable = security.may_channel_read(context, reader, source).await;
                     decided.push((entry.origin, entry.classification.clone(), readable));
                     readable
                 }
@@ -71,13 +79,13 @@ impl AgentMemory {
         id
     }
 
-    /// Forgets entry `id` if it may be recalled here (asked as in
-    /// [`recalled`](Self::recalled)) or was remembered earlier in this turn,
+    /// Forgets entry `id` if it may be recalled here, in `session` (asked
+    /// as in [`recalled`](Self::recalled)) or was remembered earlier in this turn,
     /// and is not forgotten already - taken over when the turn completes.
     /// Returns whether it was.
-    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, security: &dyn SecurityManager, context: &SecurityContext) -> bool {
+    pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, session: &SessionPrivacy, security: &dyn SecurityManager, context: &SecurityContext) -> bool {
         let origin = turn.channel();
-        let recalled = Self::recalled(turn, security, context).await.iter().any(|m| m.id == id);
+        let recalled = Self::recalled(turn, session, security, context).await.iter().any(|m| m.id == id);
         let staged = |wanted: fn(&MemoryChange, MemoryId) -> bool| turn.staged_agent_changes().iter()
             .any(|c| matches!(c, AgentStateChange::Memory { change, .. } if wanted(change, id)));
         let remembered_now = staged(|c, id| matches!(c, MemoryChange::Remember { id: r, .. } if *r == id));
@@ -100,9 +108,9 @@ impl AgentMemory {
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
+    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, session: &SessionPrivacy, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
         let (origin, here) = (turn.channel(), turn.classification());
-        let recalled = Self::recalled(turn, security, context).await.into_iter().find(|m| m.id == id).map(|m| m.classification);
+        let recalled = Self::recalled(turn, session, security, context).await.into_iter().find(|m| m.id == id).map(|m| m.classification);
         let staged = turn.staged_agent_changes();
         let remembered_now = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Remember { id: r, .. }, .. } if *r == id));
         let forgotten = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Forget { id: f }, .. } if *f == id));

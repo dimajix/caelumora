@@ -9,6 +9,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
 use caelumora_model::mention::handle_of;
+use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::StoreError;
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -156,6 +157,11 @@ impl SessionLoop {
     /// The session as it is now.
     pub fn session(&self) -> arc_swap::Guard<Arc<Session>> {
         self.session_controller.load()
+    }
+
+    /// The session as privacy sees it now (issue 134).
+    pub fn privacy(&self) -> SessionPrivacy {
+        SessionPrivacy::of(&self.session())
     }
 
     pub fn name(&self) -> String {
@@ -817,6 +823,7 @@ mod tests {
     fn make_session(name: &str) -> Session {
         Session {
             commands: Default::default(),
+            privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: name.to_string(),
@@ -1084,6 +1091,7 @@ mod tests {
             }],
             security_attributes: Default::default(),
             commands: Default::default(),
+            privacy: Default::default(),
         };
         store.create_session_template(&SecurityContext::system(), &template).await.unwrap();
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1432,7 +1440,14 @@ mod tests {
             let (reader, source, security, context) = (reader.clone(), source.clone(), security.clone(), alice_ctx.clone());
             async move {
                 use caelumora_model::security::AccessQuestions;
-                security.may_channel_read(&context, &reader.channel_ref(), &reader.classification(), &source.channel_ref(), &source.classification()).await
+                use caelumora_model::security::Place;
+                let (reader_channel, reader_classification, reader_session) = (reader.channel_ref(), reader.classification(), reader.session_privacy());
+                let (source_channel, source_classification, source_session) = (source.channel_ref(), source.classification(), source.session_privacy());
+                security.may_channel_read(
+                    &context,
+                    Place { channel: &reader_channel, classification: &reader_classification, session: &reader_session },
+                    Place { channel: &source_channel, classification: &source_classification, session: &source_session },
+                ).await
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");

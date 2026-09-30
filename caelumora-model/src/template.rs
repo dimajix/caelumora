@@ -11,6 +11,7 @@ use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
 use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::meta::{Metadata, Scope};
+use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -122,6 +123,9 @@ pub struct SessionTemplate {
     /// what the session is for, such as an integration it uses.
     #[serde(default)]
     pub commands: ComponentConfig,
+    /// The privacy policy of sessions made from this template (issue 134).
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
 }
 
 impl Secured for SessionTemplate {
@@ -155,6 +159,7 @@ impl SessionTemplate {
             participants,
             channels: channels.iter().map(|c: &Channel| c.id).collect(),
             commands: self.commands.clone(),
+            privacy: self.privacy,
             created_at: now,
             updated_at: now,
             security_attributes,
@@ -260,6 +265,7 @@ mod tests {
                 },
             ],
             commands: crate::command::default_commands(),
+            privacy: Default::default(),
         }
     }
 
@@ -307,6 +313,10 @@ mod tests {
         assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
         assert_eq!(session.commands.component_nodes.len(), 2, "the session keeps its template's commands");
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
+        assert_eq!(session.privacy, PrivacyConfig::Private, "private unless the template says otherwise");
+        let shared = SessionTemplate { privacy: PrivacyConfig::SharedAudience, ..template.clone() };
+        let (session, _) = shared.build(id, owner, "s".to_string(), resolved(&shared, id, owner)).unwrap();
+        assert_eq!(session.privacy, PrivacyConfig::SharedAudience, "the template's policy");
 
         // A channel naming someone the template does not have.
         let mut stray = template.clone();

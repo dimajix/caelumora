@@ -1,6 +1,6 @@
 # 134 — Reading across sessions is a matter of consent, not of classification
 
-**Status:** open
+**Status:** in progress
 **Area:** Sessions and channels
 
 ## The problem
@@ -80,3 +80,13 @@ agreed to be read by the other.
     once per origin of the recalled entries, not as one reference to the
     whole memory chain in the channel it was read in. [143](143-joining-a-channel-with-foreign-knowledge.md)
     builds on it.
+- **2026-09-30** — Step 1: `caelumora_model::privacy` with `PrivacyConfig`
+  (stored with `Session` and `SessionTemplate`, private by default), the
+  `PrivacyPolicy` trait and its three implementations, and
+  `SessionPrivacy` - a session's policy, owner and people.
+  `ActionType::ReadChannel` and `may_channel_read` take a `Place` for each
+  side; the ownership policy lets a channel read beyond its session only
+  where the source's session permits it, and the exception for `public`
+  is gone. Until the policy of an entry's session is kept with it (step 2),
+  the agent's memory judges an entry of another session as written in a
+  private one. The ids are ordered, so that a set of them is.

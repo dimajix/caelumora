@@ -550,6 +550,7 @@ mod tests {
         let channel_id = channel.id;
         let session = Session {
             commands: Default::default(),
+            privacy: Default::default(),
             id: session_id,
             metadata: Metadata {
                 name: "to-delete".to_string(),
@@ -598,6 +599,7 @@ mod tests {
 
         let s1 = Session {
             commands: Default::default(),
+            privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
             metadata: Metadata {
                 name: "session-1".to_string(),

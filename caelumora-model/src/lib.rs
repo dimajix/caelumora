@@ -15,6 +15,7 @@ pub mod mention;
 pub mod note;
 pub mod memory;
 pub mod plan;
+pub mod privacy;
 pub mod session;
 pub mod store;
 pub mod user;

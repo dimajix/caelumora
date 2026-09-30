@@ -72,6 +72,7 @@ fn session_template() -> SessionTemplate {
     SessionTemplate {
         security_attributes: Default::default(),
         commands: Default::default(),
+        privacy: Default::default(),
         id: SessionTemplateId(Uuid::new_v4()),
         metadata: metadata("pairing"),
         scope: ScopeTemplate::GlobalScope,
@@ -88,6 +89,7 @@ fn session_template() -> SessionTemplate {
 fn session() -> Session {
     Session {
         commands: Default::default(),
+        privacy: Default::default(),
         id: SessionId(Uuid::new_v4()),
         metadata: metadata("session"),
         participants: Vec::new(),

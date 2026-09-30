@@ -81,7 +81,7 @@ against it, and what came out of the last attempt.
 | [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
 | [73](73-watch-leaving-duplicates-events.md) | done | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
 | [67](67-change-channel-level.md) | done | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
-| [134](134-session-privacy.md) | open | Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another. |
+| [134](134-session-privacy.md) | in progress | Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |

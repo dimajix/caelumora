@@ -107,7 +107,9 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     Under the ownership policy an entry is recalled where its own
     classification - its channel's when it was written, unless it was
     reclassified - flows into the current channel's (the flow rule of issue
-    133) - within the session, and what is `public` beyond it. Only
+    133) - within the session, and beyond it only where the entry's session
+    permits it ([134](../issues/134-session-privacy.md)): for now, an
+    entry of another session is judged as written in a private one. Only
     entries recalled in a channel can be forgotten there, or reclassified
     (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).

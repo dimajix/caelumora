@@ -4,7 +4,7 @@
 #[macro_export]
 macro_rules! define_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, Default, derive_more::Display, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, Copy, Default, derive_more::Display, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]
         pub struct $name(pub uuid::Uuid);
 
