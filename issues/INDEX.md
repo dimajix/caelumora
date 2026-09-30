@@ -95,6 +95,7 @@ against it, and what came out of the last attempt.
 | [121](121-agent-controller-per-process.md) | done | An agent that takes part in several running sessions has one controller in each, so its document has more than one writer. |
 | [124](124-observer-participants.md) | open | Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live. |
 | [141](141-turn-during-reclassification.md) | open | A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it. |
+| [143](143-joining-a-channel-with-foreign-knowledge.md) | open | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Identity and access management
 

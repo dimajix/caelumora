@@ -52,3 +52,31 @@ agreed to be read by the other.
   [133](133-classification-model.md) at the maintainer's request: sessions
   stop being a confidentiality boundary, and what keeps them apart is to be
   modelled as privacy instead.
+- **2026-09-30** — Decided with the maintainer:
+  - Every session has exactly one privacy policy, chosen by a serializable
+    `PrivacyConfig` stored with it, as the `security` section chooses a
+    `SecurityManager`: `Private` (the default - reading only within the
+    session), `SameOwner` (sessions of the same owner) and `SharedAudience`
+    (every human participant of the reader also takes part in the source).
+    Each is an implementation of a `PrivacyPolicy` trait, so that further
+    ones can be added; a closed enum, no registry.
+  - A policy must be transitive - what it lets pass on may be passed on by
+    the next session's policy without breaking its promise. `SameOwner` and
+    `SharedAudience` are, also mixed; a grant to a named session would not
+    be.
+  - It is asked as part of `ActionType::ReadChannel`, only across
+    sessions, and it is the source session's policy that decides. The
+    exception that lets `public` entries cross sessions goes: privacy holds
+    whatever the classification.
+  - A memory entry keeps the policy and audience of its source session from
+    when it was remembered; recalling it needs both that and the session's
+    current policy to agree.
+  - The policy is set when the session is created (also from its template)
+    and changed only by its owner; it is shown to all participants.
+  - A participant added later sees what was read: [143](143-joining-a-channel-with-foreign-knowledge.md).
+  - Reading across sessions is traceable from the start: a `KnowledgeRef`
+    names the channel with its session (a `ChannelRef` instead of a
+    `ChannelId`), and what an agent recalls from its memory is recorded
+    once per origin of the recalled entries, not as one reference to the
+    whole memory chain in the channel it was read in. [143](143-joining-a-channel-with-foreign-knowledge.md)
+    builds on it.
