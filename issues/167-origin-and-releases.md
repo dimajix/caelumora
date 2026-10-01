@@ -1,6 +1,6 @@
 # 167 — A classification says who may read something, but not where it was written
 
-**Status:** open
+**Status:** rejected
 **Area:** Identity and access management
 
 ## The problem
@@ -168,3 +168,11 @@ only looks at reading.
   agent. The high-water mark moved to [168](168-turn-label-as-high-water-mark.md).
 - **2026-10-01** — Decided: the pair is called a *label*. Whether a channel's
   releases apply to its messages is kept as an open question.
+- **2026-10-01** — Rejected. Something classified carries exactly one
+  classification - one level, possibly several compartments - and a fixed
+  one: a write must fit into it, it does not change it. With that there is
+  nothing to join from several writers, and no origin and releases to keep
+  apart. What remains goes elsewhere: who may change something, what a
+  write must respect and where a change was made to
+  [169](169-changing-classified-content.md); a record of who released what,
+  and when, to [140](140-audit-log.md).

@@ -52,3 +52,6 @@ none of it is.
 - **2026-10-01** — Opened when [167](167-origin-and-releases.md) decided that,
   for now, the turn's label stays the channel's classification when the turn
   began; the high-water mark was deferred to this issue.
+- **2026-10-01** — [167](167-origin-and-releases.md) was rejected. The
+  turn's label is what [169](169-changing-classified-content.md) checks a
+  write against: it must flow into the classification of what is written.

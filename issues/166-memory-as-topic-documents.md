@@ -169,3 +169,9 @@ is loaded when the skill is used.
   label of the turn that writes; releases are separate. With it, the
   options above reduce to "a document's origin is that of its newest
   version, written where it could be read", plus releases.
+- **2026-10-01** — [167](167-origin-and-releases.md) was rejected. A
+  document keeps the one classification it was given; who may change it
+  and what a write must respect are decided in
+  [169](169-changing-classified-content.md), which this issue depends on.
+  Left here: what is special to memory documents - which classification a
+  new one gets, and who owns it.
