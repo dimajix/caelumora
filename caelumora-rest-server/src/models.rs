@@ -121,7 +121,7 @@ pub struct PublishedNotesResponse {
 }
 
 impl From<caelumora_runtime::view::PublishedNotes> for PublishedNotesResponse {
-    fn from(published: caelumora_runtime::session_reader::PublishedNotes) -> Self {
+    fn from(published: caelumora_runtime::view::PublishedNotes) -> Self {
         Self { agent_id: published.agent, name: published.name, notes: published.notes }
     }
 }

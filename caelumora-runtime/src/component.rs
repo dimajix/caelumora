@@ -21,7 +21,6 @@ use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
-use crate::session_reader::SessionReader;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComponentError {
@@ -63,8 +62,8 @@ impl FacetType {
 }
 
 /// What a component is built with: the environment of the whole graph - the
-/// security context it is built under, the secrets it may resolve, what it
-/// may read of the session's other channels - and, while it is built, the
+/// security context it is built under, the secrets it may resolve - and,
+/// while it is built, the
 /// other components of its graph, asked for by type (`all`, `one`). This is
 /// all a component is given: not its actor's runtime, so that it cannot store
 /// its actor's state or act as its actor past the `Turn` it is called with
@@ -77,11 +76,6 @@ pub struct ComponentContext {
     /// memory may recall in its channel (issue 131).
     pub security_manager: Arc<dyn SecurityManager>,
     pub secret_manager: Arc<SecretManager>,
-    /// What the components may read of the session's other channels (issue
-    /// 17): their actor's (`ActorRuntime::session_reader`), or
-    /// `session_reader::detached()` for components of no actor, such as the
-    /// commands of a session.
-    pub session_reader: Arc<dyn SessionReader>,
     /// The graph being built and the component this context was given to;
     /// set by `ComponentContainer::from_config`.
     building: Option<(Arc<Graph>, String)>,
@@ -100,8 +94,8 @@ impl ComponentContext {
     /// The environment a component graph is built in:
     /// `ComponentContainer::from_config` gives each component this context,
     /// through which it reaches the others.
-    pub fn new(security_context: SecurityContext, security_manager: Arc<dyn SecurityManager>, secret_manager: Arc<SecretManager>, session_reader: Arc<dyn SessionReader>) -> Self {
-        Self { security_context, security_manager, secret_manager, session_reader, building: None }
+    pub fn new(security_context: SecurityContext, security_manager: Arc<dyn SecurityManager>, secret_manager: Arc<SecretManager>) -> Self {
+        Self { security_context, security_manager, secret_manager, building: None }
     }
 
     /// Every other component of the graph that provides `T`, in the order of
@@ -676,7 +670,6 @@ mod tests {
             SecurityContext { session_id, ..SecurityContext::default() },
             Arc::new(DummySecurityManager::new()),
             Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
-            crate::session_reader::detached(),
         )
     }
 

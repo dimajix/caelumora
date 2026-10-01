@@ -115,12 +115,10 @@ registered with
     context (`AccessQuestions`; the memory asks what it may recall, issue
     131),
 *   the `SecretManager`,
-*   the `SessionReader` of the actor the components are built for
-    (`session_reader::detached()` for components of no actor, such as the
-    session's commands) - what the memory still reads of its session
-    (issue 163); everything else of other channels a component reads
-    through the `Turn` it is called with (`Turn::session`, see
-    [MEMORY.md](MEMORY.md#reading-other-channels)),
+*   nothing of the session: what a component reads of it - the other
+    channels, their notes and histories, what its agent may recall - it
+    reads through the `Turn` it is called with (`Turn::session`, issue
+    163; see [MEMORY.md](MEMORY.md#reading-other-channels)),
 *   and, internally, the graph being built, through which each component
     reaches the others it asks for.
 

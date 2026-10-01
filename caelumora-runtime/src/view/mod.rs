@@ -247,6 +247,24 @@ impl Views {
         }
     }
 
+    /// The session `id` as privacy sees it now, or `None` if there is no
+    /// such session any more (issue 134). Not an edge: looked up in the
+    /// runtime's name, for what an agent may recall of its memory from
+    /// another session - the runtime is asked to enforce what that
+    /// session's people agreed to, and nothing else of it reaches the
+    /// viewer. Changes to a session are stored before they take effect, so
+    /// the stored one is the current one, running or not.
+    ///
+    /// # Errors
+    /// `Failed` if it cannot be looked up.
+    pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
+        match self.runtime.entity_store().get_session(&SecurityContext::system(), id).await {
+            Ok(session) => Ok(Some(SessionPrivacy::of(&session))),
+            Err(caelumora_model::store::StoreError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}")))),
+        }
+    }
+
     /// The roles of the viewer's user, which decide what they are cleared
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
@@ -262,29 +280,55 @@ impl std::fmt::Debug for Views {
 }
 
 /// What an agent's views are built from, once per turn (`Turn::session`):
-/// its actor's runtime, which reaches its channel and session once they
-/// are attached, and its context. The place it reads from is completed
-/// with the turn's classification when the views are built.
-#[derive(Debug, Clone)]
+/// where its session is reached, and its context. The place it reads from
+/// is completed with the turn's channel and classification when the views
+/// are built.
+#[derive(Clone)]
 pub struct ViewsFactory {
-    runtime: ActorRuntime,
+    root: FactoryRoot,
     context: SecurityContext,
+}
+
+/// Where a factory reaches the agent's session.
+#[derive(Clone)]
+enum FactoryRoot {
+    /// Through the actor's runtime, which reaches its channel and session
+    /// once they are attached.
+    Actor(ActorRuntime),
+    /// A session loop held directly: for turns outside of an actor, in
+    /// tests.
+    #[cfg(test)]
+    Session { session: Arc<SessionLoop>, runtime: Arc<RuntimeManager> },
 }
 
 impl ViewsFactory {
     pub(crate) fn of_actor(runtime: ActorRuntime, context: SecurityContext) -> Self {
-        Self { runtime, context }
+        Self { root: FactoryRoot::Actor(runtime), context }
     }
 
-    /// The agent's own session, as it reads from its channel at
+    #[cfg(test)]
+    pub(crate) fn in_session(session: Arc<SessionLoop>, runtime: Arc<RuntimeManager>, context: SecurityContext) -> Self {
+        Self { root: FactoryRoot::Session { session, runtime }, context }
+    }
+
+    /// The agent's own session, as it reads from `channel` at
     /// `classification`; `None` while the channel is not attached to its
     /// session yet, or once it is gone.
-    pub(crate) fn session(&self, classification: Classification) -> Option<SessionView> {
-        let channel = self.runtime.channel_loop()?;
-        let session_loop = channel.session_loop()?;
-        let from = ReaderPlace { channel: channel.channel_ref(), classification, session: session_loop.privacy() };
-        let views = Views::new(self.runtime.runtime_manager().clone(), Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
+    pub(crate) fn session(&self, channel: ChannelRef, classification: Classification) -> Option<SessionView> {
+        let (session_loop, runtime) = match &self.root {
+            FactoryRoot::Actor(actor) => (actor.channel_loop()?.session_loop()?, actor.runtime_manager().clone()),
+            #[cfg(test)]
+            FactoryRoot::Session { session, runtime } => (session.clone(), runtime.clone()),
+        };
+        let from = ReaderPlace { channel, classification, session: session_loop.privacy() };
+        let views = Views::new(runtime, Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
         Some(SessionView::of(views, Found::Running(session_loop)))
+    }
+}
+
+impl std::fmt::Debug for ViewsFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ViewsFactory").field("context", &self.context).finish_non_exhaustive()
     }
 }
 

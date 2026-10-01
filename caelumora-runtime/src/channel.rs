@@ -630,34 +630,6 @@ impl ChannelLoop {
         self.channel.load().channel_ref()
     }
 
-    /// The notes every agent of the channel published (issue 17), read from
-    /// their states in the `StateStore`: notes of finished turns only.
-    pub async fn published_notes(&self) -> Result<Vec<crate::session_reader::PublishedNotes>> {
-        let mut published = Vec::new();
-        for actor in self.actors.load().values() {
-            let ActorId::Agent(agent_id) = actor.id() else { continue };
-            let state = self.state_store.get_agent_channel_state(agent_id, self.id).await?;
-            published.push(crate::session_reader::PublishedNotes {
-                agent: actor.id(),
-                name: actor.name(),
-                notes: state.notes.current(),
-                digest: state.notes.digest(),
-            });
-        }
-        Ok(published)
-    }
-
-    /// The private notes `agent` wrote in this channel (issue 51), read from
-    /// its state; `None` if it takes no part in the channel. Only for the
-    /// agent itself - see `session_reader::SessionReader::private_notes`.
-    pub async fn private_notes(&self, agent: caelumora_model::agent::AgentId) -> Result<Option<(Vec<caelumora_model::note::Note>, Option<caelumora_model::digest::Digest>)>> {
-        if !self.actors.load().contains_key(&ActorId::Agent(agent)) {
-            return Ok(None);
-        }
-        let state = self.state_store.get_agent_channel_state(agent, self.id).await?;
-        Ok(Some((state.private_notes.current(), state.private_notes.digest())))
-    }
-
     fn is_mentionable(id: ActorId) -> bool {
         matches!(id, ActorId::User(_) | ActorId::Agent(_))
     }

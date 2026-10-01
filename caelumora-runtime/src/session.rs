@@ -1312,21 +1312,22 @@ mod tests {
         let channel = hers.channels()[0].clone();
         let channel_runtime = ChannelRuntime::new(runtime.clone(), hers.commands.clone());
         channel_runtime.attach(&channel);
-        let reader = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).session_reader(alice_ctx.clone());
+        let views = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).views(alice_ctx.clone());
+        let session = views.session(channel.channel_ref(), channel.classification()).expect("attached to its session");
 
-        let own = reader.own_privacy();
+        let own = session.privacy();
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
         assert_eq!(own.people, [alice.id].into_iter().collect(), "its users and its owner");
-        let other = reader.privacy_of(theirs.id).await.unwrap().expect("stored, running or not");
+        let other = session.views().privacy_of(theirs.id).await.unwrap().expect("stored, running or not");
         assert_eq!((other.policy, other.owner), (PrivacyConfig::Private, carol_id), "even a session the reader may not read");
-        assert!(reader.privacy_of(SessionId::new()).await.unwrap().is_none(), "one that is gone");
+        assert!(session.views().privacy_of(SessionId::new()).await.unwrap().is_none(), "one that is gone");
         manager.stop_session(&SecurityContext::system(), hers.id()).await.unwrap();
     }
 
     #[tokio::test]
     async fn a_released_message_is_read_where_its_channel_is_not() {
         use crate::channel::ChannelError;
-        use crate::session_reader::ReadError;
+        use crate::view::ViewError;
         use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
@@ -1360,16 +1361,18 @@ mod tests {
         let history = history_of(&hr, 2).await;
         assert_eq!(history[0].classification, classified(Confidentiality::Internal, &["hr"]), "the channel's, unless classified otherwise");
 
-        // Read as an agent in another channel reads.
-        let reader = |channel: &Arc<ChannelLoop>| {
+        // Read as an agent in another channel reads: through its turn's views.
+        let reading_from = |channel: &Arc<ChannelLoop>| {
             let channel_runtime = ChannelRuntime::new(runtime.clone(), session.commands.clone());
             channel_runtime.attach(channel);
-            channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).session_reader(alice_ctx.clone())
+            let views = channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).views(alice_ctx.clone());
+            views.session(channel.channel_ref(), channel.classification()).expect("attached to its session")
         };
-        let read = reader(&finance).history_of("hr").await.expect("what was released to finance");
-        let texts: Vec<_> = read.history.messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect();
+        let read = reading_from(&finance).channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
+        let texts: Vec<_> = read.messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(texts, ["for finance too"], "only what was released");
-        assert!(matches!(reader(&team).history_of("hr").await, Err(ReadError::NotReadable(_))), "nothing was released to a general channel");
+        let nothing = reading_from(&team).channel_named("hr").await.expect("reachable, but").history().await;
+        assert!(matches!(nothing, Err(ViewError::NoChannelNamed(_))), "nothing was released to a general channel");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

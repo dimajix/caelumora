@@ -21,7 +21,6 @@ use caelumora_model::session::SessionId;
 use caelumora_model::store::{StoreError, StoreResult};
 use crate::agent_state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
-use crate::session_reader::{ChannelSessionReader, SessionReader};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
@@ -102,9 +101,10 @@ impl ChannelRuntime {
 /// events, a narrow view of its channel. It is made for one actor
 /// (`ChannelRuntime::new_actor_runtime`) and hands out nothing about others.
 /// It is the actor's alone: its components get only what they need of it
-/// (`ComponentContext`, issue 128), such as `session_reader()`, which reads
-/// the other channels as the confidentiality rules allow. The full channel and
-/// session are `pub(crate)`, for the user's commands and the reader.
+/// (`ComponentContext`, issue 128); what they read of the session they read
+/// through their turn's views (`views()`, issue 163), as the
+/// confidentiality rules allow. The full channel and session are
+/// `pub(crate)`, for the user's commands and the views.
 #[derive(Debug, Clone)]
 pub struct ActorRuntime {
     runtime: ChannelRuntime,
@@ -190,13 +190,6 @@ impl ActorRuntime {
             .publish(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes);
     }
 
-    /// What the actor may read of the session's other channels: their notes
-    /// and histories, as the confidentiality rules allow (issue 17), asked
-    /// in `context` - the actor's own (issue 131).
-    pub fn session_reader(&self, context: SecurityContext) -> Arc<dyn SessionReader> {
-        Arc::new(ChannelSessionReader::new(self.clone(), context))
-    }
-
     /// What the actor's turns navigate (issue 163): its session, read from
     /// its channel, asked in `context` - the actor's own (issue 131).
     pub fn views(&self, context: SecurityContext) -> ViewsFactory {
@@ -277,8 +270,7 @@ impl RuntimeManager {
     pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
-        // Commands run outside of any channel: they read none.
-        let context = ComponentContext::new(security, self.security_manager(), self.secret_manager(), crate::session_reader::detached());
+        let context = ComponentContext::new(security, self.security_manager(), self.secret_manager());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.

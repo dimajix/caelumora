@@ -93,6 +93,13 @@ the turn is and what it has done so far:
 Work between turns does not touch it: perceiving a message only appends to
 the transcript and the history.
 
+Beside its state, a turn reaches the agent's session: `Turn::session()`
+answers the `SessionView` of the turn's views (issue 163), from which the
+components read the other channels as the confidentiality rules allow -
+at the classification the turn began with (see
+[MEMORY.md](MEMORY.md#reading-other-channels)). A turn outside of a
+channel, in tests, has none and reads nothing.
+
 ### Beginning and ending a turn
 
 *   **`Turn::next_turn`** begins a turn and fixes the first four of the

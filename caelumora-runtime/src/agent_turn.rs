@@ -166,7 +166,7 @@ impl<'a> Turn<'a> {
     /// classification the turn began with (issue 67). `None` for a turn
     /// outside of a channel, which reads nothing elsewhere.
     pub fn session(&self) -> Option<SessionView> {
-        self.views.as_ref()?.session(self.classification())
+        self.views.as_ref()?.session(self.channel(), self.classification())
     }
 
     /// The agent whose turn this is.

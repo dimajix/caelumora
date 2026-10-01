@@ -459,3 +459,27 @@ each step, for running and stopped sessions alike.
     role is `From<ViewError> for ToolError`.
   - Still on `SessionReader`: the memory (`own_privacy`, `privacy_of`),
     and so `ComponentContext::session_reader`. Second half next.
+- **2026-10-01** — Step 4, second half, and step 5: the memory reads
+  through the turn's views, and `SessionReader` is gone.
+  - `AgentMemory::recalled`, `remember`, `forget` and `reclassify` take no
+    reader: the session's privacy is `turn.session().privacy()`, that of
+    the sessions entries come from `Views::privacy_of` - `pub(crate)`,
+    looked up in the runtime's name, deliberately not an edge the agent
+    could follow. A turn in no session recalls nothing and remembers as
+    private (new test).
+  - `ComponentContext` lost `session_reader`; `ActorRuntime::session_reader`
+    and `session_reader.rs` with `detached()`, `ChannelSessionReader`,
+    `ChannelInfo`, `ChannelHistory`, `ChannelNotes` and `ReadError` are
+    deleted, and so are `ChannelLoop::published_notes` and
+    `private_notes`, which only the reader used.
+  - `ViewsFactory` reaches the session through the actor's runtime or,
+    in tests, through a session loop held directly (`in_session`,
+    `cfg(test)`); `ViewsFactory::session(channel, classification)` takes
+    the turn's channel, so that place and turn agree.
+  - Tests: the memory component's tests run over real sessions - stored,
+    and running without channels - instead of a faked privacy lookup
+    (`Privacies`); the case "a session that cannot be looked up" is not
+    among them any more, since a store that fails cannot be faked there.
+    The two reader tests of `session.rs` read through the views.
+  - Open from the plan: step 6 (former members, edges into nothing,
+    points in time) and the rest of step 7.

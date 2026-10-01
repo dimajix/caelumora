@@ -73,7 +73,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
     let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(store.clone())).unwrap();
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.security_manager(), runtime_manager.secret_manager(), caelumora_runtime::session_reader::detached());
+    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.security_manager(), runtime_manager.secret_manager());
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -164,7 +164,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(store.clone())).unwrap();
     let registry = runtime_manager.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.security_manager(), runtime_manager.secret_manager(), caelumora_runtime::session_reader::detached());
+    let context = ComponentContext::new(SecurityContext::default(), runtime_manager.security_manager(), runtime_manager.secret_manager());
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {

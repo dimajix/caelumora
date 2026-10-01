@@ -128,9 +128,11 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     another session it is recalled only where both that and the privacy
     the session has now permit it, so that what was said under a private
     policy stays private and a session made private again takes back what
-    it let go. The current one is looked up through the `SessionReader`
-    (`privacy_of`), in the runtime's name; of a session that is gone, the
-    one kept decides, and one that cannot be looked up recalls nothing. Only
+    it let go. The current one is looked up through the turn's views
+    (`Views::privacy_of`), in the runtime's name - not an edge the agent
+    could follow; of a session that is gone, the one kept decides, and one
+    that cannot be looked up recalls nothing. A turn in no session - in
+    tests - recalls nothing. Only
     entries recalled in a channel can be forgotten there, or reclassified
     (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
