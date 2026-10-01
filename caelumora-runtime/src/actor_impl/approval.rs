@@ -374,6 +374,7 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::Name;
     use crate::command::CommandExecutor;
     use crate::runtime::ChannelRuntime;
     use caelumora_model::command::default_commands;
@@ -426,7 +427,7 @@ mod tests {
         let channel = Channel {
             id: channel_id,
             session_id,
-            name: "test".to_string(),
+            name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
@@ -531,7 +532,7 @@ mod tests {
         let channel = Channel {
             id: channel_id,
             session_id,
-            name: "test".to_string(),
+            name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
@@ -599,7 +600,7 @@ mod tests {
         let channel = Channel {
             id: channel_id,
             session_id,
-            name: "test".to_string(),
+            name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
@@ -715,7 +716,7 @@ mod tests {
         let channel = Channel {
             id: channel_id,
             session_id,
-            name: "test".to_string(),
+            name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
@@ -791,7 +792,7 @@ mod tests {
         let channel = Channel {
             id: channel_id,
             session_id,
-            name: "test".to_string(),
+            name: Name::new("test").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),

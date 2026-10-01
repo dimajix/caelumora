@@ -1,3 +1,4 @@
+use caelumora_model::name::Name;
 use arc_swap::ArcSwap;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
@@ -45,7 +46,7 @@ impl ChannelController {
         self.id
     }
 
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> Name {
         self.channel.load().name.clone()
     }
 
@@ -54,7 +55,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: String) -> StoreResult<()> {
+    pub async fn update_name(&self, ctx: &SecurityContext, new_name: Name) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name);
         self.update(ctx, &event).await
     }

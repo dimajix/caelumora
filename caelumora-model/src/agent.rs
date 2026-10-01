@@ -8,7 +8,7 @@ use crate::message::{Message, MessageId};
 use crate::message_history::MessageHistory;
 use crate::transcript::{Transcript, TranscriptEntry};
 use crate::note::{NoteChain, NoteChange, NoteOrigin};
-use crate::scope::Scope;
+use crate::name::{Name, ScopedName};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::tool::{Tool, ToolCallState, ToolDefinition};
@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
-    NameChanged(String),
+    NameChanged(Name),
 }
 
 
@@ -30,10 +30,10 @@ define_id!(PersonalityId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Personality {
     pub id: PersonalityId,
-    pub name: String,
-    /// Where it lies (issue 177): the global scope unless named.
-    #[serde(default)]
-    pub scope: Scope,
+    /// What it is found by: its name and where it lies (issue 177), the
+    /// global scope unless named.
+    #[serde(flatten)]
+    pub name: ScopedName,
     /// What the personality is, for whoever chooses one: a catalogue line.
     #[serde(default)]
     pub description: String,
@@ -77,12 +77,12 @@ define_id!(AgentId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: AgentId,
-    /// Its name, as every channel it takes part in knows it.
-    pub name: String,
-    /// Where it lies (issue 177): a template finds an existing agent there,
-    /// so it decides whether the agent is reused - one per user, with its
-    /// memory - or made anew for every session.
-    pub scope: Scope,
+    /// What it is found by (issue 177): its name, as every channel it takes
+    /// part in knows it, and where it lies. A template finds an existing
+    /// agent there, so the scope decides whether the agent is reused - one
+    /// per user, with its memory - or made anew for every session.
+    #[serde(flatten)]
+    pub name: ScopedName,
     pub personality_id: PersonalityId,
     pub security_attributes: SecurityAttributes,
 }
@@ -94,7 +94,7 @@ impl Agent {
     /// the personality is copied into it: what the agent is - its
     /// components, its introduction - is read through `personality_id`, so
     /// that a change of the personality reaches it (issue 176).
-    pub fn new(name:String, scope:Scope, personality: &Personality, owner: ActorId) -> Self {
+    pub fn new(name: ScopedName, personality: &Personality, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
         // The agent itself contributes, so that it may read its own
         // definition (issue 11).
@@ -106,7 +106,6 @@ impl Agent {
             id: agent_id,
             personality_id: personality.id,
             name,
-            scope,
             security_attributes,
         }
     }

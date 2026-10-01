@@ -25,6 +25,7 @@ pub mod user;
 pub mod template;
 pub mod store_impl;
 pub mod scope;
+pub mod name;
 pub mod component;
 pub mod event;
 pub mod security;

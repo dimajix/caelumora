@@ -184,6 +184,7 @@ fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controll
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::{Name, ScopedName};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::actor::ActorId;
     use caelumora_model::scope::Scope;
@@ -202,16 +203,15 @@ mod tests {
 
     async fn agent_in(store: &MemoryStore) -> Agent {
         let personality = Personality {
-            scope: Default::default(),
             description: String::new(),
             introduction: None,
             id: PersonalityId::new(),
-            name: String::new(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
         };
-        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, ActorId::None);
+        let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
@@ -258,7 +258,7 @@ mod tests {
         // Nobody uses it any more: the next one is loaded again, as stored now.
         drop(first);
         let mut renamed = agent.clone();
-        renamed.name = "renamed".to_string();
+        renamed.name.name = Name::new("renamed").unwrap();
         store.update_agent(&SecurityContext::system(), &renamed).await.unwrap();
         assert_eq!(manager.agent_controller(agent.id).await.unwrap().name(), "renamed");
 
@@ -273,7 +273,7 @@ mod tests {
         let (agents_controller, users_controller) = (manager.agent_controller(agent.id).await.unwrap(), manager.user_controller(user.id).await.unwrap());
 
         // As another instance, or whoever changes users, would announce them.
-        bus.publish(GlobalEvent::AgentUpdated(agent.id, AgentUpdateEvent::NameChanged("from elsewhere".to_string())), Default::default());
+        bus.publish(GlobalEvent::AgentUpdated(agent.id, AgentUpdateEvent::NameChanged(Name::new("from elsewhere").unwrap())), Default::default());
         bus.publish(GlobalEvent::UserUpdated(user.id, UserUpdateEvent::NameChanged("alice b.".to_string())), Default::default());
 
         eventually(|| agents_controller.name() == "from elsewhere" && users_controller.username() == "alice b.").await;
@@ -285,8 +285,8 @@ mod tests {
         let agent = agent_in(&store).await;
         let controller = manager.agent_controller(agent.id).await.unwrap();
 
-        controller.update_name(&SecurityContext::system(), "first".to_string()).await.unwrap();
-        controller.update_name(&SecurityContext::system(), "second".to_string()).await.unwrap();
+        controller.update_name(&SecurityContext::system(), Name::new("first").unwrap()).await.unwrap();
+        controller.update_name(&SecurityContext::system(), Name::new("second").unwrap()).await.unwrap();
         // Both announcements come back through the follower; each carries
         // the name it set, so the last one leaves the last name.
         tokio::time::sleep(Duration::from_millis(50)).await;

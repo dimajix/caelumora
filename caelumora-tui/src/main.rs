@@ -262,7 +262,7 @@ async fn main() -> anyhow::Result<()> {
 
     // By name, among those this user may use.
     let template = entity_store.list_session_templates(&security).await?.into_iter()
-        .find(|t| t.name == args.template)
+        .find(|t| t.name.name == args.template.as_str())
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
     let session_manager = Arc::new(SessionManager::new(runtime.clone()));

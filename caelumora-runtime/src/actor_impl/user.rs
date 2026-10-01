@@ -316,6 +316,7 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::Name;
     use caelumora_model::command::default_commands;
     use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
@@ -333,7 +334,7 @@ mod tests {
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
-            name: "main".to_string(),
+            name: Name::new("main").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),

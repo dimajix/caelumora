@@ -135,6 +135,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::{Name, ScopedName};
     use crate::agent_state::AgentStateHandle;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
@@ -178,10 +179,9 @@ mod tests {
 
     async fn personality(store: &MemoryStore, introduction: Option<&str>) -> Personality {
         let personality = Personality {
-            scope: Default::default(),
             description: String::new(),
             id: PersonalityId::new(),
-            name: String::new(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
             introduction: introduction.map(str::to_string),
             components: Default::default(),
             security_attributes: Default::default(),
@@ -192,7 +192,7 @@ mod tests {
     }
 
     async fn agent(store: &MemoryStore, name: &str, personality: &Personality) -> Agent {
-        let agent = Agent::new(name.to_string(), Scope::GlobalScope, personality, ActorId::None);
+        let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::None);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
@@ -214,7 +214,7 @@ mod tests {
         let plain = personality(&store, None).await;
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;
         let sassy = agent(&store, "Sassy", &plain).await;
-        let gone = Agent::new("Gone".to_string(), Scope::GlobalScope, &plain, ActorId::None);
+        let gone = Agent::new(ScopedName::new("Gone", Scope::GlobalScope).unwrap(), &plain, ActorId::None);
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Approver(approver), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
@@ -224,7 +224,7 @@ mod tests {
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
         };
         let channel = Channel {
-            id: session.channels[0], session_id: session.id, name: "main".to_string(), components: Default::default(),
+            id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
             classification: Classification::CHANNEL_DEFAULT, history_limits: Vec::new(), participants, security_attributes: Default::default(),
         };
         store.create_session(&system, &session).await.unwrap();

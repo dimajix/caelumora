@@ -1,6 +1,7 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, Compartment};
 use caelumora_model::message::Message;
+use caelumora_model::name::Name;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -51,7 +52,7 @@ pub struct TemplateResponse {
 
 impl From<&SessionTemplate> for TemplateResponse {
     fn from(template: &SessionTemplate) -> Self {
-        Self { id: template.id, name: template.name.clone(), description: template.description.clone() }
+        Self { id: template.id, name: template.name.to_string(), description: template.description.clone() }
     }
 }
 
@@ -205,7 +206,9 @@ pub struct AddParticipantRequest {
 /// A channel to create in a running session (issue 09).
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
-    pub name: String,
+    /// Checked as it is read: a text that is no name is a malformed request
+    /// (issue 177).
+    pub name: Name,
     /// The kind of the moderator, e.g. `policy_moderator`; the default if
     /// absent (issue 174).
     pub moderator: Option<String>,

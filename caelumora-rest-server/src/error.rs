@@ -191,7 +191,7 @@ impl ApiError {
             match e {
                 SessionError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
                 SessionError::DuplicateChannelName { .. } => return Self::conflict("channel_exists", detail),
-                SessionError::EmptyChannelName | SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
+                SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
                 // A caller that is no user: not the client's request.
                 SessionError::OwnerNotAUser(_) => {}
@@ -372,8 +372,7 @@ mod tests {
         assert_eq!(answer(not_found("session"), Subject::Session), (404, "session_not_found"));
         assert_eq!(answer(not_found("session_template"), Subject::Session), (404, "template_not_found"));
         assert_eq!(answer(anyhow::Error::new(SessionError::ChannelNotFound { session, channel }), Subject::Session), (404, "channel_not_found"));
-        assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: "x".into() }), Subject::Session), (409, "channel_exists"));
-        assert_eq!(answer(anyhow::Error::new(SessionError::EmptyChannelName), Subject::Session), (400, "invalid_channel"));
+        assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: caelumora_model::name::Name::new("x").unwrap() }), Subject::Session), (409, "channel_exists"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::AlreadyParticipant { participant: someone, channel }), Subject::Participant), (409, "already_participant"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::ParticipantGone { participant: someone, channel }), Subject::Participant), (404, "participant_not_found"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::ApproverStays { channel }), Subject::Participant), (400, "invalid_participant"));

@@ -10,7 +10,7 @@ use crate::user::UserId;
 /// users have none: they are scopes themselves. Looking definitions up by
 /// name within their scope is issue 178; so far only templates read it, to
 /// find their agents.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Scope {
     ChannelScope { session_id:SessionId, channel:String },
     SessionScope { session_id:SessionId },

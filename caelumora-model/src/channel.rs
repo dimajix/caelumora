@@ -5,6 +5,7 @@ use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::{ChannelRef, Classification};
 use crate::message::MessageId;
 use crate::message_history::MessageHistory;
+use crate::name::Name;
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
 use crate::user::UserId;
@@ -13,7 +14,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
-    NameChanged(String),
+    NameChanged(Name),
     /// Reclassified (issue 133).
     ClassificationChanged(Classification),
 }
@@ -34,7 +35,8 @@ pub fn moderation_components(moderator: Option<&str>, responder_policy: Option<&
 pub struct Channel {
     pub id: ChannelId,
     pub session_id: SessionId,
-    pub name: String,
+    /// What it is found by in its session (issue 177).
+    pub name: Name,
     /// The channel's components (issue 174): its moderator and the policy
     /// that fills the moderator's slot. A facet nobody here provides is
     /// built from its default.
@@ -98,7 +100,7 @@ impl Channel {
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and with every user and agent in it as a
     /// contributor (see `participant_attributes`).
-    pub fn build(session_id: SessionId, owner: ActorId, name: String, components: ComponentConfig, classification: Classification, mut participants: Vec<Participant>) -> Self {
+    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {
                 id: ApproverId(Uuid::new_v4()),

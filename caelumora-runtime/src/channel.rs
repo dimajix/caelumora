@@ -1,3 +1,4 @@
+use caelumora_model::name::Name;
 use crate::actor::Actor;
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::approval::ApproverActor;
@@ -290,7 +291,7 @@ impl ChannelLoop {
 
     pub fn session_id(&self) -> SessionId { self.session_id }
     
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> Name {
         self.channel.name()
     }
 
@@ -310,7 +311,7 @@ impl ChannelLoop {
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
-    pub async fn update_name(&self, context: &SecurityContext, new_name: String) -> Result<()> {
+    pub async fn update_name(&self, context: &SecurityContext, new_name: Name) -> Result<()> {
         Ok(self.channel.update_name(context, new_name).await?)
     }
 
@@ -1040,6 +1041,7 @@ fn visible_from(start: HistoryStart, history: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::{Name, ScopedName};
     use caelumora_model::store::EntityStore;
     use crate::command::CommandExecutor;
     use crate::command_impl::help_command::HelpCommandProvider;
@@ -1109,7 +1111,7 @@ mod tests {
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
-            name: "main".to_string(),
+            name: Name::new("main").unwrap(),
             components,
             participants,
             security_attributes: SecurityAttributes::default(),
@@ -1507,19 +1509,18 @@ mod tests {
 
         let store = Arc::new(MemoryStore::new());
         let personality = Personality {
-            scope: Default::default(),
             description: String::new(),
             introduction: None,
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),
-            name: "plain".to_string(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
             components,
             security_attributes: Default::default(),
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let agent = Agent::new("helper".to_string(), Scope::GlobalScope, &personality, context.initiator_id);
+        let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
         let agent_id = agent.id;
         store.create_user(&SecurityContext::system(), &alice).await.unwrap();
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
@@ -1550,7 +1551,7 @@ mod tests {
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
-            name: "main".to_string(),
+            name: Name::new("main").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             participants: vec![
                 Participant::User(alice.id),

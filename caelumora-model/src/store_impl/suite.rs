@@ -7,6 +7,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::confidentiality::{Classification, Visibility};
+use crate::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
@@ -31,7 +32,7 @@ macro_rules! lifecycle {
         let conflict = store.$create(&ctx, &value).await;
         assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict, got {:?}"), conflict);
 
-        value.$($field).+ = "renamed".to_string().into();
+        value.$($field).+ = "renamed".to_string().try_into().expect(concat!($entity, ": a valid value"));
         store.$update(&ctx, &value).await.expect(concat!($entity, ": update"));
         let found = store.$get(&ctx, ($key)(&value)).await.expect(concat!($entity, ": get"));
         assert_eq!(found.$($field).+, value.$($field).+, concat!($entity, ": get sees the update"));
@@ -51,14 +52,17 @@ macro_rules! lifecycle {
     }};
 }
 
+fn scoped(name: &str) -> ScopedName {
+    ScopedName::new(name, Scope::GlobalScope).unwrap()
+}
+
 fn personality() -> Personality {
     Personality {
         introduction: None,
         reasoning_visibility: Visibility::Channel,
         security_attributes: Default::default(),
         id: PersonalityId(Uuid::new_v4()),
-        name: "assistant".to_string(),
-        scope: Scope::GlobalScope,
+        name: scoped("assistant"),
         description: String::new(),
         components: Default::default(),
     }
@@ -70,12 +74,11 @@ fn session_template() -> SessionTemplate {
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionTemplateId(Uuid::new_v4()),
-        name: "pairing".to_string(),
-        scope: Scope::GlobalScope,
+        name: scoped("pairing"),
         description: String::new(),
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
-            name: "general".to_string(),
+            name: Name::new("general").unwrap(),
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             participants: vec!["user".to_string()],
@@ -101,7 +104,7 @@ fn channel() -> Channel {
     Channel {
         id: ChannelId(Uuid::new_v4()),
         session_id: SessionId(Uuid::new_v4()),
-        name: "general".to_string(),
+        name: Name::new("general").unwrap(),
         components: crate::channel::moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         history_limits: Vec::new(),
@@ -139,11 +142,11 @@ fn component_id(value: &ComponentDescriptor) -> &str {
 /// Every kind of entity goes through the same life, and users are also
 /// found by name.
 pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
-    lifecycle!(store, personality(), |v: &Personality| v.id, name, "personality",
+    lifecycle!(store, personality(), |v: &Personality| v.id, name.name, "personality",
         create_personality, get_personality, update_personality, delete_personality, list_personalities);
-    lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, name, "session_template",
+    lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
         create_session_template, get_session_template, update_session_template, delete_session_template, list_session_templates);
-    lifecycle!(store, Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, name, "agent",
+    lifecycle!(store, Agent::new(scoped("assistant-1"), &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, name.name, "agent",
         create_agent, get_agent, update_agent, delete_agent, list_agents);
     lifecycle!(store, session(), |v: &Session| v.id, name, "session",
         create_session, get_session, update_session, delete_session, list_sessions);

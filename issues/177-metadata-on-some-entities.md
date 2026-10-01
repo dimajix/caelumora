@@ -75,3 +75,18 @@ name differently per kind is a small trap at every call site.
   it - `ScopeTemplate` remains for a template's agents. The REST API is
   unchanged; `examples/seed.yaml` and `docs/STORAGE.md` follow the new
   shape. The local store was started afresh.
+- **2026-10-01** — Followed up at the maintainer's proposal: a name that
+  something is looked up by has a type of its own. `Name`
+  (`caelumora-model/src/name.rs`) is checked when made or read, keeps its
+  text with whitespace tidied and compares regardless of case;
+  `ScopedName` is a `Name` with its `Scope`, flattened into the document
+  as `name` and `scope`, made from a text and a scope
+  (`ScopedName::new`). `Personality`, `SessionTemplate` and `Agent` hold a
+  `ScopedName` in their field `name`; a `Channel`, a `ChannelTemplate` and a
+  template's agent a `Name`. A
+  session's name stays a `String` - it is only shown - and so does a user's
+  `username`, the login identity a user provider owns. Renaming a channel
+  or an agent takes a `Name`; `POST …/channels` reads its `name` as one,
+  so a text that is no name is a malformed request (`invalid_request_body`)
+  and `SessionError::EmptyChannelName` is gone. Uniqueness per scope is
+  still issue [178](178-scoped-lookup-by-name.md).

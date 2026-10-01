@@ -11,6 +11,7 @@ use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::digest::Digest;
 use caelumora_model::mention::handle_of;
+use caelumora_model::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes};
 use caelumora_model::session::ChannelId;
@@ -69,7 +70,7 @@ impl ChannelView {
         self.channel.id
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &Name {
         &self.channel.name
     }
 
@@ -114,7 +115,7 @@ impl ChannelView {
     /// could be read: that there is no such channel, so that nothing can be
     /// probed.
     fn nothing_released(&self) -> ViewError {
-        ViewError::NoChannelNamed(self.channel.name.clone())
+        ViewError::NoChannelNamed(self.channel.name.to_string())
     }
 
     /// Whether the viewer may rename the channel and add or remove its
@@ -246,7 +247,7 @@ impl ChannelView {
         }
         ChannelSnapshot {
             id: self.channel.id,
-            name: self.channel.name.clone(),
+            name: self.channel.name.to_string(),
             moderator: self.moderator(),
             responder_policy: self.responder_policy(),
             classification: self.channel.classification.clone(),
@@ -300,7 +301,7 @@ impl MemberView {
     /// `None` for a user or agent that no longer exists.
     pub fn name(&self) -> Option<&str> {
         match &self.agent {
-            Some(agent) => Some(&agent.name),
+            Some(agent) => Some(agent.name.as_str()),
             None => self.name.as_deref(),
         }
     }

@@ -565,7 +565,7 @@ mod tests {
         let channel = Channel {
             id: ChannelId(Uuid::new_v4()),
             session_id,
-            name: "general".to_string(),
+            name: crate::name::Name::new("general").unwrap(),
             components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),

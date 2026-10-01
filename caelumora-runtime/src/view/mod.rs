@@ -260,7 +260,7 @@ impl Views {
     async fn name_of(&self, participant: &Participant) -> Option<String> {
         match participant {
             Participant::User(id) => self.runtime.entity_store().get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
-            Participant::Agent(id) => self.agent_of(*id).await.map(|agent| agent.name),
+            Participant::Agent(id) => self.agent_of(*id).await.map(|agent| agent.name.to_string()),
             Participant::Approver(_) => participant.actor_id().fixed_name().map(str::to_string),
         }
     }
@@ -387,6 +387,7 @@ impl std::fmt::Debug for ViewsFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::{Name, ScopedName};
     use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::channel::Channel;
@@ -447,7 +448,7 @@ mod tests {
         Channel {
             id: session.channels[0],
             session_id: session.id,
-            name: "main".to_string(),
+            name: Name::new("main").unwrap(),
             components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
@@ -458,17 +459,16 @@ mod tests {
 
     async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
         let personality = Personality {
-            scope: Default::default(),
             description: String::new(),
             introduction: None,
             reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
-            name: "plain".to_string(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
             components: Default::default(),
             security_attributes: Default::default(),
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
-        let agent = Agent::new("Helper".to_string(), Scope::GlobalScope, &personality, owner);
+        let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
@@ -485,7 +485,7 @@ mod tests {
         let main = main_channel(&session);
         let running = manager.create_session(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
-        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, participants: vec![] }).await.unwrap().id();
+        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: Name::new("private").unwrap(), components: Default::default(), classification: None, participants: vec![] }).await.unwrap().id();
         let id = running.id();
 
         let check = |state: &'static str| {
@@ -665,7 +665,7 @@ mod tests {
         let system = SecurityContext::system();
         let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
         let mut channel_of = |name: &str, classification: Classification| {
-            let channel = Channel { id: ChannelId::new(), name: name.to_string(), classification, ..template.clone() };
+            let channel = Channel { id: ChannelId::new(), name: Name::new(name).unwrap(), classification, ..template.clone() };
             session.channels.push(channel.id);
             channel
         };

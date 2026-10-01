@@ -6,7 +6,7 @@
 
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::Participant;
-use caelumora_model::scope::Scope;
+use caelumora_model::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreResult};
@@ -33,8 +33,8 @@ pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &Secu
                 store.get_user(context, id).await?;
                 Participant::User(id)
             }
-            ParticipantRequest::Agent { name, scope, personality_id } => {
-                Participant::Agent(agent(store, context, name, scope, personality_id).await?)
+            ParticipantRequest::Agent { name: agent_name, personality_id } => {
+                Participant::Agent(agent(store, context, agent_name, personality_id).await?)
             }
             ParticipantRequest::Approver(approver) => Participant::Approver(approver),
         };
@@ -43,19 +43,19 @@ pub(crate) async fn resolve_participants(store: &dyn EntityStore, context: &Secu
     Ok(participants)
 }
 
-/// The agent named `name` in `scope`, or a new one of `personality_id`,
-/// owned by whoever `context` acts for.
-async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: String, scope: Scope, personality_id: PersonalityId) -> StoreResult<AgentId> {
+/// The agent of `name`, or a new one of `personality_id`, owned by whoever
+/// `context` acts for.
+async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> StoreResult<AgentId> {
     // Only "there is none" means "make one": a lookup that failed or was
     // refused is an error, not a reason for a second agent of that name
     // (issue 77).
     let known = store.list_agents(context).await?.into_iter()
-        .find(|a| a.name == name && scope.contains(&a.scope));
+        .find(|a| a.name.name == name.name && name.scope.contains(&a.name.scope));
     if let Some(agent) = known {
         return Ok(agent.id);
     }
     let personality = store.get_personality(context, personality_id).await?;
-    let agent = Agent::new(name, scope, &personality, context.initiator_id);
+    let agent = Agent::new(name, &personality, context.initiator_id);
     store.create_agent(context, &agent).await?;
     Ok(agent.id)
 }
@@ -63,6 +63,7 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: String,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::name::{Name, ScopedName};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Personality;
@@ -87,8 +88,7 @@ mod tests {
     fn template(participants: Vec<ParticipantTemplate>) -> SessionTemplate {
         SessionTemplate {
             id: SessionTemplateId::new(),
-            name: String::new(),
-            scope: Default::default(),
+            name: ScopedName::new("pairing", Default::default()).unwrap(),
             description: String::new(),
             participants,
             channels: Vec::new(),
@@ -99,16 +99,15 @@ mod tests {
     }
 
     fn helper(personality_id: PersonalityId) -> ParticipantTemplate {
-        ParticipantTemplate::Agent { name: "helper".to_string(), scope: ScopeTemplate::GlobalScope, personality_id }
+        ParticipantTemplate::Agent { name: Name::new("helper").unwrap(), scope: ScopeTemplate::GlobalScope, personality_id }
     }
 
     async fn store_with_personality(store: MemoryStore) -> (Arc<MemoryStore>, PersonalityId) {
         let personality = Personality {
-            scope: Default::default(),
             description: String::new(),
             introduction: None,
             id: PersonalityId::new(),
-            name: "plain".to_string(),
+            name: ScopedName::new("plain", Default::default()).unwrap(),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,

@@ -10,6 +10,7 @@ use crate::channel::{participant_attributes, Channel, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
+use crate::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
@@ -70,7 +71,7 @@ impl ScopeTemplate {
 /// the fields with a default may be left out (issue 108).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelTemplate {
-    pub name: String,
+    pub name: Name,
     /// The channel's components (issue 174): its moderator and the policy
     /// that fills its slot; the defaults if none are named.
     #[serde(default)]
@@ -109,10 +110,10 @@ define_id!(SessionTemplateId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTemplate {
     pub id: SessionTemplateId,
-    pub name: String,
-    /// Where it lies (issue 177): the global scope unless named.
-    #[serde(default)]
-    pub scope: Scope,
+    /// What it is found by: its name and where it lies (issue 177), the
+    /// global scope unless named.
+    #[serde(flatten)]
+    pub name: ScopedName,
     /// What sessions made from it are for: a catalogue line, offered to
     /// whoever starts one.
     #[serde(default)]
@@ -140,6 +141,7 @@ impl Secured for SessionTemplate {
 }
 
 impl SessionTemplate {
+
     /// Builds the session `id` of `owner`, named `name`, and its channels -
     /// documents of their own, which the session lists by id (issue 70).
     /// `participants` are the template's participants as found or created
@@ -174,7 +176,7 @@ pub enum ParticipantTemplate {
     User { name: String },
     /// An agent of `personality_id`, found by its name in `scope` or made.
     Agent {
-        name: String,
+        name: Name,
         scope: ScopeTemplate,
         personality_id: PersonalityId,
     },
@@ -197,8 +199,9 @@ fn default_strategy() -> ApprovalStrategy {
 pub enum ParticipantRequest {
     /// This user, who must exist.
     User(UserId),
-    /// The agent named `name` in `scope`, or a new one of `personality_id`.
-    Agent { name: String, scope: Scope, personality_id: PersonalityId },
+    /// The agent of that name in that scope, or a new one of
+    /// `personality_id`.
+    Agent { name: ScopedName, personality_id: PersonalityId },
     /// This approver, which needs nothing from the store.
     Approver(Approver),
 }
@@ -207,7 +210,8 @@ impl ParticipantTemplate {
     /// The name channels use to refer to this participant.
     pub fn name(&self) -> &str {
         match self {
-            ParticipantTemplate::User { name } | ParticipantTemplate::Agent { name, .. } | ParticipantTemplate::Approver { name, .. } => name,
+            ParticipantTemplate::User { name } | ParticipantTemplate::Approver { name, .. } => name,
+            ParticipantTemplate::Agent { name, .. } => name.as_str(),
         }
     }
 
@@ -221,8 +225,7 @@ impl ParticipantTemplate {
             ParticipantTemplate::User { name } if name == OWNER => Ok(ParticipantRequest::User(owner)),
             ParticipantTemplate::User { name } => Err(TemplateError::UnboundUser(name.clone())),
             ParticipantTemplate::Agent { name, scope, personality_id } => Ok(ParticipantRequest::Agent {
-                name: name.clone(),
-                scope: scope.instantiate(session_id, owner)?,
+                name: ScopedName { name: name.clone(), scope: scope.instantiate(session_id, owner)? },
                 personality_id: *personality_id,
             }),
             ParticipantTemplate::Approver { strategy, .. } => Ok(ParticipantRequest::Approver(Approver {
@@ -243,23 +246,22 @@ mod tests {
         SessionTemplate {
             security_attributes: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
-            name: String::new(),
-            scope: Scope::GlobalScope,
+            name: ScopedName::new("pairing", Scope::GlobalScope).unwrap(),
             description: String::new(),
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
-                ParticipantTemplate::Agent { name: "helper".to_string(), scope: ScopeTemplate::UserScope, personality_id: PersonalityId::new() },
+                ParticipantTemplate::Agent { name: Name::new("helper").unwrap(), scope: ScopeTemplate::UserScope, personality_id: PersonalityId::new() },
                 ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
             ],
             channels: vec![
                 ChannelTemplate {
-                    name: "main".to_string(),
+                    name: Name::new("main").unwrap(),
                     components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
                 },
                 ChannelTemplate {
-                    name: "side".to_string(),
+                    name: Name::new("side").unwrap(),
                     components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string()],
@@ -289,12 +291,12 @@ mod tests {
         let requests: Vec<_> = template.participants.iter().map(|p| p.request(session, owner).unwrap()).collect();
 
         assert!(matches!(requests[0], ParticipantRequest::User(id) if id == owner), "\"user\" is the owner");
-        assert!(matches!(&requests[1], ParticipantRequest::Agent { name, scope: Scope::UserScope { user_id }, .. } if name == "helper" && *user_id == owner));
+        assert!(matches!(&requests[1], ParticipantRequest::Agent { name: ScopedName { name, scope: Scope::UserScope { user_id } }, .. } if *name == "helper" && *user_id == owner));
         assert!(matches!(&requests[2], ParticipantRequest::Approver(a) if a.strategy == ApprovalStrategy::All), "the template's strategy");
 
         let other = ParticipantTemplate::User { name: "guest".to_string() };
         assert!(matches!(other.request(session, owner), Err(TemplateError::UnboundUser(_))), "only the owner fills a user");
-        let group = ParticipantTemplate::Agent { name: "x".to_string(), scope: ScopeTemplate::GroupScope, personality_id: PersonalityId::new() };
+        let group = ParticipantTemplate::Agent { name: Name::new("x").unwrap(), scope: ScopeTemplate::GroupScope, personality_id: PersonalityId::new() };
         assert!(matches!(group.request(session, owner), Err(TemplateError::UnsupportedScope("group"))), "an error, not a panic");
     }
 

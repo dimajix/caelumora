@@ -23,8 +23,8 @@ entities:
     part of the `User` record.
 *   **Preconfigured components**: `ComponentDescriptor`s kept by id.
 
-Every entity has a `name` (a user its `username`, the login identity it is
-found by), and the fields that mean something for it (issue 177):
+Every entity has a name, and the fields that mean something for it (issue
+177):
 
 *   **What is a scope** - a session, a channel, a user - has a name only.
 *   **What lies in a scope** - a personality, a session template, an agent -
@@ -35,6 +35,20 @@ found by), and the fields that mean something for it (issue 177):
     [178](../issues/178-scoped-lookup-by-name.md).
 *   What is offered for choosing - a personality, a session template - has a
     `description` as well, a catalogue line.
+
+The type of a name says what it is for (`caelumora_model::name`):
+
+*   **`Name`** - a name something is looked up by: a channel's. It is
+    checked when it is made or read (not empty, no control characters, at
+    most `MAX_NAME_CHARS`), kept as written with its whitespace tidied, and
+    compared regardless of case - "Jonathan" and "jonathan" are one name, in
+    a lookup, a map and a key. Its `handle` is what it is `@`-mentioned by.
+*   **`ScopedName`** - a `Name` with the `Scope` it lies in: what a
+    definition is found by. Written into the document as the fields `name`
+    and `scope`, the scope global unless named.
+*   **`String`** - a name that is only shown (a session's), or that is
+    decided elsewhere: a user's `username` is their login identity, owned by
+    a user provider such as a directory, and opaque to Caelumora.
 
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`,
 which keeps one JSON file per document.
