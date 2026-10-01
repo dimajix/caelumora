@@ -18,7 +18,8 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
-use caelumora_model::memory::{Memory, MemoryChange, MemoryId, MemoryOrigin};
+use caelumora_model::ledger::Staged;
+use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::session::SessionId;
 use crate::view::Views;
@@ -130,47 +131,52 @@ impl AgentMemory {
         id
     }
 
-    /// Forgets entry `id` if it may be recalled here (asked as in
-    /// [`recalled`](Self::recalled)) or was remembered earlier in this turn,
-    /// and is not forgotten already - taken over when the turn completes.
-    /// Returns whether it was.
+    /// The memory as it stands with the changes of the current turn in it
+    /// (issue 156) - every entry, recallable here or not.
+    pub fn effective(turn: &Turn) -> Staged<Memories> {
+        let staged = turn.staged_agent_changes().iter().map(|AgentStateChange::Memory { change, origin }| (change, origin.clone()));
+        turn.agent_state().current().memory.with_staged(staged)
+    }
+
+    /// Entry `id` as it stands with the turn's changes, if it does and is
+    /// the agent's to change here: remembered earlier in this turn, or one
+    /// that may be recalled here - asked of the policy for this entry alone,
+    /// as in [`recalled`](Self::recalled).
+    pub async fn find(turn: &Turn<'_>, id: MemoryId, security: &dyn SecurityManager, context: &SecurityContext) -> Option<Memory> {
+        let entry = Self::effective(turn).get(id)?.clone();
+        let Some(stored) = turn.agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
+            return Some(entry);
+        };
+        let own = turn.session()?;
+        let (here, classification, session) = (turn.channel(), turn.classification(), own.privacy());
+        let place = Place { channel: &here, classification: &classification, session: &session };
+        Self::may_recall(&stored, place, own.views(), &mut Vec::new(), security, context).await.then_some(entry)
+    }
+
+    /// Forgets entry `id` - one the turn may change (see
+    /// [`find`](Self::find)) - when the turn completes. Returns whether
+    /// there was one.
     pub async fn forget(turn: &mut Turn<'_>, id: MemoryId, security: &dyn SecurityManager, context: &SecurityContext) -> bool {
-        let recalled = Self::recalled(turn, security, context).await.iter().any(|m| m.id == id);
-        let staged = |wanted: fn(&MemoryChange, MemoryId) -> bool| turn.staged_agent_changes().iter()
-            .any(|c| matches!(c, AgentStateChange::Memory { change, .. } if wanted(change, id)));
-        let remembered_now = staged(|c, id| matches!(c, MemoryChange::Add { id: r, .. } if *r == id));
-        let forgotten = staged(|c, id| matches!(c, MemoryChange::Remove { id: f } if *f == id));
-        if !(recalled || remembered_now) || forgotten {
+        if Self::find(turn, id, security, context).await.is_none() {
             return false;
         }
         turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remove { id }, origin: Self::origin(turn) });
         true
     }
 
-    /// Reclassifies entry `id` as `classification` (issue 133) - one that
-    /// may be recalled here (asked as in [`recalled`](Self::recalled)) or
-    /// was remembered earlier in this turn, and is not forgotten - if the
-    /// policy lets the agent (`ActionType::Reclassify`, asked in `context`,
-    /// the agent's): never above the turn's channel. Taken over when the
-    /// turn completes; from then on the entry is recalled where its new
-    /// classification may be read.
+    /// Reclassifies entry `id` as `classification` (issue 133) - one the
+    /// turn may change (see [`find`](Self::find)) - if the policy lets the
+    /// agent (`ActionType::Reclassify`, asked in `context`, the agent's):
+    /// never above the turn's channel. Taken over when the turn completes;
+    /// from then on the entry is recalled where its new classification may
+    /// be read.
     ///
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
     pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
         let here = turn.classification();
-        let recalled = Self::recalled(turn, security, context).await.into_iter().find(|m| m.id == id).map(|m| m.classification);
-        let staged = turn.staged_agent_changes();
-        let remembered_now = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Add { id: r, .. }, .. } if *r == id));
-        let forgotten = staged.iter().any(|c| matches!(c, AgentStateChange::Memory { change: MemoryChange::Remove { id: f }, .. } if *f == id));
-        // What the turn staged last for the entry is what it is now.
-        let reclassified_now = staged.iter().rev().find_map(|c| match c {
-            AgentStateChange::Memory { change: MemoryChange::Reclassify { id: r, classification }, .. } if *r == id => Some(classification.clone()),
-            _ => None,
-        });
-        let current = reclassified_now.or(recalled).or_else(|| remembered_now.then(|| here.clone()));
-        let Some(current) = current.filter(|_| !forgotten) else {
+        let Some(current) = Self::find(turn, id, security, context).await.map(|m| m.classification) else {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
         };
         let action = ActionType::Reclassify {

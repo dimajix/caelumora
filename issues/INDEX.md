@@ -124,6 +124,7 @@ against it, and what came out of the last attempt.
 | [149](149-special-tokens-in-content.md) | open | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
 | [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [158](158-publish-question-built-five-times.md) | done | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
+| [167](167-origin-and-releases.md) | open | A classification says who may read something but not where it was written: a release overwrites the origin, releases cannot be told apart, and there is no rule for writing. |
 
 ## Tools and approvals
 
@@ -198,7 +199,8 @@ against it, and what came out of the last attempt.
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [92](92-ledger-for-notes-and-memory.md) | done | `NoteChain` and `MemoryChain` are the same type written twice. |
-| [156](156-notes-and-memory-staged-scans.md) | open | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
+| [156](156-notes-and-memory-staged-scans.md) | done | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
+| [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |

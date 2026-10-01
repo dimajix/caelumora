@@ -1,6 +1,6 @@
 # 156 — Notes and memory search a turn's staged changes by hand
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -58,3 +58,17 @@ of [92](92-ledger-for-notes-and-memory.md); written once, it serves both.
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, N1, N2, N4), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-10-01** — Done. The ledger's fold runs over staged changes too:
+  `Ledger::with_staged` gives a `Staged<K>` (`current`, `get`, `next_id`)
+  sharing one private fold with `Ledger::current`; an entry added by a
+  staged change follows `MessageId::default()` until it is appended.
+  `AgentNotes::effective(turn, kind)` and `AgentMemory::effective(turn)`
+  are what `note`, `revoke`, `reclassify` and `forget` look at - no
+  operation scans the staged changes any more. A note revoked in the turn
+  that noted it is revoked by a staged `Remove`; both changes are taken
+  over and its number is used up. `Turn::staged_channel_changes` returns
+  `&[_]`. `AgentMemory::find(turn, id, ...)` asks the policy about the one
+  entry (`may_recall`) - none at all for an entry remembered in the turn.
+  `AgentChannelChange::Note { kind, change }` was not taken up: left to
+  [65](65-generic-component-state.md), which decides how component state
+  is held generically; `NoteKind::of` is used in one place now.

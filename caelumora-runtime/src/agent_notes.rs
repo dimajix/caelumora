@@ -5,8 +5,11 @@
 //! only generic access to that state - reading it, staging
 //! `AgentChannelChange`s that `commit_turn` applies when the turn completes -
 //! and knows nothing of notes (issue 65). [`AgentNotes`] is the logic on top:
-//! numbering, noting, revoking. The `notes` and `private_notes` components use
-//! it; anything else that works with an agent's notes in a turn uses it too.
+//! numbering, noting, revoking, reclassifying - each looking at the notes
+//! as they stand with the turn's own changes in them
+//! ([`AgentNotes::effective`], issue 156). The `notes` and `private_notes`
+//! components use it; anything else that works with an agent's notes in a
+//! turn uses it too.
 
 use crate::agent_turn::Turn;
 use crate::tool::{ToolError, ToolResult};
@@ -15,7 +18,8 @@ use caelumora_model::agent::{AgentChannelChange, AgentChannelState};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 use caelumora_model::digest::Digest;
-use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId};
+use caelumora_model::ledger::Staged;
+use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId, NoteOrigin, Notes};
 
 /// Which of an agent's note chains in a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,35 +73,27 @@ impl AgentNotes {
         kind.chain(turn.agent_channel_state()).digest()
     }
 
+    /// The notes as they stand with the changes of the current turn in
+    /// them (issue 156): what the turn's operations on notes look at.
+    pub fn effective(turn: &Turn, kind: NoteKind) -> Staged<Notes> {
+        let staged = turn.staged_channel_changes().iter().filter_map(|c| kind.of(c)).map(|c| (c, NoteOrigin::default()));
+        kind.chain(turn.agent_channel_state()).with_staged(staged)
+    }
+
     /// Notes `text` in this turn and returns the note's number: one more than
     /// any in the chain or noted earlier in the turn.
     pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
-        let noted_now = turn.staged_channel_changes().iter()
-            .filter_map(|c| match kind.of(c) {
-                Some(NoteChange::Add { id, .. }) => Some(id.0),
-                _ => None,
-            })
-            .max();
-        let id = match noted_now {
-            Some(highest) => NoteId(highest + 1),
-            None => kind.chain(turn.agent_channel_state()).next_id(),
-        };
+        let id = Self::effective(turn, kind).next_id();
         let classification = turn.classification();
         turn.stage_channel_change(kind.change(NoteChange::Add { id, text, classification }));
         id
     }
 
-    /// Revokes note `id`: one of the current notes, or one noted earlier in
-    /// this turn, which is then simply dropped - it was never published.
-    /// `false` if there is no such note.
+    /// Revokes note `id` - one of the current notes, or one noted earlier in
+    /// this turn - when the turn completes. `false` if there is no such note
+    /// (or it is revoked already).
     pub fn revoke(turn: &mut Turn, kind: NoteKind, id: NoteId) -> bool {
-        let staged = turn.staged_channel_changes();
-        if let Some(index) = staged.iter().position(|c| matches!(kind.of(c), Some(NoteChange::Add { id: noted, .. }) if *noted == id)) {
-            staged.remove(index);
-            return true;
-        }
-        let revoked_now = staged.iter().any(|c| matches!(kind.of(c), Some(NoteChange::Remove { id: revoked }) if *revoked == id));
-        if revoked_now || !kind.chain(turn.agent_channel_state()).current().iter().any(|n| n.id == id) {
+        if Self::effective(turn, kind).get(id).is_none() {
             return false;
         }
         turn.stage_channel_change(kind.change(NoteChange::Remove { id }));
@@ -114,14 +110,7 @@ impl AgentNotes {
     /// `InvalidParameter` if there is no such note, `PermissionDenied` if
     /// the policy refuses.
     pub async fn reclassify(turn: &mut Turn<'_>, kind: NoteKind, id: NoteId, classification: Classification, security: &dyn SecurityManager, context: &SecurityContext) -> ToolResult<()> {
-        let staged = turn.staged_channel_changes();
-        let noted_now = staged.iter().rev().find_map(|c| match kind.of(c) {
-            Some(NoteChange::Add { id: noted, classification, .. }) if *noted == id => Some(classification.clone()),
-            _ => None,
-        });
-        let revoked_now = staged.iter().any(|c| matches!(kind.of(c), Some(NoteChange::Remove { id: revoked }) if *revoked == id));
-        let current = noted_now.or_else(|| kind.chain(turn.agent_channel_state()).current().into_iter().find(|n| n.id == id).map(|n| n.classification));
-        let Some(current) = current.filter(|_| !revoked_now) else {
+        let Some(current) = Self::effective(turn, kind).get(id).map(|n| n.classification.clone()) else {
             return Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be reclassified")));
         };
         let channel = turn.classification();

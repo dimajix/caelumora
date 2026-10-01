@@ -54,17 +54,23 @@ in the channel.
     both a `Remove`.
 *   **Numbers.** Notes are numbered per agent, counting up, and a number is
     never given again, so that a model can repeat it to revoke.
-*   **Staging.** `AgentNotes` numbers, notes and revokes (`NoteKind::Public`
-    or `Private`). A change is staged as an `AgentChannelChange`
-    (`Turn::stage_channel_change`) and applied generically through
-    `AgentChannelState::apply` when the turn completes, after the turn's
-    last message in the history.
+*   **Staging.** `AgentNotes` numbers, notes, revokes and reclassifies
+    (`NoteKind::Public` or `Private`). A change is staged as an
+    `AgentChannelChange` (`Turn::stage_channel_change`) and applied
+    generically through `AgentChannelState::apply` when the turn completes,
+    after the turn's last message in the history.
+*   **What the turn sees.** Each operation looks at the notes as they stand
+    with the turn's own changes in them, `AgentNotes::effective` - the
+    ledger's fold run over the staged changes as well
+    (`Ledger::with_staged`, issue 156). A note revoked in the turn that
+    noted it is revoked like any other: both changes are taken over, and
+    its number is used up.
 *   **Announcing.** The agent then stores its channel state and announces
     `GlobalEvent::AgentChannelStateChanged` - with the channel's attributes,
     without content - before `FullResponseGenerated` ends the turn. Whoever
     reacts to the end of the turn thus reads the state it left.
 *   **Reading.** Others read published notes from the agents' states in the
-    `StateStore` (`ChannelView::notes`, `ChannelLoop::published_notes`), so
+    `StateStore` (`ChannelView::notes`), so
     only notes of finished turns are ever seen.
 *   **Prompt part.** The notes prompt part is a `BeforeTurnInput` part,
     empty when nothing is noted: the agent's own notes first, then those of
@@ -133,9 +139,12 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
     could follow; of a session that is gone, the one kept decides, and one
     that cannot be looked up recalls nothing. A turn in no session - in
     tests - recalls nothing. Only
-    entries recalled in a channel can be forgotten there, or reclassified
-    (`reclassify_memory`, see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
+    entries recalled in a channel, or remembered in the turn, can be
+    forgotten there, or reclassified (`reclassify_memory`, see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)):
+    `AgentMemory::find` looks the entry up in the memory as it stands with
+    the turn's changes (`AgentMemory::effective`, issue 156) and asks the
+    policy about that one entry.
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in
     the channel, as the memory is now.
 *   **Staging.** A change is staged as an `AgentStateChange`

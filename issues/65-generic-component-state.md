@@ -167,3 +167,9 @@ the turn again.
   direction for the rest of this issue is that the core does not know the
   kind - not another case in `AgentChannelChange` for the next component's
   state.
+- **2026-10-01** — From [156](156-notes-and-memory-staged-scans.md):
+  `AgentChannelChange` keeps its two variants with the same payload
+  (`Note`, `PrivateNote`), and `NoteKind::change` and `NoteKind::of` in
+  `agent_notes.rs` map between them. Folding them into
+  `AgentChannelChange::Note { kind, change }` was deliberately left to
+  this issue rather than done in passing.

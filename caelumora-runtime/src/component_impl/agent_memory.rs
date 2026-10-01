@@ -366,6 +366,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_entry_remembered_and_forgotten_in_one_turn_is_gone_once_it_completes() {
+        let agent = AgentId::new();
+        let handle = handle(agent).await;
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let memory = component(policy.clone(), ActorId::User(UserId::new()));
+        let session = SessionId::new();
+        let mut sessions = Sessions::under(policy).await;
+        sessions.add(session, SessionPrivacy::default()).await;
+        let team = channel(session, Confidentiality::Internal);
+
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default()).with_views(sessions.views_in(&team, &memory));
+        turn.next_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new());
+        memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "draft" }), &mut turn).await.unwrap();
+        memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.expect("remembered in this turn");
+        assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err(), "forgotten already");
+        let forgotten = memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), &mut turn).await;
+        assert!(matches!(forgotten, Err(ToolError::InvalidParameter(_))), "a forgotten entry is not reclassified");
+        turn.commit_turn().await;
+        assert!(handle.current().memory.current().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_turn_in_no_session_recalls_nothing_and_remembers_as_private() {
         let agent = AgentId::new();
         let handle = handle(agent).await;

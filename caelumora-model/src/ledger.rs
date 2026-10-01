@@ -123,22 +123,7 @@ impl<K: LedgerKind> Ledger<K> {
     pub fn current(&self) -> Vec<Item<K>> {
         let mut items: Vec<Item<K>> = Vec::new();
         for entry in self.changes.entries() {
-            match &entry.change {
-                Change::Add { id, text, classification } => items.push(Item {
-                    id: *id,
-                    text: text.clone(),
-                    classification: classification.clone(),
-                    origin: entry.origin.clone(),
-                    after: entry.after,
-                    written_at: entry.written_at,
-                }),
-                Change::Remove { id } => items.retain(|i| i.id != *id),
-                Change::Reclassify { id, classification } => {
-                    if let Some(item) = items.iter_mut().find(|i| i.id == *id) {
-                        item.classification = classification.clone();
-                    }
-                }
-            }
+            fold(&mut items, &entry.change, &entry.origin, entry.after, entry.written_at);
         }
         items
     }
@@ -146,14 +131,85 @@ impl<K: LedgerKind> Ledger<K> {
     /// The number the next entry gets: one more than any entry ever added,
     /// on any branch.
     pub fn next_id(&self) -> K::Id {
-        let highest = self.changes.all_entries()
-            .filter_map(|e| match &e.change {
-                Change::Add { id, .. } => Some((*id).into()),
-                Change::Remove { .. } | Change::Reclassify { .. } => None,
-            })
-            .max()
-            .unwrap_or(0);
+        let highest = self.changes.all_entries().filter_map(|e| added(&e.change)).max().unwrap_or(0);
         K::Id::from(highest + 1)
+    }
+
+    /// The ledger as it stands with `staged` - changes not part of it yet,
+    /// each with where it is made: a turn's, until the turn completes
+    /// (issue 156) - as if they had been appended.
+    pub fn with_staged<'c>(&self, staged: impl IntoIterator<Item = (&'c Change<K::Id>, K::Origin)>) -> Staged<K>
+    where
+        K::Id: 'c,
+    {
+        let mut items = self.current();
+        let mut next_id: u32 = self.next_id().into();
+        let now = Utc::now();
+        for (change, origin) in staged {
+            if let Some(id) = added(change) {
+                next_id = next_id.max(id + 1);
+            }
+            fold(&mut items, change, &origin, MessageId::default(), now);
+        }
+        Staged { items, next_id: K::Id::from(next_id) }
+    }
+}
+
+/// The number of the entry `change` adds, if it adds one.
+fn added<Id: Copy + Into<u32>>(change: &Change<Id>) -> Option<u32> {
+    match change {
+        Change::Add { id, .. } => Some((*id).into()),
+        Change::Remove { .. } | Change::Reclassify { .. } => None,
+    }
+}
+
+/// Folds `change`, made at `origin` after message `after` at `written_at`,
+/// into `items`: what stands before it becomes what stands after it.
+fn fold<K: LedgerKind>(items: &mut Vec<Item<K>>, change: &Change<K::Id>, origin: &K::Origin, after: MessageId, written_at: DateTime<Utc>) {
+    match change {
+        Change::Add { id, text, classification } => items.push(Item {
+            id: *id,
+            text: text.clone(),
+            classification: classification.clone(),
+            origin: origin.clone(),
+            after,
+            written_at,
+        }),
+        Change::Remove { id } => items.retain(|i| i.id != *id),
+        Change::Reclassify { id, classification } => {
+            if let Some(item) = items.iter_mut().find(|i| i.id == *id) {
+                item.classification = classification.clone();
+            }
+        }
+    }
+}
+
+/// A ledger as it stands with changes not part of it yet (see
+/// [`Ledger::with_staged`]). An entry added by one of them follows
+/// `MessageId::default()` and was written when this was made: where it
+/// will follow and when it will be written is known only once it is
+/// appended.
+#[derive(Debug, Clone)]
+pub struct Staged<K: LedgerKind> {
+    items: Vec<Item<K>>,
+    next_id: K::Id,
+}
+
+impl<K: LedgerKind> Staged<K> {
+    /// The entries as they stand, oldest first.
+    pub fn current(&self) -> &[Item<K>] {
+        &self.items
+    }
+
+    /// Entry `id`, if it stands.
+    pub fn get(&self, id: K::Id) -> Option<&Item<K>> {
+        self.items.iter().find(|i| i.id == id)
+    }
+
+    /// The number the next entry gets: one more than any entry ever added,
+    /// on any branch or by the staged changes.
+    pub fn next_id(&self) -> K::Id {
+        self.next_id
     }
 }
 
@@ -226,5 +282,28 @@ mod tests {
         let loaded: NoteChain = serde_json::from_value(serde_json::to_value(&noted).unwrap()).unwrap();
         assert_eq!(loaded.digest(), noted.digest());
         assert_eq!(loaded.current(), noted.current());
+    }
+
+    #[test]
+    fn staged_changes_stand_as_if_appended_and_use_up_their_numbers() {
+        let mut chain = NoteChain::default();
+        push(&mut chain, add(1, "a"), MessageId::new());
+        push(&mut chain, add(2, "b"), MessageId::new());
+        let released = Classification::general(crate::confidentiality::Confidentiality::Public);
+        let staged = [
+            add(3, "c"),
+            Change::Remove { id: NoteId(1) },
+            Change::Reclassify { id: NoteId(3), classification: released.clone() },
+            add(4, "d"),
+            Change::Remove { id: NoteId(4) },
+        ];
+        let standing = chain.with_staged(staged.iter().map(|c| (c, NoteOrigin::default())));
+
+        let texts: Vec<&str> = standing.current().iter().map(|n| n.text.as_str()).collect();
+        assert_eq!(texts, ["b", "c"]);
+        assert_eq!(standing.get(NoteId(3)).map(|n| &n.classification), Some(&released));
+        assert!(standing.get(NoteId(4)).is_none());
+        assert_eq!(standing.next_id(), NoteId(5), "4 was added and removed, and is used up");
+        assert_eq!(chain.current().len(), 2, "the ledger itself is unchanged");
     }
 }

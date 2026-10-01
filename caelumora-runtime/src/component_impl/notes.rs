@@ -322,4 +322,29 @@ mod tests {
             assert!(!turn.commit_turn().await.channel_state_changed);
         }
     }
+
+    #[tokio::test]
+    async fn a_note_revoked_in_the_turn_that_noted_it_is_gone_and_its_number_used_up() {
+        let mut state = AgentChannelState::default();
+        let tools = NotesComponent {
+            security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
+            security_context: Default::default(),
+        };
+        {
+            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+            turn.begin();
+            tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), &mut turn).await.unwrap();
+            tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.expect("noted in this turn");
+            let again = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await;
+            assert!(matches!(again, Err(ToolError::InvalidParameter(_))), "revoked already");
+            let revoked = tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), &mut turn).await;
+            assert!(matches!(revoked, Err(ToolError::InvalidParameter(_))), "a revoked note is not reclassified");
+            turn.commit_turn().await;
+            assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty());
+        }
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        turn.begin();
+        let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), &mut turn).await.unwrap();
+        assert_eq!(noted.value["id"], 2);
+    }
 }

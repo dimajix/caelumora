@@ -564,10 +564,10 @@ impl<'a> Turn<'a> {
     }
 
     /// The changes to the agent's state in this channel staged in this turn
-    /// so far - to change as well: a change taken back within the turn is
-    /// simply dropped.
-    pub fn staged_channel_changes(&mut self) -> &mut Vec<AgentChannelChange> {
-        &mut self.current_mut().channel_changes
+    /// so far. A change taken back within the turn is taken back by another
+    /// change, not dropped (issue 156).
+    pub fn staged_channel_changes(&self) -> &[AgentChannelChange] {
+        &self.current().channel_changes
     }
 
     /// The part of `commit_turn` that concerns the agent's state in this

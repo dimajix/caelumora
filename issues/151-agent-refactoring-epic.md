@@ -72,3 +72,5 @@ records what changed in the order along the way.
 
 - **2026-09-30** — Created from the review
   (`work/2026-09-30-code-review-agent.md`) at the maintainer's request.
+- **2026-10-01** — [156](156-notes-and-memory-staged-scans.md) done, after
+  [92](92-ledger-for-notes-and-memory.md) as planned.
