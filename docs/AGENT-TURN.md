@@ -464,6 +464,36 @@ The rule is applied when the context is resolved, to prompt parts and to
 messages of the transcript alike, and recorded with the profile; the
 system prompt at the front is a system message under either rule.
 
+### Control tokens in the content
+
+Ollama tokenizes the content of a message with the model's special tokens
+enabled: `<|im_start|>` typed by a participant, contained in a fetched web
+page or quoted by the model itself would become the real token - a turn
+boundary the model cannot tell from one the runtime wrote, so that a
+message could open a fake system turn (issue 149). Which strings are such
+tokens is a property of the backend's tokenizer, not of the context, so
+the `ollama_client` defuses them, not the `ContextResolver`
+(`llm_impl/control_tokens.rs`):
+
+*   **Which.** The model's tokens of type control (3) and user-defined (4)
+    in `/api/show` (`verbose`); the latter are qwen3's `<think>` and
+    `<tool_call>`, which Ollama tokenizes alike. Read once per Ollama
+    server and model and shared by every client of the registry.
+*   **How.** A zero-width space after the first character of every
+    occurrence, searched for again until none is left. The model reads
+    nearly the same characters, as text; nothing is removed.
+*   **Where.** Every text the chat template renders, whatever the role:
+    content, reasoning, tool calls and their arguments, tool results, and
+    the names and descriptions of the tools offered - which an MCP server
+    writes.
+*   **If the tokens cannot be read,** the call fails with an `LLMError`,
+    which ends the turn; nothing goes out unprotected. A failed read is not
+    kept, the next turn tries again. A model that does not list its tokens
+    cannot be used with the `ollama_client`.
+
+The resolved context - what is recorded and shown as given - keeps the text
+as it was written; the zero-width spaces exist only in the request.
+
 ### The turn's context and the resolver
 
 What the model is given is not stored; it is resolved from what is (issues

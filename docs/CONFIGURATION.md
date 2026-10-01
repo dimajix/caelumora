@@ -54,3 +54,9 @@ component_defaults:
 | `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (issue 49, see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
 
 An unknown parameter is refused, and the agent does not start.
+
+Before the first call to a model, the client reads the model's control
+tokens from the server's `/api/show` and keeps them from being produced by
+any text it sends (issue 149, see
+[AGENT-TURN.md](AGENT-TURN.md#control-tokens-in-the-content)). If they
+cannot be read, the call fails.

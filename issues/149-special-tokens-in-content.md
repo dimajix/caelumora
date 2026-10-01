@@ -1,6 +1,6 @@
 # 149 — Special tokens typed into a message reach the model as control tokens
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -65,3 +65,22 @@ knowledge.
 - **2026-09-30** — Issue created, found while testing how models handle
   sender names for [135](135-sender-names-in-model-input.md)
   (`work/sender_names/RESULTS.md`, finding 11).
+- **2026-10-01** — Done. The `ollama_client` reads the model's tokens from
+  `/api/show` (`verbose`) once per server and model, in a cache shared by
+  the clients of a registry, and breaks every occurrence in the request with
+  a zero-width space after its first character (`llm_impl/control_tokens.rs`,
+  searched again until none is left). Defused is every text the template
+  renders, of every role: content, reasoning, tool calls and arguments,
+  tool results, and the names, descriptions and parameters of the tools
+  offered. If the tokens cannot be read, the call fails (fail closed); a
+  failed read is not kept. The resolved context stays as written.
+  Measured beforehand on qwen3, gemma4 and gpt-oss: type 3 is not enough -
+  user-defined tokens (type 4) are tokenized alike, e.g. qwen3's `<think>`,
+  `</think>`, `<tool_call>`, `<tool_response>` and gpt-oss's `[PAD0]`; both
+  types are defused. Across eight models every such token is bracketed, so
+  no ordinary text is touched. With the zero-width space, `<|im_start|>`
+  costs qwen3:8b seven prompt tokens instead of one, checked through the
+  client against a real Ollama. A model that does not list its tokens
+  cannot be used with the `ollama_client` any more. Tests: `control_tokens::tests`, and
+  `a_control_token_in_a_message_reaches_ollama_as_text` /
+  `without_the_model_s_tokens_nothing_is_sent` against a stand-in server.

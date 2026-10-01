@@ -3,6 +3,7 @@
 
 use crate::component::ComponentRegistry;
 
+pub mod control_tokens;
 pub mod ollama_client;
 
 /// Registers the model kinds with `registry`, and the `LLMClient` as a facet
