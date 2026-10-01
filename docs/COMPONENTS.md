@@ -92,8 +92,9 @@ Of some facets an agent has exactly one: the `ContextProvider` (issue 98),
 the `ToolExecutor` (issue 127) and the `LLMClient` (issue 130); a channel
 has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
 registered with
-`ComponentRegistry::single::<T>(default_kind)` in
-`component_impl::register_all` and `moderator_impl::register_all`.
+`ComponentRegistry::single::<T>(default_kind)` in the `register_all` of
+the directory that holds the default kind (`component_impl`, `tool_impl`,
+`llm_impl`, `moderator_impl`).
 
 *   Two components of one container that provide such a facet are refused
     before anything is built.
@@ -146,15 +147,26 @@ reading other channels did.
 
 ## Writing a component
 
-The built-in components live in `caelumora-runtime/src/component_impl/` -
-the moderators and policies in `caelumora-runtime/src/moderator_impl/` -
-**one file per component kind**, named after the kind
-(`calculator_tool.rs`, `notes.rs`, ...). Each file holds the kind constant,
-its `register` function and its tests; `component_impl::register_all`
-registers them all (issue 52). They are sorted by component, not by facet,
-because one component may offer several facets - `create_plan_tool` and
-`notes` provide tools and a prompt part. A new component gets a file of its
-own and a line in `register_all`; `component_impl` holds components only.
+The built-in components live in `caelumora-runtime/src/`, **one file per
+component kind**, named after the kind (`calculator_tool.rs`, `notes.rs`,
+...), in the directory of the facet that is their purpose:
+
+| Directory | Components |
+|---|---|
+| `tool_impl/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
+| `command_impl/` | command providers (`help_command`, `wakeup_command`) |
+| `llm_impl/` | language models (`ollama_client`) |
+| `moderator_impl/` | the moderator and its responder policies |
+| `component_impl/` | everything else, and every component that offers several facets |
+
+A component that offers several facets - `create_plan_tool`, `notes` and
+the other memory components provide tools and a prompt part - stays in
+`component_impl`, because it cannot be sorted by one facet. Each file holds
+the kind constant, its `register` function and its tests; each directory's
+`register_all` registers its kinds and the singles it holds the default
+for, and `ComponentRegistry::built_in` calls them all. A new component gets
+a file of its own and a line in its directory's `register_all`; the `*_impl`
+directories hold components only.
 
 They follow one convention (issue 101):
 

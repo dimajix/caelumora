@@ -8,7 +8,7 @@ use caelumora_model::security::{DummySecurityManager, SecurityContext};
 use caelumora_model::store::EntityStore;
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-use caelumora_runtime::component_impl::mcp_tool;
+use caelumora_runtime::tool_impl::mcp_tool;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::tool::ToolProvider;
 use rmcp::handler::server::tool::ToolRouter;

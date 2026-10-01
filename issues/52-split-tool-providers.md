@@ -75,3 +75,14 @@ tools are, and no rule for where a new one goes.
   `StateHistoryAppender`, `STATE_HISTORY_APPENDER_KIND`). Unlike the other
   kinds, this kind string changed, so stored personalities that refer to
   `state_history_writer` no longer load (legacy data need not be supported).
+- **2026-10-01** — Revised with the maintainer, outside of an issue: the
+  components whose purpose is one facet moved to directories of that facet -
+  `tool_impl/` (`echo_tool`, `calculator_tool`, `sleep_tool`, `stop_tool`,
+  `mcp_tool`, `default_tool_executor`), `command_impl/` (`help_command`,
+  `wakeup_command`) and `llm_impl/` (`ollama_client`), next to
+  `moderator_impl/`. The reason against `tool_impl` above still holds for
+  components with several facets: `create_plan_tool`, `notes`,
+  `private_notes`, `agent_memory` and `channel_history` stay in
+  `component_impl`, as do the context and message components. Each
+  directory has its own `register_all`; a pure move, kind strings
+  unchanged.

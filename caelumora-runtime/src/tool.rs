@@ -403,7 +403,7 @@ impl GuardedToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component_impl::default_tool_executor::DefaultToolExecutor;
+    use crate::tool_impl::default_tool_executor::DefaultToolExecutor;
     use crate::agent_turn::Turn;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};

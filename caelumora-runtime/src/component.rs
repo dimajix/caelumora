@@ -234,14 +234,18 @@ impl ComponentRegistry {
         }
     }
 
-    /// A registry with every built-in component kind
-    /// (`component_impl::register_all`, `moderator_impl::register_all`), resolving references to
+    /// A registry with every built-in component kind (the `register_all` of
+    /// `component_impl`, `tool_impl`, `command_impl`, `llm_impl` and
+    /// `moderator_impl`), resolving references to
     /// preconfigured components in `entity_store`. A binary passes it to
     /// the `RuntimeManager` as it is; a test may register kinds of its own
     /// first, such as a stand-in for the model.
     pub fn built_in(entity_store: Arc<dyn EntityStore>) -> Self {
         let mut registry = Self::new(entity_store);
         crate::component_impl::register_all(&mut registry);
+        crate::tool_impl::register_all(&mut registry);
+        crate::command_impl::register_all(&mut registry);
+        crate::llm_impl::register_all(&mut registry);
         crate::moderator_impl::register_all(&mut registry);
         registry
     }

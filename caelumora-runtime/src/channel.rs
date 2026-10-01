@@ -1042,8 +1042,8 @@ mod tests {
     use super::*;
     use caelumora_model::store::EntityStore;
     use crate::command::CommandExecutor;
-    use crate::component_impl::help_command::HelpCommandProvider;
-    use crate::component_impl::wakeup_command::WakeupCommandProvider;
+    use crate::command_impl::help_command::HelpCommandProvider;
+    use crate::command_impl::wakeup_command::WakeupCommandProvider;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::runtime::RuntimeManager;
     use caelumora_model::command::default_commands;
@@ -1608,7 +1608,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::component_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1720,7 +1720,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1784,7 +1784,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1839,7 +1839,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1896,7 +1896,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: crate::component_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1972,7 +1972,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::component_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2015,7 +2015,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::component_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2066,7 +2066,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
-            kind: crate::component_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
             params: serde_json::json!({ "seconds": 0.5 }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2100,7 +2100,7 @@ mod tests {
         };
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: crate::component_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
             params: serde_json::Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
