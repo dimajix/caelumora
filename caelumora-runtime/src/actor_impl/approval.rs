@@ -126,7 +126,7 @@ impl ApproverActor {
         self.pending.lock().await.insert(request.id, pending);
 
         let new_event = ActorEvent::ApprovalRequested(request);
-        let new_context = context.next(self.id, "Approver".to_string());
+        let new_context = context.next(self.id, self.name());
         let new_security = security.next(self.id);
         let envelope = Envelope::new(new_security, new_context, new_event);
 
@@ -238,7 +238,7 @@ impl ApproverActor {
             ApprovalStatus::Pending => return Ok(()),
         };
 
-        let context = p.event_context.next(self.id, "Approver".to_string());
+        let context = p.event_context.next(self.id, self.name());
         let envelope = Envelope::new(p.security_context.next(self.id), context, event);
 
         output.send(envelope).await.context("Failed to send decision")?;
@@ -270,7 +270,7 @@ impl Actor for ApproverActor {
     }
 
     fn name(&self) -> String {
-        "Approver".to_string()
+        ActorId::APPROVER_NAME.to_string()
     }
 
     fn state(&self) -> ActorState {

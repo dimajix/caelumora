@@ -28,6 +28,7 @@ pub use session::SessionController;
 pub use user::UserController;
 
 use crate::event::EventBus;
+use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
@@ -126,6 +127,21 @@ impl ControllerManager {
         Ok(controller)
     }
 
+    /// The name `actor` is shown with: its fixed one (`ActorId::fixed_name`),
+    /// or its user's or agent's current one, from the controller this
+    /// instance shares - an actor that runs holds it already.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the user or agent no longer exists, or
+    /// whatever else the store reports.
+    pub async fn actor_name(&self, actor: ActorId) -> StoreResult<String> {
+        match actor {
+            ActorId::User(id) => Ok(self.user_controller(id).await?.username()),
+            ActorId::Agent(id) => Ok(self.agent_controller(id).await?.name()),
+            other => Ok(other.fixed_name().unwrap_or_default().to_string()),
+        }
+    }
+
     /// Starts the task that takes the changes announced about agents and
     /// users into their live controllers - once per instance, not once per
     /// session that uses them, and the one place where changes made in
@@ -201,6 +217,21 @@ mod tests {
         let user = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new() };
         store.create_user(&SecurityContext::system(), &user).await.unwrap();
         user
+    }
+
+    #[tokio::test]
+    async fn an_actor_is_named_by_its_entity_or_by_what_it_is() {
+        let (store, _, manager) = manager();
+        let (agent, user) = (agent_in(&store).await, user_in(&store).await);
+        let approver = ActorId::Approver(caelumora_model::approval::ApproverId::new());
+
+        let mut names = Vec::new();
+        for actor in [ActorId::User(user.id), ActorId::Agent(agent.id), approver, ActorId::System] {
+            names.push(manager.actor_name(actor).await.unwrap());
+        }
+
+        assert_eq!(names, ["alice", "helper", "Approver", "system"]);
+        assert!(matches!(manager.actor_name(ActorId::User(UserId::new())).await, Err(StoreError::NotFound { .. })), "a user who does not exist has no name");
     }
 
     /// Waits until `done` holds, as the follower works in a task of its own.

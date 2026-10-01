@@ -265,7 +265,7 @@ impl Views {
                 Ok(agent) => (Some(agent.metadata.name), Some(agent.security_attributes)),
                 Err(_) => (None, None),
             },
-            Participant::Approver(_) => (Some("Approver".to_string()), None),
+            Participant::Approver(_) => (participant.actor_id().fixed_name().map(str::to_string), None),
         }
     }
 

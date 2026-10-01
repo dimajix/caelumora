@@ -25,6 +25,21 @@ pub enum ActorId {
     System,
 }
 impl ActorId {
+    /// The name every approver is shown with.
+    pub const APPROVER_NAME: &'static str = "Approver";
+
+    /// The name of an actor that is no entity and so has no name of its own:
+    /// an approver, the runtime itself, nobody. `None` for users and agents,
+    /// whose names are their entities' (`ControllerManager::actor_name`).
+    pub fn fixed_name(&self) -> Option<&'static str> {
+        match self {
+            ActorId::Approver(_) => Some(Self::APPROVER_NAME),
+            ActorId::System => Some("system"),
+            ActorId::None => Some("unknown"),
+            ActorId::User(_) | ActorId::Agent(_) => None,
+        }
+    }
+
     pub fn id(&self) -> Uuid {
         match &self {
             ActorId::None => {Uuid::nil()}

@@ -132,6 +132,11 @@ like the `AgentStates` of issue 62). An agent thus has one writer per
 instance. The `new_…_controller(document)` methods, in contrast, make the
 controllers a running session owns.
 
+What an actor is called is asked of it too: `actor_name(actor)` answers a
+user's or an agent's current name from its controller, and for an actor that
+is no entity - an approver, the runtime itself - the name its kind fixes
+(`ActorId::fixed_name`).
+
 A missing record is `StoreError::NotFound`; a channel then leaves that
 participant out (see [CHANNELS.md](CHANNELS.md)).
 

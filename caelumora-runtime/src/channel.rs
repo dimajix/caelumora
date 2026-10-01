@@ -509,25 +509,6 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// The name `actor` is shown with: a participant's own, a user's name
-    /// otherwise; for the runtime itself, `system`.
-    async fn name_of(&self, actor: ActorId) -> String {
-        if let Some(participant) = self.actor_by_id(actor) {
-            return participant.name();
-        }
-        match actor {
-            ActorId::User(user) => match self.runtime.controller_manager().user_controller(user).await {
-                Ok(user) => user.username(),
-                Err(e) => {
-                    warn!("Cannot name user {} for channel {}: {}", user, self.id, e);
-                    actor.to_string()
-                }
-            },
-            ActorId::System => "system".to_string(),
-            other => other.to_string(),
-        }
-    }
-
     fn rebuild_mentions(&self) {
         let mentions = Self::mention_directory(&self.actors.load());
         for handle in mentions.ambiguous() {
@@ -757,7 +738,11 @@ impl ChannelLoop {
                 // actor sent before is routed, what it sends after is not
                 // (`handle_actor_event`), so that nothing of it follows the
                 // announcement (issue 162).
-                let sender = EventContext::new(self.session_id, self.id, remover.caller_id, self.name_of(remover.caller_id).await);
+                let name = self.runtime.controller_manager().actor_name(remover.caller_id).await.unwrap_or_else(|e| {
+                    warn!("Cannot name {} for channel {}: {}", remover.caller_id, self.id, e);
+                    remover.caller_id.to_string()
+                });
+                let sender = EventContext::new(self.session_id, self.id, remover.caller_id, name);
                 let removed = Envelope::new(remover, sender, ActorEvent::ParticipantRemoved { participant: id });
                 self.process_envelope(removed, running).await;
             }
