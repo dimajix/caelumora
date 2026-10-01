@@ -1,6 +1,6 @@
 # 159 — `actor_impl/agent.rs` holds four roles in one file
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -52,3 +52,13 @@ by files, not by new types.
   cancel and stop and tests of its own, instead of three fields of the
   actor and their handling spread over six places. How the run loop
   decides the next state is unchanged.
+- **2026-10-01** — Done, without splitting the file. The tests of other
+  modules moved to them (the two appenders, `StateContextProvider`,
+  `Turn`); `execute_tools` is inlined into `handle_executing_tools`; the
+  named lifetimes of `Turn` are gone; `stamp` and `label` have tests of
+  their own. What is left is about 815 lines of production code with
+  clearly separate parts, and the run loop's choice of the next state is
+  not made into a function of its own: it is in one place and covered by
+  the channel tests. The file is not split - `agent/{run, model_step,
+  tool_step, ending}.rs` would cost a `pub(super)` on most methods for
+  little gain.

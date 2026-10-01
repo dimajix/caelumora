@@ -35,3 +35,54 @@ pub fn register(registry: &mut ComponentRegistry) {
         },
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component_impl::state_context_provider::StateContextProvider;
+    use crate::context::ContextProvider;
+    use crate::agent_state::AgentStateHandle;
+    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::message::{MessageId, MessageRole};
+
+    fn message(content: &str) -> Message {
+        Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
+    }
+
+    #[tokio::test]
+    async fn transcript_appender_is_passthrough_and_extends_the_transcript() {
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::new(
+            AgentId::default(),
+            String::new(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
+        let appender = TranscriptAppender {};
+        let provider = StateContextProvider {
+            prompt_providers: vec![],
+        };
+        let input = vec![message("ctx")];
+
+        let output = appender
+            .process_messages(input.clone(), &mut turn)
+            .await
+            .expect("context appender should succeed");
+
+        assert_eq!(output.len(), input.len());
+        assert_eq!(output[0].id, input[0].id);
+
+        // Perceived between turns, given in the next.
+        turn.begin();
+        provider
+            .current_context(&mut turn)
+            .await
+            .expect("context provider should succeed");
+        let given = turn.full_context().unwrap().messages;
+        assert_eq!(given.len(), 1);
+        assert_eq!(given[0].id, input[0].id);
+    }
+}

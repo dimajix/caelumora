@@ -1,6 +1,6 @@
 # 151 — Refactoring epic: the review of the agent actor of 2026-09-30
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -74,3 +74,7 @@ records what changed in the order along the way.
   (`work/2026-09-30-code-review-agent.md`) at the maintainer's request.
 - **2026-10-01** — [156](156-notes-and-memory-staged-scans.md) done, after
   [92](92-ledger-for-notes-and-memory.md) as planned.
+- **2026-10-01** — [159](159-split-agent-actor-file.md) done without
+  splitting the file: what needs no actor became free functions, the run
+  control a type of its own (`RunControl`), and the tests of other modules
+  moved to them. Every issue of the order is done; the epic is closed.

@@ -101,3 +101,89 @@ pub fn register(registry: &mut ComponentRegistry) {
         },
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_state::AgentStateHandle;
+    use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
+    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::message::{Message, MessageId};
+
+    fn message(content: &str) -> Message {
+        Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
+    }
+
+    /// `provider` as a component with `fail_policy`.
+    fn part(provider: Arc<dyn PromptProvider>, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn PromptProvider> {
+        ComponentImpl { id: "part".to_string(), fail_policy, facet: provider }
+    }
+
+    /// A prompt part that cannot be had.
+    #[derive(Debug)]
+    struct Unavailable;
+
+    #[async_trait::async_trait]
+    impl PromptProvider for Unavailable {
+        async fn get_prompt(&self, _turn: &Turn) -> anyhow::Result<crate::context::Prompt> {
+            Err(anyhow::anyhow!("unavailable"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
+        turn.begin();
+        let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
+
+        let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
+        open.current_context(&mut turn).await.expect("a part that fails open is left out");
+        assert_eq!(turn.full_context().unwrap().messages[0].content.as_deref(), Some("Be brief."), "the others are given");
+
+        let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
+        let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
+        assert!(format!("{error:#}").contains("component 'part'"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn prompt_parts_go_where_their_position_says_and_only_the_conversation_is_stored() {
+        let agent_id = AgentId::new();
+        let mut agent_channel_state = AgentChannelState::default();
+        let provider = StateContextProvider {
+            prompt_providers: vec![
+                part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed),
+                part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
+            ],
+        };
+        let contents = |turn: &Turn| turn.full_context().unwrap().messages.iter()
+            .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
+            .collect::<Vec<_>>();
+
+        let mut turn = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
+        let mut earlier = message("earlier");
+        earlier.role = MessageRole::User;
+        let mut question = message("question");
+        question.role = MessageRole::User;
+        turn.extend_transcript(vec![earlier, question]);
+        turn.begin();
+        provider.current_context(&mut turn).await.unwrap();
+        assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
+            "the system prompt first, the notes before the turn's input");
+        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
+
+        // A turn without new input - the newest message is the agent's own.
+        let mut own = message("my answer");
+        own.sender_id = ActorId::Agent(agent_id);
+        turn.extend_transcript(vec![own]);
+        turn.begin();
+        provider.current_context(&mut turn).await.unwrap();
+        assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
+    }
+}

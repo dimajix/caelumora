@@ -15,10 +15,10 @@ use tracing::warn;
 /// Passes `input` through `processors` in turn, each given what the one
 /// before returned. A failing processor is skipped if it fails open, and
 /// fails the whole stage if it fails closed.
-async fn apply_stage_processors<'a, T>(
+async fn apply_stage_processors<T>(
     processors: &[ComponentImpl<T>],
     mut input: Vec<Message>,
-    turn: &mut Turn<'a>,
+    turn: &mut Turn<'_>,
 ) -> Result<Vec<Message>>
 where
     T: MessageProcessor + ?Sized + Send + Sync,

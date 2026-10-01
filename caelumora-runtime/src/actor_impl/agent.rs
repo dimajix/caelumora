@@ -124,7 +124,7 @@ impl AgentActor {
     /// Takes in what others said: the perceive processors append it to the
     /// transcript and the history. No turn: nothing here is a turn's work,
     /// and nothing is asked of the policy (issues 85, 90).
-    async fn perceive<'a>(&self, turn: &mut Turn<'a>, messages: Vec<Message>) {
+    async fn perceive(&self, turn: &mut Turn<'_>, messages: Vec<Message>) {
         // The processors act on the agent's state (transcript, history);
         // what they return is not used.
         if let Err(e) = apply_stage_processors(&self.perceive_in_processors, messages, turn).await {
@@ -135,10 +135,10 @@ impl AgentActor {
     /// A complete message as it leaves the agent - through the emit
     /// processors - and becomes part of the turn. `None` if the processors
     /// dropped it.
-    async fn respond_complete<'a>(
+    async fn respond_complete(
         &self,
         message: Message,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
     ) -> Option<Message> {
         let msg = self.respond_partial(message, turn).await?;
         turn.push_message(msg.clone());
@@ -148,10 +148,10 @@ impl AgentActor {
     /// A message as it leaves the agent, through the emit processors; a
     /// partial one is only shown, not kept. `None` if the processors
     /// dropped it.
-    async fn respond_partial<'a>(
+    async fn respond_partial(
         &self,
         message: Message,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
     ) -> Option<Message> {
         let mut output =
             apply_stage_processors(&self.emit_out_processors, vec![message], turn)
@@ -168,9 +168,9 @@ impl AgentActor {
     /// is now: begins it, announces `ResponseStarted` and builds the
     /// context. The run loop then goes on in `Planning`. Fails without a
     /// channel, which happens only while it is being torn down.
-    async fn request_response<'a>(
+    async fn request_response(
         &self,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
         event_context: &EventContext,
         security_context: &SecurityContext,
         output: &dyn EventSender,
@@ -201,9 +201,9 @@ impl AgentActor {
     /// turn - nothing plan-specific needs handling here. The model is
     /// offered the tools the turn began with (issue 137). Fails if the
     /// turn's context cannot be resolved.
-    async fn call_llm<'a>(
+    async fn call_llm(
         &self,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
     ) -> Result<BoxStream<'static, crate::llm::LLMResult<MessageEvent>>> {
         let context = turn.full_context()?;
         Ok(self.llm_client.facet
@@ -227,30 +227,6 @@ impl AgentActor {
         self.store_channel_state(turn).await;
     }
 
-    /// Runs the approved calls of the step that have no result yet - the
-    /// executor is the actor's - and, once every call has its result, returns
-    /// the tool message the turn keeps for the model (issue 83).
-    async fn execute_tools<'a>(
-        &self,
-        turn: &mut Turn<'a>,
-    ) -> Option<Message> {
-        // Captured before running the calls: a `create_plan` call among them
-        // sets the plan as a side effect of executing it, and the result
-        // must be classified against the state that produced the call (same
-        // as the assistant message that triggered it), not the state that
-        // call itself just brought about.
-        let had_plan_before = turn.plan_progress().is_some();
-        for (id, call) in turn.tool_calls().to_run() {
-            let result = self.tool_executor.execute(&call, turn).await;
-            turn.tool_calls().record(id, result);
-        }
-        // A tool result is only ever "final" (shown as the real answer) when
-        // it's not part of executing an in-progress plan - mirrors the same
-        // internal/final rule applied to the assistant message that
-        // triggered it.
-        turn.tool_calls().collect(had_plan_before)
-    }
-
     /// Takes the turn over and ends it - after `Reflecting`, or after a
     /// cancel - and returns the state the agent lands in: the one a tool
     /// requested (the stop tool), or `Idle`; a cancelled turn lands `Idle`
@@ -271,7 +247,7 @@ impl AgentActor {
     /// is announced even with no final messages - a plan cancelled before
     /// any step produced a visible answer still has to tell observers (e.g.
     /// the web UI) that generation stopped.
-    async fn end_turn<'a>(&self, turn: &mut Turn<'a>, cancelled: bool, output: &dyn EventSender) -> Result<ActorState> {
+    async fn end_turn(&self, turn: &mut Turn<'_>, cancelled: bool, output: &dyn EventSender) -> Result<ActorState> {
         // Read before the turn is taken over, which ends it.
         let next = if cancelled { ActorState::Idle } else { turn.requested_state().unwrap_or(ActorState::Idle) };
         let CommittedTurn { final_messages, channel_state_changed, ended } = turn.commit_turn().await;
@@ -288,10 +264,10 @@ impl AgentActor {
     /// `FullResponseGenerated` is perceived, a `ResponseRequested` starts a
     /// turn - unless `asleep`, where only `wakeup()` ends the sleep. `None`
     /// once the actor's input is closed.
-    async fn handle_waiting<'a>(
+    async fn handle_waiting(
         &self,
         asleep: bool,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
@@ -326,7 +302,7 @@ impl AgentActor {
     /// nothing it staged is applied - and tells the channel with
     /// `TurnFailed`, so that users see what went wrong instead of a turn that
     /// never ends.
-    async fn fail_turn<'a>(&self, turn: &mut Turn<'a>, error: &anyhow::Error, output: &dyn EventSender) {
+    async fn fail_turn(&self, turn: &mut Turn<'_>, error: &anyhow::Error, output: &dyn EventSender) {
         let agent_name = self.agent_controller.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);
 
@@ -341,7 +317,7 @@ impl AgentActor {
     /// still flows into the channel, else by name, classified as the channel
     /// is now (issue 141). The channel's users are told with `TurnFailed`,
     /// unless the agent was stopped: it left the channel.
-    async fn give_up<'a>(&self, turn: &mut Turn<'a>, reason: GivenUpReason, output: &dyn EventSender) {
+    async fn give_up(&self, turn: &mut Turn<'_>, reason: GivenUpReason, output: &dyn EventSender) {
         let names_only = match self.turn_flow(turn).await {
             TurnFlow::Flows => None,
             TurnFlow::Lowered(channel) => Some(channel),
@@ -379,9 +355,9 @@ impl AgentActor {
     /// Handle a single approval event while in WaitingForApproval state.
     /// Records the decision; the run loop dispatches the actual tool execution
     /// on its next iteration via ExecutingTools.
-    async fn handle_waiting_for_approval<'a>(
+    async fn handle_waiting_for_approval(
         &self,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
         rx: &mut Box<dyn EventReceiver>,
     ) -> Result<Option<ActorState>> {
         let is_approval_event = |env: &Envelope| {
@@ -425,10 +401,10 @@ impl AgentActor {
     /// them (`GuardedToolExecutor::admit`) and asks for the approvals they
     /// wait for. Only records them: whether the turn goes on to run them or
     /// waits is `handle_executing_tools`'s to decide.
-    async fn request_approvals<'a>(
+    async fn request_approvals(
         &self,
         tool_calls: &[ToolCall],
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
         output: &dyn EventSender,
     ) -> Result<()> {
         if tool_calls.is_empty() {
@@ -458,9 +434,9 @@ impl AgentActor {
     /// `IntermediatePartialGenerated`/`IntermediateMessageGenerated` instead
     /// of the `Partial`/`Complete` variants, and is excluded from `history`
     /// in `end_turn`.
-    async fn handle_llm_turn<'a>(
+    async fn handle_llm_turn(
         &self,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         let agent_name = self.agent_controller.name();
@@ -526,13 +502,27 @@ impl AgentActor {
     /// from WaitingForApproval). Loops back to Planning once all calls for this
     /// step have results, or parks in WaitingForApproval if some are still
     /// Pending.
-    async fn handle_executing_tools<'a>(
+    async fn handle_executing_tools(
         &self,
-        turn: &mut Turn<'a>,
+        turn: &mut Turn<'_>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
+        // Captured before running the calls: a `create_plan` call among them
+        // sets the plan as a side effect of executing it, and the result
+        // must be classified against the state that produced the call (same
+        // as the assistant message that triggered it), not the state that
+        // call itself just brought about.
         let progress_before = turn.plan_progress();
-        if let Some(tool_message) = self.execute_tools(turn).await {
+        for (id, call) in turn.tool_calls().to_run() {
+            let result = self.tool_executor.execute(&call, turn).await;
+            turn.tool_calls().record(id, result);
+        }
+        // Once every call has its result, the turn keeps the tool message for
+        // the model (issue 83). A tool result is only ever "final" (shown as
+        // the real answer) when it's not part of executing an in-progress
+        // plan - mirrors the same internal/final rule applied to the
+        // assistant message that triggered it.
+        if let Some(tool_message) = turn.tool_calls().collect(progress_before.is_some()) {
             turn.send_event(event_for(tool_message, false), output).await?;
 
             // A plan was just created, or extended after already reaching
@@ -826,16 +816,83 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{ContextProvider, PromptPosition, PromptProvider};
-    use crate::component_impl::transcript_appender::TranscriptAppender;
-    use crate::component_impl::state_context_provider::StateContextProvider;
-    use crate::component_impl::state_history_appender::StateHistoryAppender;
-    use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
-    use crate::message::MessageProcessor;
-    use caelumora_model::component::ComponentFailPolicy;
+
+    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_model::message::{MessageId, MessageRole};
-    use chrono::Utc;
-    use uuid::Uuid;
+    use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+
+    fn tool(name: &str, visibility: ToolVisibility) -> Tool {
+        Tool {
+            name: name.to_string(),
+            description: format!("does {name}"),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval: false,
+            visibility,
+            classification: None,
+        }
+    }
+
+    fn call(name: &str) -> ToolCall {
+        // Labelled as the model can never label a call: `label` must set it.
+        ToolCall { id: None, function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN }
+    }
+
+    fn answer(calls: &[&str]) -> Message {
+        Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            content: Some("answer".to_string()),
+            reasoning: Some("thinking".to_string()),
+            tool_calls: calls.iter().map(|name| call(name)).collect(),
+            ..Message::new(Classification::general(Confidentiality::Public))
+        }
+    }
+
+    #[test]
+    fn the_model_s_message_is_the_agent_s_classified_as_the_channel_and_its_calls_as_their_tools_declare() {
+        let agent = AgentId::new();
+        let channel = Classification::general(Confidentiality::Confidential);
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::new(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
+        turn.next_turn(Default::default(), Default::default(), channel.clone(), vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)]);
+
+        let mut message = answer(&["shown", "call_only", "unknown"]);
+        stamp(&mut message, &turn, Visibility::Channel, true);
+
+        assert_eq!((message.sender_id, message.sender_name.as_str()), (ActorId::Agent(agent), "agent"));
+        assert!(!message.internal, "no plan under way");
+        assert_eq!(message.classification, channel, "as the channel the turn began in");
+        let labels: Vec<_> = message.tool_calls.iter().map(|c| c.visibility).collect();
+        assert_eq!(labels, [ToolVisibility::SHOWN, ToolVisibility::CALL_ONLY, ToolVisibility::SHOWN],
+            "as their tools declare; an unknown tool's call fails and hides nothing");
+    }
+
+    #[test]
+    fn the_reasoning_is_the_owner_s_where_the_personality_what_the_turn_saw_or_the_call_it_leads_to_says_so() {
+        let agent = AgentId::new();
+        let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)];
+        let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
+            let mut agent_channel_state = AgentChannelState::default();
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
+            turn.next_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, tools);
+            if private_knowledge {
+                turn.record_knowledge(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::PrivateNotes { agent, digest: None } });
+            }
+            let mut message = answer(calls);
+            label(&mut message, &turn, personality, complete);
+            message.reasoning_visibility
+        };
+
+        assert_eq!(reasoning(both(), Visibility::Channel, false, &["shown"], true), Visibility::Channel, "nothing says otherwise");
+        assert_eq!(reasoning(both(), Visibility::Owner, false, &["shown"], true), Visibility::Owner, "the personality says so");
+        assert_eq!(reasoning(both(), Visibility::Channel, true, &["shown"], true), Visibility::Owner, "the turn saw private notes");
+        assert_eq!(reasoning(both(), Visibility::Channel, false, &["call_only"], true), Visibility::Owner, "it leads to a call whose content is the owner's");
+        assert_eq!(reasoning(both(), Visibility::Channel, false, &["shown"], false), Visibility::Owner,
+            "while it streams, the agent could still call a tool whose content is the owner's");
+        assert_eq!(reasoning(vec![tool("shown", ToolVisibility::SHOWN)], Visibility::Channel, false, &[], false), Visibility::Channel,
+            "but not if it has no such tool");
+    }
 
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
@@ -884,160 +941,4 @@ mod tests {
         prepare_resume(&mut lost);
         assert_eq!(lost.processing_state, ActorState::Idle);
     }
-
-    fn make_message(content: &str) -> Message {
-        Message {
-            id: MessageId(Uuid::new_v4()),
-            sender_id: ActorId::None,
-            sender_name: "tester".to_string(),
-            role: MessageRole::User,
-            content: Some(content.to_string()),
-            tool_calls: Vec::new(),
-            timestamp: Utc::now(),
-            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
-        }
-    }
-
-    #[tokio::test]
-    async fn state_history_appender_is_passthrough_and_persists_history() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(
-            AgentId::default(),
-            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        let processor = StateHistoryAppender {};
-        let input = vec![make_message("hello")];
-
-        let output = processor
-            .process_messages(input.clone(), &mut turn)
-            .await
-            .expect("history processor should succeed");
-
-        assert_eq!(output.len(), input.len());
-        assert_eq!(output[0].id, input[0].id);
-
-        let history = agent_channel_state.history.messages();
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].id, input[0].id);
-    }
-
-    #[tokio::test]
-    async fn transcript_appender_is_passthrough_and_extends_the_transcript() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(
-            AgentId::default(),
-            String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        let appender = TranscriptAppender {};
-        let provider = StateContextProvider {
-            prompt_providers: vec![],
-        };
-        let input = vec![make_message("ctx")];
-
-        let output = appender
-            .process_messages(input.clone(), &mut turn)
-            .await
-            .expect("context appender should succeed");
-
-        assert_eq!(output.len(), input.len());
-        assert_eq!(output[0].id, input[0].id);
-
-        // Perceived between turns, given in the next.
-        turn.begin();
-        provider
-            .current_context(&mut turn)
-            .await
-            .expect("context provider should succeed");
-        let given = turn.full_context().unwrap().messages;
-        assert_eq!(given.len(), 1);
-        assert_eq!(given[0].id, input[0].id);
-    }
-
-    /// `provider` as a component with `fail_policy`.
-    fn part(provider: Arc<dyn PromptProvider>, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn PromptProvider> {
-        ComponentImpl { id: "part".to_string(), fail_policy, facet: provider }
-    }
-
-    /// A prompt part that cannot be had.
-    #[derive(Debug)]
-    struct Unavailable;
-
-    #[async_trait::async_trait]
-    impl PromptProvider for Unavailable {
-        async fn get_prompt(&self, _turn: &Turn) -> anyhow::Result<crate::context::Prompt> {
-            Err(anyhow::anyhow!("unavailable"))
-        }
-    }
-
-    #[tokio::test]
-    async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
-        let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
-
-        let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
-        open.current_context(&mut turn).await.expect("a part that fails open is left out");
-        assert_eq!(turn.full_context().unwrap().messages[0].content.as_deref(), Some("Be brief."), "the others are given");
-
-        let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
-        let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
-        assert!(format!("{error:#}").contains("component 'part'"), "{error:#}");
-    }
-
-    #[tokio::test]
-    async fn prompt_parts_go_where_their_position_says_and_only_the_conversation_is_stored() {
-        let agent_id = AgentId::new();
-        let mut agent_channel_state = AgentChannelState::default();
-        let provider = StateContextProvider {
-            prompt_providers: vec![
-                part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed),
-                part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
-            ],
-        };
-        let contents = |turn: &Turn| turn.full_context().unwrap().messages.iter()
-            .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
-            .collect::<Vec<_>>();
-
-        let mut turn = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        let mut earlier = make_message("earlier");
-        earlier.role = MessageRole::User;
-        let mut question = make_message("question");
-        question.role = MessageRole::User;
-        turn.extend_transcript(vec![earlier, question]);
-        turn.begin();
-        provider.current_context(&mut turn).await.unwrap();
-        assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
-            "the system prompt first, the notes before the turn's input");
-        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
-
-        // A turn without new input - the newest message is the agent's own.
-        let mut own = make_message("my answer");
-        own.sender_id = ActorId::Agent(agent_id);
-        turn.extend_transcript(vec![own]);
-        turn.begin();
-        provider.current_context(&mut turn).await.unwrap();
-        assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
-    }
-
-    #[tokio::test]
-    async fn committing_a_turn_answers_with_its_final_messages_and_clears_its_work() {
-        let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
-
-        let mut internal = make_message("working on it");
-        internal.internal = true;
-        let mut final_answer = make_message("here you go");
-        final_answer.internal = false;
-
-        turn.push_message(internal);
-        turn.push_message(final_answer.clone());
-
-        let committed = turn.commit_turn().await;
-        assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
-        assert_eq!(committed.final_messages[0].id, final_answer.id);
-        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "but of the transcript");
-        assert!(turn.messages().next().is_none() && turn.agent_channel_state().turn.is_none(), "nothing of the turn's work is stored with the state");
-    }
-
-
 }

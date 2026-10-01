@@ -1129,4 +1129,34 @@ mod tests {
         assert_eq!(reasoning(rx.recv().await).as_deref(), Some("weighing"), "the channel's");
         assert!(reasoning(rx.recv().await).is_none(), "the owner's is not published");
     }
+
+    fn message(content: &str) -> Message {
+        Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
+    }
+
+    #[tokio::test]
+    async fn committing_a_turn_answers_with_its_final_messages_and_clears_its_work() {
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
+        turn.begin();
+
+        let mut internal = message("working on it");
+        internal.internal = true;
+        let mut final_answer = message("here you go");
+        final_answer.internal = false;
+
+        turn.push_message(internal);
+        turn.push_message(final_answer.clone());
+
+        let committed = turn.commit_turn().await;
+        assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
+        assert_eq!(committed.final_messages[0].id, final_answer.id);
+        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "but of the transcript");
+        assert!(turn.messages().next().is_none() && turn.agent_channel_state().turn.is_none(), "nothing of the turn's work is stored with the state");
+    }
 }

@@ -218,7 +218,7 @@ against it, and what came out of the last attempt.
 | [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
 | [74](74-refactoring-epic.md) | done | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
-| [151](151-agent-refactoring-epic.md) | open | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
+| [151](151-agent-refactoring-epic.md) | done | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
 | [160](160-agent-small-cleanups.md) | done | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
 | [96](96-config-unification.md) | done | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
 | [97](97-small-model-unifications.md) | done | Six helper functions in five modules define the default confidentiality level. |
@@ -254,7 +254,7 @@ against it, and what came out of the last attempt.
 | [154](154-model-step-mixes-four-things.md) | done | The model step mixes stamping messages, plan mode, streaming and plan progress in one function of 120 lines. |
 | [155](155-approval-admission-on-the-actor.md) | done | The actor decides how a tool call is admitted and builds its `ToolCallState` by hand, though everything the rule is made of is in the tool guard. |
 | [157](157-actor-holds-what-is-not-its-own.md) | done | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |
-| [159](159-split-agent-actor-file.md) | open | `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines. |
+| [159](159-split-agent-actor-file.md) | done | `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines. |
 
 ## Open architecture questions
 
