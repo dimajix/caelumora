@@ -125,6 +125,7 @@ against it, and what came out of the last attempt.
 | [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [158](158-publish-question-built-five-times.md) | done | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
 | [167](167-origin-and-releases.md) | open | A classification says who may read something but not where it was written: a release overwrites the origin, releases cannot be told apart, and there is no rule for writing. |
+| [168](168-turn-label-as-high-water-mark.md) | open | A turn writes under its channel's classification even when everything it saw was classified lower, so what it remembers is lost to lower channels. |
 
 ## Tools and approvals
 
