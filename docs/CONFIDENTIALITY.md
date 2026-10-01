@@ -399,6 +399,28 @@ no wider.
 agent's owner: the owner sees private notes in the context panel, which is
 theirs alone (issue 54).
 
+## Who applies the rules
+
+The rules of this document - the flow rule, a session's consent to being
+read from beyond it, which compartments may be given, the clearances of the
+configured roles - are `ConfidentialityRules`
+(`caelumora_model::confidentiality`), built from the `compartments` and
+`roles` sections of the configuration. They are a building block, not a
+policy: the `SecurityManager` decides every confidentiality action, and the
+ownership policy decides them by these rules, together with what is its own
+- who acts, who may reclassify what - and with the system overriding them
+as it overrides everything.
+
+Confidentiality and ownership are not always cleanly separable - a
+superuser who may act against the rules is a decision about both - so a
+policy is not handed a fixed confidentiality part it can only add to; it
+applies these rules, other rules, or none
+([138](../issues/138-confidentiality-policy-in-ownership.md)). A policy
+outside the binary, such as Open Policy Agent
+([24](../issues/24-opa-security-manager.md)), states its rules itself, with
+the compartments and roles as its data. `allow_all` applies none: it allows
+every flow.
+
 ## Open questions
 
 The classification model is introduced in steps
@@ -418,9 +440,6 @@ still open:
 *   **Sessions.** An agent's memory is so far the one way across sessions;
     whoever is added to a channel later sees what it drew from other
     sessions ([143](../issues/143-joining-a-channel-with-foreign-knowledge.md)).
-*   **Where the rules live.** The flow rule and the clearances are applied
-    by the ownership policy; any other policy would have to apply them too
-    ([138](../issues/138-confidentiality-policy-in-ownership.md)).
 *   **The answer text.** It carries no label and is always published; the
     model is only told what not to quote
     ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge

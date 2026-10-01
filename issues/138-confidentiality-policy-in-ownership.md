@@ -1,6 +1,6 @@
 # 138 — The confidentiality rules are part of the ownership policy
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -61,3 +61,19 @@ mixes them.
   decides clearances (`JoinChannel`, step 5 of
   [133](133-classification-model.md)); they belong to the same
   confidentiality part.
+- **2026-10-01** — Decided: every policy decides everything, confidentiality
+  included ("Leave it to the policies"). Confidentiality and ownership are
+  not always cleanly separable - a superuser who may act against the
+  rules, as `ActorId::System` already does, is a decision about both - so
+  a composed confidentiality part that a policy can only add to was
+  rejected, as was a seam of its own beside the `SecurityManager`. Instead
+  the rules are one building block, `ConfidentialityRules` in
+  `caelumora_model::confidentiality`: the flow rule, a session's consent
+  (issue 134), which compartments may be given, and the clearances of the
+  configured roles. `OwnershipSecurityManager` holds it in place of
+  compartments and roles (`with_rules` replaces `with_compartments` and
+  `with_roles`) and adds only its own part - who acts, who may reclassify
+  what. A policy outside the binary, such as OPA, states its own rules;
+  `allow_all` stays without any. So the first point of *Done when* is met
+  only in substance: the ownership policy still applies the rules, but no
+  longer holds them itself; the second is met by this decision.

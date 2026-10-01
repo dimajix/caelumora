@@ -437,11 +437,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_entry_released_to_another_compartment_is_recalled_there() {
-        use caelumora_model::confidentiality::{Compartment, Compartments};
+        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules};
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         // As the agent's components are given it: its owner's, called by the agent.
         let memory = AgentMemoryComponent {
             security_manager: policy.clone(),

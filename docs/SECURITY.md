@@ -70,11 +70,14 @@ initiator:
     (`ActorId::System`), which may do everything. This is deliberate and never
     a default: an empty context has no rights.
 
-The confidentiality actions (`ReadChannel`, `Classify`, `Reclassify`, `Publish`, `JoinChannel`) are
-decided by classifications and the configured compartments, not by
-ownership; see [CONFIDENTIALITY.md](CONFIDENTIALITY.md). That the ownership
-policy decides them is issue
-[138](../issues/138-confidentiality-policy-in-ownership.md).
+The confidentiality actions (`ReadChannel`, `Classify`, `Reclassify`,
+`Publish`, `JoinChannel`) are decided by classifications, not by ownership:
+the ownership policy applies the `ConfidentialityRules` of the configured
+compartments and roles to them, and adds only what is about ownership - the
+actor putting a message into a channel is the one acting, a channel is
+reclassified by its owner. Another policy may apply other rules (issue
+[138](../issues/138-confidentiality-policy-in-ownership.md)); see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
 
 ### How stores check
 

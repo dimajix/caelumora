@@ -1,5 +1,5 @@
 use crate::command::default_commands;
-use crate::confidentiality::{Compartments, Roles};
+use crate::confidentiality::{Compartments, ConfidentialityRules, Roles};
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::secret::SecretManager;
@@ -320,15 +320,16 @@ impl AppConfig {
     }
 
     /// The one `SecurityManager` of the process, as configured, with the
-    /// configured compartments.
+    /// confidentiality rules of the configured compartments and roles where
+    /// the policy applies them.
     pub fn create_security_manager(&self) -> Arc<dyn SecurityManager> {
         match self.security {
             SecurityConfig::Ownership => {
-                let policy = OwnershipSecurityManager::with_compartments(self.compartments.clone());
-                Arc::new(match &self.roles {
-                    Some(roles) => policy.with_roles(roles.clone()),
-                    None => policy,
-                })
+                let rules = ConfidentialityRules::new(self.compartments.clone());
+                Arc::new(OwnershipSecurityManager::with_rules(match &self.roles {
+                    Some(roles) => rules.with_roles(roles.clone()),
+                    None => rules,
+                }))
             }
             SecurityConfig::AllowAll => {
                 tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");

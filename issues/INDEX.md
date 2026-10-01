@@ -118,7 +118,7 @@ against it, and what came out of the last attempt.
 | [95](95-require-for-security-manager.md) | done | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
 | [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
 | [133](133-classification-model.md) | done | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
-| [138](138-confidentiality-policy-in-ownership.md) | open | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
+| [138](138-confidentiality-policy-in-ownership.md) | done | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [149](149-special-tokens-in-content.md) | open | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |

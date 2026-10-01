@@ -7,12 +7,14 @@
 //! by the one flow rule, `Classification::flows_to`, from the
 //! classifications involved alone - not by who takes part in a channel at
 //! the moment, so that a decision stays the same when someone joins or
-//! leaves. The `SecurityManager` makes the decisions; the rule is here.
+//! leaves. The `SecurityManager` makes the decisions; the rule is here, and
+//! `ConfidentialityRules` applies it for a policy that uses it.
 //!
 //! Whether anyone but an actor's owner sees something at all is a separate
 //! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::channel::ChannelId;
+use crate::security::Place;
 use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -402,6 +404,68 @@ impl Roles {
     }
 }
 
+/// The confidentiality rules as Caelumora applies them (issue 133): the
+/// flow rule with the configured compartments, the session's consent to
+/// being read from beyond it (issue 134), and the clearances of the
+/// configured roles. A building block for a policy, not a policy of its
+/// own: where confidentiality and ownership meet - who may release what
+/// they write, who may act against the rules - is the policy's to decide,
+/// so a policy uses these rules, replaces them, or overrides them (issue
+/// 138).
+#[derive(Debug, Clone, Default)]
+pub struct ConfidentialityRules {
+    compartments: Compartments,
+    /// `None`: clearances are not checked.
+    roles: Option<Roles>,
+}
+
+impl ConfidentialityRules {
+    /// The rules with the configured `compartments`, without checking
+    /// clearances.
+    pub fn new(compartments: Compartments) -> Self {
+        Self { compartments, roles: None }
+    }
+
+    /// These rules, checking clearances by the configured `roles`.
+    pub fn with_roles(self, roles: Roles) -> Self {
+        Self { roles: Some(roles), ..self }
+    }
+
+    /// Whether `reader` may read from `source`: a channel itself always;
+    /// within a session as the classifications decide; beyond it only
+    /// where the source's session permits it as well (issue 134) - whatever
+    /// the classification, `public` included.
+    pub fn may_read_from(&self, reader: Place<'_>, source: Place<'_>) -> bool {
+        if source.channel.channel_id == reader.channel.channel_id {
+            return true;
+        }
+        let consented = source.channel.session_id == reader.channel.session_id || source.session.permits(reader.session);
+        consented && source.classification.flows_to(reader.classification, &self.compartments)
+    }
+
+    /// Whether `classification` may be given at all: if its compartments
+    /// are configured.
+    pub fn may_classify(&self, classification: &Classification) -> bool {
+        self.compartments.check(classification).is_ok()
+    }
+
+    /// Whether what is classified `classification` may be put into a
+    /// channel classified `channel`: if it may be given and flows into the
+    /// channel.
+    pub fn may_publish(&self, classification: &Classification, channel: &Classification) -> bool {
+        self.may_classify(classification) && classification.flows_to(channel, &self.compartments)
+    }
+
+    /// Whether someone with `roles` is cleared for what is classified
+    /// `classification`. Without roles configured, everybody is.
+    pub fn cleared(&self, roles: &[String], classification: &Classification) -> bool {
+        match &self.roles {
+            Some(configured) => configured.clearances_of(roles).admits(classification, &self.compartments),
+            None => true,
+        }
+    }
+}
+
 /// Who sees a part of what an actor produces - an ownership flag beside the
 /// classification (issue 133). `Owner` is what never reaches a channel: the
 /// actor sees it, and its owner where they may see what the actor saw.
@@ -590,5 +654,21 @@ mod tests {
         let released = classified(Internal, &["hr", "sales"]);
         assert!(released.flows_to(&classified(Internal, &["hr", "sales"]), &compartments), "released to both");
         assert!(released.flows_to(&classified(Internal, &["sales"]), &compartments), "any of its audiences will do");
+    }
+
+    #[test]
+    fn the_rules_give_only_configured_compartments_and_check_clearances_only_with_roles() {
+        let rules = ConfidentialityRules::new(organisation());
+        assert!(rules.may_classify(&classified(Internal, &["hr"])) && !rules.may_classify(&classified(Internal, &["hrr"])));
+        assert!(rules.may_publish(&classified(Internal, &["hr"]), &classified(Confidential, &["hr_management"])));
+        assert!(!rules.may_publish(&classified(Internal, &["hrr"]), &classified(Internal, &["hrr"])), "not configured, though it would flow");
+        assert!(!rules.may_publish(&classified(Confidential, &["hr"]), &classified(Internal, &["hr"])), "it would not flow");
+
+        let secret = classified(Confidential, &["hr"]);
+        assert!(rules.cleared(&[], &secret), "without roles, clearances are not checked");
+        let roles = Roles::new([("hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let rules = rules.with_roles(roles);
+        assert!(rules.cleared(&["hr".to_string()], &secret));
+        assert!(!rules.cleared(&[], &secret) && rules.cleared(&[], &Classification::general(Public)), "with roles, nobody else but for what is public");
     }
 }

@@ -1227,12 +1227,12 @@ mod tests {
     #[tokio::test]
     async fn a_channel_reads_another_by_their_classification_not_by_who_takes_part() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
@@ -1329,12 +1329,12 @@ mod tests {
         use crate::channel::ChannelError;
         use crate::view::ViewError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
@@ -1380,12 +1380,12 @@ mod tests {
     async fn a_channel_and_its_messages_are_reclassified_by_who_may() {
         use crate::channel::ChannelError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
@@ -1436,7 +1436,7 @@ mod tests {
     async fn only_who_is_cleared_takes_part_in_or_reads_a_channel() {
         use crate::channel::ChannelError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, Confidentiality, Roles};
+        use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality, Roles};
         use caelumora_model::store::EntityStore;
         use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
         use caelumora_model::user::{User, UserId};
@@ -1446,7 +1446,7 @@ mod tests {
             ("staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }]),
             ("hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
         ]).unwrap();
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_compartments(compartments).with_roles(roles));
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments).with_roles(roles)));
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());

@@ -578,7 +578,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
         use caelumora_model::channel::ChannelState;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -586,7 +586,7 @@ mod tests {
         use caelumora_model::store::StateStore;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let (store, manager) = owned_runtime_under(Arc::new(OwnershipSecurityManager::with_compartments(compartments)));
+        let (store, manager) = owned_runtime_under(Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments))));
         let alice = user("alice");
         let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
         let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);

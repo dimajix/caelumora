@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::session::SessionId;
 use crate::channel::ChannelId;
-use crate::confidentiality::{ChannelRef, Classification, Compartments, Roles};
+use crate::confidentiality::{ChannelRef, Classification, ConfidentialityRules};
 use crate::privacy::SessionPrivacy;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
@@ -440,23 +440,17 @@ impl SecurityManager for DummySecurityManager {
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
-/// - Reading from another channel follows the flow rule
-///   (`Classification::flows_to`, issue 133) with the configured
-///   compartments: what is read must flow into the reading channel. Beyond
-///   its own session, a channel reads only where the source's session
-///   permits it (`SessionPrivacy::permits`, issue 134), whatever the
-///   classification.
-/// - Joining or reading a channel needs a clearance for its classification,
-///   from the roles of the participant - of an agent's owner - if roles are
-///   configured.
-/// - A classification may be given if its compartments are configured. A
-///   message may be put into a channel if, moreover, it flows into the
-///   channel and the actor putting it there is the one acting - its author,
-///   who may release what they write.
+/// - Confidentiality follows the `ConfidentialityRules` (issues 133, 134,
+///   138): reading from another channel, giving a classification, joining
+///   or reading a channel by clearance. The system overrides them, as it
+///   overrides everything.
+/// - A message may be put into a channel by the actor that is acting - its
+///   author, who may release what they write - if the rules let it flow
+///   there.
 /// - A channel may be reclassified by its owner, a message by the channel's
-///   owner or its author, a note or memory entry by its author - never above
-///   the channel - and only with configured compartments.
-///   That these rules live in the ownership policy is issue 138.
+///   owner or its author, a note or memory entry by its author - always to
+///   a classification the rules let be given, and what is in a channel
+///   never above it.
 /// - Searching and listing are allowed; their results are filtered by what
 ///   the caller may read. Tool calls, secrets and commands are governed
 ///   elsewhere for now (approvals, issues 12 and 23).
@@ -465,34 +459,18 @@ impl SecurityManager for DummySecurityManager {
 /// started for, also when an agent carries it out.
 #[derive(Debug, Default)]
 pub struct OwnershipSecurityManager {
-    compartments: Compartments,
-    /// `None`: clearances are not checked (issue 133).
-    roles: Option<Roles>,
+    rules: ConfidentialityRules,
 }
 
 impl OwnershipSecurityManager {
-    /// The policy without compartments.
+    /// The policy without compartments and without checking clearances.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// The policy with the configured `compartments`.
-    pub fn with_compartments(compartments: Compartments) -> Self {
-        Self { compartments, roles: None }
-    }
-
-    /// This policy, checking clearances by the configured `roles`.
-    pub fn with_roles(self, roles: Roles) -> Self {
-        Self { roles: Some(roles), ..self }
-    }
-
-    /// Whether `reader` may read from `source` (`ReadChannel`): within a
-    /// session as the classifications decide, beyond it only where the
-    /// source's session permits it as well (issue 134) - whatever the
-    /// classification, `public` included.
-    fn may_read_from(&self, reader: Place<'_>, source: Place<'_>) -> bool {
-        let consented = source.channel.session_id == reader.channel.session_id || source.session.permits(reader.session);
-        consented && source.classification.flows_to(reader.classification, &self.compartments)
+    /// The policy, applying the confidentiality `rules` as configured.
+    pub fn with_rules(rules: ConfidentialityRules) -> Self {
+        Self { rules }
     }
 
     fn system_owned(attributes: &SecurityAttributes) -> bool {
@@ -521,29 +499,18 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetUser(a)
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
-            ActionType::ReadChannel { reader, source } => {
-                source.channel.channel_id == reader.channel.channel_id || self.may_read_from(reader, source)
-            }
-            ActionType::Classify(classification) => self.compartments.check(classification).is_ok(),
+            ActionType::ReadChannel { reader, source } => self.rules.may_read_from(reader, source),
+            ActionType::Classify(classification) => self.rules.may_classify(classification),
             ActionType::Reclassify { target, new, channel, .. } => {
                 let owns = |attributes: &SecurityAttributes| attributes.owner_id == me && me != ActorId::None;
-                let within = || new.flows_to(channel, &self.compartments);
-                self.compartments.check(new).is_ok() && match target {
-                    Reclassified::Channel { attributes } => owns(attributes),
-                    Reclassified::Message { author, attributes } => (owns(attributes) || author == context.caller_id) && within(),
-                    Reclassified::Note { author } | Reclassified::Memory { author } => author == context.caller_id && within(),
+                match target {
+                    Reclassified::Channel { attributes } => owns(attributes) && self.rules.may_classify(new),
+                    Reclassified::Message { author, attributes } => (owns(attributes) || author == context.caller_id) && self.rules.may_publish(new, channel),
+                    Reclassified::Note { author } | Reclassified::Memory { author } => author == context.caller_id && self.rules.may_publish(new, channel),
                 }
             }
-            ActionType::Publish { classification, actor, channel } => {
-                actor == context.caller_id
-                    && self.compartments.check(classification).is_ok()
-                    && classification.flows_to(channel, &self.compartments)
-            }
-            // Without roles configured, clearances are not checked.
-            ActionType::JoinChannel { roles, channel, .. } => match &self.roles {
-                Some(configured) => configured.clearances_of(roles).admits(channel, &self.compartments),
-                None => true,
-            },
+            ActionType::Publish { classification, actor, channel } => actor == context.caller_id && self.rules.may_publish(classification, channel),
+            ActionType::JoinChannel { roles, channel, .. } => self.rules.cleared(roles, channel),
             ActionType::CreatePersonality(a)
             | ActionType::CreateSessionTemplate(a)
             | ActionType::CreateAgent(a)
@@ -585,7 +552,7 @@ impl SecurityManager for OwnershipSecurityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confidentiality::{Compartment, Confidentiality};
+    use crate::confidentiality::{Compartment, Compartments, Confidentiality};
     use crate::privacy::PrivacyConfig;
     use crate::user::UserId;
 
@@ -686,7 +653,7 @@ mod tests {
             (Compartment::new("hr"), vec![Compartment::new("finance")]),
             (Compartment::new("finance"), vec![]),
         ]);
-        OwnershipSecurityManager::with_compartments(compartments.unwrap())
+        OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments.unwrap()))
     }
 
     #[tokio::test]
