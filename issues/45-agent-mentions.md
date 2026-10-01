@@ -106,3 +106,6 @@ senders of the messages; whether that is enough across hops has to be checked.
 - **2026-09-25** — Issue created, split off from
   [44](44-mentions-only-moderator.md). The idea to track the chain through the
   span (`span_id` plus a hop count) comes from the discussion there.
+- **2026-10-01** — [175](175-user-driven-moderator.md) asks for a moderator
+  under which agents' messages make nobody respond; its only exception, an
+  agent's mention, is this issue.
