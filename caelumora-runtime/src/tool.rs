@@ -353,7 +353,7 @@ impl GuardedToolExecutor {
         let agent = turn.agent_id();
         if !self.is_permitted(call, turn).await {
             info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.classification()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
         let description = match self.executor.facet.describe(call) {
             Ok(description) => description,

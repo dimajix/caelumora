@@ -59,7 +59,7 @@ impl ToolProvider for SleepToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name != SLEEP_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
@@ -70,7 +70,8 @@ impl ToolProvider for SleepToolProvider {
         let wait = duration(seconds)
             .ok_or_else(|| ToolError::InvalidParameter(format!("'seconds' must be between 0 and {MAX_SECONDS}")))?;
         tokio::time::sleep(wait).await;
-        Ok(serde_json::json!({ "status": "slept", "seconds": seconds }).into())
+        // Derived from the arguments alone: classified as the turn (issue 168).
+        Ok(ToolOutput::classified(serde_json::json!({ "status": "slept", "seconds": seconds }), turn.label()))
     }
 }
 

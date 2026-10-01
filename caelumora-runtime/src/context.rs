@@ -9,6 +9,7 @@ use crate::agent_turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::KnowledgeRef;
+use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
 
 /// Where a prompt part goes in the context (issue 47).
@@ -26,18 +27,38 @@ pub enum PromptPosition {
     BeforeTurnInput,
 }
 
-/// What a [`PromptProvider`] contributes: the text of its part, and the
+/// What a [`PromptProvider`] contributes: the text of its part, the
 /// knowledge from other places it contains, recorded with the turn's
-/// messages (issue 17).
+/// messages (issue 17), and how what the text holds besides that knowledge
+/// is classified (issue 168). The turn has seen both: what it writes is
+/// classified at least so.
 #[derive(Debug, Clone, Default)]
 pub struct Prompt {
     pub text: String,
     pub knowledge: Vec<KnowledgeRef>,
+    /// `None`: not known, counted as the channel - a part that does not
+    /// say what it holds may hold anything the channel may.
+    pub classification: Option<Classification>,
 }
 
+impl Prompt {
+    /// `text`, which holds nothing but `knowledge` - each entry classified
+    /// in its reference.
+    pub fn of_knowledge(text: String, knowledge: Vec<KnowledgeRef>) -> Self {
+        Self { text, knowledge, classification: Some(Classification::PUBLIC) }
+    }
+
+    /// `text`, holding no knowledge from elsewhere, classified
+    /// `classification`.
+    pub fn classified(text: String, classification: Classification) -> Self {
+        Self { text, knowledge: Vec::new(), classification: Some(classification) }
+    }
+}
+
+/// A text that does not say how it is classified: as the channel.
 impl From<String> for Prompt {
     fn from(text: String) -> Self {
-        Self { text, knowledge: Vec::new() }
+        Self { text, knowledge: Vec::new(), classification: None }
     }
 }
 

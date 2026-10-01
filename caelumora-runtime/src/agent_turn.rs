@@ -199,9 +199,22 @@ impl<'a> Turn<'a> {
     }
 
     /// The classification of the agent's channel as it was when the turn
-    /// began (`next_turn`).
+    /// began (`next_turn`): the most the turn may read, and the most it
+    /// writes as.
     pub fn classification(&self) -> Classification {
         self.current().classification.clone()
+    }
+
+    /// The classification of what the turn writes (issue 168): the join of
+    /// everything it has seen so far, at most `classification`.
+    pub fn label(&self) -> Classification {
+        self.current().label()
+    }
+
+    /// Records that the turn has seen what is classified `classification`:
+    /// what it writes from now on is classified at least so (`label`).
+    pub fn see(&mut self, classification: &Classification) {
+        self.current_mut().see(classification);
     }
 
     /// The agent's channel: where the envelope the turn answers was routed
@@ -258,12 +271,13 @@ impl<'a> Turn<'a> {
     ///
     /// What its tools did stays done. If any of its calls ran, the agent is
     /// told on the active branch, in a message of the runtime in its
-    /// transcript: in full, classified as the turn - or, with `names_only`,
-    /// only which tools ran, classified so.
+    /// transcript: in full, classified as the turn's label (issue 168) - or,
+    /// with `names_only`, only which tools ran, classified so.
     pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
-        let TurnState { entries, classification, .. } = turn;
+        let label = turn.label();
+        let TurnState { entries, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
         let messages: Vec<&Message> = entries.iter().map(|e| &e.entry.message).collect();
         let executed = executed_calls(&messages);
@@ -271,7 +285,7 @@ impl<'a> Turn<'a> {
             id: caelumora_model::message::MessageId::new(),
             content: Some(told_of_executed(&reason, &executed, names_only.is_none())),
             internal: true,
-            ..Message::new(names_only.unwrap_or(classification))
+            ..Message::new(names_only.unwrap_or(label))
         });
 
         let transcript = self.agent_channel_state.transcript.digest();
@@ -317,8 +331,14 @@ impl<'a> Turn<'a> {
                 profile: self.profile,
                 ..ContextRef::default()
             },
+            seen: Some(Classification::PUBLIC),
             ..TurnState::default()
         });
+        // The transcript is what the model is given first (issue 168).
+        let transcript = &self.agent_channel_state.transcript;
+        if let Some(turn) = self.agent_channel_state.turn.as_mut() {
+            transcript.entries().for_each(|e| turn.see_message(&e.message));
+        }
     }
 
     /// Keeps the set of `tools` as the model is offered them once by digest
@@ -385,16 +405,21 @@ impl<'a> Turn<'a> {
     /// text is kept once by digest, so that what the agent saw can be told
     /// later (issues 06, 47).
     pub fn set_context(&mut self, parts: Vec<PromptPart>) {
-        let prompts = parts.into_iter().map(|PromptPart { role, text, after }| self.keep_prompt(role, text, after)).collect();
+        let prompts = parts.into_iter()
+            .map(|PromptPart { role, text, after, classification }| self.keep_prompt(role, text, after, classification))
+            .collect();
         self.current_mut().context.prompts = prompts;
     }
 
     /// Keeps the text of a prompt part once by digest, and returns the
-    /// reference to it, given in `role` after the entry `after`.
-    fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>) -> PromptRef {
+    /// reference to it, given in `role` after the entry `after`, its text
+    /// classified `classification`. The model is given it: the turn has
+    /// seen it (issue 168).
+    fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
+        self.current_mut().see_classified(classification.as_ref());
         let digest = caelumora_model::digest::prompt(&text);
         self.agent_channel_state.prompts.entry(digest).or_insert(text);
-        PromptRef { text: digest, role, after }
+        PromptRef { text: digest, role, after, classification }
     }
 
     /// Places `text`, given in `role`, after the messages the turn has
@@ -406,7 +431,8 @@ impl<'a> Turn<'a> {
     /// from now on.
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
         let after = self.current().context.transcript;
-        let prompt = self.keep_prompt(role, text, after);
+        // Written by the runtime from what the turn produced: as the turn.
+        let prompt = self.keep_prompt(role, text, after, Some(self.label()));
         self.current_mut().context.prompts.push(prompt);
     }
 
@@ -523,7 +549,12 @@ impl<'a> Turn<'a> {
         &self.current().security_context
     }
 
+    /// Appends what others said to the transcript; a turn under way has
+    /// seen it (issue 168).
     pub fn extend_transcript(&mut self, messages: Vec<Message>) {
+        if let Some(turn) = self.agent_channel_state.turn.as_mut() {
+            messages.iter().for_each(|m| turn.see_message(m));
+        }
         self.agent_channel_state.transcript.extend(messages);
     }
     pub fn extend_history(&mut self, messages: Vec<Message>) {
@@ -672,6 +703,7 @@ async fn send(
 mod tests {
     use super::*;
     use caelumora_model::message::MessageId;
+    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::plan::{Plan, PlanId, PlanStep};
 
     fn make_plan_state() -> PlanState {
@@ -844,7 +876,7 @@ mod tests {
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), keeps_system);
             turn.begin();
-            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None }]);
+            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
             turn.set_plan(plan_of(&["only"]));
             turn.advance_plan(0);
             let mut internal = step.clone();
@@ -1000,7 +1032,7 @@ mod tests {
         state.transcript.push(question.clone());
 
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
-        let system = || PromptPart { role: MessageRole::System, text: "You are good at sums.".to_string(), after: None };
+        let system = || PromptPart { role: MessageRole::System, text: "You are good at sums.".to_string(), after: None, classification: None };
         let order = |items: &[ContextItem]| items.iter().map(|item| match item {
             ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
@@ -1028,13 +1060,14 @@ mod tests {
         let read = KnowledgeRef {
             channel: Default::default(),
             source: caelumora_model::context::KnowledgeSource::History { digest: None, start: None },
+            classification: None,
         };
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             turn.push_message(before.clone());
-            turn.record_knowledge(read);
-            turn.record_knowledge(read);
+            turn.record_knowledge(read.clone());
+            turn.record_knowledge(read.clone());
             turn.push_message(after.clone());
             turn.commit_turn().await;
         }
@@ -1137,6 +1170,29 @@ mod tests {
             content: Some(content.to_string()),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         }
+    }
+
+    fn message_classified(classification: &Classification) -> Message {
+        Message { id: MessageId::new(), role: MessageRole::User, ..Message::new(classification.clone()) }
+    }
+
+    #[test]
+    fn a_turn_has_seen_its_transcript_its_prompt_parts_and_its_tool_results() {
+        let (internal, confidential) = (Classification::general(Confidentiality::Internal), Classification::general(Confidentiality::Confidential));
+        let said = |classification: &Classification, content: &str| Message { content: Some(content.to_string()), ..message_classified(classification) };
+        let mut state = AgentChannelState::default();
+        state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
+        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        turn.next_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Vec::new());
+        assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
+
+        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC) }]);
+        assert_eq!(turn.label(), Classification::PUBLIC);
+        turn.extend_transcript(vec![said(&internal, "Our numbers are good.")]);
+        assert_eq!(turn.label(), internal, "what others said during the turn");
+        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
+        assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");
+        assert_eq!(turn.agent_channel_state().turn.as_ref().unwrap().context.prompts[0].classification, None, "and is recorded so");
     }
 
     #[tokio::test]

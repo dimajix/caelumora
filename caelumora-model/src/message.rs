@@ -27,8 +27,9 @@ pub struct Message {
     pub sender_name: String,
     pub role: MessageRole,
     /// How sensitive the message is and for whom (issue 133): set by its
-    /// sender - the channel's, unless a user classifies it otherwise - and
-    /// checked by the channel it enters, which admits only what may flow
+    /// sender - for a user the channel's, unless they classify it
+    /// otherwise; for an agent its turn's label, the join of what the turn
+    /// has seen (issue 168) - and checked by the channel it enters, which admits only what may flow
     /// into it. So a message is never classified above its channel; one
     /// classified below is released to a wider audience.
     pub classification: Classification,

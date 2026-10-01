@@ -592,20 +592,21 @@ fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
 /// knowledge, or if the content of a call it leads to is - those of the
 /// message once it is `complete`, and while it streams those of every
 /// tool the agent could still call, since reasoning comes before the
-/// call it leads to. Otherwise it carries the channel's classification,
-/// as everything the agent derives does (issue 133). Knowledge read
-/// from other channels adds nothing: a channel reads only what may flow
-/// into it. The tools are those the turn began with, which the model
-/// was offered (issue 137).
+/// call it leads to. The message carries the turn's label, as
+/// everything the agent derives does (issues 133, 168): the join of what
+/// the turn has seen, knowledge read from other channels included, at
+/// most the channel's classification. The tools are those the turn began
+/// with, which the model was offered (issue 137).
 fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
     let tools = turn.tools();
     let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.visibility).unwrap_or_default();
     for call in &mut message.tool_calls {
         call.visibility = declared(&call.function_name);
     }
-    // What the model produces is derived in the channel: it carries
-    // the channel's classification, as the turn began with it.
-    message.classification = turn.classification();
+    // What the model produces is derived from what the turn has seen: it
+    // carries the turn's label, at most the channel's classification as
+    // the turn began with it (issue 168).
+    message.classification = turn.label();
 
     let owners_call = if complete {
         message.tool_calls.iter().any(|c| !c.visibility.content.is_channel())
@@ -850,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn the_model_s_message_is_the_agent_s_classified_as_the_channel_and_its_calls_as_their_tools_declare() {
+    fn the_model_s_message_is_the_agent_s_classified_as_what_its_turn_has_seen_and_its_calls_as_their_tools_declare() {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
@@ -862,7 +863,13 @@ mod tests {
 
         assert_eq!((message.sender_id, message.sender_name.as_str()), (ActorId::Agent(agent), "agent"));
         assert!(!message.internal, "no plan under way");
-        assert_eq!(message.classification, channel, "as the channel the turn began in");
+        assert_eq!(message.classification, Classification::PUBLIC, "the turn has seen nothing yet");
+        turn.see(&Classification::general(Confidentiality::Internal));
+        stamp(&mut message, &turn, Visibility::Channel, true);
+        assert_eq!(message.classification, Classification::general(Confidentiality::Internal), "as what it has seen");
+        turn.see(&Classification::general(Confidentiality::StrictlyConfidential));
+        stamp(&mut message, &turn, Visibility::Channel, true);
+        assert_eq!(message.classification, channel, "never above the channel the turn began in");
         let labels: Vec<_> = message.tool_calls.iter().map(|c| c.visibility).collect();
         assert_eq!(labels, [ToolVisibility::SHOWN, ToolVisibility::CALL_ONLY, ToolVisibility::SHOWN],
             "as their tools declare; an unknown tool's call fails and hides nothing");
@@ -877,7 +884,7 @@ mod tests {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
             turn.next_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, tools);
             if private_knowledge {
-                turn.record_knowledge(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::PrivateNotes { agent, digest: None } });
+                turn.record_knowledge(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }
             let mut message = answer(calls);
             label(&mut message, &turn, personality, complete);

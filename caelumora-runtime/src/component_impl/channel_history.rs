@@ -10,6 +10,7 @@ use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::Message;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
@@ -78,10 +79,13 @@ impl ToolProvider for ChannelHistoryComponent {
         };
         let channel = session.channel_named(channel).await?;
         let history = channel.history().await?;
-        turn.record_knowledge(KnowledgeRef { channel: channel.channel_ref(), source: KnowledgeSource::History { digest: history.digest, start: history.start } });
-
         let (messages, more) = select(&history.messages, last, query);
-        Ok(serde_json::json!({
+        // What was read is classified as the messages given (issue 168).
+        let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
+        let source = KnowledgeSource::History { digest: history.digest, start: history.start };
+        turn.record_knowledge(KnowledgeRef { channel: channel.channel_ref(), source, classification: classification.clone() });
+
+        let value = serde_json::json!({
             "channel": channel.name(),
             "messages": messages.iter().map(|m| serde_json::json!({
                 "from": m.sender_name,
@@ -89,7 +93,8 @@ impl ToolProvider for ChannelHistoryComponent {
                 "text": m.content.clone().unwrap_or_default(),
             })).collect::<Vec<_>>(),
             "more": more,
-        }).into())
+        });
+        Ok(ToolOutput { value, classification })
     }
 }
 

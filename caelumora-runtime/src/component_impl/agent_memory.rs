@@ -26,6 +26,7 @@ use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Se
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -104,7 +105,9 @@ impl ToolProvider for AgentMemoryComponent {
             RECLASSIFY_MEMORY_TOOL_NAME => self.execute_reclassify(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }?;
-        Ok(value.into())
+        // What these answer tells only what the model asked for: classified
+        // as the turn (issue 168).
+        Ok(ToolOutput::classified(value, turn.label()))
     }
 }
 
@@ -153,10 +156,11 @@ impl PromptProvider for AgentMemoryComponent {
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
         for memory in &recalled {
             if !knowledge.iter().any(|k| k.channel == memory.origin.channel) {
-                knowledge.push(KnowledgeRef { channel: memory.origin.channel, source });
+                let from_there = recalled.iter().filter(|m| m.origin.channel == memory.origin.channel).map(|m| &m.classification);
+                knowledge.push(KnowledgeRef { channel: memory.origin.channel, source, classification: Classification::join_all(from_there) });
             }
         }
-        Ok(Prompt { text: render(&recalled), knowledge })
+        Ok(Prompt::of_knowledge(render(&recalled), knowledge))
     }
 }
 
@@ -307,10 +311,13 @@ mod tests {
     }
 
     /// Remembers `text` in a turn in channel `at`, and completes the turn.
+    /// Remembers `text` in a turn in channel `at` that was told something
+    /// classified as the channel.
     async fn remember(memory: &AgentMemoryComponent, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
         let mut state = AgentChannelState::default();
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default()).with_views(sessions.views_in(&at, memory));
         turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
+        turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), &mut turn).await.unwrap();
         turn.commit_turn().await;
     }
@@ -334,11 +341,13 @@ mod tests {
         sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
         let (team, public, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Public), channel(other_session, Confidentiality::Internal));
 
-        // A turn in an internal channel remembers something ...
+        // A turn in an internal channel remembers something it was told
+        // there ...
         let mut state = AgentChannelState::default();
         {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default()).with_views(sessions.views_in(&team, &memory));
             turn.next_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new());
+            turn.see(&team.1);
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
@@ -433,6 +442,42 @@ mod tests {
         assert!(asked_by_stranger.text.is_empty(), "the policy refuses, whatever the levels say: {}", asked_by_stranger.text);
         let in_its_own_channel = recall(&component(policy, stranger), &sessions, &handle, agent, origin).await;
         assert!(in_its_own_channel.text.contains("Kaya likes tea."), "a channel always reads itself");
+    }
+
+    #[tokio::test]
+    async fn what_a_turn_remembers_is_classified_as_what_it_has_seen() {
+        let agent = AgentId::new();
+        let handle = handle(agent).await;
+        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        let memory = component(policy.clone(), ActorId::User(UserId::new()));
+        let session = SessionId::new();
+        let mut sessions = Sessions::under(policy).await;
+        sessions.add(session, SessionPrivacy::default()).await;
+        let (confidential, public) = (channel(session, Confidentiality::Confidential), channel(session, Confidentiality::Public));
+
+        // A turn in a confidential channel that has seen only what is
+        // internal remembers it as internal (issue 168) ...
+        let mut state = AgentChannelState::default();
+        {
+            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default()).with_views(sessions.views_in(&confidential, &memory));
+            turn.next_turn(in_channel(&confidential), Default::default(), confidential.1.clone(), Vec::new());
+            turn.see(&Classification::general(Confidentiality::Internal));
+            let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
+            assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
+            turn.commit_turn().await;
+        }
+        let remembered = handle.current().memory.current();
+        assert_eq!(remembered[0].classification, Classification::general(Confidentiality::Internal));
+
+        // ... so that an internal channel recalls it, a public one not.
+        assert!(recall(&memory, &sessions, &handle, agent, channel(session, Confidentiality::Internal)).await.text.contains("Kaya likes tea."));
+        assert!(recall(&memory, &sessions, &handle, agent, public).await.text.is_empty());
+
+        // What is recalled is recorded with its classification, and is
+        // part of what the turn has seen.
+        let prompt = recall(&memory, &sessions, &handle, agent, confidential).await;
+        assert_eq!(prompt.knowledge[0].classification, Some(Classification::general(Confidentiality::Internal)));
+        assert_eq!(prompt.classification, Some(Classification::PUBLIC), "nothing but what it recalls");
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ use crate::tool::{arguments, classification_argument, id_argument, reclassify_pa
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::ChannelRef;
+use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -107,11 +107,13 @@ impl ToolProvider for NotesComponent {
         let value = match name {
             NOTE_TOOL_NAME => self.execute_note(params, turn),
             REVOKE_NOTE_TOOL_NAME => self.execute_revoke_note(params, turn),
-            READ_NOTES_TOOL_NAME => self.execute_read_notes(params, turn).await,
+            READ_NOTES_TOOL_NAME => return self.execute_read_notes(params, turn).await,
             RECLASSIFY_NOTE_TOOL_NAME => self.execute_reclassify_note(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }?;
-        Ok(value.into())
+        // What these answer tells only what the model asked for: classified
+        // as the turn (issue 168).
+        Ok(ToolOutput::classified(value, turn.label()))
     }
 }
 
@@ -142,8 +144,9 @@ impl NotesComponent {
     }
 
     /// `read_notes(channel?)`: the notes of the channel named, or of every
-    /// channel that may be read, each read recorded as knowledge.
-    async fn execute_read_notes(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
+    /// channel that may be read, each read recorded as knowledge - classified
+    /// as the notes read (issue 168).
+    async fn execute_read_notes(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<ToolOutput> {
         #[derive(Deserialize)]
         struct ReadNotes { #[serde(default)] channel: Option<String> }
         let ReadNotes { channel } = arguments(params)?;
@@ -155,6 +158,7 @@ impl NotesComponent {
             None => session.channels().await,
         };
         let mut listed = Vec::new();
+        let mut read = Vec::new();
         for channel in channels {
             let mut notes = Vec::new();
             for agent_notes in channel.notes().await? {
@@ -163,18 +167,21 @@ impl NotesComponent {
                 }
                 for note in agent_notes.notes {
                     notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
+                    read.push(note.classification);
                 }
             }
             listed.push(serde_json::json!({ "channel": channel.name(), "notes": notes }));
         }
-        Ok(serde_json::json!({ "channels": listed }))
+        let value = serde_json::json!({ "channels": listed });
+        Ok(ToolOutput { value, classification: Classification::join_all(&read) })
     }
 }
 
 /// What reading `published` in `channel` records.
 fn notes_ref(channel: ChannelRef, published: &PublishedNotes) -> Option<KnowledgeRef> {
     let ActorId::Agent(agent) = published.agent else { return None };
-    Some(KnowledgeRef { channel, source: KnowledgeSource::Notes { agent, digest: published.digest } })
+    let classification = Classification::join_all(published.notes.iter().map(|n| &n.classification));
+    Some(KnowledgeRef { channel, source: KnowledgeSource::Notes { agent, digest: published.digest }, classification })
 }
 
 #[async_trait]
@@ -206,9 +213,10 @@ impl PromptProvider for NotesComponent {
         let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel(), p)).collect();
         if !own_notes.is_empty() {
             let own_digest = AgentNotes::digest(turn, NoteKind::Public);
-            knowledge.push(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest } });
+            let classification = Classification::join_all(own_notes.iter().map(|n| &n.classification));
+            knowledge.push(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest }, classification });
         }
-        Ok(Prompt { text, knowledge })
+        Ok(Prompt::of_knowledge(text, knowledge))
     }
 }
 

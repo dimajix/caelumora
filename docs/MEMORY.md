@@ -95,9 +95,10 @@ channel, `AgentChannelState::private_notes`, with its own tools
     `MemberView::private_notes` in each - of
     every other channel of the session that this channel may read
     (`AccessQuestions::may_channel_read`, the same rule as for
-    [reading another channel](#reading-other-channels)). A note carries the
-    classification of the channel it was written in, stamped when it is
-    written, and is read note by note; `reclassify_private_note` changes it
+    [reading another channel](#reading-other-channels)). A note carries
+    [the turn's label](CONFIDENTIALITY.md#what-a-turn-writes-as) - the classification of what the
+    turn had seen, at most its channel's - stamped when it is written, and
+    is read note by note; `reclassify_private_note` changes it
     (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Hidden calls.** Both tools are `ToolVisibility::HIDDEN`, so the
     calls never reach the channel. "Private" means private from other agents
@@ -120,13 +121,14 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
 *   **Tools.** `remember(text)` and `forget(id)`, both
     `ToolVisibility::HIDDEN`: like private notes, memory is the
     agent's own, seen by its owner in the context panel only.
-*   **Where it is recalled.** Every entry carries the classification of the
-    channel it was written in and is recalled only where that channel's
-    contents may be read. The component asks the policy in the agent's name
+*   **Where it is recalled.** Every entry carries the label of the turn
+    that wrote it - the classification of what the turn had seen, at most
+    its channel's ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as),
+    issue 168) - and is recalled only where that may be read. The component asks the policy in the agent's name
     (`AccessQuestions::may_channel_read` through the `SecurityManager` of its
     `ComponentContext`, issue 131), once per channel the entries come from.
     Under the ownership policy an entry is recalled where its own
-    classification - its channel's when it was written, unless it was
+    classification - the turn's label when it was written, unless it was
     reclassified - flows into the current channel's (the flow rule of issue
     133) - within the session, and beyond it only where the entry's session
     permits it ([134](../issues/134-session-privacy.md)). An entry keeps the
@@ -239,7 +241,7 @@ branch of the conversation it came from
 | **Turn state** | The working state of a turn: plan, pending tool calls, the turn's messages, the changes staged to the agent's states. | agent in channel | turn | discarded |
 | **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes ([17](../issues/17-information-sharing-within-session.md)). | agent in channel | session | yes |
 | **Session memory** | The union of the active public note chains of all agents in all channels of a session - a view, not a store. | session | session | per channel |
-| **Agent memory** | An alternative to private notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)): what an agent remembers across its channels and sessions: a chain in its `AgentState` (component `agent_memory`, tools `remember` / `forget`), each entry carrying the classification of the channel it was written in and recalled only where that channel may be read ([62](../issues/62-json-store-concurrent-writes.md)). | agent | beyond the session | no |
+| **Agent memory** | An alternative to private notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)): what an agent remembers across its channels and sessions: a chain in its `AgentState` (component `agent_memory`, tools `remember` / `forget`), each entry carrying the label of the turn that wrote it and recalled only where that may be read ([62](../issues/62-json-store-concurrent-writes.md)). | agent | beyond the session | no |
 | **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent, carrying the classification of that channel ([51](../issues/51-agent-private-notes.md)). | agent in channel | session | yes |
 | **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its channel's classification allows. | agent in session | session | per channel |
 | **Agent knowledge** | What an agent keeps across sessions, committed from notes ([18](../issues/18-knowledge-sharing.md)). | agent | permanent | no |

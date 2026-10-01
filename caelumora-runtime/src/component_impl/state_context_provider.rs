@@ -10,6 +10,7 @@ use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::MessageRole;
 use std::sync::Arc;
 
@@ -52,9 +53,10 @@ impl ContextProvider for StateContextProvider {
             for reference in contribution.knowledge {
                 state.record_knowledge(reference);
             }
+            let part = (prompt, contribution.classification);
             match provider.facet.position() {
-                PromptPosition::Start => start.push(prompt),
-                PromptPosition::BeforeTurnInput => before_input.push(prompt),
+                PromptPosition::Start => start.push(part),
+                PromptPosition::BeforeTurnInput => before_input.push(part),
             }
         }
 
@@ -62,7 +64,8 @@ impl ContextProvider for StateContextProvider {
         let transcript = &state.agent_channel_state().transcript;
         let mut parts = Vec::with_capacity(2);
         if !start.is_empty() {
-            parts.push(PromptPart { role: MessageRole::System, text: start.join("\n\n"), after: None });
+            let (text, classification) = joined(start);
+            parts.push(PromptPart { role: MessageRole::System, text, after: None, classification });
         }
         if !before_input.is_empty() {
             // Before the newest message, which is the turn's input - unless
@@ -75,12 +78,22 @@ impl ContextProvider for StateContextProvider {
                 Some(own_message) => Some(own_message.digest),
                 None => None,
             };
-            parts.push(PromptPart { role: MessageRole::User, text: before_input.join("\n\n"), after });
+            let (text, classification) = joined(before_input);
+            parts.push(PromptPart { role: MessageRole::User, text, after, classification });
         }
         state.set_context(parts);
 
         Ok(())
     }
+}
+
+/// The prompt parts of one position joined into one: their texts, and the
+/// join of their classifications - `None` if one of them is not known, or
+/// they have no audience in common (issue 168).
+fn joined(parts: Vec<(String, Option<Classification>)>) -> (String, Option<Classification>) {
+    let (texts, classifications): (Vec<String>, Vec<Option<Classification>>) = parts.into_iter().unzip();
+    let classification = classifications.into_iter().collect::<Option<Vec<_>>>().and_then(|c| Classification::join_all(&c));
+    (texts.join("\n\n"), classification)
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -141,7 +154,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
         turn.begin();
-        let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed);
+        let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed);
 
         let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         open.current_context(&mut turn).await.expect("a part that fails open is left out");
@@ -158,8 +171,8 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let provider = StateContextProvider {
             prompt_providers: vec![
-                part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start }), ComponentFailPolicy::FailClosed),
-                part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput }), ComponentFailPolicy::FailClosed),
+                part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
+                part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
             ],
         };
         let contents = |turn: &Turn| turn.full_context().unwrap().messages.iter()

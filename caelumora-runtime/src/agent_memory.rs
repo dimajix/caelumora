@@ -115,7 +115,8 @@ impl AgentMemory {
     }
 
     /// Remembers `text`, as written in the turn's channel, with the privacy
-    /// its session has now (issue 134): taken over when the turn completes.
+    /// its session has now (issue 134) and classified as the turn has seen
+    /// so far (`Turn::label`, issue 168): taken over when the turn completes.
     /// Returns its number.
     ///
     /// Unlike a note's, the number is reserved on the agent's shared state
@@ -125,7 +126,7 @@ impl AgentMemory {
     /// time, and would otherwise hand out the same number. Deliberately the
     /// one exception to "commit, don't write" (issue 19).
     pub fn remember(turn: &mut Turn, text: String) -> MemoryId {
-        let classification = turn.classification();
+        let classification = turn.label();
         let id = turn.agent_state().reserve_memory_id();
         turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Add { id, text, classification }, origin: Self::origin(turn) });
         id

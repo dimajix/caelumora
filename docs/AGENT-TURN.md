@@ -83,7 +83,12 @@ the turn is and what it has done so far:
 *   the envelope it answers (`EventContext`),
 *   whose authority it acts with (`SecurityContext`),
 *   the classification of its channel as the turn began - where the
-    channel is, the turn reads from the envelope it answers,
+    channel is, the turn reads from the envelope it answers - which bounds
+    what it may read,
+*   its label: the join of the classifications of everything it has seen
+    so far, at most the channel's, which everything it writes is
+    classified as (issue 168, see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)),
 *   what its next message is produced from (see [The turn's context and
     the resolver](#the-turns-context-and-the-resolver)), the messages
     produced, each with what it was produced from,
@@ -136,7 +141,7 @@ channel, in tests, has none and reads nothing.
     *   what its tools did stays done. If a call ran (its result has a
         start), the agent is told on the active branch, in an internal
         system message of the runtime in its transcript - with arguments
-        and results, classified as the turn, while the turn may still flow
+        and results, classified as the turn's label, while the turn may still flow
         into the channel (`ActionType::Publish`); only the names of the
         tools, classified as the channel, once the channel was lowered
         below the turn (issue 141) or is gone. A call that did not run -
@@ -380,7 +385,11 @@ stable prefix.
 `StateContextProvider` asks for every `PromptProvider` of the agent by type
 (issue 99) and joins their parts per position, in the order of the
 configuration. `static_system_prompt_provider` takes its position from its
-parameter `position` (`start` by default, or `before_turn_input`).
+parameter `position` (`start` by default, or `before_turn_input`), and how
+its prompt is classified from `classification` (`public` by default). Every
+part is classified as its provider says - a part that does not say counts
+as the channel - and what the parts of one position are joined into, as the
+join of theirs; the turn has seen it (issue 168).
 
 The parts may be left out, each by the fail policy of its own component: a
 part that fails open is left out of that turn with a warning; one that

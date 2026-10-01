@@ -80,11 +80,12 @@ impl AgentNotes {
         kind.chain(turn.agent_channel_state()).with_staged(staged)
     }
 
-    /// Notes `text` in this turn and returns the note's number: one more than
-    /// any in the chain or noted earlier in the turn.
+    /// Notes `text` in this turn, classified as the turn has seen so far
+    /// (`Turn::label`, issue 168), and returns the note's number: one more
+    /// than any in the chain or noted earlier in the turn.
     pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
         let id = Self::effective(turn, kind).next_id();
-        let classification = turn.classification();
+        let classification = turn.label();
         turn.stage_channel_change(kind.change(NoteChange::Add { id, text, classification }));
         id
     }

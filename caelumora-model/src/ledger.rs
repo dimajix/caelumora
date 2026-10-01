@@ -38,9 +38,10 @@ pub trait LedgerKind {
 /// A change to a ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Change<Id> {
-    /// An entry, classified as the channel it was written in was then (issue
-    /// 133): what the agent derives carries its channel's classification,
-    /// and a later change of the channel changes none of its entries.
+    /// An entry, classified as the turn that wrote it had seen (issues 133,
+    /// 168): what the agent derives carries its turn's label, at most its
+    /// channel's classification, and a later change of the channel changes
+    /// none of its entries.
     Add { id: Id, text: String, classification: Classification },
     Remove { id: Id },
     /// The entry `id` is classified `classification` from now on (issue
@@ -74,8 +75,8 @@ impl<K: LedgerKind> ChainEntry for LedgerEntry<K> {
 pub struct Item<K: LedgerKind> {
     pub id: K::Id,
     pub text: String,
-    /// Its channel's classification when it was written, unless it was
-    /// reclassified since (issue 133).
+    /// The label of the turn that wrote it, unless it was reclassified
+    /// since (issues 133, 168).
     pub classification: Classification,
     /// Where it was added.
     pub origin: K::Origin,

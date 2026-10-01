@@ -26,7 +26,7 @@ use crate::tool::{classification_argument, id_argument, reclassify_parameters, t
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::ChannelRef;
+use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::digest::Digest;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
@@ -103,7 +103,9 @@ impl ToolProvider for PrivateNotesComponent {
             RECLASSIFY_PRIVATE_NOTE_TOOL_NAME => self.execute_reclassify_private_note(params, turn).await,
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }?;
-        Ok(value.into())
+        // What these answer tells only what the model asked for: classified
+        // as the turn (issue 168).
+        Ok(ToolOutput::classified(value, turn.label()))
     }
 }
 
@@ -162,12 +164,16 @@ impl PromptProvider for PrivateNotesComponent {
         }
         elsewhere.sort_by(|l, r| l.name.cmp(&r.name));
 
-        let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest } };
-        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel, c.digest)).collect();
+        let private = |channel, digest, notes: &[Note]| KnowledgeRef {
+            channel,
+            source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest },
+            classification: Classification::join_all(notes.iter().map(|n| &n.classification)),
+        };
+        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel, c.digest, &c.notes)).collect();
         if !own.is_empty() {
-            knowledge.push(private(turn.channel(), AgentNotes::digest(turn, NoteKind::Private)));
+            knowledge.push(private(turn.channel(), AgentNotes::digest(turn, NoteKind::Private), &own));
         }
-        Ok(Prompt { text: render(&own, &elsewhere), knowledge })
+        Ok(Prompt::of_knowledge(render(&own, &elsewhere), knowledge))
     }
 }
 

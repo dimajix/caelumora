@@ -113,6 +113,9 @@ impl Classification {
     /// The classification of a channel whose creator or template names none.
     pub const CHANNEL_DEFAULT: Classification = Classification::general(Confidentiality::Internal);
 
+    /// The lowest classification: anyone may read it.
+    pub const PUBLIC: Classification = Classification::general(Confidentiality::Public);
+
     /// `level` with the audience `compartments`; refused for `Public` with
     /// compartments. Whether the compartments exist is the configuration's
     /// question (`Compartments::check`).
@@ -176,6 +179,43 @@ impl Classification {
             self.compartments.union(&destination.compartments).cloned().collect()
         };
         Classification { level, compartments }
+    }
+
+    /// The classification of what holds information classified `self` and
+    /// information classified `other` (issue 168): the higher level, and
+    /// the audience both have in common - none if both are general, the
+    /// other's if one is. Both flow into it, whatever compartments read
+    /// which. Without a compartment that reads another it is the lowest
+    /// such classification; with one, a lower one may exist that only the
+    /// read relation shows, which is the rules' and not known here.
+    /// `None` if the two have no compartment in common.
+    pub fn join(&self, other: &Classification) -> Option<Classification> {
+        let level = self.level.max(other.level);
+        let compartments = match (self.compartments.is_empty(), other.compartments.is_empty()) {
+            (true, _) => other.compartments.clone(),
+            (false, true) => self.compartments.clone(),
+            (false, false) => {
+                let common: BTreeSet<Compartment> = self.compartments.intersection(&other.compartments).cloned().collect();
+                if common.is_empty() {
+                    return None;
+                }
+                common
+            }
+        };
+        Some(Classification { level, compartments })
+    }
+
+    /// The join of all `classifications` (`join`): `PUBLIC` for none,
+    /// `None` if they have no compartment in common.
+    pub fn join_all<'a>(classifications: impl IntoIterator<Item = &'a Classification>) -> Option<Classification> {
+        classifications.into_iter().try_fold(Classification::PUBLIC, |joined, c| joined.join(c))
+    }
+
+    /// Whether what is classified `self` flows into `destination` whatever
+    /// compartments read which (issue 168): `flows_to` as if none read
+    /// another. What does flows under every read relation.
+    pub fn surely_flows_to(&self, destination: &Classification) -> bool {
+        self.flows_to(destination, &Compartments::default())
     }
 }
 
@@ -561,6 +601,36 @@ mod tests {
         assert_eq!(fitted(hr_confidential.clone(), Classification::general(Public)), Classification::general(Public));
         assert_eq!(fitted(classified(Internal, &["hr"]), classified(StrictlyConfidential, &["hr"])), classified(Internal, &["hr"]), "raising changes nothing");
         assert_eq!(fitted(Classification::general(Internal), classified(Internal, &["hr"])), Classification::general(Internal), "what is general stays general");
+    }
+
+    #[test]
+    fn what_holds_two_classifications_is_their_join_into_which_both_flow() {
+        let compartments = organisation();
+        let joined = |a: Classification, b: Classification| {
+            let joined = a.join(&b);
+            assert_eq!(joined, b.join(&a), "in either order");
+            if let Some(joined) = &joined {
+                assert!(a.flows_to(joined, &compartments) && b.flows_to(joined, &compartments), "{a} and {b} flow into {joined}");
+            }
+            joined
+        };
+        assert_eq!(joined(Classification::PUBLIC, classified(Internal, &["hr"])), Some(classified(Internal, &["hr"])), "public adds nothing");
+        assert_eq!(joined(Classification::general(Confidential), classified(Internal, &["hr"])), Some(classified(Confidential, &["hr"])), "the higher level, the audience");
+        assert_eq!(joined(classified(Internal, &["hr", "sales"]), classified(Internal, &["hr"])), Some(classified(Internal, &["hr"])), "the audience in common");
+        assert_eq!(joined(classified(Internal, &["hr"]), classified(Internal, &["sales"])), None, "no audience in common");
+        assert_eq!(Classification::join_all([]), Some(Classification::PUBLIC));
+        assert_eq!(Classification::join_all(&[Classification::general(Internal), classified(Confidential, &["hr", "sales"]), classified(Internal, &["sales"])]), Some(classified(Confidential, &["sales"])));
+    }
+
+    #[test]
+    fn what_surely_flows_flows_whatever_compartments_read() {
+        let compartments = organisation();
+        assert!(classified(Internal, &["hr", "sales"]).surely_flows_to(&classified(Confidential, &["hr"])));
+        assert!(Classification::general(Internal).surely_flows_to(&classified(Internal, &["hr"])));
+        assert!(!classified(Internal, &["hr"]).surely_flows_to(&Classification::general(Internal)), "an audience never into what is general");
+        let hr_management = classified(Internal, &["hr_management"]);
+        assert!(classified(Internal, &["hr"]).flows_to(&hr_management, &compartments));
+        assert!(!classified(Internal, &["hr"]).surely_flows_to(&hr_management), "only by the read relation");
     }
 
     #[test]

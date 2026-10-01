@@ -71,6 +71,8 @@ impl<'t> ToolCalls<'t> {
     /// outcome is decided in `crate::tool` (issue 15).
     pub(crate) fn to_run(&mut self) -> Vec<(ApprovalId, ToolCall)> {
         let mut to_run = Vec::new();
+        // A fixed text of the runtime's: as the turn (issue 168).
+        let label = self.turn.label();
         for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
             let answer = match call.status {
                 ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
@@ -82,7 +84,7 @@ impl<'t> ToolCalls<'t> {
                 ApprovalStatus::Pending => None,
             };
             if let Some((status, content)) = answer {
-                call.result = Some(ToolCallResult::of(&call.tool_call, status, content, self.turn.classification.clone()));
+                call.result = Some(ToolCallResult::of(&call.tool_call, status, content, label.clone()));
             }
         }
         to_run
@@ -103,9 +105,13 @@ impl<'t> ToolCalls<'t> {
         if self.turn.tool_calls.iter().any(|c| c.result.is_none()) {
             return None;
         }
-        let tool_results = mem::take(&mut self.turn.tool_calls).into_iter()
+        let tool_results: Vec<_> = mem::take(&mut self.turn.tool_calls).into_iter()
             .filter_map(|c| c.result)
             .collect();
+        // The model sees the results from here on (issue 168).
+        for result in &tool_results {
+            self.turn.see(&result.classification);
+        }
         let message = Message {
             id: MessageId::new(),
             sender_id: ActorId::Agent(self.agent_id),
@@ -115,7 +121,7 @@ impl<'t> ToolCalls<'t> {
             content: None,
             timestamp: chrono::Utc::now(),
             internal,
-            ..Message::new(self.turn.classification.clone())
+            ..Message::new(self.turn.label())
         };
         self.turn.push(message.clone());
         Some(message)

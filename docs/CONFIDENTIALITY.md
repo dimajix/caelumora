@@ -373,27 +373,69 @@ quote (issue 66):
 *   The private notes' prompt part and tool descriptions say not to reveal
     them.
 
-## Knowledge that carries its channel
+## What a turn writes as
 
-What an agent writes down carries the classification of the channel it was
-written in, stamped when it is written, so that the reading rule can follow
-it into other channels; a later change of the channel changes none of it:
+Everything an agent's turn writes - its messages, the tool message with its
+results, its notes and private notes, what it remembers - is classified by
+the turn's *label* (`Turn::label`, issue 168), stamped when it is written,
+so that the reading rule can follow it into other channels; a later change
+of the channel changes none of it.
+
+The label is the join of the classifications of everything the turn has
+seen so far (`TurnState::see`): it starts at `public` and rises with
+
+*   every message of the transcript - those it began with, and what others
+    said while it ran - and every tool result in them,
+*   every prompt part, as its `PromptProvider` classifies it
+    (`Prompt::classification`): a part that holds only knowledge, such as
+    the notes or what is recalled from memory, by that knowledge; the
+    system prompt of `static_system_prompt_provider` by its parameter
+    `classification`, `public` if left out - who writes something
+    confidential into a personality's prompt classifies it; a part that
+    does not say counts as the channel,
+*   every piece of knowledge read (`KnowledgeRef::classification`): notes,
+    private notes and memory by the join of the entries read, another
+    channel's history by the join of the messages given,
+*   every tool result, once the model is given it. A built-in tool whose
+    answer is derived only from what the model asked - `calculate`, `echo`,
+    `note`, `remember`, ... - classifies it as the turn; a result the tool
+    does not classify is, as before, classified as the tool is configured,
+    else as the channel.
+
+The join (`Classification::join`) is the higher level and the audience in
+common. It is never above the channel the turn began in: everything the turn
+sees flows into the channel, and where the join is not known to flow there
+too - no compartment in common, or only by which compartments read which,
+which only the rules know (`Classification::surely_flows_to`) - the label is
+the channel's classification. So the label is the channel's classification
+at worst, which is what everything was classified as before, and lower where
+the turn has seen less: what an agent remembers from a turn that saw only
+internal things in a confidential channel stays readable in internal
+channels.
+
+What the label was made of can be told afterwards: every prompt part
+(`PromptRef`) and every knowledge read (`KnowledgeRef`) of a message's
+context records the classification it had when it was read.
+
+In detail:
 
 *   **Notes** (issue 17) and **private notes** (issue 51) carry their
     classification (`NoteChange::Add`, `Note::classification`). Other
     channels read them note by note; the agent is shown the private notes
     of every other channel of the session that its current channel may
     read (`AccessQuestions::may_channel_read`).
-*   **Agent memory** (issue 62) entries carry the classification of the
-    channel they were written in, and are recalled only in channels that may
-    read it (`AgentMemory::recalled`, which asks
+*   **Agent memory** (issue 62) entries carry the label they were written
+    with, and are recalled only in channels that may read it
+    (`AgentMemory::recalled`, which asks
     `AccessQuestions::may_channel_read` like the private notes, issue 131).
     The reading channel is judged by the classification the turn began
-    with.
+    with: what the turn may read is bounded by its channel, not by its
+    label.
 
 This is sound because an agent never sees anything that may not flow into
-its channel: everything it wrote may be read by the channel's audience and
-no wider.
+its channel, and what it writes is classified at least as everything it has
+seen: everything it wrote may be read wherever all of that may, and no
+wider.
 
 "Private" means private from other agents and other users, not from the
 agent's owner: the owner sees private notes in the context panel, which is

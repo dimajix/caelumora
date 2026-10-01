@@ -19,6 +19,7 @@
 //!   cannot diverge.
 
 use crate::actor::ActorId;
+use crate::confidentiality::Classification;
 use crate::agent::{AgentChannelState, TurnEntry};
 use crate::digest::Digest;
 use crate::message::{Message, MessageRole};
@@ -30,12 +31,15 @@ use std::collections::BTreeMap;
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
 /// was given as, and the entry of the transcript it followed, `None` if it
-/// came before everything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// came before everything - and how what it holds besides the knowledge it
+/// lists was classified (issue 168), `None` if that is not known.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptRef {
     pub text: Digest,
     pub role: MessageRole,
     pub after: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<Classification>,
 }
 
 /// An element of what an agent's model is given, in the shape it was given
@@ -63,11 +67,16 @@ impl ContextItem {
 
 /// Knowledge from another place an agent's model was given (issue 17): what
 /// was read, from which channel - of which session (issue 134) - as the
-/// digest of the state read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// digest of the state read, and how what was read was classified when it
+/// was read (issue 168): the join of its entries, `None` if that is not
+/// known - read before it was recorded, or entries without an audience in
+/// common.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeRef {
     pub channel: crate::confidentiality::ChannelRef,
     pub source: KnowledgeSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<Classification>,
 }
 
 /// What a [`KnowledgeRef`] read.
@@ -188,12 +197,14 @@ pub enum SystemMessages {
 
 /// A prompt part as a `ContextProvider` places it: its text, the role it is
 /// given in, and the transcript entry it follows - `None`: before
-/// everything.
+/// everything - and how what it holds besides knowledge is classified,
+/// `None` if that is not known (issue 168).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptPart {
     pub role: MessageRole,
     pub text: String,
     pub after: Option<Digest>,
+    pub classification: Option<Classification>,
 }
 
 /// What an agent's model saw when it produced a message (issue 06): the
@@ -383,8 +394,8 @@ mod tests {
         let reference = ContextRef {
             transcript: whole,
             prompts: vec![
-                PromptRef { text: prompt("system"), role: MessageRole::System, after: None },
-                PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question },
+                PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: None },
+                PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question, classification: None },
             ],
             tools: None,
             knowledge: Vec::new(),
@@ -415,7 +426,7 @@ mod tests {
     fn place(state: &mut AgentChannelState, role: MessageRole, text: &str) {
         state.prompts.insert(prompt(text), text.to_string());
         let turn = state.turn.as_mut().unwrap();
-        turn.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.context.transcript });
+        turn.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.context.transcript, classification: None });
     }
 
     #[test]
@@ -479,7 +490,7 @@ mod tests {
             let mut state = state.clone();
             state.prompts.insert(prompt("system prompt"), "system prompt".to_string());
             begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
-            state.turn.as_mut().unwrap().context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None });
+            state.turn.as_mut().unwrap().context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
             place(&mut state, MessageRole::System, "instruction");
             let next = state.turn.as_ref().unwrap().context.clone();
             ContextResolver::of(&state).resolve(&next, ActorId::None).expect("everything it names is here")

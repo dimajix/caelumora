@@ -31,9 +31,10 @@ impl ToolProvider for EchoToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == ECHO_TOOL_NAME {
-            Ok(params.clone().into())
+            // The arguments themselves: classified as the turn (issue 168).
+            Ok(ToolOutput::classified(params.clone(), turn.label()))
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }

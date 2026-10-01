@@ -33,7 +33,7 @@ impl ToolProvider for CalculatorToolProvider {
         }]
     }
 
-    async fn execute(&self, name: &str, params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+    async fn execute(&self, name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == CALCULATE_TOOL_NAME {
             #[derive(Deserialize)]
             struct Calculate { expression: String }
@@ -42,7 +42,9 @@ impl ToolProvider for CalculatorToolProvider {
             let result = meval::eval_str(&expression)
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e)))?;
 
-            Ok(serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?.into())
+            // Derived from the arguments alone: classified as the turn (issue 168).
+            let value = serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            Ok(ToolOutput::classified(value, turn.label()))
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }

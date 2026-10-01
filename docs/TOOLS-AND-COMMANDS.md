@@ -53,7 +53,12 @@ channel (`ActionType::Publish`, in the agent's name) never reaches the
 model: it is replaced by the status `withheld` and a message that names the
 classification and asks the model not to obtain it another way. The value
 is not kept anywhere. Results that did not come from the tool - refused,
-denied, timed out, failed - are the channel's. See
+denied, timed out - are the runtime's fixed texts and classified as the
+turn's label; a failed one, whose error may come from the tool, is the
+channel's. Built-in tools whose answer is derived from the arguments alone
+classify it as the turn's label too (issue 168): the model sees every
+result, and what it has seen classifies what the turn writes (see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)). See
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 
 ### Running tool calls

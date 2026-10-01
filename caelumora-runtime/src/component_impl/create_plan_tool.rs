@@ -8,6 +8,7 @@ use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
@@ -46,7 +47,8 @@ pub struct CreatePlanToolProvider;
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
     async fn get_prompt(&self, _turn: &Turn) -> Result<Prompt> {
-        Ok(PLANNING_SYSTEM_PROMPT.to_string().into())
+        // A fixed text of the runtime's: nothing confidential (issue 168).
+        Ok(Prompt::classified(PLANNING_SYSTEM_PROMPT.to_string(), Classification::PUBLIC))
     }
 }
 
@@ -115,6 +117,7 @@ impl ToolProvider for CreatePlanToolProvider {
 
     async fn execute(&self, _name: &str, params: &Value, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let incoming = parse_plan(params)?;
+        // What it answers tells nothing: classified as the turn (issue 168).
         match turn.take_plan() {
             Some(mut state) => {
                 let start = state.plan.steps.len();
@@ -130,11 +133,11 @@ impl ToolProvider for CreatePlanToolProvider {
                 // untouched - the current step continues uninterrupted, and
                 // the new steps get picked up once it converges.
                 turn.set_plan(state);
-                Ok(serde_json::json!({ "status": "steps_added" }).into())
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "steps_added" }), turn.label()))
             }
             None => {
                 turn.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
-                Ok(serde_json::json!({ "status": "accepted" }).into())
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "accepted" }), turn.label()))
             }
         }
     }

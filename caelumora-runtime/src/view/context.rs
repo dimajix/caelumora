@@ -101,7 +101,7 @@ mod tests {
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
-        let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
+        let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
         state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
         let view = AgentContextView::of(actor, state);
         assert!(matches!(view.context_of(lost.id), Err(ContextError::Unavailable { .. })));
