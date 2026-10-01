@@ -10,7 +10,8 @@ use std::fmt::Debug;
 pub enum ToolParameters {
     Object {
         properties: HashMap<String, ToolParameters>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        // Left out when empty, so it must be read as empty when missing.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         required: Vec<String>,
     },
     String {
@@ -262,6 +263,14 @@ impl ToolCallState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parameters_without_required_ones_are_read_back_as_written() {
+        let parameters = ToolParameters::Object { properties: HashMap::from([("channel".to_string(), ToolParameters::string("a channel"))]), required: Vec::new() };
+        let json = serde_json::to_string(&parameters).unwrap();
+        assert!(!json.contains("required"), "an empty list is left out");
+        assert_eq!(serde_json::from_str::<ToolParameters>(&json).unwrap(), parameters);
+    }
 
     #[test]
     fn boolean_and_array_round_trip_through_json() {
