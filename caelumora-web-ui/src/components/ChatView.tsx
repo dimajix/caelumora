@@ -232,6 +232,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         setMessages(snapshot.messages);
         setChannel(snapshot.channel);
         setNotes(snapshot.notes ?? []);
+        setPendingApprovals(snapshot.pending_approvals ?? []);
         setHasMore(snapshot.has_more);
         setStreamingMessage(null);
         setStreamingSender(null);
@@ -277,7 +278,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           setStreamingMessage(null);
           setStreamingSender(null);
         } else if (actorEvent.ApprovalRequested) {
-          setPendingApprovals(prev => [...prev, actorEvent.ApprovalRequested!]);
+          // Asked again by an agent that resumed its turn (issue 172), or
+          // already in the snapshot: shown once.
+          const requested = actorEvent.ApprovalRequested;
+          setPendingApprovals(prev => prev.some(req => req.id === requested.id) ? prev : [...prev, requested]);
         } else if (actorEvent.ApprovalGranted || actorEvent.ApprovalDenied || actorEvent.ApprovalTimedOut || actorEvent.ApprovalRequestWithdrawn) {
           // Over only once the approver says so - decided, or no longer
           // asked for (issue 148); a user's answer alone may not decide it.

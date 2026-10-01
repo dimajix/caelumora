@@ -1,6 +1,6 @@
 # 172 — Pending approvals live only in the approver's memory and the stream
 
-**Status:** open
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -50,3 +50,24 @@ Found while implementing [148](148-cancelled-call-without-result.md).
 
 - **2026-10-01** — Opened while implementing
   [148](148-cancelled-call-without-result.md).
+- **2026-10-01** — Done, as decided with the maintainer: the agent's turn
+  is the record, the approver stays in memory.
+  - An agent that resumes a turn with calls still pending asks again with
+    the same ids (`TurnState::pending_approvals`, `AgentActor::run`) - not
+    only in `WaitingForApproval`: a turn stored right after asking resumes
+    executing its tools, and waits after that. A cancelled one does not; it
+    withdraws.
+  - The approver takes a request it still holds as announced again, keeping
+    the answers and the timeout. After a restart it holds nothing: the
+    timeout starts anew, and answers given before are lost - the users are
+    asked again.
+  - The pending approvals are read from the agents' stored turns
+    (`ChannelView::pending_approvals`) for a viewer who takes part in the
+    channel as a user, and sent with the channel stream's snapshot
+    (`pending_approvals`) rather than in the channel snapshot of
+    `GET …/channels/{cid}`, as proposed above: that one is taken for every
+    channel of every session listed, and reading every agent's state there
+    is not worth it; the stream's snapshot also leaves no window between
+    reading and listening.
+  - The web UI takes them from the snapshot and shows a request asked
+    again once. Whether a user already answered is known only to the page.

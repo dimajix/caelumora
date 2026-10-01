@@ -203,7 +203,11 @@ Both streams accept `?snapshot=true` and then begin with a named `snapshot`
 event describing the state they start from (issue 34):
 
 *   for a channel, its members and the last 20 messages, with `has_more`;
-    older ones come over `GET .../messages`;
+    older ones come over `GET .../messages`; the notes its agents published;
+    and, for a user who takes part in it, the approvals its agents wait for
+    (`pending_approvals`, issue 172), read from their stored turns - an
+    approval asked for before the client connected, or before a restart,
+    is shown too;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state

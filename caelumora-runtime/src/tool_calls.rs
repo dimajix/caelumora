@@ -9,23 +9,22 @@
 //! running a call needs the whole turn, which a longer-lived view would hold.
 //! Running is the actor's - it owns the executor.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentId, TurnState};
+use caelumora_model::agent::TurnState;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use std::mem;
 
-/// The tool calls of the current step of a turn of `agent_id`.
+/// The tool calls of the current step of a turn, of the agent the turn's
+/// context is sent by, called `agent_name` now.
 pub(crate) struct ToolCalls<'t> {
     turn: &'t mut TurnState,
-    agent_id: AgentId,
     agent_name: &'t str,
 }
 
 impl<'t> ToolCalls<'t> {
-    pub(crate) fn new(turn: &'t mut TurnState, agent_id: AgentId, agent_name: &'t str) -> Self {
-        Self { turn, agent_id, agent_name }
+    pub(crate) fn new(turn: &'t mut TurnState, agent_name: &'t str) -> Self {
+        Self { turn, agent_name }
     }
 
     /// Whether the step has calls.
@@ -37,20 +36,14 @@ impl<'t> ToolCalls<'t> {
     /// answered already (issue 118) - and returns the approval requests for
     /// those that wait for a decision.
     pub(crate) fn register(&mut self, calls: Vec<ToolCallState>) -> Vec<ApprovalRequest> {
-        let (session_id, channel_id) = (self.turn.event_context.session_id, self.turn.event_context.channel_id);
-        let requests = calls.iter()
-            .filter(|c| c.status == ApprovalStatus::Pending)
-            .map(|c| ApprovalRequest {
-                id: c.id,
-                session_id,
-                channel_id,
-                agent_id: self.agent_id,
-                tool_call: c.tool_call.clone(),
-                description: c.description.clone(),
-            })
-            .collect();
         self.turn.tool_calls = calls;
-        requests
+        self.pending_approvals()
+    }
+
+    /// The approval requests of the calls that still wait for a decision
+    /// (`TurnState::pending_approvals`).
+    pub(crate) fn pending_approvals(&self) -> Vec<ApprovalRequest> {
+        self.turn.pending_approvals()
     }
 
     /// Records the decision on the call `id`; `false` if there is no such
@@ -134,7 +127,7 @@ impl<'t> ToolCalls<'t> {
         }
         let message = Message {
             id: MessageId::new(),
-            sender_id: ActorId::Agent(self.agent_id),
+            sender_id: self.turn.event_context.sender_id,
             sender_name: self.agent_name.to_string(),
             role: MessageRole::Tool,
             tool_results,
@@ -151,6 +144,8 @@ impl<'t> ToolCalls<'t> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::AgentId;
     use caelumora_model::tool::ToolVisibility;
 
     fn call(name: &str, status: ApprovalStatus) -> ToolCallState {
@@ -166,8 +161,9 @@ mod tests {
     #[test]
     fn a_steps_calls_are_answered_run_and_given_back_to_the_model_in_one_message() {
         let mut turn = TurnState::default();
+        turn.event_context.sender_id = ActorId::Agent(AgentId::default());
         fn view(turn: &mut TurnState) -> ToolCalls<'_> {
-            ToolCalls::new(turn, AgentId::default(), "agent")
+            ToolCalls::new(turn, "agent")
         }
 
         // Registering asks for the approvals still to be given.

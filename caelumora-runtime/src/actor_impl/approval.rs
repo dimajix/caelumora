@@ -113,20 +113,24 @@ impl ApproverActor {
         }
     }
 
+    /// Takes `request` up and asks the users. A request it already holds -
+    /// asked again by an agent that resumed its turn (issue 172) - is only
+    /// announced again: the answers given so far and the timeout stay.
     async fn handle_request(&self, request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &dyn EventSender) -> Result<()> {
-        let timeout = Utc::now() + Duration::minutes(10); // Default timeout 10 mins
-
-        let pending = PendingApproval {
-            id: request.id,
-            agent_id: request.agent_id,
-            strategy: self.approver.strategy,
-            responses: HashMap::new(),
-            timeout,
-            security_context: security.clone(),
-            event_context: context.clone(),
-        };
-
-        self.pending.lock().await.insert(request.id, pending);
+        {
+            let mut pending = self.pending.lock().await;
+            if !pending.contains_key(&request.id) {
+                pending.insert(request.id, PendingApproval {
+                    id: request.id,
+                    agent_id: request.agent_id,
+                    strategy: self.approver.strategy,
+                    responses: HashMap::new(),
+                    timeout: Utc::now() + Duration::minutes(10), // Default timeout 10 mins
+                    security_context: security.clone(),
+                    event_context: context.clone(),
+                });
+            }
+        }
 
         let new_event = ActorEvent::ApprovalRequested(request);
         let new_context = context.next(self.id, self.name());
@@ -512,6 +516,58 @@ mod tests {
         assert_eq!(told.context.sender_id, ActorId::Approver(approver_id));
         tx.send(Envelope::new(Default::default(), user_context, ActorEvent::ApprovalGranted(ApprovalResponse { id: withdrawn_id, agent_id }))).await.unwrap();
         assert!(tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv()).await.is_err(), "nothing is decided any longer");
+    }
+
+    #[tokio::test]
+    async fn a_request_asked_again_keeps_the_answers_given_so_far() {
+        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
+        let runtime_manager = Arc::new(
+            RuntimeManager::new(store.clone(), store.clone(), test_secret_manager(), Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap(),
+        );
+        let (agent_id, session_id, channel_id) = (AgentId::new(), SessionId::new(), ChannelId::new());
+        let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
+        // Both have to approve.
+        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::All };
+        let channel = Channel {
+            id: channel_id,
+            session_id,
+            name: "test".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
+            participants: vec![Participant::User(alice), Participant::User(bob), Participant::Approver(approver.clone())],
+            security_attributes: caelumora_model::security::SecurityAttributes::default(),
+        };
+        let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
+        let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
+            .new_actor_runtime(ActorId::Approver(approver.id), session_id, channel_id);
+        let actor = Arc::new(ApproverActor::new(channel_controller, approver, actor_runtime));
+        let (tx, rx) = mpsc::channel(100);
+        let (output_tx, mut output_rx) = mpsc::channel(100);
+        tokio::spawn(async move {
+            let receiver = Box::new(InMemoryEventReceiver::new(rx));
+            let sender = Box::new(InMemoryEventSender::new(output_tx));
+            actor.run(receiver, sender).await.unwrap();
+        });
+
+        let request = request_of(agent_id, session_id, channel_id);
+        let agent_context = EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string());
+        let answer = |user: UserId| Envelope::new(
+            Default::default(),
+            EventContext::new(session_id, channel_id, ActorId::User(user), "User".to_string()),
+            ActorEvent::ApprovalGranted(ApprovalResponse { id: request.id, agent_id }),
+        );
+        tx.send(Envelope::new(Default::default(), agent_context.clone(), ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
+        assert!(matches!(output_rx.recv().await.unwrap().event, ActorEvent::ApprovalRequested(_)));
+        tx.send(answer(alice)).await.unwrap();
+
+        // The agent resumed its turn and asks again (issue 172): the users
+        // are asked again, alice's answer stays.
+        tx.send(Envelope::new(Default::default(), agent_context, ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
+        assert!(matches!(output_rx.recv().await.unwrap().event, ActorEvent::ApprovalRequested(ref r) if r.id == request.id), "announced again");
+        tx.send(answer(bob)).await.unwrap();
+        let decided = output_rx.recv().await.unwrap();
+        assert!(matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id), "both approved: {:?}", decided.event);
     }
 
     fn request_of(agent_id: AgentId, session_id: SessionId, channel_id: ChannelId) -> ApprovalRequest {

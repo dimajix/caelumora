@@ -139,9 +139,11 @@ shown its history and no input.
 *   **Approvals.** A tool call that needs approval is shown with approve and
     deny. Once this user answered, it waits for the decision; it disappears
     only when the approver ends it - decided, timed out, or withdrawn by an
-    agent whose turn ended (issue 148). Pending approvals are known only
-    from the stream: a reload loses them
-    ([172](../issues/172-pending-approvals-not-kept.md)).
+    agent whose turn ended (issue 148). The pending approvals come with the
+    stream's snapshot, so a reload shows them again; a request that arrives
+    again - asked anew by an agent after a restart - is shown once (issue
+    172). Whether this user answered is known only to this page: after a
+    reload, an answered approval is offered again.
 *   **Stop.** The stop button ends the current turn of every agent
     (`POST …/cancel`).
 *   **Input.** A line starting with `/` is sent as a command, `//` as a

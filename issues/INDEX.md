@@ -155,7 +155,7 @@ against it, and what came out of the last attempt.
 | [145](145-ended-turns-leave-a-record.md) | done | A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain. |
 | [148](148-cancelled-call-without-result.md) | done | A turn cancelled while tool calls are pending is taken over with the calls but without results, so the transcript holds calls never answered. |
 | [161](161-tools-cannot-be-interrupted.md) | open | A running tool cannot be interrupted, so a cancel waits for it and a stop during it aborts the agent without giving its turn up. |
-| [172](172-pending-approvals-not-kept.md) | open | Pending approvals live only in the approver's memory and in the event stream, so a restart or a reload leaves a turn waiting for a decision nobody can give. |
+| [172](172-pending-approvals-not-kept.md) | done | Pending approvals live only in the approver's memory and in the event stream, so a restart or a reload leaves a turn waiting for a decision nobody can give. |
 
 ## User interaction
 

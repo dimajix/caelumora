@@ -102,6 +102,8 @@ export interface ChannelSnapshot {
   has_more: boolean;
   /** The notes every agent of the channel published (issue 17). */
   notes: PublishedNotes[];
+  /** The approvals the channel's agents wait for (issue 172): the stream tells only of requests made while it listens. */
+  pending_approvals?: ApprovalRequest[];
 }
 
 /** A note as it stands (issue 17). */

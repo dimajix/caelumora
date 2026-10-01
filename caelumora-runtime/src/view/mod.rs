@@ -576,6 +576,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
+        use caelumora_model::actor::ActorState;
+        use caelumora_model::agent::{AgentChannelState, TurnState};
+        use caelumora_model::store::StateStore;
+        use caelumora_model::tool::{ToolCall, ToolCallState};
+
+        let (store, manager) = owned_runtime();
+        let alice = user("alice");
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let channel = main_channel(&session);
+        store.create_session(&SecurityContext::system(), &session).await.unwrap();
+        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+
+        // The agent's turn waits for one call, the other was approved.
+        let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
+        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string());
+        let mut turn = TurnState::default();
+        turn.event_context.session_id = session.id;
+        turn.event_context.channel_id = channel.id;
+        turn.event_context.sender_id = ActorId::Agent(helper.id);
+        turn.tool_calls = vec![waiting.clone(), ToolCallState::approved(call("echo"))];
+        let state = AgentChannelState { processing_state: ActorState::WaitingForApproval, turn: Some(turn), ..Default::default() };
+        store.put_agent_channel_state(helper.id, channel.id, &state).await.unwrap();
+
+        let main = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+        let pending = main.pending_approvals().await.unwrap();
+        assert_eq!(pending.len(), 1, "only the call that waits");
+        assert_eq!((pending[0].id, pending[0].agent_id, pending[0].channel_id, pending[0].description.as_str()), (waiting.id, helper.id, channel.id, "Delete it?"));
+        assert!(manager.running(session.id).is_none(), "read without starting the session");
+    }
+
+    #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};

@@ -1,4 +1,5 @@
 use crate::actor::{ActorId, ActorState, EventContext};
+use crate::approval::{ApprovalRequest, ApprovalStatus};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::confidentiality::Classification;
@@ -133,8 +134,9 @@ pub struct AgentChannelState {
 /// 08) will give it up the same way.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnState {
-    /// The envelope the turn answers: carries the ids (`span_id`,
-    /// `correlation_id`) that tie the turn to what started it.
+    /// The envelope the turn answers, continued in the agent's name - its
+    /// sender is the agent: carries the ids (`span_id`, `correlation_id`)
+    /// that tie the turn to what started it.
     pub event_context: EventContext,
     /// Whose authority the turn acts with.
     pub security_context: SecurityContext,
@@ -185,6 +187,27 @@ pub struct TurnState {
 }
 
 impl TurnState {
+    /// The approval requests of the calls of the current step that still
+    /// wait for a decision, as the turn asks for them - the same ids every
+    /// time, in the name of the agent the turn's context is sent by. The
+    /// turn is their record (issue 172): the approver is asked again from
+    /// it when the turn resumes, and a client is shown them from it. None
+    /// for a turn whose context is sent by no agent.
+    pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
+        let ActorId::Agent(agent) = self.event_context.sender_id else { return Vec::new() };
+        self.tool_calls.iter()
+            .filter(|c| c.status == ApprovalStatus::Pending)
+            .map(|c| ApprovalRequest {
+                id: c.id,
+                session_id: self.event_context.session_id,
+                channel_id: self.event_context.channel_id,
+                agent_id: agent,
+                tool_call: c.tool_call.clone(),
+                description: c.description.clone(),
+            })
+            .collect()
+    }
+
     /// Appends `message`, produced by the turn from its context as it
     /// stands, and moves the context on past it (issue 136). The message
     /// gets the digest it will have in the transcript, computed as the

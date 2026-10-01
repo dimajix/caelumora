@@ -6,6 +6,7 @@ use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::digest::Digest;
@@ -216,6 +217,27 @@ impl ChannelView {
         Ok(published)
     }
 
+    /// The approvals the channel's agents wait for (issue 172), read from
+    /// their turns as stored - the record the approver is asked again from
+    /// after a restart - for a viewer who takes part in the channel as a
+    /// user: the users decide, and are told of every request as it is made.
+    /// None for any other viewer.
+    ///
+    /// # Errors
+    /// `Failed` if an agent's state cannot be read.
+    pub async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
+        let viewer = self.views().viewer().context().initiator_id;
+        let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
+        if !takes_part || self.readable != Readable::Whole {
+            return Ok(Vec::new());
+        }
+        let mut pending = Vec::new();
+        for member in self.members().await {
+            pending.extend(member.pending_approvals().await?);
+        }
+        Ok(pending)
+    }
+
     /// The channel as the viewer sees it at this moment (issue 80).
     pub async fn snapshot(&self) -> ChannelSnapshot {
         let mut members = Vec::with_capacity(self.channel.participants.len());
@@ -305,6 +327,20 @@ impl MemberView {
         let state = self.stored_state(agent).await?;
         let notes = self.channel.released(state.notes.current()).await;
         Ok(Some(PublishedNotes { agent: self.id(), name: self.name.clone().unwrap_or_default(), notes, digest: state.notes.digest() }))
+    }
+
+    /// The approvals the member's turn waits for (issue 172), as stored;
+    /// none for a member that is no agent or has left.
+    ///
+    /// # Errors
+    /// `Failed` if the agent's state cannot be read.
+    async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
+        let Participant::Agent(agent) = self.participant else { return Ok(Vec::new()) };
+        if self.former {
+            return Ok(Vec::new());
+        }
+        let state = self.stored_state(agent).await?;
+        Ok(state.turn.map(|turn| turn.pending_approvals()).unwrap_or_default())
     }
 
     /// The private notes the member wrote in the channel (issue 51), with

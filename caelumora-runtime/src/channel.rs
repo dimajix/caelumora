@@ -2053,6 +2053,71 @@ mod tests {
         assert_eq!(answered, [caelumora_model::tool::ToolResultStatus::NotExecuted]);
     }
 
+    /// The approval the approver asks the users for, from `events`.
+    async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> caelumora_model::approval::ApprovalRequest {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if let ActorEvent::ApprovalRequested(request) = envelope.event {
+                    if matches!(envelope.context.sender_id, ActorId::Approver(_)) {
+                        break request;
+                    }
+                }
+            }
+        }).await.expect("the users are asked")
+    }
+
+    #[tokio::test]
+    async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let bye = Message {
+            role: MessageRole::Assistant,
+            tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "stop".to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let Stuck { channel, agent, helper, mut events, running, .. } =
+            with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+        settled(&helper, ActorState::WaitingForApproval).await;
+        let asked = approval_requested(&mut events).await;
+
+        // The turn is the record of what it waits for (issue 172).
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let pending: Vec<_> = stored.turn.expect("a turn under way").pending_approvals().into_iter().map(|r| r.id).collect();
+        assert_eq!(pending, [asked.id]);
+
+        // A restart: the channel and its actors are gone, the approver's
+        // memory with them; the channel is built again from the stores.
+        running.abort();
+        let _ = running.await;
+        let document = Channel::clone(&channel.channel());
+        let manager = channel.runtime.new_actor_runtime(ActorId::System, document.session_id, document.id).runtime_manager().clone();
+        let executor = CommandExecutor::empty(manager.security_manager());
+        let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::new(manager, Arc::new(executor))).await.unwrap();
+        let mut events = restarted.subscribe();
+        let running = tokio::spawn({ let restarted = restarted.clone(); async move { restarted.run().await } });
+        let helper = restarted.actor_by_id(ActorId::Agent(agent)).unwrap();
+
+        // The agent asks again, with the same id, and the users can decide.
+        let asked_again = approval_requested(&mut events).await;
+        assert_eq!(asked_again.id, asked.id);
+        let alice = document.participants.iter().find_map(|p| match p { Participant::User(id) => Some(*id), _ => None }).expect("alice");
+        let response = caelumora_model::approval::ApprovalResponse { id: asked.id, agent_id: agent };
+        restarted.user_actor(alice).unwrap().send_approval(response, true).await.unwrap();
+        settled(&helper, ActorState::Sleeping).await;
+        running.abort();
+    }
+
     #[tokio::test]
     async fn a_cancel_while_a_tool_runs_ends_the_turn_after_the_tool() {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};

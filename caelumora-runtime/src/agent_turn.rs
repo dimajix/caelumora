@@ -55,16 +55,14 @@ pub(crate) const MAX_MODEL_CALLS: u32 = 25;
 /// was used up in ending it.
 #[derive(Debug)]
 pub struct EndedTurn {
-    agent_id: AgentId,
     event_context: EventContext,
     security_context: SecurityContext,
     abandoned_calls: Vec<ToolCallState>,
 }
 
 impl EndedTurn {
-    fn of(agent_id: AgentId, turn: &TurnState, abandoned_calls: Vec<ToolCallState>) -> Self {
+    fn of(turn: &TurnState, abandoned_calls: Vec<ToolCallState>) -> Self {
         Self {
-            agent_id,
             event_context: turn.event_context.clone(),
             security_context: turn.security_context.clone(),
             abandoned_calls,
@@ -79,7 +77,7 @@ impl EndedTurn {
 
     /// Sends `event` as the ended turn would have: see [`Turn::send_event`].
     pub(crate) async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        send(&self.event_context, &self.security_context, self.agent_id, event, output).await
+        send(&self.event_context, &self.security_context, event, output).await
     }
 }
 
@@ -271,7 +269,7 @@ impl<'a> Turn<'a> {
     pub(crate) async fn commit_turn(&mut self, cancelled: bool) -> CommittedTurn {
         let abandoned_calls = self.abandon_tool_calls(if cancelled { "it was cancelled" } else { "it ended" });
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(self.agent_id, &turn, abandoned_calls);
+        let ended = EndedTurn::of(&turn, abandoned_calls);
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let TurnState { entries, agent_changes, channel_changes, .. } = turn;
@@ -298,7 +296,7 @@ impl<'a> Turn<'a> {
     pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
         let abandoned_calls = self.abandon_tool_calls(because(&reason));
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(self.agent_id, &turn, abandoned_calls);
+        let ended = EndedTurn::of(&turn, abandoned_calls);
         let label = turn.label();
         let TurnState { entries, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
@@ -336,7 +334,7 @@ impl<'a> Turn<'a> {
     fn abandon_tool_calls(&mut self, because: &str) -> Vec<ToolCallState> {
         let internal = self.in_plan_step();
         match self.agent_channel_state.turn.as_mut() {
-            Some(turn) => ToolCalls::new(turn, self.agent_id, &self.agent_name).abandon(because, internal),
+            Some(turn) => ToolCalls::new(turn, &self.agent_name).abandon(because, internal),
             None => Vec::new(),
         }
     }
@@ -499,7 +497,7 @@ impl<'a> Turn<'a> {
     pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
         debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
         let turn = self.agent_channel_state.turn.get_or_insert_with(TurnState::default);
-        ToolCalls::new(turn, self.agent_id, &self.agent_name)
+        ToolCalls::new(turn, &self.agent_name)
     }
 
     pub fn set_plan(&mut self, plan: PlanState) {
@@ -688,7 +686,7 @@ impl<'a> Turn<'a> {
     /// sent.
     pub async fn send_event(&self, av: ActorEvent, output: &dyn EventSender) -> Result<()> {
         let turn = self.current();
-        send(&turn.event_context, &turn.security_context, self.agent_id, av, output).await
+        send(&turn.event_context, &turn.security_context, av, output).await
     }
 }
 
@@ -718,12 +716,11 @@ fn plan_finalize_instruction(plan: &Plan) -> String {
     )
 }
 
-/// Sends `av` as a turn of `agent_id` publishes it: without what only its
-/// owner sees, in the turn's contexts.
+/// Sends `av` as a turn publishes it: without what only its owner sees, in
+/// the turn's contexts - sent by its agent.
 async fn send(
     event_context: &EventContext,
     security_context: &SecurityContext,
-    agent_id: AgentId,
     av: ActorEvent,
     output: &dyn EventSender,
 ) -> Result<()> {
@@ -732,7 +729,7 @@ async fn send(
     output
         .send(ev)
         .await
-        .context(format!("Actor {} failed to send event", agent_id))?;
+        .context(format!("Actor {} failed to send event", event_context.sender_id))?;
     Ok(())
 }
 

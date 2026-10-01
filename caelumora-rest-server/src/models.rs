@@ -110,6 +110,10 @@ pub struct ChannelSnapshot {
     /// is announced as `AgentChannelStateChanged` on the event stream, and
     /// the notes reloaded from `GET …/channels/{cid}/notes` (issue 65).
     pub notes: Vec<PublishedNotesResponse>,
+    /// The approvals the channel's agents wait for (issue 172), as their
+    /// turns are stored: the stream tells only of requests made while it
+    /// listens. Empty for a viewer who does not take part as a user.
+    pub pending_approvals: Vec<caelumora_model::approval::ApprovalRequest>,
 }
 
 /// The notes one agent published in a channel.

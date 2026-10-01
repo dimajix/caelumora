@@ -427,12 +427,24 @@ impl AgentActor {
         Ok(())
     }
 
+    /// Asks again for the approvals a resumed turn waits for (issue 172):
+    /// the turn is their record, the approver holds them only in memory and
+    /// starts empty after a restart. The same ids as before, so that the
+    /// approver, should it still hold them, only announces them again.
+    async fn request_pending_approvals(&self, turn: &mut Turn<'_>, output: &dyn EventSender) -> Result<()> {
+        for request in turn.tool_calls().pending_approvals() {
+            turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+        }
+        Ok(())
+    }
+
     /// Withdraws the approval requests of the calls the `ended` turn
-    /// abandoned while they still waited for a decision, so that nobody is
-    /// asked any longer to decide on a call that will not run (issue 148) -
-    /// the counterpart of `request_approvals`.
+    /// abandoned, so that nobody is asked any longer to decide on a call
+    /// that will not run (issue 148) - the counterpart of
+    /// `request_approvals`. Every abandoned call: the approver ignores what
+    /// it does not hold - decided already, or never asked for.
     async fn withdraw_approval_requests(&self, ended: &EndedTurn, output: &dyn EventSender) -> Result<()> {
-        for call in ended.abandoned_calls().iter().filter(|c| c.status == ApprovalStatus::Pending) {
+        for call in ended.abandoned_calls() {
             ended.send_event(ActorEvent::ApprovalRequestWithdrawn { id: call.id }, output).await?;
         }
         Ok(())
@@ -709,6 +721,14 @@ impl Actor for AgentActor {
         info!("AgentActor {} is starting", self.id());
         if self.control.state().in_turn() {
             info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.control.state());
+        }
+        // Whatever step it resumes at, a turn may wait for approvals: one
+        // stored right after asking resumes executing its tools, then waits.
+        if self.control.state().in_turn() && self.control.state() != ActorState::Cancelling {
+            let mut turn = Turn::new(self.agent_id, self.agent_controller.name(), &mut state, self.agent_state.clone(), self.llm_client.profile());
+            if let Err(e) = self.request_pending_approvals(&mut turn, &*output).await {
+                warn!("AgentActor {} cannot ask again for the approvals it waits for: {:#}", self.id(), e);
+            }
         }
 
         loop {

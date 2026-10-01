@@ -144,11 +144,17 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
         tracing::warn!("Reading the notes of channel {} failed: {:#}", channel.id(), e);
         Vec::new()
     });
+    let pending_approvals = view.pending_approvals().await.unwrap_or_else(|e| {
+        // The conversation can be shown without them.
+        tracing::warn!("Reading the pending approvals of channel {} failed: {:#}", channel.id(), e);
+        Vec::new()
+    });
     Some(ChannelSnapshot {
         channel: view.snapshot().await.into(),
         messages,
         has_more,
         notes: notes.into_iter().map(Into::into).collect(),
+        pending_approvals,
     })
 }
 

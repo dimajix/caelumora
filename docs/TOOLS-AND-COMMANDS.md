@@ -162,6 +162,15 @@ asked any longer. A stopped agent withdraws nothing - it has left - and the
 approver answers its pending requests as it leaves (see
 [CHANNELS.md](CHANNELS.md)).
 
+The agent's turn is the record of what it waits for (issue 172): the
+approver holds its requests only in memory and starts empty after a
+restart. An agent that resumes a turn with calls still pending - in
+`WaitingForApproval`, or stored right after asking - asks again, with the
+same ids (`TurnState::pending_approvals`). The approver takes a request it
+does not know up as new, with a new timeout; one it still holds it only
+announces again, keeping the answers given so far. Answers given before a
+restart are lost with the approver's memory: the users are asked again.
+
 Messages that arrive while the agent waits for approval are queued and
 processed in order once it resumes, so its context stays consistent.
 
