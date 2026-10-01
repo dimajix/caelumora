@@ -1502,15 +1502,17 @@ mod tests {
     /// `with_an_agent`, under `security`.
     async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> Stuck {
         use caelumora_model::agent::{Agent, Personality, PersonalityId};
-        use caelumora_model::meta::{Metadata, Scope};
+        use caelumora_model::scope::Scope;
         use caelumora_model::store::EntityStore;
 
         let store = Arc::new(MemoryStore::new());
         let personality = Personality {
+            scope: Default::default(),
+            description: String::new(),
             introduction: None,
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),
-            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            name: "plain".to_string(),
             components,
             security_attributes: Default::default(),
         };

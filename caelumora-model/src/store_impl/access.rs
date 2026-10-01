@@ -207,7 +207,7 @@ mod tests {
     fn session(owner: ActorId, contributors: Vec<ActorId>) -> Session {
         Session {
             id: SessionId::new(),
-            metadata: Default::default(),
+            name: String::new(),
             participants: Vec::new(),
             channels: Vec::new(),
             commands: Default::default(),

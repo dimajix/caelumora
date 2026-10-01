@@ -47,7 +47,7 @@ impl SessionView {
     }
 
     pub fn name(&self) -> &str {
-        &self.session.metadata.name
+        &self.session.name
     }
 
     /// The session as privacy sees it now (issue 134).
@@ -201,7 +201,7 @@ impl SessionView {
         }
         SessionSnapshot {
             id: self.session.id,
-            name: self.session.metadata.name.clone(),
+            name: self.session.name.clone(),
             privacy: self.session.privacy,
             can_change: self.may_change().await,
             participants,

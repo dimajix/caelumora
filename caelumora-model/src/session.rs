@@ -1,6 +1,5 @@
 pub use crate::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::component::ComponentConfig;
-use crate::meta::Metadata;
 use crate::privacy::PrivacyConfig;
 use crate::security::{Secured, SecurityAttributes};
 use chrono::{DateTime, Utc};
@@ -19,7 +18,7 @@ define_id!(SessionId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: SessionId,
-    pub metadata: Metadata,
+    pub name: String,
     pub participants: Vec<Participant>,
     /// The session's channels by id, in order; each is a document of its own
     /// (issue 70).

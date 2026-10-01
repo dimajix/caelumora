@@ -45,13 +45,13 @@ impl Seed {
         for personality in &self.personalities {
             if missing(store.get_personality(&system, personality.id).await)? {
                 store.create_personality(&system, personality).await?;
-                info!("Seeded personality {} ({})", personality.metadata.name, personality.id);
+                info!("Seeded personality {} ({})", personality.name, personality.id);
             }
         }
         for template in &self.session_templates {
             if missing(store.get_session_template(&system, template.id).await)? {
                 store.create_session_template(&system, template).await?;
-                info!("Seeded session template {} ({})", template.metadata.name, template.id);
+                info!("Seeded session template {} ({})", template.name, template.id);
             }
         }
         Ok(())
@@ -102,19 +102,19 @@ mod tests {
             for participant in &template.participants {
                 if let ParticipantTemplate::Agent { personality_id, .. } = participant {
                     store.get_personality(&system, *personality_id).await
-                        .unwrap_or_else(|_| panic!("template {} names a personality the seed has", template.metadata.name));
+                        .unwrap_or_else(|_| panic!("template {} names a personality the seed has", template.name));
                 }
             }
         }
 
         // A document changed in the store stays as it is.
         let mut changed = seed.personalities[0].clone();
-        changed.metadata.description = "changed".to_string();
+        changed.description = "changed".to_string();
         store.update_personality(&system, &changed).await.unwrap();
         load(&store, &[example()]).await.expect("seeding again is no conflict");
         assert_eq!(store.list_personalities(&system).await.unwrap().len(), seed.personalities.len(), "nothing twice");
         assert_eq!(store.list_session_templates(&system).await.unwrap().len(), seed.session_templates.len());
-        assert_eq!(store.get_personality(&system, changed.id).await.unwrap().metadata.description, "changed");
+        assert_eq!(store.get_personality(&system, changed.id).await.unwrap().description, "changed");
     }
 
     #[test]

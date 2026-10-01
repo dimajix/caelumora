@@ -40,7 +40,7 @@ impl AgentController {
     }
 
     pub fn name(&self) -> String {
-        self.agent.load().metadata.name.clone()
+        self.agent.load().name.clone()
     }
 
     /// Renames the agent on behalf of `ctx`: stored first - which is where
@@ -64,7 +64,7 @@ impl AgentController {
     fn apply(&self, event: &AgentUpdateEvent) -> Agent {
         let mut agent = (**self.agent.load()).clone();
         match event {
-            AgentUpdateEvent::NameChanged(name) => agent.metadata.name = name.clone(),
+            AgentUpdateEvent::NameChanged(name) => agent.name = name.clone(),
         }
         agent
     }
@@ -85,15 +85,17 @@ impl AgentController {
 mod tests {
     use super::*;
     use caelumora_model::agent::{Personality, PersonalityId};
-    use caelumora_model::meta::{Metadata, Scope};
+    use caelumora_model::scope::Scope;
     use caelumora_model::store_impl::memory::MemoryStore;
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
         let personality = Personality {
+            scope: Default::default(),
+            description: String::new(),
             introduction: None,
             id: PersonalityId::new(),
-            metadata: Metadata::default(),
+            name: String::new(),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
@@ -107,6 +109,6 @@ mod tests {
         controller.update_name(&ctx, "new_name".to_string()).await.unwrap();
 
         assert_eq!(controller.name(), "new_name");
-        assert_eq!(store.get_agent(&ctx, agent.id).await.unwrap().metadata.name, "new_name");
+        assert_eq!(store.get_agent(&ctx, agent.id).await.unwrap().name, "new_name");
     }
 }

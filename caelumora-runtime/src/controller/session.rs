@@ -39,7 +39,7 @@ impl SessionController {
     }
 
     pub fn name(&self) -> String {
-        self.session.load().metadata.name.clone()
+        self.session.load().name.clone()
     }
 
     /// Renames the session on behalf of `ctx`, as [`Self::update`] does.
@@ -129,7 +129,7 @@ impl SessionController {
     fn apply(&self, event: &SessionUpdateEvent) -> Session {
         let mut session = (**self.session.load()).clone();
         match event {
-            SessionUpdateEvent::NameChanged(name) => session.metadata.name = name.clone(),
+            SessionUpdateEvent::NameChanged(name) => session.name = name.clone(),
             SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
         }
         session
@@ -139,7 +139,6 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::meta::{Metadata, Scope};
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store_impl::memory::MemoryStore;
 
@@ -149,7 +148,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),
-            metadata: Metadata { name: "session".to_string(), scope: Scope::GlobalScope, ..Metadata::default() },
+            name: "session".to_string(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
@@ -164,6 +163,6 @@ mod tests {
         controller.update_name(&ctx, "renamed".to_string()).await.unwrap();
 
         assert_eq!(controller.name(), "renamed");
-        assert_eq!(store.get_session(&ctx, session.id).await.unwrap().metadata.name, "renamed");
+        assert_eq!(store.get_session(&ctx, session.id).await.unwrap().name, "renamed");
     }
 }

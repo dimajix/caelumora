@@ -70,6 +70,7 @@ against it, and what came out of the last attempt.
 | [93](93-entity-store-dialects.md) | done | The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id. |
 | [108](108-serde-defaults-for-legacy.md) | done | Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to. |
 | [164](164-soft-deletion-and-former-members.md) | open | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
+| [178](178-scoped-lookup-by-name.md) | open | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
 
 ## Sessions and channels
 
@@ -263,6 +264,7 @@ against it, and what came out of the last attempt.
 | [155](155-approval-admission-on-the-actor.md) | done | The actor decides how a tool call is admitted and builds its `ToolCallState` by hand, though everything the rule is made of is in the tool guard. |
 | [157](157-actor-holds-what-is-not-its-own.md) | done | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |
 | [159](159-split-agent-actor-file.md) | done | `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines. |
+| [177](177-metadata-on-some-entities.md) | done | Name, scope and description sit in `Metadata` on some entities only, which brings fields to entities that mean nothing there. |
 
 ## Open architecture questions
 

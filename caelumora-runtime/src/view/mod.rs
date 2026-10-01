@@ -260,7 +260,7 @@ impl Views {
     async fn name_of(&self, participant: &Participant) -> Option<String> {
         match participant {
             Participant::User(id) => self.runtime.entity_store().get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
-            Participant::Agent(id) => self.agent_of(*id).await.map(|agent| agent.metadata.name),
+            Participant::Agent(id) => self.agent_of(*id).await.map(|agent| agent.name),
             Participant::Approver(_) => participant.actor_id().fixed_name().map(str::to_string),
         }
     }
@@ -392,7 +392,7 @@ mod tests {
     use caelumora_model::channel::Channel;
     use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::{Classification, Visibility};
-    use caelumora_model::meta::{Metadata, Scope};
+    use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipSecurityManager, SecurityAttributes, SecurityManager};
     use caelumora_model::session::Session;
@@ -434,7 +434,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId::new(),
-            metadata: Metadata { name: name.to_string(), scope: Scope::GlobalScope, ..Metadata::default() },
+            name: name.to_string(),
             participants: Vec::new(),
             channels: vec![ChannelId::new()],
             created_at: chrono::Utc::now(),
@@ -458,10 +458,12 @@ mod tests {
 
     async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
         let personality = Personality {
+            scope: Default::default(),
+            description: String::new(),
             introduction: None,
             reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
-            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            name: "plain".to_string(),
             components: Default::default(),
             security_attributes: Default::default(),
         };

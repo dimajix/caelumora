@@ -160,7 +160,7 @@ mod tests {
         let (alice, bob) = (UserId::new(), UserId::new());
         let session = Session {
             id: Default::default(),
-            metadata: Default::default(),
+            name: String::new(),
             participants: vec![Participant::User(bob), Participant::Agent(Default::default())],
             channels: Vec::new(),
             commands: Default::default(),

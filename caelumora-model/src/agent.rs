@@ -8,7 +8,7 @@ use crate::message::{Message, MessageId};
 use crate::message_history::MessageHistory;
 use crate::transcript::{Transcript, TranscriptEntry};
 use crate::note::{NoteChain, NoteChange, NoteOrigin};
-use crate::meta::{Metadata, Scope};
+use crate::scope::Scope;
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::tool::{Tool, ToolCallState, ToolDefinition};
@@ -30,11 +30,17 @@ define_id!(PersonalityId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Personality {
     pub id: PersonalityId,
-    pub metadata: Metadata,
+    pub name: String,
+    /// Where it lies (issue 177): the global scope unless named.
+    #[serde(default)]
+    pub scope: Scope,
+    /// What the personality is, for whoever chooses one: a catalogue line.
+    #[serde(default)]
+    pub description: String,
     /// How its agents are introduced (issue 176) - to the others in their
     /// channel and to themselves: who they are, what they are there for.
-    /// Public, like an agent's name. Not `metadata.description`, which says
-    /// what the personality is, to whoever chooses one.
+    /// Public, like an agent's name. Not `description`, which says what the
+    /// personality is, to whoever chooses one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introduction: Option<String>,
     /// Whether the agent first analyzes the request and proposes a
@@ -71,7 +77,12 @@ define_id!(AgentId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: AgentId,
-    pub metadata: Metadata,
+    /// Its name, as every channel it takes part in knows it.
+    pub name: String,
+    /// Where it lies (issue 177): a template finds an existing agent there,
+    /// so it decides whether the agent is reused - one per user, with its
+    /// memory - or made anew for every session.
+    pub scope: Scope,
     pub personality_id: PersonalityId,
     pub security_attributes: SecurityAttributes,
 }
@@ -94,11 +105,8 @@ impl Agent {
         Agent {
             id: agent_id,
             personality_id: personality.id,
-            metadata: Metadata {
-                name,
-                scope,
-                ..Metadata::default()
-            },
+            name,
+            scope,
             security_attributes,
         }
     }

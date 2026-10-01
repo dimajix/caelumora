@@ -7,11 +7,11 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::confidentiality::{Classification, Visibility};
-use crate::meta::{Metadata, Scope};
+use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError};
-use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use chrono::Utc;
 use uuid::Uuid;
@@ -51,21 +51,15 @@ macro_rules! lifecycle {
     }};
 }
 
-fn metadata(name: &str) -> Metadata {
-    Metadata {
-        name: name.to_string(),
-        scope: Scope::GlobalScope,
-        ..Metadata::default()
-    }
-}
-
 fn personality() -> Personality {
     Personality {
         introduction: None,
         reasoning_visibility: Visibility::Channel,
         security_attributes: Default::default(),
         id: PersonalityId(Uuid::new_v4()),
-        metadata: metadata("assistant"),
+        name: "assistant".to_string(),
+        scope: Scope::GlobalScope,
+        description: String::new(),
         components: Default::default(),
     }
 }
@@ -76,8 +70,9 @@ fn session_template() -> SessionTemplate {
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionTemplateId(Uuid::new_v4()),
-        metadata: metadata("pairing"),
-        scope: ScopeTemplate::GlobalScope,
+        name: "pairing".to_string(),
+        scope: Scope::GlobalScope,
+        description: String::new(),
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
             name: "general".to_string(),
@@ -93,7 +88,7 @@ fn session() -> Session {
         commands: Default::default(),
         privacy: Default::default(),
         id: SessionId(Uuid::new_v4()),
-        metadata: metadata("session"),
+        name: "session".to_string(),
         participants: Vec::new(),
         channels: Vec::new(),
         created_at: Utc::now(),
@@ -144,13 +139,13 @@ fn component_id(value: &ComponentDescriptor) -> &str {
 /// Every kind of entity goes through the same life, and users are also
 /// found by name.
 pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
-    lifecycle!(store, personality(), |v: &Personality| v.id, metadata.name, "personality",
+    lifecycle!(store, personality(), |v: &Personality| v.id, name, "personality",
         create_personality, get_personality, update_personality, delete_personality, list_personalities);
-    lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, metadata.name, "session_template",
+    lifecycle!(store, session_template(), |v: &SessionTemplate| v.id, name, "session_template",
         create_session_template, get_session_template, update_session_template, delete_session_template, list_session_templates);
-    lifecycle!(store, Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, metadata.name, "agent",
+    lifecycle!(store, Agent::new("assistant-1".to_string(), Scope::GlobalScope, &personality(), crate::actor::ActorId::None), |v: &Agent| v.id, name, "agent",
         create_agent, get_agent, update_agent, delete_agent, list_agents);
-    lifecycle!(store, session(), |v: &Session| v.id, metadata.name, "session",
+    lifecycle!(store, session(), |v: &Session| v.id, name, "session",
         create_session, get_session, update_session, delete_session, list_sessions);
     lifecycle!(store, channel(), |v: &Channel| v.id, name, "channel",
         create_channel, get_channel, update_channel, delete_channel, list_channels);

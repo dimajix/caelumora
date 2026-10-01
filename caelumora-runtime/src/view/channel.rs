@@ -300,7 +300,7 @@ impl MemberView {
     /// `None` for a user or agent that no longer exists.
     pub fn name(&self) -> Option<&str> {
         match &self.agent {
-            Some(agent) => Some(&agent.metadata.name),
+            Some(agent) => Some(&agent.name),
             None => self.name.as_deref(),
         }
     }

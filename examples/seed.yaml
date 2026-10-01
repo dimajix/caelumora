@@ -13,10 +13,8 @@
 
 personalities:
 - id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
-  metadata:
-    name: jonathan-assistant
-    description: A helpful and polite assistant
-    scope: GlobalScope
+  name: jonathan-assistant
+  description: A helpful and polite assistant
   introduction: A self-made millionaire who always wanted to be a quiz-master - polite, helpful and
     fond of a good quiz.
   components:
@@ -59,10 +57,8 @@ personalities:
       kind: stop_tool
       fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
-  metadata:
-    name: sassy-assistant
-    description: A sassy and witty assistant
-    scope: GlobalScope
+  name: sassy-assistant
+  description: A sassy and witty assistant
   introduction: A witty and slightly sarcastic assistant who loves to play quiz games.
   components:
     component_nodes:
@@ -104,11 +100,8 @@ personalities:
       fail_policy: FailClosed
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
-  metadata:
-    name: simple-session
-    description: Simple user+assistant session
-    scope: GlobalScope
-  scope: SessionScope
+  name: simple-session
+  description: Simple user+assistant session
   participants:
   - User:
       name: user
@@ -125,11 +118,8 @@ session_templates:
     - approval
     - assistant
 - id: e195e4bf-89e7-46d9-a666-0d56a3d10bbb
-  metadata:
-    name: sassy-session
-    description: Sassy user+assistant session
-    scope: GlobalScope
-  scope: SessionScope
+  name: sassy-session
+  description: Sassy user+assistant session
   participants:
   - User:
       name: user
@@ -151,11 +141,8 @@ session_templates:
     - Jonathan
     - Sassy
 - id: 772a28e1-bb1d-4671-ab6c-e8e0b62136f5
-  metadata:
-    name: mentions-session
-    description: Two assistants that answer only when @-mentioned
-    scope: GlobalScope
-  scope: SessionScope
+  name: mentions-session
+  description: Two assistants that answer only when @-mentioned
   participants:
   - User:
       name: user
@@ -181,11 +168,8 @@ session_templates:
     - Jonathan
     - Sassy
 - id: 9ea5159d-3f05-466b-8d4f-6fa3078aad60
-  metadata:
-    name: user-driven-session
-    description: Two assistants that both answer you, but not each other
-    scope: GlobalScope
-  scope: SessionScope
+  name: user-driven-session
+  description: Two assistants that both answer you, but not each other
   participants:
   - User:
       name: user

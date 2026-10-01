@@ -6,7 +6,7 @@
 
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::Participant;
-use caelumora_model::meta::Scope;
+use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StoreResult};
@@ -50,7 +50,7 @@ async fn agent(store: &dyn EntityStore, context: &SecurityContext, name: String,
     // refused is an error, not a reason for a second agent of that name
     // (issue 77).
     let known = store.list_agents(context).await?.into_iter()
-        .find(|a| a.metadata.name == name && scope.contains(&a.metadata.scope));
+        .find(|a| a.name == name && scope.contains(&a.scope));
     if let Some(agent) = known {
         return Ok(agent.id);
     }
@@ -66,7 +66,6 @@ mod tests {
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Personality;
-    use caelumora_model::meta::Metadata;
     use caelumora_model::security::{ActionType, SecurityManager};
     use caelumora_model::store::StoreError;
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -88,8 +87,9 @@ mod tests {
     fn template(participants: Vec<ParticipantTemplate>) -> SessionTemplate {
         SessionTemplate {
             id: SessionTemplateId::new(),
-            metadata: Metadata::default(),
-            scope: ScopeTemplate::SessionScope,
+            name: String::new(),
+            scope: Default::default(),
+            description: String::new(),
             participants,
             channels: Vec::new(),
             security_attributes: Default::default(),
@@ -104,9 +104,11 @@ mod tests {
 
     async fn store_with_personality(store: MemoryStore) -> (Arc<MemoryStore>, PersonalityId) {
         let personality = Personality {
+            scope: Default::default(),
+            description: String::new(),
             introduction: None,
             id: PersonalityId::new(),
-            metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
+            name: "plain".to_string(),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,

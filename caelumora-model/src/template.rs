@@ -9,8 +9,8 @@ use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::channel::{participant_attributes, Channel, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
-use crate::meta::Scope::{GlobalScope, SessionScope, UserScope};
-use crate::meta::{Metadata, Scope};
+use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
+use crate::scope::Scope;
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
 use chrono::Utc;
@@ -50,7 +50,8 @@ pub enum ScopeTemplate {
 }
 
 impl ScopeTemplate {
-    /// The scope for the session `session_id` of `owner`.
+    /// The scope of an agent of the template, in the session `session_id`
+    /// of `owner`.
     ///
     /// # Errors
     /// `TemplateError::UnsupportedScope` for a group scope: there are no
@@ -108,8 +109,14 @@ define_id!(SessionTemplateId);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTemplate {
     pub id: SessionTemplateId,
-    pub metadata: Metadata,
-    pub scope: ScopeTemplate,
+    pub name: String,
+    /// Where it lies (issue 177): the global scope unless named.
+    #[serde(default)]
+    pub scope: Scope,
+    /// What sessions made from it are for: a catalogue line, offered to
+    /// whoever starts one.
+    #[serde(default)]
+    pub description: String,
     /// Every actor of the session - users, agents and approvers - each with
     /// the name its channels refer to it by.
     pub participants: Vec<ParticipantTemplate>,
@@ -148,12 +155,7 @@ impl SessionTemplate {
         let now = Utc::now();
         let session = Session {
             id,
-            metadata: Metadata {
-                name,
-                scope: self.scope.instantiate(id, owner)?,
-                description: self.metadata.description.clone(),
-                ..Metadata::default()
-            },
+            name,
             participants,
             channels: channels.iter().map(|c: &Channel| c.id).collect(),
             commands: self.commands.clone(),
@@ -241,8 +243,9 @@ mod tests {
         SessionTemplate {
             security_attributes: Default::default(),
             id: SessionTemplateId(Uuid::new_v4()),
-            metadata: Metadata::default(),
-            scope: ScopeTemplate::SessionScope,
+            name: String::new(),
+            scope: Scope::GlobalScope,
+            description: String::new(),
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent { name: "helper".to_string(), scope: ScopeTemplate::UserScope, personality_id: PersonalityId::new() },

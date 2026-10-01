@@ -23,6 +23,19 @@ entities:
     part of the `User` record.
 *   **Preconfigured components**: `ComponentDescriptor`s kept by id.
 
+Every entity has a `name` (a user its `username`, the login identity it is
+found by), and the fields that mean something for it (issue 177):
+
+*   **What is a scope** - a session, a channel, a user - has a name only.
+*   **What lies in a scope** - a personality, a session template, an agent -
+    has a name and a `Scope`: where it is found by name. A template finds
+    its agents there, so an agent's scope decides whether it is reused - one
+    per user, with its memory - or made anew for every session. Looking
+    definitions up by name within their scope is
+    [178](../issues/178-scoped-lookup-by-name.md).
+*   What is offered for choosing - a personality, a session template - has a
+    `description` as well, a catalogue line.
+
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`,
 which keeps one JSON file per document.
 

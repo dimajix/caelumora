@@ -498,7 +498,7 @@ impl SessionManager {
         let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
-        let name = name.unwrap_or_else(|| template.metadata.name.clone());
+        let name = name.unwrap_or_else(|| template.name.clone());
         let (session, channels) = template.build(id, owner, name, participants)?;
         self.create_session(context, session, channels).await
     }
@@ -677,7 +677,6 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::command::default_commands;
     use caelumora_model::channel::Channel;
-    use caelumora_model::meta::{Metadata, Scope};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -706,11 +705,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: name.to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
+            name: name.to_string(),
             participants: Vec::new(),
             channels: vec![ChannelId(Uuid::new_v4())],
             created_at: chrono::Utc::now(),
@@ -948,7 +943,7 @@ mod tests {
         use caelumora_model::actor::ActorId;
         use caelumora_model::approval::ApprovalStrategy;
         use caelumora_model::channel::Participant;
-        use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+        use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
         use caelumora_model::user::{User, UserId};
 
         let runtime = test_runtime();
@@ -958,8 +953,9 @@ mod tests {
         store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new() }).await.unwrap();
         let template = SessionTemplate {
             id: SessionTemplateId::new(),
-            metadata: Metadata { name: "pairing".to_string(), ..Metadata::default() },
-            scope: ScopeTemplate::SessionScope,
+            name: "pairing".to_string(),
+            scope: Default::default(),
+            description: String::new(),
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },

@@ -186,7 +186,7 @@ mod tests {
     use super::*;
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::actor::ActorId;
-    use caelumora_model::meta::{Metadata, Scope};
+    use caelumora_model::scope::Scope;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::StoreError;
     use caelumora_model::store_impl::memory::MemoryStore;
@@ -202,9 +202,11 @@ mod tests {
 
     async fn agent_in(store: &MemoryStore) -> Agent {
         let personality = Personality {
+            scope: Default::default(),
+            description: String::new(),
             introduction: None,
             id: PersonalityId::new(),
-            metadata: Metadata::default(),
+            name: String::new(),
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
@@ -256,7 +258,7 @@ mod tests {
         // Nobody uses it any more: the next one is loaded again, as stored now.
         drop(first);
         let mut renamed = agent.clone();
-        renamed.metadata.name = "renamed".to_string();
+        renamed.name = "renamed".to_string();
         store.update_agent(&SecurityContext::system(), &renamed).await.unwrap();
         assert_eq!(manager.agent_controller(agent.id).await.unwrap().name(), "renamed");
 

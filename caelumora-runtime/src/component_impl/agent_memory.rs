@@ -203,7 +203,6 @@ mod tests {
     use caelumora_model::channel::Participant;
     use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::{ChannelRef, Classification, Confidentiality};
-    use caelumora_model::meta::Metadata;
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes};
@@ -295,7 +294,7 @@ mod tests {
         let now = chrono::Utc::now();
         Session {
             id,
-            metadata: Metadata::default(),
+            name: String::new(),
             participants: privacy.people.iter().map(|user| Participant::User(*user)).collect(),
             channels: Vec::new(),
             commands: Default::default(),

@@ -145,7 +145,7 @@ mod tests {
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::command::default_commands;
     use caelumora_model::confidentiality::Visibility;
-    use caelumora_model::meta::{Metadata, Scope};
+    use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -178,8 +178,10 @@ mod tests {
 
     async fn personality(store: &MemoryStore, introduction: Option<&str>) -> Personality {
         let personality = Personality {
+            scope: Default::default(),
+            description: String::new(),
             id: PersonalityId::new(),
-            metadata: Metadata::default(),
+            name: String::new(),
             introduction: introduction.map(str::to_string),
             components: Default::default(),
             security_attributes: Default::default(),
@@ -218,7 +220,7 @@ mod tests {
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Approver(approver), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
         let now = chrono::Utc::now();
         let session = Session {
-            id: SessionId::new(), metadata: Metadata::default(), participants: participants.clone(), channels: vec![ChannelId::new()],
+            id: SessionId::new(), name: String::new(), participants: participants.clone(), channels: vec![ChannelId::new()],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
         };
         let channel = Channel {

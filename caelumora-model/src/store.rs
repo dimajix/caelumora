@@ -119,8 +119,6 @@ pub trait StateStore : Debug + Sync + Send {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meta::Scope;
-    use crate::meta::Metadata;
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::store_impl::memory::MemoryStore;
     use std::sync::Arc;
@@ -133,11 +131,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "session1".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
+            name: "session1".to_string(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),
@@ -148,11 +142,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "session2".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
+            name: "session2".to_string(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: chrono::Utc::now(),

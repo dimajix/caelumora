@@ -507,7 +507,6 @@ impl StateStore for JsonFileStore {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use crate::meta::{Metadata, Scope};
     use crate::security::SecurityAttributes;
     use crate::store_impl::suite;
     use tempfile::tempdir;
@@ -578,11 +577,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: session_id,
-            metadata: Metadata {
-                name: "to-delete".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
+            name: "to-delete".to_string(),
             participants: Vec::new(),
             channels: vec![channel.id],
             created_at: Utc::now(),
@@ -627,11 +622,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            metadata: Metadata {
-                name: "session-1".to_string(),
-                scope: Scope::GlobalScope,
-                ..Metadata::default()
-            },
+            name: "session-1".to_string(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),

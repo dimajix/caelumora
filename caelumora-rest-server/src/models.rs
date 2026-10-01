@@ -27,7 +27,7 @@ pub struct SessionResponse {
 
 impl From<&caelumora_model::session::Session> for SessionResponse {
     fn from(session: &caelumora_model::session::Session) -> Self {
-        Self { id: session.id, name: session.metadata.name.clone(), privacy: session.privacy }
+        Self { id: session.id, name: session.name.clone(), privacy: session.privacy }
     }
 }
 
@@ -51,7 +51,7 @@ pub struct TemplateResponse {
 
 impl From<&SessionTemplate> for TemplateResponse {
     fn from(template: &SessionTemplate) -> Self {
-        Self { id: template.id, name: template.metadata.name.clone(), description: template.metadata.description.clone() }
+        Self { id: template.id, name: template.name.clone(), description: template.description.clone() }
     }
 }
 

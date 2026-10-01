@@ -1,8 +1,15 @@
+//! `Scope`: where a definition lies (issue 177).
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::session::SessionId;
 use crate::user::UserId;
 
+/// Where a definition - a personality, a session template, an agent - lies:
+/// the name space it is found in by name (issue 177). Sessions, channels and
+/// users have none: they are scopes themselves. Looking definitions up by
+/// name within their scope is issue 178; so far only templates read it, to
+/// find their agents.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Scope {
     ChannelScope { session_id:SessionId, channel:String },
@@ -25,13 +32,6 @@ impl Scope {
             _ => false,
         }
     }
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct Metadata {
-    pub name: String,
-    pub scope: Scope,
-    pub description: String,
 }
 
 #[cfg(test)]
