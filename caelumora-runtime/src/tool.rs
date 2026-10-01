@@ -361,7 +361,7 @@ impl GuardedToolExecutor {
     /// what the tool says of the call.
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.agent_id();
-        if !self.is_permitted(call, turn).await {
+        if !self.security_manager.may_call_tool(turn.security_context(), call).await {
             info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
@@ -378,11 +378,6 @@ impl GuardedToolExecutor {
         };
         let asks = turn.tools().iter().any(|t| t.name == call.function_name && t.requires_approval);
         if asks { Admission::Ask { description } } else { Admission::Run }
-    }
-
-    /// Whether the policy permits `call` in the turn.
-    async fn is_permitted(&self, call: &ToolCall, turn: &Turn<'_>) -> bool {
-        self.security_manager.may_call_tool(turn.security_context(), call).await
     }
 
     pub fn tools(&self) -> Vec<Tool> {
@@ -541,7 +536,8 @@ mod tests {
         agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() });
         let mut context = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
 
-        assert!(!executor.is_permitted(&call("test_tool"), &context).await);
+        let admitted = executor.admit(&call("test_tool"), &context).await;
+        assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "refused before anyone is asked: {admitted:?}");
         let result = executor.execute(&call("test_tool"), &mut context).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden);
         assert_eq!(result.content, forbidden_result());
