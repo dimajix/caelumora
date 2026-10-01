@@ -38,7 +38,7 @@ impl SessionView {
         }
     }
 
-    pub(crate) fn views(&self) -> &Views {
+    pub fn views(&self) -> &Views {
         &self.views
     }
 

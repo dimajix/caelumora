@@ -176,9 +176,14 @@ its own access question, in the viewer's name:
     (`GetChannel`, and cleared for their classification, issue 133),
     `channel(id)` asks the same of one; `may_change()` asks
     `UpdateSession`;
-*   `ChannelView::members()` and `member(actor)`; `may_change()` asks
-    `UpdateChannel`;
-*   `MemberView::may_read_context()` asks `ReadAgentContext`.
+*   `ChannelView::members()` and `member(actor)` - which also reaches an
+    agent that took part and left, by the messages it left in the history
+    (`MemberView::former`), so that what it saw stays readable;
+    `may_change()` asks `UpdateChannel`;
+*   `MemberView::may_read_context()` asks `ReadAgentContext`;
+*   `Views::channel_of(ChannelRef)` reaches what a memory entry's origin or
+    a `KnowledgeRef` names, wherever it is, and answers `None` for what is
+    gone or not the viewer's to read.
 
 What does not exist and what the viewer may not read are one answer
 (`ViewError::SessionNotFound`, `ChannelNotFound`), so that nothing can be

@@ -370,12 +370,12 @@ impl KnowledgeRefResponse {
     /// `knowledge` with the names of its channel and agent, as far as
     /// `session` still has them.
     pub async fn describe(session: &SessionView, knowledge: &KnowledgeRef) -> Self {
-        // A channel of another session is not named here (issue 134), nor
-        // one the viewer may not read.
-        let channel = match knowledge.channel.session_id == session.id() {
-            true => session.channel(knowledge.channel.channel_id).await.ok(),
-            false => None,
-        };
+        // Named only if the viewer may read it - of this session or another
+        // (issue 134) - and it is still there; by id alone otherwise.
+        let channel = session.views().channel_of(knowledge.channel).await.unwrap_or_else(|e| {
+            tracing::warn!("Cannot reach channel {} of the knowledge read: {:#}", knowledge.channel.channel_id, e);
+            None
+        });
         let (source, agent_id, digest, history_start) = match knowledge.source {
             KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),

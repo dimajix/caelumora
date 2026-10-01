@@ -69,6 +69,7 @@ against it, and what came out of the last attempt.
 | [77](77-template-swallows-store-errors.md) | done | `ParticipantTemplate::instantiate` treats every store error as "not found" and creates a second agent. |
 | [93](93-entity-store-dialects.md) | done | The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id. |
 | [108](108-serde-defaults-for-legacy.md) | done | Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to. |
+| [164](164-soft-deletion-and-former-members.md) | open | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
 
 ## Sessions and channels
 

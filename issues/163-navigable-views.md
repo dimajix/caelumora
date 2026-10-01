@@ -483,3 +483,30 @@ each step, for running and stopped sessions alike.
     The two reader tests of `session.rs` read through the views.
   - Open from the plan: step 6 (former members, edges into nothing,
     points in time) and the rest of step 7.
+- **2026-10-01** — Verified in the browser, with `gemma4:26b` and a
+  seeded agent that notes what it is told, in a session of two channels:
+  the channel snapshot (members, handles), the history over
+  `GET …/messages`, the notes panel, the context panel of an agent's
+  message (transcript, tools, system prompt), and the agent reading the
+  other channel's notes through `read_notes` without a channel - the
+  agent viewer's `channels()` listed both. The knowledge read is named
+  with its channels (`#main`, `#side`) through the views. A turn that
+  failed (the model was still loading) is shown as "could not answer";
+  given-up turns have no view in the UI yet (146). No change to the web
+  UI was needed.
+- **2026-10-01** — Step 6, decided by the maintainer:
+  - *Former members:* `ChannelView::member(actor)` reaches an agent that
+    left by the messages it left in the history the viewer sees
+    (`MemberView::former`); `members()` lists the current ones. Its
+    context stays readable to whom it is readable.
+  - *Edges into nothing:* `Views::channel_of(ChannelRef)` answers `None`
+    for a session or channel that is gone or not the viewer's to read.
+    `KnowledgeRefResponse::describe` names channels through it - of
+    another session too, if the viewer may read it. That the store should
+    keep what was deleted and mark who left, so that gone and never there
+    can be told apart, is [164](164-soft-deletion-and-former-members.md).
+  - *Points in time* (`AgentContextView::at(digest)`,
+    `ChannelView::history_at(digest)`): not built. No caller needs them;
+    the chains answer a prefix by digest already. Open here and noted in
+    [08](08-retry-and-edit-past-answers.md), which is where a caller would
+    come from.

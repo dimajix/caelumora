@@ -219,6 +219,28 @@ impl Views {
         Ok(SessionView::of(self.clone(), found))
     }
 
+    /// The channel `channel` names, wherever it is - what a memory entry's
+    /// origin or a `KnowledgeRef` points to - if the viewer may read it:
+    /// `None` if its session or the channel is gone, or not the viewer's to
+    /// read (asked as `session(id)` and `SessionView::channel` ask). Until
+    /// the store keeps what was deleted (issue 164), gone and never there
+    /// are one answer.
+    ///
+    /// # Errors
+    /// `Failed` if reaching it failed.
+    pub async fn channel_of(&self, channel: ChannelRef) -> ViewResult<Option<ChannelView>> {
+        let session = match self.session(channel.session_id).await {
+            Ok(session) => session,
+            Err(ViewError::SessionNotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        match session.channel(channel.channel_id).await {
+            Ok(channel) => Ok(Some(channel)),
+            Err(ViewError::ChannelNotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Whether the viewer, reading from its place, may read what is
     /// classified `classification` in `channel` of a session with privacy
     /// `session` (`AccessQuestions::may_channel_read`, issue 133). A viewer
@@ -631,5 +653,40 @@ mod tests {
         let whole = from_secret.channel(secret.id).await.unwrap();
         assert_eq!(texts(whole.history().await.unwrap()), ["the plan", "the date"], "a channel reads itself as a whole");
         assert!(whole.member(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_member_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_none() {
+        use caelumora_model::channel::ChannelState;
+        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let alice = user("alice");
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice]).await;
+        // The agent took part, said something, and was removed.
+        let mut channel = main_channel(&session);
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+        let mut state = ChannelState::new(channel.id);
+        state.history.extend(vec![Message { id: MessageId::new(), sender_id: ActorId::Agent(helper.id), content: Some("I was here".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
+        store.put_channel_state(channel.id, &state).await.unwrap();
+
+        let views = manager.views(as_user(alice.id));
+        let reached = views.channel_of(ChannelRef { session_id: session.id, channel_id: channel.id }).await.unwrap().expect("there");
+        let former = reached.member(ActorId::Agent(helper.id)).await.expect("known by what it said");
+        assert!(former.former() && former.name() == Some("Helper"));
+        assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
+        assert!(reached.members().await.iter().all(|m| m.id() != ActorId::Agent(helper.id)), "not listed among the members");
+        assert!(matches!(reached.member(ActorId::User(UserId::new())).await, Err(ViewError::MemberNotFound { .. })), "a user who never took part");
+
+        // Gone: the channel, then the session.
+        channel.id = ChannelId::new();
+        assert!(views.channel_of(ChannelRef { session_id: session.id, channel_id: channel.id }).await.unwrap().is_none());
+        assert!(views.channel_of(ChannelRef { session_id: SessionId::new(), channel_id: channel.id }).await.unwrap().is_none());
+        assert!(manager.views(as_user(UserId::new())).channel_of(ChannelRef { session_id: session.id, channel_id: reached.id() }).await.unwrap().is_none(), "nor is it there for a stranger");
     }
 }

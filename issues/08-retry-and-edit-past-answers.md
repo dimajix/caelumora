@@ -222,3 +222,9 @@ and comes later.
   Claude do when switching back to a branch) are what the `< n/m >`
   switch of step 4 needs. The wrappers get their branching methods with
   their first caller ([145](145-ended-turns-leave-a-record.md), step 2).
+- **2026-10-01** — From [163](163-navigable-views.md): the views reach a
+  channel's history and an agent's context as they are now; a state at a
+  point in time - "as the agent saw them when it produced message Z",
+  `AgentContextView::at(digest)`, `ChannelView::history_at(digest)` over
+  the chains' `prefix` - was left out until a caller needs it. Branching
+  is the likely one.

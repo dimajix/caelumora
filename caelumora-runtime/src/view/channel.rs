@@ -116,19 +116,31 @@ impl ChannelView {
     pub async fn members(&self) -> Vec<MemberView> {
         let mut members = Vec::with_capacity(self.channel.participants.len());
         for participant in &self.channel.participants {
-            members.push(MemberView::of(self.clone(), participant.clone()).await);
+            members.push(MemberView::of(self.clone(), participant.clone(), false).await);
         }
         members
     }
 
-    /// The member `actor` of the channel.
+    /// The member `actor` of the channel - or, for an agent that took part
+    /// and left, a former member (`MemberView::former`): its messages are in
+    /// the history and its state in the store, so what it saw stays
+    /// readable (issue 163). Until the store marks who left (issue 164), a
+    /// former member is known by the messages it left in the history the
+    /// viewer sees.
     ///
     /// # Errors
-    /// `MemberNotFound` if `actor` does not take part in the channel.
+    /// `MemberNotFound` if `actor` neither takes part in the channel nor
+    /// left messages in it; `Failed` if the history cannot be read.
     pub async fn member(&self, actor: ActorId) -> ViewResult<MemberView> {
-        let participant = self.channel.participants.iter().find(|p| p.actor_id() == actor)
-            .ok_or(ViewError::MemberNotFound { channel: self.channel.id, actor })?;
-        Ok(MemberView::of(self.clone(), participant.clone()).await)
+        if let Some(participant) = self.channel.participants.iter().find(|p| p.actor_id() == actor) {
+            return Ok(MemberView::of(self.clone(), participant.clone(), false).await);
+        }
+        let not_found = || ViewError::MemberNotFound { channel: self.channel.id, actor };
+        let ActorId::Agent(agent) = actor else { return Err(not_found()) };
+        if !self.history().await?.messages.iter().any(|m| m.sender_id == actor) {
+            return Err(not_found());
+        }
+        Ok(MemberView::of(self.clone(), Participant::Agent(agent), true).await)
     }
 
     /// The history as the viewer sees it (issue 46): all of it, unless they
@@ -221,12 +233,20 @@ pub struct MemberView {
     name: Option<String>,
     /// For an agent: its attributes, which its context is read by.
     agent: Option<SecurityAttributes>,
+    /// Took part once and left.
+    former: bool,
 }
 
 impl MemberView {
-    async fn of(channel: ChannelView, participant: Participant) -> Self {
+    async fn of(channel: ChannelView, participant: Participant, former: bool) -> Self {
         let (name, agent) = channel.views().look_up(&participant).await;
-        Self { channel, participant, name, agent }
+        Self { channel, participant, name, agent, former }
+    }
+
+    /// Whether the member took part once and left: not among the channel's
+    /// participants any more, but what it said and saw is still there.
+    pub fn former(&self) -> bool {
+        self.former
     }
 
     /// The channel the member takes part in.
