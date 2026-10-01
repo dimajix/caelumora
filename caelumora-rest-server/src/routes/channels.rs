@@ -11,6 +11,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
+use caelumora_runtime::view::Viewer;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
@@ -30,9 +31,13 @@ pub async fn list_channels(
     let session_id = SessionId(id);
     // Only the channels the user may read (issue 70), as they see them
     // (issue 80).
-    let session = state.session_manager.session_view(&user.security_context(), session_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("listing the channels of session {session_id}")))?;
-    Ok(Json(session.channels.into_iter().map(Into::into).collect()))
+    let session = crate::routes::views(&state, &user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("listing the channels of session {session_id}")))?;
+    let mut channels = Vec::new();
+    for channel in session.channels().await {
+        channels.push(channel.snapshot().await.into());
+    }
+    Ok(Json(channels))
 }
 
 /// Creates a channel in the session and starts it (issue 09). Only who may
@@ -112,8 +117,13 @@ pub async fn get_notes(
 /// `viewer` any more - deleted, or no longer theirs to read - in which case
 /// their watch ends.
 async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> Option<ChannelSnapshot> {
-    let view = match state.session_manager.channel_view(viewer, channel.session_id(), channel.id()).await {
-        Ok(view) => view,
+    let views = state.session_manager.views(Viewer::new(viewer.clone()));
+    let described = match views.session(channel.session_id()).await {
+        Ok(session) => session.channel(channel.id()).await,
+        Err(e) => Err(e),
+    };
+    let view = match described {
+        Ok(view) => view.snapshot().await,
         Err(e) => {
             tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel.id(), e);
             return None;

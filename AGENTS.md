@@ -23,7 +23,7 @@ subject:
 | the REST API, login and tokens, server-sent event streams | [REST-SERVER.md](docs/REST-SERVER.md) |
 | the web UI | [WEB-UI.md](docs/WEB-UI.md) |
 | stores, controllers, persistence | [STORAGE.md](docs/STORAGE.md) |
-| permissions, ownership, users, authentication, secrets | [SECURITY.md](docs/SECURITY.md) |
+| permissions, ownership, the views, users, authentication, secrets | [SECURITY.md](docs/SECURITY.md) |
 | confidentiality levels and labels | [CONFIDENTIALITY.md](docs/CONFIDENTIALITY.md) |
 | `AppConfig` and its sections | [CONFIGURATION.md](docs/CONFIGURATION.md) |
 

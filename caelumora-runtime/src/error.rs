@@ -13,6 +13,7 @@ use crate::component::ComponentError;
 use crate::llm::LLMError;
 use crate::session::SessionError;
 use crate::tool::ToolError;
+use crate::view::ViewError;
 use crate::channel::ChannelError;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
@@ -35,6 +36,12 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ReadStateError>() {
             Some(e.to_string())
+        } else if let Some(e) = e.downcast_ref::<ViewError>() {
+            // What it names is safe; why reaching it failed is for the log.
+            match e {
+                ViewError::Failed(_) => None,
+                _ => Some(e.to_string()),
+            }
         } else if let Some(e) = e.downcast_ref::<ChannelError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<SessionError>() {

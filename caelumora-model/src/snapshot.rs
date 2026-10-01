@@ -1,12 +1,12 @@
-//! Sessions and channels as one viewer sees them (issue 80): what a client
-//! lists and offers, built by the runtime (`SessionManager::session_view`,
-//! `channel_view`) for running and stopped sessions alike, and only of what
-//! the viewer may read.
+//! Sessions and channels as one viewer sees them at one moment (issue 80):
+//! what a client lists and offers, taken by the runtime's views
+//! (`caelumora_runtime::view`, issue 163) for running and stopped sessions
+//! alike, and only of what the viewer may read.
 //!
-//! A view answers the access questions that decide what to show or offer -
-//! may the viewer change the channel, read an agent's context - at the time
-//! it is built. It is a snapshot for listing and offering: an operation still
-//! checks its own permission when it acts, never by a view.
+//! A snapshot answers the access questions that decide what to show or
+//! offer - may the viewer change the channel, read an agent's context - at
+//! the time it is taken. It is data for listing and offering: an operation
+//! still checks its own permission when it acts, never by a snapshot.
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
@@ -15,7 +15,7 @@ use crate::session::{ChannelId, SessionId};
 
 /// A session with its participants and the channels the viewer may read.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SessionView {
+pub struct SessionSnapshot {
     pub id: SessionId,
     pub name: String,
     /// Whom the session lets read what was said in it (issue 134) - shown
@@ -26,14 +26,14 @@ pub struct SessionView {
     pub can_change: bool,
     /// Everyone who takes part in the session - whom a new channel can be
     /// made of (issue 09).
-    pub participants: Vec<ParticipantView>,
+    pub participants: Vec<ParticipantSnapshot>,
     /// The channels the viewer may read, in the order of the session.
-    pub channels: Vec<ChannelView>,
+    pub channels: Vec<ChannelSnapshot>,
 }
 
 /// A participant of a session.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ParticipantView {
+pub struct ParticipantSnapshot {
     pub id: ActorId,
     /// `None` for a user or agent that no longer exists.
     pub name: Option<String>,
@@ -41,7 +41,7 @@ pub struct ParticipantView {
 
 /// A channel as the viewer sees it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChannelView {
+pub struct ChannelSnapshot {
     pub id: ChannelId,
     pub name: String,
     /// The kind of moderator, e.g. `round_robin` (issue 44).
@@ -52,12 +52,12 @@ pub struct ChannelView {
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
     /// Its participants, in the order of the channel.
-    pub members: Vec<MemberView>,
+    pub members: Vec<MemberSnapshot>,
 }
 
 /// A participant of a channel as the viewer sees it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MemberView {
+pub struct MemberSnapshot {
     pub id: ActorId,
     /// `None` for a user or agent that no longer exists.
     pub name: Option<String>,

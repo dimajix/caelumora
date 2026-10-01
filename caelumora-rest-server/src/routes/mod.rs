@@ -9,6 +9,7 @@ use axum::{
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
+use caelumora_runtime::view::{Viewer, Views};
 use std::sync::Arc;
 
 mod channels;
@@ -46,9 +47,18 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 /// 80) - what a handler answers with a channel. Described by the runtime,
 /// which decides what the user may read and do; does not start the session.
 pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
-    let view = state.session_manager.channel_view(&user.security_context(), session_id, channel_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("describing channel {channel_id}")))?;
-    Ok(view.into())
+    let describing = || format!("describing channel {channel_id}");
+    let session = views(state, user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &describing()))?;
+    let channel = session.channel(channel_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &describing()))?;
+    Ok(channel.snapshot().await.into())
+}
+
+/// The views as `user` navigates them (issue 163): what a handler reads
+/// through; `open_channel` is for what it does.
+pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
+    state.session_manager.views(Viewer::new(user.security_context()))
 }
 
 /// All routes. Everything except `/auth/login` and `/auth/logout` requires a

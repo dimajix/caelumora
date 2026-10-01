@@ -26,7 +26,8 @@ lets read what was said in it from other sessions. It is taken over from its
 template (`SessionTemplate.privacy`, private unless the template says
 otherwise), changed only by the session's owner
 (`SessionLoop::update_privacy`, stored first like a new name, announced as
-`SessionUpdated`), and shown to everyone who takes part (`SessionView`).
+`SessionUpdated`), and shown to everyone who takes part
+(`SessionView::privacy`).
 What it decides is described in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel).
 

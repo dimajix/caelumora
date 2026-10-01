@@ -167,6 +167,7 @@ impl ApiError {
         use caelumora_runtime::command::CommandError;
         use caelumora_runtime::error::{is_forbidden, is_not_found, user_message};
         use caelumora_runtime::session::SessionError;
+        use caelumora_runtime::view::ViewError;
         use caelumora_model::template::TemplateError;
 
         let detail = error.to_string();
@@ -181,6 +182,14 @@ impl ApiError {
         }
         if let Some(ReadStateError::Forbidden { .. }) = error.downcast_ref::<ReadStateError>() {
             return Self::forbidden(Subject::Context.forbidden(), detail);
+        }
+        if let Some(e) = error.downcast_ref::<ViewError>() {
+            match e {
+                ViewError::SessionNotFound(_) => return Self::not_found("session_not_found", detail),
+                ViewError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
+                ViewError::MemberNotFound { .. } => return Self::not_found("actor_not_found", detail),
+                ViewError::Failed(_) => {}
+            }
         }
         if let Some(e) = error.downcast_ref::<SessionError>() {
             match e {

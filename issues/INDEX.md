@@ -259,4 +259,4 @@ against it, and what came out of the last attempt.
 | [21](21-scaling.md) | open | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |
 | [69](69-scoped-actor-runtime.md) | done | Every actor's `ActorRuntime` hands out the process-wide services unrestricted, so it cannot be given to components without letting them read around the confidentiality rules. |
 | [128](128-actor-runtime-in-components.md) | done | Components are given their actor's whole `ActorRuntime` and could store its state or act as it past the turn. |
-| [163](163-navigable-views.md) | open | There is no model to navigate from a session to what is in it: every read of history, notes, contexts or memory is put together anew, with its own conditions, by the REST server, the channel loop, the actors and `SessionReader`. |
+| [163](163-navigable-views.md) | in progress | There is no model to navigate from a session to what is in it: every read of history, notes, contexts or memory is put together anew, with its own conditions, by the REST server, the channel loop, the actors and `SessionReader`. |

@@ -160,27 +160,40 @@ whom an event reaches, the commands a user is shown.
 
 ## Views
 
-What a client lists and offers comes from the runtime as views of
-`caelumora_model::view` (issue 80), each built for one viewer:
+What a frontend reads, it reads through the runtime's **views**
+(`caelumora_runtime::view`, issue 163): the sessions, their channels and
+their members as one viewer navigates them. A view is a node the viewer
+stands on; its methods are the edges to the next ones, and each edge asks
+its own access question, in the viewer's name:
 
-*   a `SessionView`: the session's participants, its privacy (issue 134),
-    the channels the viewer may read, and `can_change`;
-*   a `ChannelView`: the channel's members with their handles and
-    `can_read_context`, and `can_change`.
+*   `SessionManager::views(viewer)` is the root: `sessions()` are those
+    the store lists for the viewer, `session(id)` asks `GetSession`;
+*   `SessionView::channels()` lists the channels the viewer may read
+    (`GetChannel`, and cleared for their classification, issue 133),
+    `channel(id)` asks the same of one; `may_change()` asks
+    `UpdateSession`;
+*   `ChannelView::members()` and `member(actor)`; `may_change()` asks
+    `UpdateChannel`;
+*   `MemberView::may_read_context()` asks `ReadAgentContext`.
 
-The `SessionManager` builds them with `session_views(ctx)`, `session_view(ctx,
-id)` and `channel_view(ctx, session, channel)`, for running and stopped
-sessions alike and without starting one. A channel is described from its
-`Channel` document - the running channel's or the stored one - by one private
-`describe_channel`, which asks the `AccessQuestions`. Names are read in the
-runtime's name (issue 120).
+What does not exist and what the viewer may not read are one answer
+(`ViewError::SessionNotFound`, `ChannelNotFound`), so that nothing can be
+probed. A node is reached through the running loop where there is one and
+from the stores otherwise, so the same navigation serves running and
+stopped sessions alike, and reaching a session does not start it. Names
+are read in the runtime's name (issue 120).
 
-The REST server only maps views to responses (`From<ChannelView> for
-ChannelResponse` and the like, in `models.rs`) and asks the `SecurityManager`
-nothing. A frontend never asks the access questions itself.
+A node answers with a **snapshot** (`caelumora_model::snapshot`, issue 80)
+for a client that lists and offers: `SessionView::snapshot()` with the
+participants, the channels the viewer may read and `can_change`;
+`ChannelView::snapshot()` with the members, their handles,
+`can_read_context` and `can_change`. The REST server only maps snapshots
+to responses (`From<snapshot::ChannelSnapshot> for ChannelResponse` and
+the like, in `models.rs`) and asks the `SecurityManager` nothing. A
+frontend never asks the access questions itself.
 
-A view is a snapshot for listing and offering. An operation never relies on
-it: it checks its own permission when it acts.
+A node is data the viewer was allowed to reach; it decides nothing. An
+operation never relies on it: it checks its own permission when it acts.
 
 ## Users
 

@@ -23,9 +23,13 @@ pub async fn create_session(
 }
 
 pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let sessions = state.session_manager.session_views(&user.security_context()).await
-        .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e))?;
-    Ok(Json(sessions.into_iter().map(SessionResponse::from).collect()))
+    let sessions = crate::routes::views(&state, &user).sessions().await
+        .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
+    let mut listed = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        listed.push(SessionResponse::from(session.snapshot().await));
+    }
+    Ok(Json(listed))
 }
 
 /// One session with its channels, in the form the global snapshot uses - so
@@ -37,9 +41,9 @@ pub async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session = state.session_manager.session_view(&user.security_context(), session_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.into()))
+    let session = crate::routes::views(&state, &user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(Json(session.snapshot().await.into()))
 }
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
@@ -81,7 +85,7 @@ pub async fn update_session_privacy(
     session_loop.update_privacy(&user.security_context(), payload.privacy).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("changing the privacy of session {session_id}")))?;
 
-    let session = state.session_manager.session_view(&user.security_context(), session_id).await
-        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.into()))
+    let session = crate::routes::views(&state, &user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(Json(session.snapshot().await.into()))
 }

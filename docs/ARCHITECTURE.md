@@ -168,9 +168,9 @@ Two questions are kept apart:
 *   **Who may do what** is decided by one `SecurityManager` per process, asked
     with an `ActionType` and the `SecurityAttributes` (owner and contributors)
     of the entity concerned. The default policy is ownership: owners do
-    everything, contributors read and use. The runtime answers what a client
-    may see with a **view** built for that viewer; frontends never ask the
-    policy themselves. Users come from a chain of user providers, and the
+    everything, contributors read and use. What a client may see, it reads
+    through the runtime's **views**, which ask the policy at every step
+    for that viewer; frontends never ask the policy themselves. Users come from a chain of user providers, and the
     REST server authenticates them with a short-lived signed token.
 *   **What may flow where** is decided by classifications, not by who takes
     part. Every channel has a classification - a level from `public` to

@@ -1,6 +1,6 @@
 # 163 — There is no model to navigate from a session to what is in it
 
-**Status:** open
+**Status:** in progress
 **Area:** Architecture
 
 ## The problem
@@ -389,3 +389,27 @@ each step, for running and stopped sessions alike.
   interface of the views, seven steps from the nodes over the REST reads
   and the agent as viewer to the removal of `SessionReader`, and the
   decisions still open. To be taken up on 2026-10-01.
+- **2026-10-01** — The open decisions taken as proposed: one `Viewer`, the
+  running loop as the source while a session runs (`Found`), the root on
+  `SessionManager`, the snapshots renamed now and decided on in step 3,
+  and the agent's reading classification set by whoever builds its viewer
+  - which means the agent's views are built per turn, through the `Turn`,
+  not once in the `ComponentContext` (to be laid out in step 4).
+- **2026-10-01** — Step 1 done: `caelumora_runtime::view` with `Viewer`,
+  `Views`, `SessionView`, `ChannelView`, `MemberView`, `ViewError`, and
+  `SessionManager::views(viewer)` as the root; `caelumora_model::view` is
+  `snapshot` (`SessionSnapshot`, `ChannelSnapshot`, `MemberSnapshot`,
+  `ParticipantSnapshot`), taken by `snapshot()` on each node.
+  `session_views`, `session_view`, `channel_view`, `describe_session`,
+  `describe_channel` and `look_up` are gone from `SessionManager`.
+  Deviation from the plan: the REST handlers that answered with views
+  (`GET /sessions`, `/sessions/{id}`, `…/channels`, `…/channels/{cid}`,
+  the channel and global snapshots of the streams) already read through
+  the views - thin wrappers for one step were not worth keeping - so step
+  3 is left with the reads of history, notes, contexts and given-up turns.
+  `ViewError` is mapped by `ApiError::from_runtime` to the codes the
+  routes answered before (`session_not_found`, `channel_not_found`,
+  `actor_not_found`). `Views` holds an `Arc<SessionManager>`; an agent's
+  root (step 4) is its own `SessionLoop`, for which the root will become
+  a small trait over "where the running sessions are". The tests on views
+  moved from `session.rs` to `view/`.

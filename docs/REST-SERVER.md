@@ -40,12 +40,13 @@ A handler translates; it does not decide.
     user's own actor in the channel. Someone who is not a participant has
     none and is refused with `403` (issue 30). See
     [CHANNELS.md](CHANNELS.md#acting-in-a-channel).
-*   **It answers with views.** What a client lists and offers - sessions,
-    channels, members, `can_change`, `can_read_context` - comes from the
-    views the runtime builds for the user (`SessionManager::session_view`,
-    `channel_view`, issue 80). `models.rs` maps them to responses
-    (`From<ChannelView> for ChannelResponse` and the like), and the server
-    asks the `SecurityManager` nothing itself. See
+*   **It reads through the views.** What a client lists and offers -
+    sessions, channels, members, `can_change`, `can_read_context` - a
+    handler reaches through the runtime's views as the user
+    (`routes::views`, `SessionManager::views`, issue 163) and answers
+    with their snapshots (issue 80). `models.rs` maps them to responses
+    (`From<snapshot::ChannelSnapshot> for ChannelResponse` and the like),
+    and the server asks the `SecurityManager` nothing itself. See
     [SECURITY.md](SECURITY.md#views).
 
 Every handler derives its `SecurityContext` from the `AuthenticatedUser` the
@@ -189,7 +190,7 @@ the store (issue 11), its events through `EventBus::subscribe_as` (issue 39).
 
 Global events name sessions and channels by id alone. A client follows them
 with `GET /sessions/{id}`, which answers in the snapshot's own form
-(`SessionSnapshot`, mapped from the same `SessionView`) without starting a
+(`SessionSnapshot`, mapped from the same `SessionView::snapshot`) without starting a
 stopped session.
 
 ### Snapshots

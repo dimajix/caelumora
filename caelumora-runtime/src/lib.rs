@@ -26,4 +26,5 @@ pub mod transport;
 pub mod moderator_impl;
 pub mod seed;
 pub mod session_reader;
+pub mod view;
 mod template;

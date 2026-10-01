@@ -31,12 +31,16 @@ pub async fn global_events(
 /// sessions' events refer to them by id alone - described by the runtime,
 /// running or not (issue 80).
 async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Option<GlobalSnapshot> {
-    let sessions = match state.session_manager.session_views(&user.security_context()).await {
+    let sessions = match crate::routes::views(state, user).sessions().await {
         Ok(sessions) => sessions,
         Err(e) => {
             tracing::error!("Cannot assemble the snapshot of the global event stream: {:#}", e);
             Vec::new()
         }
     };
-    Some(GlobalSnapshot { sessions: sessions.into_iter().map(Into::into).collect() })
+    let mut described = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        described.push(session.snapshot().await.into());
+    }
+    Some(GlobalSnapshot { sessions: described })
 }

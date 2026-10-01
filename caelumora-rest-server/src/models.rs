@@ -5,7 +5,7 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
-use caelumora_model::view::{ChannelView, MemberView, ParticipantView, SessionView};
+use caelumora_model::snapshot;
 use caelumora_runtime::session::SessionLoop;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -31,8 +31,8 @@ impl From<&caelumora_model::session::Session> for SessionResponse {
     }
 }
 
-impl From<SessionView> for SessionResponse {
-    fn from(view: SessionView) -> Self {
+impl From<snapshot::SessionSnapshot> for SessionResponse {
+    fn from(view: snapshot::SessionSnapshot) -> Self {
         Self { id: view.id, name: view.name, privacy: view.privacy }
     }
 }
@@ -149,8 +149,8 @@ pub struct SessionSnapshot {
     pub participants: Vec<ParticipantResponse>,
 }
 
-impl From<SessionView> for SessionSnapshot {
-    fn from(view: SessionView) -> Self {
+impl From<snapshot::SessionSnapshot> for SessionSnapshot {
+    fn from(view: snapshot::SessionSnapshot) -> Self {
         Self {
             id: view.id,
             name: view.name,
@@ -173,7 +173,7 @@ pub struct ParticipantResponse {
 
 impl ParticipantResponse {
     /// `view` as the API shows it; `None` for an id that is no participant.
-    fn of(view: ParticipantView) -> Option<Self> {
+    fn of(view: snapshot::ParticipantSnapshot) -> Option<Self> {
         Some(Self { id: view.id, kind: ParticipantKind::of(view.id)?, name: view.name.unwrap_or_else(|| UNKNOWN.to_string()) })
     }
 }
@@ -233,8 +233,8 @@ pub struct ChannelResponse {
     pub can_change: bool,
 }
 
-impl From<ChannelView> for ChannelResponse {
-    fn from(view: ChannelView) -> Self {
+impl From<snapshot::ChannelSnapshot> for ChannelResponse {
+    fn from(view: snapshot::ChannelSnapshot) -> Self {
         Self {
             id: view.id,
             name: view.name,
@@ -262,7 +262,7 @@ pub struct ChannelMemberResponse {
 
 impl ChannelMemberResponse {
     /// `view` as the API shows it; `None` for an id that is no participant.
-    fn of(view: MemberView) -> Option<Self> {
+    fn of(view: snapshot::MemberSnapshot) -> Option<Self> {
         Some(Self {
             id: view.id,
             kind: ParticipantKind::of(view.id)?,
@@ -434,8 +434,8 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| MemberView { id, name: name.map(str::to_string), handle: None, can_read_context: false };
-        let view = ChannelView {
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false };
+        let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
             moderator: "broadcast".to_string(),
