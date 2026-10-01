@@ -85,7 +85,7 @@ message classified by accident.
 
 *   **Its sender classifies it.** An agent's messages - its answers, tool
     results, what its model is given - carry the classification its turn
-    began with (`AgentActor::label` for everything its model produces; until
+    began with (`label` in `actor_impl/agent.rs` for everything its model produces; until
     then an `LLMClient` builds on `llm::unlabelled_message`, the strictest
     general classification). A user's message carries the channel's, unless
     the user classifies it otherwise.

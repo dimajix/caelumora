@@ -173,16 +173,6 @@ impl AgentActor {
         Some(output.remove(0))
     }
 
-    /// Has the agent's `ContextProvider` assemble what the model is given in
-    /// the turn just begun.
-    async fn assemble_context<'a>(&self, turn: &mut Turn<'a>) -> Result<()> {
-        // Whatever its fail policy: without a context there is nothing to
-        // give the model. Parts that may be left out are the prompt
-        // providers', each by its own policy.
-        self.context_provider.facet.current_context(turn).await
-            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
-    }
-
     /// Starts a new turn in answer to a `ResponseRequested` - whose envelope
     /// has `event_context` and `security_context` - with the channel as it
     /// is now: begins it, announces `ResponseStarted` and builds the
@@ -210,7 +200,12 @@ impl AgentActor {
 
         debug!("Starting generating messages for agent {} {}", self.id(), turn.agent_name());
         turn.send_event(ActorEvent::ResponseStarted, output).await?;
-        self.assemble_context(turn).await
+        // The agent's `ContextProvider` assembles what the model is given,
+        // whatever its fail policy: without a context there is nothing to
+        // give the model. Parts that may be left out are the prompt
+        // providers', each by its own policy.
+        self.context_provider.facet.current_context(turn).await
+            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
     }
 
     /// Calls the LLM for one turn step. `create_plan_tool` (when wired in)
@@ -227,54 +222,6 @@ impl AgentActor {
         Ok(self.llm_client.facet
             .chat_completion(&context.messages, &context.tools)
             .await)
-    }
-
-    /// Makes `message` of the model the agent's: its sender, its labels
-    /// (`label`), and whether it is internal - part of executing a plan
-    /// (`Turn::in_plan_step`); the final answer after the last step is
-    /// not, and must reach the user live. `complete` as for `label`.
-    fn stamp(&self, message: &mut Message, turn: &Turn, complete: bool) {
-        message.sender_name = self.agent_controller.name();
-        message.sender_id = self.id();
-        self.label(message, turn, complete);
-        message.internal = turn.in_plan_step();
-    }
-
-    /// Labels `message` and its parts (issues 54, 61, 133). The message is
-    /// classified as the turn's channel - every message of the agent's
-    /// model passes here, partial and complete, before it goes anywhere.
-    /// Every tool call gets
-    /// the labels its tool declares now, so that the call and its result are
-    /// published by what applied at the time of the call; a call of an
-    /// unknown tool is public: it fails, and its failure hides nothing.
-    ///
-    /// The reasoning is the owner's (`Visibility::Owner`) if the
-    /// personality says so, once the turn saw the agent's private
-    /// knowledge, or if the content of a call it leads to is - those of the
-    /// message once it is `complete`, and while it streams those of every
-    /// tool the agent could still call, since reasoning comes before the
-    /// call it leads to. Otherwise it carries the channel's classification,
-    /// as everything the agent derives does (issue 133). Knowledge read
-    /// from other channels adds nothing: a channel reads only what may flow
-    /// into it. The tools are those the turn began with, which the model
-    /// was offered (issue 137).
-    fn label(&self, message: &mut Message, turn: &Turn, complete: bool) {
-        let tools = turn.tools();
-        let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.visibility).unwrap_or_default();
-        for call in &mut message.tool_calls {
-            call.visibility = declared(&call.function_name);
-        }
-        // What the model produces is derived in the channel: it carries
-        // the channel's classification, as the turn began with it.
-        message.classification = turn.classification();
-
-        let owners_call = if complete {
-            message.tool_calls.iter().any(|c| !c.visibility.content.is_channel())
-        } else {
-            tools.iter().any(|t| !t.visibility.content.is_channel())
-        };
-        let owners = !self.reasoning_visibility.is_channel() || turn.saw_private_knowledge() || owners_call;
-        message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };
     }
 
     /// Stores the agent's state in its channel as `turn` holds it, with
@@ -580,13 +527,13 @@ impl AgentActor {
 
             match event {
                 MessageEvent::Partial(mut message) => {
-                    self.stamp(&mut message, turn, false);
+                    stamp(&mut message, turn, self.reasoning_visibility, false);
                     if let Some(msg) = self.respond_partial(message, turn).await {
                         turn.send_event(event_for(msg, true), output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
-                    self.stamp(&mut message, turn, true);
+                    stamp(&mut message, turn, self.reasoning_visibility, true);
                     self.request_approvals(&message.tool_calls, turn, output).await?;
                     let converged = message.tool_calls.is_empty();
                     if let Some(msg) = self.respond_complete(message, turn).await {
@@ -683,6 +630,55 @@ enum TurnFlow {
     Lowered(Classification),
     /// The channel is gone.
     NoChannel,
+}
+
+/// Makes `message` of the model the agent's: its sender, its labels
+/// (`label`), and whether it is internal - part of executing a plan
+/// (`Turn::in_plan_step`); the final answer after the last step is
+/// not, and must reach the user live. `reasoning_visibility` and
+/// `complete` as for `label`.
+fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
+    message.sender_name = turn.agent_name().to_string();
+    message.sender_id = ActorId::Agent(turn.agent_id());
+    label(message, turn, reasoning_visibility, complete);
+    message.internal = turn.in_plan_step();
+}
+
+/// Labels `message` and its parts (issues 54, 61, 133). The message is
+/// classified as the turn's channel - every message of the agent's
+/// model passes here, partial and complete, before it goes anywhere.
+/// Every tool call gets the labels its tool declares now, so that the call
+/// and its result are published by what applied at the time of the call; a
+/// call of an unknown tool is public: it fails, and its failure hides
+/// nothing.
+///
+/// The reasoning is the owner's (`Visibility::Owner`) if the personality
+/// says so (`reasoning_visibility`), once the turn saw the agent's private
+/// knowledge, or if the content of a call it leads to is - those of the
+/// message once it is `complete`, and while it streams those of every
+/// tool the agent could still call, since reasoning comes before the
+/// call it leads to. Otherwise it carries the channel's classification,
+/// as everything the agent derives does (issue 133). Knowledge read
+/// from other channels adds nothing: a channel reads only what may flow
+/// into it. The tools are those the turn began with, which the model
+/// was offered (issue 137).
+fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
+    let tools = turn.tools();
+    let declared = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.visibility).unwrap_or_default();
+    for call in &mut message.tool_calls {
+        call.visibility = declared(&call.function_name);
+    }
+    // What the model produces is derived in the channel: it carries
+    // the channel's classification, as the turn began with it.
+    message.classification = turn.classification();
+
+    let owners_call = if complete {
+        message.tool_calls.iter().any(|c| !c.visibility.content.is_channel())
+    } else {
+        tools.iter().any(|t| !t.visibility.content.is_channel())
+    };
+    let owners = !reasoning_visibility.is_channel() || turn.saw_private_knowledge() || owners_call;
+    message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };
 }
 
 /// Makes a loaded state fit to run from (issue 75). A state stored

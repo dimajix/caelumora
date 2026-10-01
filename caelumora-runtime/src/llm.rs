@@ -60,7 +60,7 @@ pub type LLMResult<T> = Result<T, LLMError>;
 
 /// An empty message of a model, as an `LLMClient` builds its answer from.
 /// A client does not know where its answer goes; the agent classifies every
-/// message of its model before it is used (`AgentActor::label`, issue 133).
+/// message of its model before it is used (`actor_impl::agent::label`, issue 133).
 /// Until then it is the strictest classification there is without
 /// compartments, which no channel below `strictly_confidential` admits.
 pub fn unlabelled_message() -> Message {

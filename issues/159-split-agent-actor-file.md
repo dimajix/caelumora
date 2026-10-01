@@ -42,3 +42,7 @@ by files, not by new types.
   have nothing agent-specific, are in `actor_impl/mod.rs`; `state_span` is
   `logging::agent_span`, next to `envelope_span`. Whether the file is split
   is still open.
+- **2026-10-01** — `stamp` and `label`, which read of the actor only the
+  personality's reasoning visibility, are free functions too, taking it as
+  a parameter and the sender from the turn; `assemble_context` is inlined
+  into `request_response`, its only caller.
