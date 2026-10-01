@@ -207,6 +207,12 @@ export interface ActorEvent {
   ApprovalRequested?: ApprovalRequest;
   ApprovalGranted?: ApprovalResponse;
   ApprovalDenied?: ApprovalResponse;
+  ApprovalTimedOut?: ApprovalResponse;
+  /**
+   * The agent no longer waits for the decision on request `id`: its turn
+   * ended first (issue 148). Nobody is asked any longer.
+   */
+  ApprovalRequestWithdrawn?: { id: string };
   FullResponseGenerated?: Message[];
   IntermediatePartialGenerated?: Message;
   IntermediateMessageGenerated?: Message;

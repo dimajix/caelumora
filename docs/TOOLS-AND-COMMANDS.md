@@ -147,9 +147,20 @@ blocks.
     again when users join or leave. A request nobody decides times out
     after ten minutes. The approver sends `ApprovalGranted`,
     `ApprovalDenied` or `ApprovalTimedOut` to the agent - the only way a
-    decision reaches an agent (issue 81).
+    decision reaches an agent (issue 81) - and to the users, broadcast:
+    an approval is over only once the approver says so, not when one user
+    answered.
 5.  **Resumption.** The agent runs the granted calls and continues its
     turn.
+
+A turn that ends while it waits - cancelled, given up - withdraws its
+requests (issue 148): the agent sends `ApprovalRequestWithdrawn` with the
+id, which the moderator routes to the approver only. The approver takes it
+only from the agent that asked, forgets the request without deciding it,
+and passes the withdrawal on to the users, broadcast, so that nobody is
+asked any longer. A stopped agent withdraws nothing - it has left - and the
+approver answers its pending requests as it leaves (see
+[CHANNELS.md](CHANNELS.md)).
 
 Messages that arrive while the agent waits for approval are queued and
 processed in order once it resumes, so its context stays consistent.

@@ -1,5 +1,5 @@
 use crate::agent::AgentId;
-use crate::approval::{ApprovalRequest, ApprovalResponse, ApproverId};
+use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
 use crate::message::Message;
 use crate::security::SecurityContext;
@@ -73,6 +73,11 @@ pub enum ActorEvent {
     ApprovalGranted(ApprovalResponse),
     ApprovalDenied(ApprovalResponse),
     ApprovalTimedOut(ApprovalResponse),
+    /// The agent no longer waits for the decision on its request `id`: the
+    /// turn that made the call ended first (issue 148). Sent by the agent to
+    /// the approvers, which take it only from the agent that asked, and by
+    /// an approver to the users, so that nobody is asked any longer.
+    ApprovalRequestWithdrawn { id: ApprovalId },
     ResponseRequested,
     ResponseStarted,
     PartialMessageGenerated(Message),
@@ -164,6 +169,7 @@ impl ActorEvent {
             ActorEvent::ApprovalGranted(_) => "ApprovalGranted",
             ActorEvent::ApprovalDenied(_) => "ApprovalDenied",
             ActorEvent::ApprovalTimedOut(_) => "ApprovalTimedOut",
+            ActorEvent::ApprovalRequestWithdrawn { .. } => "ApprovalRequestWithdrawn",
             ActorEvent::ResponseRequested => "ResponseRequested",
             ActorEvent::ResponseStarted => "ResponseStarted",
             ActorEvent::PartialMessageGenerated(_) => "PartialMessageGenerated",

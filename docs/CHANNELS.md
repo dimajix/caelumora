@@ -234,7 +234,8 @@ agent's run loop an interrupt and cancels the turn's `CancellationToken`.
 The streaming loop waits on that token next to the model's stream, so the
 request is abandoned at once, wherever it stands (issue 76). Waiting for an
 approval waits on it too: a turn waiting for a decision ends at once,
-without one. The run loop takes the interrupt after the step it cut short
+without one, and withdraws its requests (see
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). The run loop takes the interrupt after the step it cut short
 and goes on in `Cancelling`, whatever that step returned; `stop` works the
 same way with an interrupt of its own, which wins (issue 152). A tool does
 not see the token: it runs to its end, and a cancel waits for it

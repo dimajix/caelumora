@@ -25,6 +25,7 @@
 //! (perceiving a message) touches only the transcript and the history.
 
 use anyhow::{Context, Result};
+use caelumora_model::approval::ApprovalId;
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange, TurnState};
 use std::sync::{Arc, LazyLock};
 use tracing::warn;
@@ -49,22 +50,32 @@ static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
 /// How many times a turn may ask its model; then it ends with what it has.
 pub(crate) const MAX_MODEL_CALLS: u32 = 25;
 
-/// What is left of a turn once it ended - taken over or discarded: what its
-/// last event is sent with, the contexts the turn had (issue 85). Nothing else; the rest of the turn was used up in ending it.
+/// What is left of a turn once it ended - taken over or given up: what its
+/// last events are sent with, the contexts the turn had (issue 85), and the
+/// approval requests it no longer waits for (issue 148). Nothing else; the
+/// rest of the turn was used up in ending it.
 #[derive(Debug)]
 pub struct EndedTurn {
     agent_id: AgentId,
     event_context: EventContext,
     security_context: SecurityContext,
+    withdrawn: Vec<ApprovalId>,
 }
 
 impl EndedTurn {
-    fn of(agent_id: AgentId, turn: &TurnState) -> Self {
+    fn of(agent_id: AgentId, turn: &TurnState, withdrawn: Vec<ApprovalId>) -> Self {
         Self {
             agent_id,
             event_context: turn.event_context.clone(),
             security_context: turn.security_context.clone(),
+            withdrawn,
         }
+    }
+
+    /// The approval requests the turn still waited for when it ended
+    /// (issue 148).
+    pub(crate) fn withdrawn(&self) -> &[ApprovalId] {
+        &self.withdrawn
     }
 
     /// Sends `event` as the ended turn would have: see [`Turn::send_event`].
@@ -258,9 +269,9 @@ impl<'a> Turn<'a> {
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
     pub(crate) async fn commit_turn(&mut self, cancelled: bool) -> CommittedTurn {
-        self.abandon_step(if cancelled { "it was cancelled" } else { "it ended" });
+        let withdrawn = self.abandon_step(if cancelled { "it was cancelled" } else { "it ended" });
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(self.agent_id, &turn);
+        let ended = EndedTurn::of(self.agent_id, &turn, withdrawn);
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let TurnState { entries, agent_changes, channel_changes, .. } = turn;
@@ -285,9 +296,9 @@ impl<'a> Turn<'a> {
     /// calls do not all have their result yet is ended first
     /// (`abandon_step`), so that those that ran are told too.
     pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
-        self.abandon_step(because(&reason));
+        let withdrawn = self.abandon_step(because(&reason));
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(self.agent_id, &turn);
+        let ended = EndedTurn::of(self.agent_id, &turn, withdrawn);
         let label = turn.label();
         let TurnState { entries, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
@@ -322,10 +333,13 @@ impl<'a> Turn<'a> {
     /// the step. No call of the turn is left unanswered in the transcript,
     /// and the results of those that ran are not lost with the turn's
     /// working state.
-    fn abandon_step(&mut self, because: &str) {
+    /// Returns the approval requests of the step still waiting for a
+    /// decision, which the agent withdraws.
+    fn abandon_step(&mut self, because: &str) -> Vec<ApprovalId> {
         let internal = self.in_plan_step();
-        if let Some(turn) = self.agent_channel_state.turn.as_mut() {
-            ToolCalls::new(turn, self.agent_id, &self.agent_name).abandon(because, internal);
+        match self.agent_channel_state.turn.as_mut() {
+            Some(turn) => ToolCalls::new(turn, self.agent_id, &self.agent_name).abandon(because, internal),
+            None => Vec::new(),
         }
     }
 

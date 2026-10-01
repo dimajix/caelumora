@@ -100,19 +100,25 @@ impl<'t> ToolCalls<'t> {
     /// Ends the step as its turn ends (issue 148): answers every call still
     /// without a result as not executed, `because` - why the turn ended -
     /// and keeps the tool message as `collect` does, so that no call is left
-    /// unanswered and the results of those that ran are kept. `None` if the
-    /// step has no calls.
-    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Option<Message> {
+    /// unanswered and the results of those that ran are kept. Returns the
+    /// approval requests still waiting for a decision, for the agent to
+    /// withdraw.
+    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Vec<ApprovalId> {
         if self.is_empty() {
-            return None;
+            return Vec::new();
         }
+        let waiting = self.turn.tool_calls.iter()
+            .filter(|c| c.status == ApprovalStatus::Pending && c.result.is_none())
+            .map(|c| c.id)
+            .collect();
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.label();
         for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
             let content = crate::tool::abandoned_result(because);
             call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone()));
         }
-        self.collect(internal)
+        self.collect(internal);
+        waiting
     }
 
     /// Once every call has its result: the tool message that gives them to

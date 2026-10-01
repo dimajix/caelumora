@@ -150,8 +150,9 @@ against it, and what came out of the last attempt.
 | [127](127-tool-executor-not-replaceable.md) | done | The tool executor is fixed in the runtime, so how tools are executed cannot be tried out by configuring a different component. |
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
 | [145](145-ended-turns-leave-a-record.md) | done | A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain. |
-| [148](148-cancelled-call-without-result.md) | in progress | A turn cancelled while tool calls are pending is taken over with the calls but without results, so the transcript holds calls never answered. |
+| [148](148-cancelled-call-without-result.md) | done | A turn cancelled while tool calls are pending is taken over with the calls but without results, so the transcript holds calls never answered. |
 | [161](161-tools-cannot-be-interrupted.md) | open | A running tool cannot be interrupted, so a cancel waits for it and a stop during it aborts the agent without giving its turn up. |
+| [172](172-pending-approvals-not-kept.md) | open | Pending approvals live only in the approver's memory and in the event stream, so a restart or a reload leaves a turn waiting for a decision nobody can give. |
 
 ## User interaction
 

@@ -70,7 +70,8 @@ impl<P: ResponderPolicy> Moderator for PolicyModerator<P> {
             ActorEvent::ApprovalRequested(_) |
             ActorEvent::ApprovalGranted(_) |
             ActorEvent::ApprovalDenied(_) |
-            ActorEvent::ApprovalTimedOut(_) => {
+            ActorEvent::ApprovalTimedOut(_) |
+            ActorEvent::ApprovalRequestWithdrawn { .. } => {
                 self.actors.route_approval_events(event)
             }
             ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
@@ -179,59 +180,40 @@ impl ModeratorActors {
             .into()
     }
 
+    /// Routes the approval of a tool call (issues 81, 148): the agent's
+    /// request and its withdrawal go to the approvers, which ask the users
+    /// and tell them; the users' answers go to the approvers; an approver's
+    /// decision goes to the agent that asked, and to the users, who learn
+    /// so that the approval is over.
     fn route_approval_events(&self, event: &Envelope) -> RouteDecision {
+        let to_approvers = || self.approval_actors.keys().map(|id| (*id, event.clone())).collect::<Vec<_>>();
+        let to_users = || self.user_actors.keys().map(|id| (*id, event.clone())).collect::<Vec<_>>();
+        let sender = event.context.sender_id;
         match &event.event {
-            ActorEvent::ApprovalRequested(_) => {
-                if matches!(event.context.sender_id, ActorId::Agent(_)) {
-                    // Agent -> ApproverActor: internal plumbing, not shown to users yet.
-                    let forwards = self.approval_actors.keys()
-                        .map(|id| (*id, event.clone()))
-                        .collect();
-                    RouteDecision { forwards, broadcast: false }
-                } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
-                    // ApproverActor -> Users: the request users actually act on.
-                    let forwards = self.user_actors.keys()
-                        .map(|id| (*id, event.clone()))
-                        .collect();
-                    RouteDecision { forwards, broadcast: true }
-                } else {
-                    RouteDecision { forwards: Vec::new(), broadcast: false }
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => match sender {
+                // Agent -> ApproverActor: internal plumbing, not shown to users yet.
+                ActorId::Agent(_) => RouteDecision { forwards: to_approvers(), broadcast: false },
+                // ApproverActor -> Users: what users act on, or no longer.
+                ActorId::Approver(_) => RouteDecision { forwards: to_users(), broadcast: true },
+                _ => RouteDecision { forwards: Vec::new(), broadcast: false },
+            },
+            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) | ActorEvent::ApprovalTimedOut(response) => match sender {
+                // User -> ApproverActor: lets other observers see the answer
+                // too. A timeout is the approver's alone.
+                ActorId::User(_) if !matches!(event.event, ActorEvent::ApprovalTimedOut(_)) => {
+                    RouteDecision { forwards: to_approvers(), broadcast: true }
                 }
-            }
-            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) => {
-                if matches!(event.context.sender_id, ActorId::User(_)) {
-                    // User -> ApproverActor: lets other observers see the decision too.
-                    let forwards = self.approval_actors.keys()
-                        .map(|id| (*id, event.clone()))
-                        .collect();
-                    RouteDecision { forwards, broadcast: true }
-                } else if matches!(event.context.sender_id, ActorId::Approver(_)) {
-                    // ApproverActor -> Agent: internal plumbing informing the agent.
+                // ApproverActor -> Agent, and the users: the decision.
+                ActorId::Approver(_) => {
                     let agent_id = ActorId::Agent(response.agent_id);
-                    let forwards = if self.agent_actors.contains_key(&agent_id) {
-                        vec![(agent_id, event.clone())]
-                    } else {
-                        Vec::new()
-                    };
-                    RouteDecision { forwards, broadcast: false }
-                } else {
-                    RouteDecision { forwards: Vec::new(), broadcast: false }
+                    let mut forwards = to_users();
+                    if self.agent_actors.contains_key(&agent_id) {
+                        forwards.push((agent_id, event.clone()));
+                    }
+                    RouteDecision { forwards, broadcast: true }
                 }
-            }
-            ActorEvent::ApprovalTimedOut(response) => {
-                if matches!(event.context.sender_id, ActorId::Approver(_)) {
-                    // ApproverActor -> Agent: internal plumbing informing the agent.
-                    let agent_id = ActorId::Agent(response.agent_id);
-                    let forwards = if self.agent_actors.contains_key(&agent_id) {
-                        vec![(agent_id, event.clone())]
-                    } else {
-                        Vec::new()
-                    };
-                    RouteDecision { forwards, broadcast: false }
-                } else {
-                    RouteDecision { forwards: Vec::new(), broadcast: false }
-                }
-            }
+                _ => RouteDecision { forwards: Vec::new(), broadcast: false },
+            },
             _ => RouteDecision { forwards: Vec::new(), broadcast: false }
         }
     }
@@ -508,11 +490,22 @@ mod tests {
     }
 
     #[test]
-    fn approval_granted_from_approver_is_internal_only() {
+    fn a_decision_of_the_approver_reaches_the_users_too() {
         let actors = ModeratorActors::new();
         let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
-        let event = envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), ActorEvent::ApprovalGranted(response));
-        let decision = actors.route_approval_events(&event);
-        assert!(!decision.broadcast);
+        for decided in [ActorEvent::ApprovalGranted(response.clone()), ActorEvent::ApprovalDenied(response.clone()), ActorEvent::ApprovalTimedOut(response.clone())] {
+            let event = envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), decided);
+            assert!(actors.route_approval_events(&event).broadcast, "{} ends the approval for the users", event.event.kind());
+        }
+    }
+
+    #[test]
+    fn a_withdrawn_request_goes_to_the_approvers_and_from_them_to_the_users() {
+        let actors = ModeratorActors::new();
+        let withdrawn = ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
+        assert!(!actors.route_approval_events(&envelope(ActorId::Agent(AgentId::new()), withdrawn.clone())).broadcast);
+        assert!(actors.route_approval_events(&envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), withdrawn.clone())).broadcast);
+        let decision = actors.route_approval_events(&envelope(ActorId::User(UserId::new()), withdrawn));
+        assert!(decision.forwards.is_empty() && !decision.broadcast, "only an agent withdraws");
     }
 }

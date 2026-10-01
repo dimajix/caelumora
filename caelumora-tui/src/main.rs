@@ -94,6 +94,15 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                         println!("{}", request.description);
                         println!("Type '/approve {}' or '/deny {}' to respond.", request.id.0, request.id.0);
                     }
+                    // The approval is over: decided, or no longer asked for.
+                    Some(ActorEvent::ApprovalGranted(response)) | Some(ActorEvent::ApprovalDenied(response)) | Some(ActorEvent::ApprovalTimedOut(response)) => {
+                        pending_approvals.remove(&response.id.0);
+                    }
+                    Some(ActorEvent::ApprovalRequestWithdrawn { id }) => {
+                        if pending_approvals.remove(&id.0).is_some() {
+                            println!("\r--- Approval {} withdrawn: the turn ended ---", id.0);
+                        }
+                    }
                     Some(_) => {
                     }
                     None => break,

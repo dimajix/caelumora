@@ -1992,7 +1992,7 @@ mod tests {
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),
         }] };
-        let Stuck { channel, context, agent, helper, running, .. } =
+        let Stuck { channel, context, agent, helper, mut events, running } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
         settled(&helper, ActorState::WaitingForApproval).await;
 
@@ -2000,6 +2000,21 @@ mod tests {
 
         // Without anyone deciding on the call.
         settled(&helper, ActorState::Idle).await;
+
+        // The request is withdrawn, and the approver tells the users
+        // (issue 148).
+        let (requested, withdrawn) = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut requested = None;
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                match envelope.event {
+                    ActorEvent::ApprovalRequested(request) if matches!(envelope.context.sender_id, ActorId::Approver(_)) => requested = Some(request.id),
+                    ActorEvent::ApprovalRequestWithdrawn { id } if matches!(envelope.context.sender_id, ActorId::Approver(_)) => break (requested, id),
+                    _ => {}
+                }
+            }
+        }).await.expect("the users learn that the request was withdrawn");
+        assert_eq!(requested, Some(withdrawn));
         running.abort();
 
         // The call is answered as not executed (issue 148).

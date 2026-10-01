@@ -1,6 +1,6 @@
 # 148 — A cancelled turn takes over tool calls that have no result
 
-**Status:** in progress
+**Status:** done
 **Area:** Tools and approvals
 
 ## The problem
@@ -58,3 +58,15 @@ before as well, when the approval came after the cancel.
   `Failed`. Still open, and to be done in this issue: the approvals of
   such calls stay pending at the approver and in the user interface after
   the cancel.
+- **2026-10-01** — The approvals of the calls answered so are ended too.
+  The agent withdraws its requests still waiting for a decision when its
+  turn ends (`AgentActor::withdraw_approval_requests`, sending
+  `ActorEvent::ApprovalRequestWithdrawn`); the approver takes the withdrawal only from the agent that asked, forgets
+  the request and tells the users. A stopped agent withdraws nothing: the
+  approver answers its requests as it leaves. Users also learn of every
+  decision of the approver now - before, only the agent did, and the web
+  UI dropped an approval as soon as any user had answered, though under
+  `All` or `Majority` it was not decided yet. The web UI and the TUI drop
+  an approval only once the approver ends it. That pending approvals are
+  lost on a restart or a reload went to
+  [172](172-pending-approvals-not-kept.md). Done.

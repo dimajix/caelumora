@@ -1,7 +1,7 @@
 use super::{apply_stage_processors, event_for};
 use crate::actor::Actor;
 use crate::agent_run_control::{Interrupt, RunControl};
-use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
+use crate::agent_turn::{CommittedTurn, EndedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
@@ -255,6 +255,7 @@ impl AgentActor {
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
         }
+        self.withdraw_approval_requests(&ended, output).await?;
         ended.send_event(ActorEvent::FullResponseGenerated(final_messages), output).await?;
         debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
@@ -315,8 +316,11 @@ impl AgentActor {
     /// its messages stay as a branch no longer active, and the calls of its
     /// tools that ran are told on the active branch, in full while the turn
     /// still flows into the channel, else by name, classified as the channel
-    /// is now (issue 141). The channel's users are told with `TurnFailed`,
-    /// unless the agent was stopped: it left the channel.
+    /// is now (issue 141). The approval requests it still waited for are
+    /// withdrawn (issue 148), and the channel's users are told with
+    /// `TurnFailed` - unless the agent was stopped: it left the channel,
+    /// which takes nothing from it any longer, and the approvers discard
+    /// its requests as it leaves.
     async fn give_up(&self, turn: &mut Turn<'_>, reason: GivenUpReason, output: &dyn EventSender) {
         let names_only = match self.turn_flow(turn).await {
             TurnFlow::Flows => None,
@@ -331,6 +335,9 @@ impl AgentActor {
         };
         let ended = turn.give_up_turn(reason, names_only);
         let Some(message) = told else { return };
+        if let Err(e) = self.withdraw_approval_requests(&ended, output).await {
+            warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
+        }
         if let Err(e) = ended.send_event(ActorEvent::TurnFailed { message }, output).await {
             warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id(), agent_name, e);
         }
@@ -416,6 +423,16 @@ impl AgentActor {
         }
         for request in turn.tool_calls().register(states) {
             turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
+        }
+        Ok(())
+    }
+
+    /// Withdraws the approval requests the `ended` turn still waited for, so
+    /// that nobody is asked any longer to decide on a call that will not run
+    /// (issue 148) - the counterpart of `request_approvals`.
+    async fn withdraw_approval_requests(&self, ended: &EndedTurn, output: &dyn EventSender) -> Result<()> {
+        for id in ended.withdrawn() {
+            ended.send_event(ActorEvent::ApprovalRequestWithdrawn { id: *id }, output).await?;
         }
         Ok(())
     }

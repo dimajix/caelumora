@@ -93,6 +93,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // Who is generating (`actorKey`), so that their removal can end it (issue 162).
   const generatingActor = useRef<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
+  // The pending approvals this user answered, still waiting for the decision.
+  const [answeredApprovals, setAnsweredApprovals] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
   // The snapshot holds the end of the history; older messages on request.
   const [hasMore, setHasMore] = useState(false);
@@ -276,12 +278,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           setStreamingSender(null);
         } else if (actorEvent.ApprovalRequested) {
           setPendingApprovals(prev => [...prev, actorEvent.ApprovalRequested!]);
-        } else if (actorEvent.ApprovalGranted) {
-          const res = actorEvent.ApprovalGranted;
-          setPendingApprovals(prev => prev.filter(req => req.id !== res!.id));
-        } else if (actorEvent.ApprovalDenied) {
-          const res = actorEvent.ApprovalDenied;
-          setPendingApprovals(prev => prev.filter(req => req.id !== res!.id));
+        } else if (actorEvent.ApprovalGranted || actorEvent.ApprovalDenied || actorEvent.ApprovalTimedOut || actorEvent.ApprovalRequestWithdrawn) {
+          // Over only once the approver says so - decided, or no longer
+          // asked for (issue 148); a user's answer alone may not decide it.
+          const sender = envelope.context.sender_id;
+          const ended = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied ?? actorEvent.ApprovalTimedOut ?? actorEvent.ApprovalRequestWithdrawn)!.id;
+          if (typeof sender === 'object' && 'Approver' in sender) {
+            setPendingApprovals(prev => prev.filter(req => req.id !== ended));
+            setAnsweredApprovals(prev => prev.filter(id => id !== ended));
+          }
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           setStreamingMessage(null);
@@ -510,7 +515,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const handleApproval = async (approval: ApprovalRequest, approved: boolean) => {
     try {
       await api.respondToApproval(sessionId, channelId, approval.id, approval.agent_id, approved);
-      setPendingApprovals(prev => prev.filter(a => a.id !== approval.id));
+      setAnsweredApprovals(prev => [...prev, approval.id]);
     } catch (e) {
       reportError('Failed to respond to approval', e);
     }
@@ -640,6 +645,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
                   {formatArguments(approval.tool_call.arguments)}
                 </pre>
+                {answeredApprovals.includes(approval.id) ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Answered - waiting for the decision.</p>
+                ) : (
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleApproval(approval, true)}
@@ -654,6 +662,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                     Deny
                   </button>
                 </div>
+                )}
               </div>
             ))}
           </div>

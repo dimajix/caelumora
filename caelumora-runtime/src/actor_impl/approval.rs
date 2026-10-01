@@ -106,6 +106,9 @@ impl ApproverActor {
             ActorEvent::ApprovalDenied(res) => {
                 self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output).await
             }
+            ActorEvent::ApprovalRequestWithdrawn { id } => {
+                self.handle_withdrawal(env.context.sender_id, id, output).await
+            }
             _ => Ok(()),
         }
     }
@@ -154,6 +157,23 @@ impl ApproverActor {
             }
         }
 
+        Ok(())
+    }
+
+    /// Forgets the request `id` that `sender` withdrew (issue 148) - only the
+    /// agent that asked may - and tells the users, so that nobody is asked
+    /// any longer. Nothing is decided: the agent no longer waits.
+    async fn handle_withdrawal(&self, sender: ActorId, id: ApprovalId, output: &dyn EventSender) -> Result<()> {
+        let mut pending = self.pending.lock().await;
+        let Some(p) = pending.get(&id) else { return Ok(()) };
+        if sender != ActorId::Agent(p.agent_id) {
+            warn!("ApproverActor: {} tried to withdraw the approval request {} of agent {}", sender, id, p.agent_id);
+            return Ok(());
+        }
+        let Some(p) = pending.remove(&id) else { return Ok(()) };
+        let context = p.event_context.next(self.id, self.name());
+        let envelope = Envelope::new(p.security_context.next(self.id), context, ActorEvent::ApprovalRequestWithdrawn { id });
+        output.send(envelope).await.context("Failed to announce a withdrawn approval request")?;
         Ok(())
     }
 
@@ -284,6 +304,7 @@ impl Actor for ApproverActor {
                 ActorEvent::ApprovalGranted(_)
                     | ActorEvent::ApprovalDenied(_)
                     | ActorEvent::ApprovalRequested(_)
+                    | ActorEvent::ApprovalRequestWithdrawn { .. }
             )
         }
     }
@@ -396,6 +417,7 @@ mod tests {
             id: ApproverId(Uuid::new_v4()),
             strategy: ApprovalStrategy::Any,
         };
+        let approver_id = approver.id;
 
         let channel = Channel {
             id: channel_id,
@@ -473,6 +495,33 @@ mod tests {
             assert_eq!(res.agent_id, agent_id);
         } else {
             panic!("Expected ApprovalGranted, got {:?}", decision_env.event);
+        }
+
+        // A request withdrawn (issue 148) - only by the agent that asked -
+        // is forgotten, and the users are told.
+        let withdrawn_id = ApprovalId::new();
+        let request = ApprovalRequest { id: withdrawn_id, ..request_of(agent_id, session_id, channel_id) };
+        let agent_context = EventContext::new(session_id, channel_id, ActorId::Agent(agent_id), "Agent".to_string());
+        tx.send(Envelope::new(Default::default(), agent_context.clone(), ActorEvent::ApprovalRequested(request))).await.unwrap();
+        assert!(matches!(output_rx.recv().await.unwrap().event, ActorEvent::ApprovalRequested(_)));
+        let user_context = EventContext::new(session_id, channel_id, user1_actor_id, "User 1".to_string());
+        tx.send(Envelope::new(Default::default(), user_context.clone(), ActorEvent::ApprovalRequestWithdrawn { id: withdrawn_id })).await.unwrap();
+        tx.send(Envelope::new(Default::default(), agent_context, ActorEvent::ApprovalRequestWithdrawn { id: withdrawn_id })).await.unwrap();
+        let told = output_rx.recv().await.unwrap();
+        assert!(matches!(told.event, ActorEvent::ApprovalRequestWithdrawn { id } if id == withdrawn_id), "not the user's withdrawal: {:?}", told.event);
+        assert_eq!(told.context.sender_id, ActorId::Approver(approver_id));
+        tx.send(Envelope::new(Default::default(), user_context, ActorEvent::ApprovalGranted(ApprovalResponse { id: withdrawn_id, agent_id }))).await.unwrap();
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv()).await.is_err(), "nothing is decided any longer");
+    }
+
+    fn request_of(agent_id: AgentId, session_id: SessionId, channel_id: ChannelId) -> ApprovalRequest {
+        ApprovalRequest {
+            id: ApprovalId::new(),
+            session_id,
+            channel_id,
+            agent_id,
+            tool_call: ToolCall { id: Some("call_2".to_string()), function_name: "test_tool".to_string(), arguments: json!({}), visibility: Default::default() },
+            description: "test".to_string(),
         }
     }
 
