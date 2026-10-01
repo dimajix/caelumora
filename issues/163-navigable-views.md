@@ -1,6 +1,6 @@
 # 163 — There is no model to navigate from a session to what is in it
 
-**Status:** in progress
+**Status:** done
 **Area:** Architecture
 
 ## The problem
@@ -510,3 +510,17 @@ each step, for running and stopped sessions alike.
     the chains answer a prefix by digest already. Open here and noted in
     [08](08-retry-and-edit-past-answers.md), which is where a caller would
     come from.
+- **2026-10-01** — Step 7 and done. The views have their section in
+  SECURITY.md (*Views*), since what they are about is who may reach what;
+  ARCHITECTURE.md gained *Reading what is there*, which names the concept
+  and points there and to MEMORY.md for the agent as viewer. No document
+  of its own and no section in CHANNELS.md: SECURITY.md is where AGENTS.md
+  sends whoever works on the views. "Done when" is met: the REST server's
+  reads and what `SessionReader` did go through one navigation, with the
+  permission asked at each step, for running and stopped sessions alike.
+  Left open: points in time (noted in 08); gone and never-there told apart,
+  and former members from the channel's document (164). The snapshots of
+  `caelumora_model::snapshot` stay: the REST server builds its responses
+  from them, and they are the nodes' data at one moment, not a parallel
+  navigation.
+- **2026-10-01** — The maintainer confirmed that the snapshots stay.

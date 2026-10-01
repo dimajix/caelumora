@@ -139,6 +139,29 @@ of digests.
 
 Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
+## Reading what is there
+
+What is in the system is read through one navigation, the **views**
+(`caelumora_runtime::view`): from a session to its channels, from a
+channel to its history, notes and members, from an agent among them to
+what it saw - its transcript, its private notes, the context of each of
+its messages, the turns it gave up. Each step asks its own access
+question, in the name of whoever reads; a node is data that was allowed to
+be reached and decides nothing, so an operation still checks its own
+permission. The views read what is stored - through the running loop
+where there is one - so running and stopped sessions are read alike and
+reading starts nothing.
+
+Two kinds of viewer walk the same steps: a user, who reads what they may
+read and are cleared for, and an agent, which reads from its channel by
+the confidentiality rules, through the `Turn` its components are called
+with. The REST server reads through the views and answers with their
+snapshots; the components read through them; neither asks the policy
+itself.
+
+Details: [SECURITY.md](SECURITY.md#views),
+[MEMORY.md](MEMORY.md#reading-other-channels).
+
 ## State and persistence
 
 Two stores, configured separately:
@@ -169,9 +192,11 @@ Two questions are kept apart:
     with an `ActionType` and the `SecurityAttributes` (owner and contributors)
     of the entity concerned. The default policy is ownership: owners do
     everything, contributors read and use. What a client may see, it reads
-    through the runtime's **views**, which ask the policy at every step
-    for that viewer; frontends never ask the policy themselves. Users come from a chain of user providers, and the
-    REST server authenticates them with a short-lived signed token.
+    through the runtime's **views** (see [Reading what is
+    there](#reading-what-is-there)), which ask the policy at every step for
+    that viewer; frontends never ask the policy themselves. Users come from
+    a chain of user providers, and the REST server authenticates them with
+    a short-lived signed token.
 *   **What may flow where** is decided by classifications, not by who takes
     part. Every channel has a classification - a level from `public` to
     `strictly_confidential` and an audience of compartments, which the
