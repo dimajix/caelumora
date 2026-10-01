@@ -427,12 +427,13 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Withdraws the approval requests the `ended` turn still waited for, so
-    /// that nobody is asked any longer to decide on a call that will not run
-    /// (issue 148) - the counterpart of `request_approvals`.
+    /// Withdraws the approval requests of the calls the `ended` turn
+    /// abandoned while they still waited for a decision, so that nobody is
+    /// asked any longer to decide on a call that will not run (issue 148) -
+    /// the counterpart of `request_approvals`.
     async fn withdraw_approval_requests(&self, ended: &EndedTurn, output: &dyn EventSender) -> Result<()> {
-        for id in ended.withdrawn() {
-            ended.send_event(ActorEvent::ApprovalRequestWithdrawn { id: *id }, output).await?;
+        for call in ended.abandoned_calls().iter().filter(|c| c.status == ApprovalStatus::Pending) {
+            ended.send_event(ActorEvent::ApprovalRequestWithdrawn { id: call.id }, output).await?;
         }
         Ok(())
     }

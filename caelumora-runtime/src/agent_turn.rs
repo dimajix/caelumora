@@ -25,7 +25,6 @@
 //! (perceiving a message) touches only the transcript and the history.
 
 use anyhow::{Context, Result};
-use caelumora_model::approval::ApprovalId;
 use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange, TurnState};
 use std::sync::{Arc, LazyLock};
 use tracing::warn;
@@ -40,7 +39,7 @@ use caelumora_model::message::{executed_calls, Message, MessageRole};
 use caelumora_model::transcript::{GivenUp, GivenUpReason};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolDefinition};
+use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolDefinition};
 use crate::tool_calls::ToolCalls;
 use crate::view::{SessionView, ViewsFactory};
 
@@ -52,30 +51,30 @@ pub(crate) const MAX_MODEL_CALLS: u32 = 25;
 
 /// What is left of a turn once it ended - taken over or given up: what its
 /// last events are sent with, the contexts the turn had (issue 85), and the
-/// approval requests it no longer waits for (issue 148). Nothing else; the
-/// rest of the turn was used up in ending it.
+/// tool calls it abandoned (issue 148). Nothing else; the rest of the turn
+/// was used up in ending it.
 #[derive(Debug)]
 pub struct EndedTurn {
     agent_id: AgentId,
     event_context: EventContext,
     security_context: SecurityContext,
-    withdrawn: Vec<ApprovalId>,
+    abandoned_calls: Vec<ToolCallState>,
 }
 
 impl EndedTurn {
-    fn of(agent_id: AgentId, turn: &TurnState, withdrawn: Vec<ApprovalId>) -> Self {
+    fn of(agent_id: AgentId, turn: &TurnState, abandoned_calls: Vec<ToolCallState>) -> Self {
         Self {
             agent_id,
             event_context: turn.event_context.clone(),
             security_context: turn.security_context.clone(),
-            withdrawn,
+            abandoned_calls,
         }
     }
 
-    /// The approval requests the turn still waited for when it ended
-    /// (issue 148).
-    pub(crate) fn withdrawn(&self) -> &[ApprovalId] {
-        &self.withdrawn
+    /// The tool calls that had no result when the turn ended, answered as
+    /// not executed (`Turn::abandon_tool_calls`, issue 148).
+    pub(crate) fn abandoned_calls(&self) -> &[ToolCallState] {
+        &self.abandoned_calls
     }
 
     /// Sends `event` as the ended turn would have: see [`Turn::send_event`].
@@ -264,14 +263,15 @@ impl<'a> Turn<'a> {
     ///   costs the turn's memory, not the turn: it is logged.
     ///
     /// A step whose calls do not all have their result yet - only a
-    /// `cancelled` turn is taken over so - is ended first (`abandon_step`).
+    /// `cancelled` turn is taken over so - are abandoned first
+    /// (`abandon_tool_calls`).
     ///
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
     pub(crate) async fn commit_turn(&mut self, cancelled: bool) -> CommittedTurn {
-        let withdrawn = self.abandon_step(if cancelled { "it was cancelled" } else { "it ended" });
+        let abandoned_calls = self.abandon_tool_calls(if cancelled { "it was cancelled" } else { "it ended" });
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(self.agent_id, &turn, withdrawn);
+        let ended = EndedTurn::of(self.agent_id, &turn, abandoned_calls);
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let TurnState { entries, agent_changes, channel_changes, .. } = turn;
@@ -294,11 +294,11 @@ impl<'a> Turn<'a> {
     /// transcript: in full, classified as the turn's label (issue 168) - or,
     /// with `names_only`, only which tools ran, classified so. A step whose
     /// calls do not all have their result yet is ended first
-    /// (`abandon_step`), so that those that ran are told too.
+    /// (`abandon_tool_calls`), so that those that ran are told too.
     pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
-        let withdrawn = self.abandon_step(because(&reason));
+        let abandoned_calls = self.abandon_tool_calls(because(&reason));
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(self.agent_id, &turn, withdrawn);
+        let ended = EndedTurn::of(self.agent_id, &turn, abandoned_calls);
         let label = turn.label();
         let TurnState { entries, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
@@ -327,15 +327,13 @@ impl<'a> Turn<'a> {
         ended
     }
 
-    /// Ends the current step as the turn ends, `because` - why it ends
-    /// (issue 148): its calls without a result are answered as not
-    /// executed, and the tool message is kept like any other, internal like
-    /// the step. No call of the turn is left unanswered in the transcript,
-    /// and the results of those that ran are not lost with the turn's
-    /// working state.
-    /// Returns the approval requests of the step still waiting for a
-    /// decision, which the agent withdraws.
-    fn abandon_step(&mut self, because: &str) -> Vec<ApprovalId> {
+    /// Abandons the tool calls of the current step as the turn ends,
+    /// `because` - why it ends (issue 148): those without a result are
+    /// answered as not executed, and the tool message is kept like any
+    /// other, internal like the step. No call of the turn is left unanswered
+    /// in the transcript, and the results of those that ran are not lost
+    /// with the turn's working state. Returns the calls abandoned.
+    fn abandon_tool_calls(&mut self, because: &str) -> Vec<ToolCallState> {
         let internal = self.in_plan_step();
         match self.agent_channel_state.turn.as_mut() {
             Some(turn) => ToolCalls::new(turn, self.agent_id, &self.agent_name).abandon(because, internal),
@@ -867,6 +865,8 @@ mod tests {
         assert_eq!(results, [("send_mail", ToolResultStatus::Ok), ("delete", ToolResultStatus::NotExecuted)], "what ran is kept");
         assert!(messages[2].tool_results[1].content.contains("cancelled"), "the model is told why: {}", messages[2].tool_results[1].content);
         assert!(committed.final_messages.iter().any(|m| m.role == MessageRole::Tool), "observers learn of it too");
+        let abandoned: Vec<_> = committed.ended.abandoned_calls().iter().map(|c| (c.tool_call.function_name.as_str(), c.status)).collect();
+        assert_eq!(abandoned, [("delete", caelumora_model::approval::ApprovalStatus::Pending)], "only the call without a result, as it stood");
     }
 
     #[test]

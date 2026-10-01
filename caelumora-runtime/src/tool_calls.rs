@@ -101,32 +101,28 @@ impl<'t> ToolCalls<'t> {
     /// without a result as not executed, `because` - why the turn ended -
     /// and keeps the tool message as `collect` does, so that no call is left
     /// unanswered and the results of those that ran are kept. Returns the
-    /// approval requests still waiting for a decision, for the agent to
-    /// withdraw.
-    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Vec<ApprovalId> {
-        if self.is_empty() {
-            return Vec::new();
-        }
-        let waiting = self.turn.tool_calls.iter()
-            .filter(|c| c.status == ApprovalStatus::Pending && c.result.is_none())
-            .map(|c| c.id)
-            .collect();
+    /// calls it abandoned - those that had no result - as answered so, with
+    /// the approval status they had.
+    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Vec<ToolCallState> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.label();
+        let mut abandoned = Vec::new();
         for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
             let content = crate::tool::abandoned_result(because);
             call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone()));
+            abandoned.push(call.clone());
         }
         self.collect(internal);
-        waiting
+        abandoned
     }
 
     /// Once every call has its result: the tool message that gives them to
     /// the model, kept in the turn - `internal` like the step that made the
     /// calls - and the step's calls done. `None` while a call still waits
-    /// for its approval.
+    /// for its approval, and for a step without calls: there is nothing to
+    /// give.
     pub(crate) fn collect(&mut self, internal: bool) -> Option<Message> {
-        if self.turn.tool_calls.iter().any(|c| c.result.is_none()) {
+        if self.is_empty() || self.turn.tool_calls.iter().any(|c| c.result.is_none()) {
             return None;
         }
         let tool_results: Vec<_> = mem::take(&mut self.turn.tool_calls).into_iter()
@@ -193,6 +189,7 @@ mod tests {
         assert_eq!(results, [("run", ToolResultStatus::Ok), ("ask", ToolResultStatus::Denied)]);
         assert_eq!(message.role, MessageRole::Tool);
         assert!(view(&mut turn).is_empty(), "the step's calls are done");
+        assert!(view(&mut turn).collect(false).is_none(), "nothing is left to give");
         assert_eq!(turn.messages().last().map(|m| m.id), Some(message.id), "the turn keeps it for the model");
     }
 }
