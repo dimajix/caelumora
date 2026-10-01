@@ -14,7 +14,8 @@
 //! is unrelated to `tracing`'s own spans, which only structure the log.
 
 use anyhow::{Context, Result};
-use caelumora_model::actor::EventContext;
+use caelumora_model::actor::{ActorState, EventContext};
+use caelumora_model::agent::AgentId;
 use caelumora_model::config::{LogFormat, LoggingConfig};
 use std::fs::OpenOptions;
 use std::io::IsTerminal;
@@ -76,6 +77,31 @@ pub fn envelope_span(context: &EventContext, event: &'static str) -> tracing::Sp
         correlation_id = %context.correlation_id,
         span_depth = context.span_depth,
     )
+}
+
+/// The span one iteration of an agent's run loop executes in, in `state`.
+/// The waiting states get an `agent` span; the states of a turn get a
+/// `turn` span carrying the ids of `turn`, the context of the envelope that
+/// started the turn, so the turn can be found by the same `span_id` as the
+/// REST request and the channel dispatch.
+pub fn agent_span(agent_id: AgentId, agent: &str, state: ActorState, turn: &EventContext) -> tracing::Span {
+    match state {
+        ActorState::Idle | ActorState::Sleeping => {
+            tracing::info_span!("agent", agent_id = %agent_id, agent = %agent, state = ?state)
+        }
+        _ => tracing::info_span!(
+            "turn",
+            agent_id = %agent_id,
+            agent = %agent,
+            state = ?state,
+            session_id = %turn.session_id,
+            channel_id = %turn.channel_id,
+            span_id = %turn.span_id,
+            event_id = %turn.event_id,
+            correlation_id = %turn.correlation_id,
+            span_depth = turn.span_depth,
+        ),
+    }
 }
 
 #[cfg(test)]

@@ -171,7 +171,7 @@ resumed (issue 75):
 *   `ExecutingTools` is the exception. A tool may have run without its
     result being stored, and running it again would repeat its effect
     (issue 20). So every approved call without a result is answered as *not
-    executed* (`AgentActor::prepare_resume`), the tool message is built from
+    executed* (`prepare_resume` in `actor_impl/agent.rs`), the tool message is built from
     that, and the model decides again.
 
 A turn state stored without the turn's working state cannot be resumed; the

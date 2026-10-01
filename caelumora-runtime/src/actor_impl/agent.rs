@@ -1,10 +1,11 @@
+use super::{apply_stage_processors, event_for};
 use crate::actor::Actor;
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
-use crate::message::{EmitOutProcessor, MessageProcessor, PerceiveInProcessor};
+use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::tool::{GuardedToolExecutor, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
@@ -16,7 +17,6 @@ use caelumora_model::agent::{AgentChannelState, AgentId};
 use crate::controller::AgentController;
 use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::Channel;
-use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::transcript::GivenUpReason;
@@ -24,8 +24,7 @@ use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use futures::stream::BoxStream;
-use tracing::{debug, info, warn, Instrument, Span};
-use std::mem;
+use tracing::{debug, info, warn, Instrument};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -105,7 +104,7 @@ impl AgentActor {
         let tool_executor = GuardedToolExecutor::new(actor_runtime.security_manager(), components.one::<dyn ToolExecutor>().await?);
 
         let mut agent_channel_state = actor_runtime.load_channel_state().await?;
-        let not_executed = Self::prepare_resume(&mut agent_channel_state);
+        let not_executed = prepare_resume(&mut agent_channel_state);
         if not_executed > 0 {
             warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
         }
@@ -138,7 +137,7 @@ impl AgentActor {
     async fn perceive<'a>(&self, turn: &mut Turn<'a>, messages: Vec<Message>) {
         // The processors act on the agent's state (transcript, history);
         // what they return is not used.
-        if let Err(e) = Self::apply_stage_processors(&self.perceive_in_processors, messages, turn).await {
+        if let Err(e) = apply_stage_processors(&self.perceive_in_processors, messages, turn).await {
             warn!("PerceiveIn stage failed: {}", e);
         }
     }
@@ -165,25 +164,13 @@ impl AgentActor {
         turn: &mut Turn<'a>,
     ) -> Option<Message> {
         let mut output =
-            Self::apply_stage_processors(&self.emit_out_processors, vec![message], turn)
+            apply_stage_processors(&self.emit_out_processors, vec![message], turn)
                 .await
                 .ok()?;
         if output.is_empty() {
             return None;
         }
         Some(output.remove(0))
-    }
-
-    /// The event that publishes `message`: internal messages (plan steps)
-    /// are intermediate, the others what the channel shows as the answer;
-    /// `partial` for a streamed chunk.
-    fn event_for(message: Message, partial: bool) -> ActorEvent {
-        match (message.internal, partial) {
-            (true, true) => ActorEvent::IntermediatePartialGenerated(message),
-            (false, true) => ActorEvent::PartialMessageGenerated(message),
-            (true, false) => ActorEvent::IntermediateMessageGenerated(message),
-            (false, false) => ActorEvent::CompleteMessageGenerated(message),
-        }
     }
 
     /// Has the agent's `ContextProvider` assemble what the model is given in
@@ -306,42 +293,6 @@ impl AgentActor {
         self.store_channel_state(turn).await;
     }
 
-    /// Makes a loaded state fit to run from (issue 75). A state stored
-    /// between two steps of a turn is a turn to resume - the server
-    /// stopped or crashed in the middle of it - stored with the step that
-    /// was to come next (issue 85), and most states resume as they are:
-    /// `Planning` asks the model with the turn so far, `Reflecting` takes
-    /// the finished turn over, `WaitingForApproval` keeps waiting,
-    /// `Cancelling` ends the turn. A deliberate end never leaves a turn in the
-    /// store (`stop`, `cancel`, the stop tool).
-    ///
-    /// `ExecutingTools` is the exception: a tool may have run without its
-    /// result being stored, and running it again would repeat its effect
-    /// (issue 20). Every approved call without a result is answered as not
-    /// executed, so that the next step builds the tool message and the
-    /// model decides again; results already stored stay. Returns how many
-    /// calls were answered so.
-    ///
-    /// A state in the middle of a turn without the turn's working state
-    /// cannot be resumed; it starts idle.
-    fn prepare_resume(state: &mut AgentChannelState) -> usize {
-        if state.processing_state.in_turn() && state.turn.is_none() {
-            state.processing_state = ActorState::Idle;
-        }
-        let Some(turn) = state.turn.as_mut().filter(|_| state.processing_state == ActorState::ExecutingTools) else {
-            return 0;
-        };
-        let mut answered = 0;
-        let classification = turn.classification.clone();
-        for call in &mut turn.tool_calls {
-            if call.status == ApprovalStatus::Approved && call.result.is_none() {
-                call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result(), classification.clone()));
-                answered += 1;
-            }
-        }
-        answered
-    }
-
     /// The token of the current turn, cancelled by `cancel` and `stop`.
     fn turn_token(&self) -> CancellationToken {
         self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
@@ -423,38 +374,6 @@ impl AgentActor {
         ended.send_event(ActorEvent::FullResponseGenerated(final_messages), output).await?;
         debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
-    }
-
-    async fn apply_stage_processors<'a, T>(
-        processors: &[ComponentImpl<T>],
-        mut input: Vec<Message>,
-        turn: &mut Turn<'a>,
-    ) -> Result<Vec<Message>>
-    where
-        T: MessageProcessor + ?Sized + Send + Sync,
-    {
-        for stage_processor in processors {
-            let current = mem::take(&mut input);
-            match stage_processor
-                .facet
-                .process_messages(current, turn)
-                .await
-            {
-                Ok(output) => {
-                    input = output;
-                }
-                Err(e) => match stage_processor.fail_policy {
-                    ComponentFailPolicy::FailOpen => {
-                        warn!(
-                            "Component '{}' failed with fail-open policy: {}",
-                            stage_processor.id, e
-                        );
-                    }
-                    ComponentFailPolicy::FailClosed => return Err(e),
-                },
-            }
-        }
-        Ok(input)
     }
 
     /// Idle and Sleeping wait for the next event alike: a
@@ -546,34 +465,6 @@ impl AgentActor {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
-        }
-    }
-
-    /// The span one iteration of the run loop executes in. Waiting states get
-    /// an `agent` span; the states of a turn get a `turn` span carrying the
-    /// ids of the envelope that started the turn, so the turn can be found by
-    /// the same `span_id` as the REST request and the channel dispatch.
-    fn state_span(&self, state: ActorState, turn: &Turn<'_>) -> Span {
-        let agent = self.agent_controller.name();
-        match state {
-            ActorState::Idle | ActorState::Sleeping => {
-                tracing::info_span!("agent", agent_id = %self.agent_id, agent = %agent, state = ?state)
-            }
-            _ => {
-                let ctx = turn.event_context();
-                tracing::info_span!(
-                    "turn",
-                    agent_id = %self.agent_id,
-                    agent = %agent,
-                    state = ?state,
-                    session_id = %ctx.session_id,
-                    channel_id = %ctx.channel_id,
-                    span_id = %ctx.span_id,
-                    event_id = %ctx.event_id,
-                    correlation_id = %ctx.correlation_id,
-                    span_depth = ctx.span_depth,
-                )
-            }
         }
     }
 
@@ -691,7 +582,7 @@ impl AgentActor {
                 MessageEvent::Partial(mut message) => {
                     self.stamp(&mut message, turn, false);
                     if let Some(msg) = self.respond_partial(message, turn).await {
-                        turn.send_event(Self::event_for(msg, true), output).await?;
+                        turn.send_event(event_for(msg, true), output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
@@ -699,7 +590,7 @@ impl AgentActor {
                     self.request_approvals(&message.tool_calls, turn, output).await?;
                     let converged = message.tool_calls.is_empty();
                     if let Some(msg) = self.respond_complete(message, turn).await {
-                        turn.send_event(Self::event_for(msg, false), output).await?;
+                        turn.send_event(event_for(msg, false), output).await?;
                     }
                     // An answer without tool calls ends a step of a plan -
                     // the next one begins with another model call - or the
@@ -734,7 +625,7 @@ impl AgentActor {
     ) -> Result<ActorState> {
         let progress_before = turn.plan_progress();
         if let Some(tool_message) = self.execute_tools(turn).await {
-            turn.send_event(Self::event_for(tool_message, false), output).await?;
+            turn.send_event(event_for(tool_message, false), output).await?;
 
             // A plan was just created, or extended after already reaching
             // Finalizing, by a create_plan call in this batch (progress only
@@ -794,6 +685,42 @@ enum TurnFlow {
     NoChannel,
 }
 
+/// Makes a loaded state fit to run from (issue 75). A state stored
+/// between two steps of a turn is a turn to resume - the server
+/// stopped or crashed in the middle of it - stored with the step that
+/// was to come next (issue 85), and most states resume as they are:
+/// `Planning` asks the model with the turn so far, `Reflecting` takes
+/// the finished turn over, `WaitingForApproval` keeps waiting,
+/// `Cancelling` ends the turn. A deliberate end never leaves a turn in the
+/// store (`stop`, `cancel`, the stop tool).
+///
+/// `ExecutingTools` is the exception: a tool may have run without its
+/// result being stored, and running it again would repeat its effect
+/// (issue 20). Every approved call without a result is answered as not
+/// executed, so that the next step builds the tool message and the
+/// model decides again; results already stored stay. Returns how many
+/// calls were answered so.
+///
+/// A state in the middle of a turn without the turn's working state
+/// cannot be resumed; it starts idle.
+fn prepare_resume(state: &mut AgentChannelState) -> usize {
+    if state.processing_state.in_turn() && state.turn.is_none() {
+        state.processing_state = ActorState::Idle;
+    }
+    let Some(turn) = state.turn.as_mut().filter(|_| state.processing_state == ActorState::ExecutingTools) else {
+        return 0;
+    };
+    let mut answered = 0;
+    let classification = turn.classification.clone();
+    for call in &mut turn.tool_calls {
+        if call.status == ApprovalStatus::Approved && call.result.is_none() {
+            call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result(), classification.clone()));
+            answered += 1;
+        }
+    }
+    answered
+}
+
 #[async_trait]
 impl Actor for AgentActor {
     fn id(&self) -> ActorId {
@@ -849,7 +776,7 @@ impl Actor for AgentActor {
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
-            let span = self.state_span(current_state, &turn);
+            let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, turn.event_context());
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was
@@ -972,6 +899,7 @@ mod tests {
     use crate::component_impl::state_history_appender::StateHistoryAppender;
     use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::message::MessageProcessor;
+    use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::message::{MessageId, MessageRole};
     use chrono::Utc;
     use uuid::Uuid;
@@ -1001,7 +929,7 @@ mod tests {
         let calls = |state: &AgentChannelState| state.turn.as_ref().map(|t| t.tool_calls.clone()).unwrap_or_default();
 
         let mut executing = state_in(ActorState::ExecutingTools);
-        assert_eq!(AgentActor::prepare_resume(&mut executing), 1, "one approved call had no result");
+        assert_eq!(prepare_resume(&mut executing), 1, "one approved call had no result");
         let executing = calls(&executing);
         let [unfinished, finished, pending] = executing.as_slice() else { panic!("three calls") };
         let unfinished = unfinished.result.as_ref().expect("answered");
@@ -1013,14 +941,14 @@ mod tests {
         // Every other state resumes as it is.
         for other in [ActorState::Planning, ActorState::WaitingForApproval, ActorState::Reflecting] {
             let mut state = state_in(other);
-            assert_eq!(AgentActor::prepare_resume(&mut state), 0, "{other:?}");
+            assert_eq!(prepare_resume(&mut state), 0, "{other:?}");
             assert!(calls(&state)[0].result.is_none());
             assert_eq!(state.processing_state, other);
         }
 
         // A turn state without the turn cannot be resumed.
         let mut lost = AgentChannelState { processing_state: ActorState::Planning, ..AgentChannelState::default() };
-        AgentActor::prepare_resume(&mut lost);
+        prepare_resume(&mut lost);
         assert_eq!(lost.processing_state, ActorState::Idle);
     }
 

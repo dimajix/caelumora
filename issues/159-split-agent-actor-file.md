@@ -36,3 +36,9 @@ by files, not by new types.
 - **2026-09-30** — From the review of the agent actor
   (`work/2026-09-30-code-review-agent.md`, A10), epic
   [151](151-agent-refactoring-epic.md).
+- **2026-10-01** — First step, without splitting the file: what needs no
+  actor is no longer a method of it. `prepare_resume` is a free function in
+  `actor_impl/agent.rs`; `apply_stage_processors` and `event_for`, which
+  have nothing agent-specific, are in `actor_impl/mod.rs`; `state_span` is
+  `logging::agent_span`, next to `envelope_span`. Whether the file is split
+  is still open.
