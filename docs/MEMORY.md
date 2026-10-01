@@ -85,7 +85,8 @@ channel, `AgentChannelState::private_notes`, with its own tools
 *   **Staging.** Changes are staged and taken over with the turn like public
     ones (`AgentChannelChange::PrivateNote`).
 *   **Prompt part.** Its `BeforeTurnInput` part shows the agent its private
-    notes of this channel and - through `SessionReader::private_notes` - of
+    notes of this channel and - through the turn's views,
+    `MemberView::private_notes` in each - of
     every other channel of the session that this channel may read
     (`AccessQuestions::may_channel_read`, the same rule as for
     [reading another channel](#reading-other-channels)). A note carries the
@@ -149,28 +150,37 @@ personality ([68](../issues/68-notes-in-agent-state.md)).
 
 ## Reading other channels
 
-Components read what other channels know through a `SessionReader`, which
-they are given when they are built (see [COMPONENTS.md](COMPONENTS.md)).
-Components of no actor get `session_reader::detached()`, which reads
-nothing.
+Components read what other channels know through the views of the turn
+they are called with (`Turn::session`, issue 163; see
+[SECURITY.md](SECURITY.md#views)): the agent's session, from which they
+reach its channels (`SessionView::channels`, `channel_named`), their
+notes and histories (`ChannelView::notes`, `history`) and the agent's own
+private notes there (`MemberView::private_notes`). A turn outside of a
+channel - in tests - has no session and reads nothing.
 
-*   **Through the own channel.** The reader reaches the other channels of
-    the session through its own channel: a `ChannelLoop` knows its session
-    (`ChannelLoop::session_loop()`, a weak handle the `SessionLoop` sets on each
-    of its channels with `ChannelLoop::attach`, issue 123). The actors'
-    runtimes carry no session.
-*   **Who may read what.** What another channel holds is read entry by
-    entry - message, note - as the reading channel may read it
-    (`AccessQuestions::may_channel_read`, `ActionType::ReadChannel`). That
-    depends on the channels and the entry's classification, not on who
-    takes part in them, because an agent passes on what it reads to its
-    channel; an entry released below its channel is read where the channel
-    as a whole is not (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+*   **From the own channel.** The agent reads as a viewer *from a place*
+    (`Viewer::from_place`, `ReaderPlace`): its channel, the classification
+    its turn began with (issue 67) and its session's privacy. The views
+    are built once per turn from the actor's runtime, which reaches the
+    session through its channel (`ChannelLoop::session_loop()`, a weak
+    handle the `SessionLoop` sets on each of its channels with
+    `ChannelLoop::attach`, issue 123).
+*   **Who may read what.** Another channel is read as a whole if the
+    agent's channel may read it by their classifications
+    (`AccessQuestions::may_channel_read`, `ActionType::ReadChannel`) -
+    those are what `SessionView::channels` lists; the rest
+    (`all_channels`, `channel_named`) entry by entry - message, note - as
+    each entry's classification may be read. That depends on the channels
+    and the entry, not on who takes part in them, because an agent passes
+    on what it reads to its channel; an entry released below its channel
+    is read where the channel as a whole is not (see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 *   **No probing.** A channel that does not exist and one that may not be
-    read, and of which nothing was released, are the same error, so
-    channels cannot be probed.
+    read, and of which nothing was released, are the same error
+    (`ViewError::NoChannelNamed`), so channels cannot be probed. A tool
+    passes it on with `?` (`From<ViewError> for ToolError`).
 *   **Tools.** `read_notes(channel?)` in `notes` reads the notes of another
-    channel, or without a channel of every readable channel.
+    channel, or without a channel of every channel readable as a whole.
     `read_history(channel, last?, query?)` in the component
     `channel_history` reads another channel's conversation.
 

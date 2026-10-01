@@ -14,7 +14,7 @@ use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::session_reader::{PublishedNotes, SessionReader};
+use crate::view::PublishedNotes;
 use crate::tool::{arguments, classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -38,8 +38,6 @@ pub const RECLASSIFY_NOTE_TOOL_NAME: &str = "reclassify_note";
 
 #[derive(Debug)]
 pub struct NotesComponent {
-    /// What the other agents and channels of the session published.
-    reader: Arc<dyn SessionReader>,
     /// The policy that decides whether a note may be reclassified, asked in
     /// `security_context` - the agent's (issues 131, 133).
     security_manager: Arc<dyn SecurityManager>,
@@ -149,29 +147,25 @@ impl NotesComponent {
         #[derive(Deserialize)]
         struct ReadNotes { #[serde(default)] channel: Option<String> }
         let ReadNotes { channel } = arguments(params)?;
-        let reader = &self.reader;
+        let Some(session) = turn.session() else {
+            return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
+        };
         let channels = match channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-            Some(name) => vec![reader.notes_of(name).await?],
-            None => {
-                let mut all = Vec::new();
-                for channel in reader.readable_channels().await? {
-                    all.push(reader.notes_of(&channel.name).await?);
-                }
-                all
-            }
+            Some(name) => vec![session.channel_named(name).await?],
+            None => session.channels().await,
         };
         let mut listed = Vec::new();
-        for (channel, published) in channels {
+        for channel in channels {
             let mut notes = Vec::new();
-            for agent_notes in published {
-                if let Some(reference) = notes_ref(ChannelRef { session_id: turn.channel().session_id, channel_id: channel.id }, &agent_notes) {
+            for agent_notes in channel.notes().await? {
+                if let Some(reference) = notes_ref(channel.channel_ref(), &agent_notes) {
                     turn.record_knowledge(reference);
                 }
                 for note in agent_notes.notes {
                     notes.push(serde_json::json!({ "by": agent_notes.name, "id": note.id.0, "text": note.text }));
                 }
             }
-            listed.push(serde_json::json!({ "channel": channel.name, "notes": notes }));
+            listed.push(serde_json::json!({ "channel": channel.name(), "notes": notes }));
         }
         Ok(serde_json::json!({ "channels": listed }))
     }
@@ -191,14 +185,18 @@ impl PromptProvider for NotesComponent {
 
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
         let own = ActorId::Agent(turn.agent_id());
-        let mut others = match self.reader.channel_notes().await {
-            Ok(published) => published,
-            Err(e) => {
+        let mut others = Vec::new();
+        if let Some(session) = turn.session() {
+            let published = match session.channel(turn.channel().channel_id).await {
+                Ok(channel) => channel.notes().await,
+                Err(e) => Err(e),
+            };
+            match published {
+                Ok(published) => others = published,
                 // The agent can still answer without the others' notes.
-                warn!("Reading the notes of channel {} failed: {}", turn.channel().channel_id, e);
-                Vec::new()
+                Err(e) => warn!("Reading the notes of channel {} failed: {}", turn.channel().channel_id, e),
             }
-        };
+        }
         others.retain(|p| p.agent != own && !p.notes.is_empty());
         others.sort_by(|l, r| l.name.cmp(&r.name));
         let own_notes = AgentNotes::current(turn, NoteKind::Public);
@@ -228,7 +226,6 @@ pub fn register(registry: &mut ComponentRegistry) {
         ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
             let component = Arc::new(NotesComponent {
-                reader: context.session_reader.clone(),
                 security_manager: context.security_manager.clone(),
                 security_context: context.security_context.clone(),
             });
@@ -271,7 +268,6 @@ mod tests {
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
         let tools = NotesComponent {
-            reader: crate::session_reader::detached(),
             security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()),
             security_context: SecurityContext::default().next(ActorId::Agent(agent)),
         };
@@ -293,7 +289,6 @@ mod tests {
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
         let tools = NotesComponent {
-            reader: crate::session_reader::detached(),
             security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
             security_context: Default::default(),
         };

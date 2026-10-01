@@ -121,10 +121,10 @@ They are asked:
 
 *   by the runtime building views, which decide what a client lists and offers
     (`can_change`, `can_read_context`, issue 80);
-*   by the `SessionReader` and the components, deciding what an agent may
-    read of other channels or recall (see [MEMORY.md](MEMORY.md)); a
-    component asks with the `SecurityManager` and `SecurityContext` of its
-    `ComponentContext` (issue 131);
+*   by the views an agent's turn navigates and by the components, deciding
+    what an agent may read of other channels or recall (see
+    [MEMORY.md](MEMORY.md)); a component asks with the `SecurityManager`
+    and `SecurityContext` of its `ComponentContext` (issue 131);
 *   by an agent, deciding what it may put up for approval.
 
 The questions are `may_read_channel`, `may_change_channel`,
@@ -167,7 +167,11 @@ stands on; its methods are the edges to the next ones, and each edge asks
 its own access question, in the viewer's name:
 
 *   `SessionManager::views(viewer)` is the root: `sessions()` are those
-    the store lists for the viewer, `session(id)` asks `GetSession`;
+    the store lists for the viewer, `session(id)` asks `GetSession`
+    (`may_read_session`). An agent's root is its own session, through its
+    turn (`Turn::session`); it reads from its channel by the
+    confidentiality rules, see
+    [MEMORY.md](MEMORY.md#reading-other-channels);
 *   `SessionView::channels()` lists the channels the viewer may read
     (`GetChannel`, and cleared for their classification, issue 133),
     `channel(id)` asks the same of one; `may_change()` asks

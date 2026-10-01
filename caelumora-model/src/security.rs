@@ -291,6 +291,10 @@ pub trait SecurityManager : Debug + Sync + Send {
 /// runtime builds with these questions; clients do not ask them themselves.
 #[async_trait]
 pub trait AccessQuestions {
+    /// Whether `context` may read the session with `session` attributes -
+    /// its participants, its channels (`GetSession`).
+    async fn may_read_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool;
+
     /// Whether `context` may read the channel with `channel` attributes -
     /// its members, its history, its events (`GetChannel`).
     async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
@@ -332,6 +336,10 @@ pub trait AccessQuestions {
 
 #[async_trait]
 impl<T: SecurityManager + ?Sized> AccessQuestions for T {
+    async fn may_read_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::GetSession(session)).await
+    }
+
     async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::GetChannel(channel)).await
     }

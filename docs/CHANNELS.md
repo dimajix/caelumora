@@ -306,12 +306,13 @@ only what concerns that actor (issue 69):
     else) and announcement (`announce_channel_state_changed`);
 *   the loop of its channel (`channel_loop`, `pub(crate)`), and a stored
     session as a given context may read it (`load_session`);
-*   a `SessionReader` that enforces the confidentiality rules (see
-    [MEMORY.md](MEMORY.md)).
+*   the views of its turns (`views`, issue 163), which read the session's
+    other channels as the confidentiality rules allow (see
+    [MEMORY.md](MEMORY.md#reading-other-channels)).
 
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from
 other crates cannot reach them; within the runtime, the user actor needs the
-channel for commands, and the session reader needs both.
+channel for commands, and the views need both.
 
 Components are not given their actor's `ActorRuntime`, only what their
 `ComponentContext` holds

@@ -22,6 +22,7 @@ use caelumora_model::store::{StoreError, StoreResult};
 use crate::agent_state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::session_reader::{ChannelSessionReader, SessionReader};
+use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
@@ -194,6 +195,16 @@ impl ActorRuntime {
     /// in `context` - the actor's own (issue 131).
     pub fn session_reader(&self, context: SecurityContext) -> Arc<dyn SessionReader> {
         Arc::new(ChannelSessionReader::new(self.clone(), context))
+    }
+
+    /// What the actor's turns navigate (issue 163): its session, read from
+    /// its channel, asked in `context` - the actor's own (issue 131).
+    pub fn views(&self, context: SecurityContext) -> ViewsFactory {
+        ViewsFactory::of_actor(self.clone(), context)
+    }
+
+    pub(crate) fn runtime_manager(&self) -> &Arc<RuntimeManager> {
+        &self.runtime.runtime_manager
     }
 
     /// The channel the actor is in, or `None` while the channel is still

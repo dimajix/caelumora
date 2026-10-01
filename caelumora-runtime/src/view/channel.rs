@@ -2,18 +2,40 @@
 
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
-use crate::session_reader::PublishedNotes;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentChannelState;
+use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::digest::Digest;
 use caelumora_model::mention::handle_of;
+use caelumora_model::note::Note;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, MemberSnapshot};
 use caelumora_model::store::StoreError;
 use std::sync::Arc;
 use tracing::warn;
+
+/// The notes one agent published in a channel.
+#[derive(Debug, Clone)]
+pub struct PublishedNotes {
+    pub agent: ActorId,
+    pub name: String,
+    pub notes: Vec<Note>,
+    /// The digest of the agent's note chain: the state of knowledge read.
+    pub digest: Option<Digest>,
+}
+
+/// How much of a channel its viewer may read (issue 133).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Readable {
+    /// All of it.
+    Whole,
+    /// Only what was released to where the viewer reads from: entry by
+    /// entry, each by its own classification. A channel of which nothing
+    /// is readable is answered as one that does not exist.
+    Released,
+}
 
 /// A channel the viewer may read.
 #[derive(Debug, Clone)]
@@ -23,11 +45,12 @@ pub struct ChannelView {
     channel: Arc<Channel>,
     /// Its loop, if it runs.
     running: Option<Arc<ChannelLoop>>,
+    readable: Readable,
 }
 
 impl ChannelView {
-    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>) -> Self {
-        Self { session, channel, running }
+    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>, readable: Readable) -> Self {
+        Self { session, channel, running, readable }
     }
 
     fn views(&self) -> &Views {
@@ -66,6 +89,23 @@ impl ChannelView {
         self.running.as_ref()
     }
 
+    /// Whether the viewer may read an entry of the channel classified
+    /// `classification`: every one if it reads the channel as a whole, else
+    /// those released to where it reads from.
+    pub(super) async fn may_read_entry(&self, classification: &Classification) -> bool {
+        match self.readable {
+            Readable::Whole => true,
+            Readable::Released => self.views().may_read_from(&self.channel_ref(), classification, &self.session.privacy()).await,
+        }
+    }
+
+    /// What a read of a channel read entry by entry answers when nothing
+    /// could be read: that there is no such channel, so that nothing can be
+    /// probed.
+    fn nothing_released(&self) -> ViewError {
+        ViewError::NoChannelNamed(self.channel.name.clone())
+    }
+
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub async fn may_change(&self) -> bool {
@@ -93,39 +133,63 @@ impl ChannelView {
 
     /// The history as the viewer sees it (issue 46): all of it, unless they
     /// joined later with a limit - with what a reader records as read
-    /// (issue 72). From the running loop, or from the store.
+    /// (issue 72); of a channel read entry by entry, the messages released
+    /// to where the viewer reads from. From the running loop, or from the
+    /// store.
     ///
     /// # Errors
-    /// `Failed` if the stored history cannot be read.
+    /// `Failed` if the stored history cannot be read; `NoChannelNamed` if
+    /// nothing of a channel read entry by entry can be.
     pub async fn history(&self) -> ViewResult<VisibleHistory> {
         let actor = self.views().viewer().context().initiator_id;
-        if let Some(channel_loop) = &self.running {
-            return Ok(channel_loop.visible_history(actor).await);
-        }
-        let state = match self.views().runtime().state_store().get_channel_state(self.channel.id).await {
-            Ok(state) => state,
-            // Nothing was said yet.
-            Err(StoreError::NotFound { .. }) => ChannelState::new(self.channel.id),
-            Err(e) => {
-                warn!("Cannot read the history of channel {}: {}", self.channel.id, e);
-                return Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the history of channel {}", self.channel.id))));
+        let mut history = match &self.running {
+            Some(channel_loop) => channel_loop.visible_history(actor).await,
+            None => {
+                let state = match self.views().runtime().state_store().get_channel_state(self.channel.id).await {
+                    Ok(state) => state,
+                    // Nothing was said yet.
+                    Err(StoreError::NotFound { .. }) => ChannelState::new(self.channel.id),
+                    Err(e) => {
+                        warn!("Cannot read the history of channel {}: {}", self.channel.id, e);
+                        return Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the history of channel {}", self.channel.id))));
+                    }
+                };
+                let start = self.channel.history_limits.iter().find(|l| l.participant == actor).map(|l| l.start);
+                VisibleHistory { messages: visible_part(start, state.history.messages()), digest: state.history.digest(), start }
             }
         };
-        let start = self.channel.history_limits.iter().find(|l| l.participant == actor).map(|l| l.start);
-        Ok(VisibleHistory { messages: visible_part(start, state.history.messages()), digest: state.history.digest(), start })
+        if self.readable == Readable::Released {
+            let mut released = Vec::with_capacity(history.messages.len());
+            for message in history.messages {
+                if self.may_read_entry(&message.classification).await {
+                    released.push(message);
+                }
+            }
+            if released.is_empty() {
+                return Err(self.nothing_released());
+            }
+            history.messages = released;
+        }
+        Ok(history)
     }
 
     /// The notes every agent of the channel published (issue 17), read from
-    /// their states in the store: notes of finished turns only.
+    /// their states in the store: notes of finished turns only; of a
+    /// channel read entry by entry, those released to where the viewer
+    /// reads from.
     ///
     /// # Errors
-    /// `Failed` if an agent's state cannot be read.
+    /// `Failed` if an agent's state cannot be read; `NoChannelNamed` if
+    /// nothing of a channel read entry by entry can be.
     pub async fn notes(&self) -> ViewResult<Vec<PublishedNotes>> {
         let mut published = Vec::new();
         for member in self.members().await {
             if let Some(notes) = member.notes().await? {
                 published.push(notes);
             }
+        }
+        if self.readable == Readable::Released && published.iter().all(|p| p.notes.is_empty()) {
+            return Err(self.nothing_released());
         }
         Ok(published)
     }
@@ -199,29 +263,52 @@ impl MemberView {
     }
 
     /// The notes the member published in the channel (issue 17), with the
-    /// digest of their chain; `None` for a member that is no agent.
+    /// digest of their chain - of a channel read entry by entry, those
+    /// released to where the viewer reads from; `None` for a member that
+    /// is no agent.
     ///
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
         let Participant::Agent(agent) = self.participant else { return Ok(None) };
         let state = self.stored_state(agent).await?;
-        Ok(Some(PublishedNotes {
-            agent: self.id(),
-            name: self.name.clone().unwrap_or_default(),
-            notes: state.notes.current(),
-            digest: state.notes.digest(),
-        }))
+        let notes = self.channel.released(state.notes.current()).await;
+        Ok(Some(PublishedNotes { agent: self.id(), name: self.name.clone().unwrap_or_default(), notes, digest: state.notes.digest() }))
     }
 
-    /// What the member saw in the channel (issue 41): its transcript, its
-    /// private notes, the context of each of its messages, the turns it
-    /// gave up - for a viewer who may read its context (`ReadAgentContext`).
+    /// The private notes the member wrote in the channel (issue 51), with
+    /// the digest of their chain, for a viewer who may read what it saw
+    /// (`ReadAgentContext`) - of a channel read entry by entry, those
+    /// released to where the viewer reads from (issue 133).
     ///
     /// # Errors
     /// `NoContext` if the member is no agent, `Forbidden` if the viewer may
     /// not read what it saw, `Failed` if its state cannot be read.
+    pub async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
+        let (agent, _) = self.readable_agent().await?;
+        let state = self.stored_state(agent).await?;
+        Ok((self.channel.released(state.private_notes.current()).await, state.private_notes.digest()))
+    }
+
+    /// What the member saw in the channel (issue 41): its transcript, its
+    /// private notes, the context of each of its messages, the turns it
+    /// gave up - for a viewer who may read its context (`ReadAgentContext`)
+    /// and the channel as a whole.
+    ///
+    /// # Errors
+    /// `NoContext` if the member is no agent, `Forbidden` if the viewer may
+    /// not read what it saw or reads the channel entry by entry only,
+    /// `Failed` if its state cannot be read.
     pub async fn context(&self) -> ViewResult<AgentContextView> {
+        let (agent, _) = self.readable_agent().await?;
+        if self.channel.readable == Readable::Released {
+            return Err(ViewError::Forbidden { actor: self.id() });
+        }
+        Ok(AgentContextView::of(self.id(), self.stored_state(agent).await?))
+    }
+
+    /// The member as an agent whose context the viewer may read.
+    async fn readable_agent(&self) -> ViewResult<(AgentId, &SecurityAttributes)> {
         let (Participant::Agent(agent), Some(attributes)) = (&self.participant, &self.agent) else {
             return Err(ViewError::NoContext { actor: self.id() });
         };
@@ -230,11 +317,11 @@ impl MemberView {
         views.runtime().security_manager()
             .require(views.viewer().context(), ActionType::ReadAgentContext(attributes), forbidden).await
             .map_err(|_| forbidden())?;
-        Ok(AgentContextView::of(self.id(), self.stored_state(*agent).await?))
+        Ok((*agent, attributes))
     }
 
     /// The state of `agent` in the channel, as stored.
-    async fn stored_state(&self, agent: caelumora_model::agent::AgentId) -> ViewResult<AgentChannelState> {
+    async fn stored_state(&self, agent: AgentId) -> ViewResult<AgentChannelState> {
         let channel = self.channel.id();
         self.channel.views().runtime().state_store().get_agent_channel_state(agent, channel).await.map_err(|e| {
             warn!("Cannot read the state of agent {} in channel {}: {}", agent, channel, e);
@@ -245,5 +332,21 @@ impl MemberView {
     /// The member as the viewer sees it at this moment (issue 80).
     pub async fn snapshot(&self) -> MemberSnapshot {
         MemberSnapshot { id: self.id(), name: self.name.clone(), handle: self.handle(), can_read_context: self.may_read_context().await }
+    }
+}
+
+impl ChannelView {
+    /// Of `notes`, those the viewer may read (`may_read_entry`).
+    async fn released(&self, notes: Vec<Note>) -> Vec<Note> {
+        if self.readable == Readable::Whole {
+            return notes;
+        }
+        let mut released = Vec::with_capacity(notes.len());
+        for note in notes {
+            if self.may_read_entry(&note.classification).await {
+                released.push(note);
+            }
+        }
+        released
     }
 }

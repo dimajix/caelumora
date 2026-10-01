@@ -117,7 +117,10 @@ registered with
 *   the `SecretManager`,
 *   the `SessionReader` of the actor the components are built for
     (`session_reader::detached()` for components of no actor, such as the
-    session's commands) - see [MEMORY.md](MEMORY.md) for what it reads,
+    session's commands) - what the memory still reads of its session
+    (issue 163); everything else of other channels a component reads
+    through the `Turn` it is called with (`Turn::session`, see
+    [MEMORY.md](MEMORY.md#reading-other-channels)),
 *   and, internally, the graph being built, through which each component
     reaches the others it asks for.
 
@@ -156,8 +159,8 @@ They follow one convention (issue 101):
 
 What components share lives beside the facet: `tool::text_argument` and
 `id_argument` for tool parameters, `context::render_sections` for a prompt
-part that lists entries, and `session_reader::ReadError`, which a tool
-passes on with `?`.
+part that lists entries, and `view::ViewError`, which a tool passes on
+with `?`.
 
 ## Built-in components
 

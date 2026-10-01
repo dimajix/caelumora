@@ -1,16 +1,14 @@
 //! The `channel_history` component (issue 17): an agent reads the history of
 //! another channel of its session - the latest messages, or those that
 //! contain a text. Only channels the agent's channel may read by their
-//! classifications can be read (`session_reader::SessionReader`, issue 133);
-//! every read is recorded as a
+//! classifications can be read - as the turn's views answer
+//! (`Turn::session`, issues 133, 163); every read is recorded as a
 //! `KnowledgeRef` with the turn's messages.
 
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::session_reader::SessionReader;
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::confidentiality::ChannelRef;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::message::Message;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
@@ -28,10 +26,7 @@ const DEFAULT_LAST: usize = 20;
 const MAX_LAST: usize = 100;
 
 #[derive(Debug)]
-pub struct ChannelHistoryComponent {
-    /// The session's channels.
-    reader: Arc<dyn SessionReader>,
-}
+pub struct ChannelHistoryComponent;
 
 #[async_trait]
 impl ToolProvider for ChannelHistoryComponent {
@@ -78,13 +73,16 @@ impl ToolProvider for ChannelHistoryComponent {
         let last = last.map(|n| n.clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
         let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
-        let history = self.reader.history_of(channel).await?;
-        let (channel, history) = (history.channel, history.history);
-        turn.record_knowledge(KnowledgeRef { channel: ChannelRef { session_id: turn.channel().session_id, channel_id: channel.id }, source: KnowledgeSource::History { digest: history.digest, start: history.start } });
+        let Some(session) = turn.session() else {
+            return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
+        };
+        let channel = session.channel_named(channel).await?;
+        let history = channel.history().await?;
+        turn.record_knowledge(KnowledgeRef { channel: channel.channel_ref(), source: KnowledgeSource::History { digest: history.digest, start: history.start } });
 
         let (messages, more) = select(&history.messages, last, query);
         Ok(serde_json::json!({
-            "channel": channel.name,
+            "channel": channel.name(),
             "messages": messages.iter().map(|m| serde_json::json!({
                 "from": m.sender_name,
                 "at": m.timestamp.to_rfc3339(),
@@ -113,9 +111,9 @@ fn select<'a>(messages: &'a [Message], last: usize, query: Option<&str>) -> (Vec
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>(),
-        |_descriptor, context| {
+        |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent { reader: context.session_reader.clone() }));
+            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent));
             Ok(facets)
         },
     );

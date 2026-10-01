@@ -437,3 +437,25 @@ each step, for running and stopped sessions alike.
     which only the memory component needs (step 4).
   - A member is still one of the channel's participants: a removed agent's
     context stays unreachable until step 6.
+- **2026-10-01** — Step 4, first half: the agent as viewer.
+  - `Viewer::from_place(context, ReaderPlace)`: the agent's channel, the
+    classification it reads at and its session's privacy. For such a
+    viewer `SessionView::channels()` lists what its channel may read as a
+    whole (`may_channel_read`), `all_channels()` and `channel_named()`
+    reach the rest entry by entry (`Readable::Released`): `history()`,
+    `notes()` and the new `MemberView::private_notes()` filter by each
+    entry's classification, and answer `NoChannelNamed` when nothing
+    could be read; `context()` needs the channel as a whole. A user
+    viewer is unchanged. `AccessQuestions::may_read_session` was added
+    for the root.
+  - The agent's root is its own session, built once per turn:
+    `ViewsFactory` (from `ActorRuntime::views`) resolves the channel and
+    session loops when asked, `Turn::with_views` carries it and
+    `Turn::session()` answers the `SessionView` at the turn's
+    classification (decision 5). `Views` holds the runtime and a
+    `RunningSessions` (the `SessionManager`, or the agent's one loop).
+  - `notes`, `private_notes` and `channel_history` read through
+    `turn.session()`; `PublishedNotes` is the views' type. `ReadError`'s
+    role is `From<ViewError> for ToolError`.
+  - Still on `SessionReader`: the memory (`own_privacy`, `privacy_of`),
+    and so `ComponentContext::session_reader`. Second half next.

@@ -8,9 +8,18 @@
 //! What a node shows is what is stored - the documents from the
 //! `EntityStore`, the agents' states from the `StateStore` - reached
 //! through the running loop where there is one, which holds the truth in
-//! memory and writes the store after. So one
-//! navigation serves running and stopped sessions alike, and reaching a
-//! session does not start it. The root is [`SessionManager::views`].
+//! memory and writes the store after. So one navigation serves running and
+//! stopped sessions alike, and reaching a session does not start it.
+//!
+//! Two kinds of viewer walk the same edges by two rules. A **user** reads a
+//! channel if they may read its document and are cleared for it (issues
+//! 70, 133). An **agent** reads *from its channel* (`Viewer::from_place`,
+//! issue 17): another channel as a whole if its channel may read it by
+//! their classifications (`AccessQuestions::may_channel_read`, issue 133),
+//! else entry by entry - only what was released to it - and a channel it
+//! may not read at all is one that does not exist. Its root is its own
+//! session, reached through its turn (`Turn::session`); a frontend's root
+//! is [`SessionManager::views`].
 //!
 //! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)
 //! for a client that lists and offers: the node's data with its questions
@@ -20,36 +29,69 @@ mod channel;
 mod context;
 mod session;
 
-pub use channel::{ChannelView, MemberView};
+pub use channel::{ChannelView, MemberView, PublishedNotes};
 pub use context::{AgentContextView, ContextError};
 pub use session::SessionView;
 
-use crate::runtime::RuntimeManager;
-use crate::session::{Found, SessionManager};
+use crate::runtime::{ActorRuntime, RuntimeManager};
+use crate::session::{Found, SessionLoop, SessionManager};
+use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Participant;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::security::{AccessQuestions, Place, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use std::sync::Arc;
 
-/// Who navigates: in whose name every edge asks its question (issue 131).
+/// Where an agent reads from: its channel, the classification it reads at
+/// (its turn's, issue 67) and its session's privacy (issue 134). The
+/// `reader` of every `may_channel_read` it asks.
+#[derive(Debug, Clone)]
+pub struct ReaderPlace {
+    pub channel: ChannelRef,
+    pub classification: Classification,
+    pub session: SessionPrivacy,
+}
+
+impl ReaderPlace {
+    fn place(&self) -> Place<'_> {
+        Place { channel: &self.channel, classification: &self.classification, session: &self.session }
+    }
+}
+
+/// Who navigates: in whose name every edge asks its question (issue 131),
+/// and - for an agent - from where.
 #[derive(Debug, Clone)]
 pub struct Viewer {
     context: SecurityContext,
+    from: Option<ReaderPlace>,
 }
 
 impl Viewer {
+    /// A viewer who reads by what they may read: a user.
     pub fn new(context: SecurityContext) -> Self {
-        Self { context }
+        Self { context, from: None }
+    }
+
+    /// A viewer who reads from a place: an agent in its channel.
+    pub fn from_place(context: SecurityContext, from: ReaderPlace) -> Self {
+        Self { context, from: Some(from) }
     }
 
     pub fn context(&self) -> &SecurityContext {
         &self.context
     }
+
+    /// Where the viewer reads from, if it reads as an agent does.
+    pub fn place(&self) -> Option<&ReaderPlace> {
+        self.from.as_ref()
+    }
 }
 
 /// Why an edge could not be followed. The messages are meant for users
-/// (see `crate::error::user_message`).
+/// (see `crate::error::user_message`) - or, through `ToolError`, for the
+/// model that asked.
 ///
 /// What does not exist and what the viewer may not read are one case each,
 /// so that nothing can be probed - as `SessionError::ChannelNotFound` holds
@@ -60,6 +102,10 @@ pub enum ViewError {
     SessionNotFound(SessionId),
     #[error("Session {session} has no channel {channel}")]
     ChannelNotFound { session: SessionId, channel: ChannelId },
+    /// Asked for by name, as an agent's tools do: no such channel, or
+    /// nothing in it that can be read from where the viewer reads.
+    #[error("there is no channel named \"{0}\" that can be read from here")]
+    NoChannelNamed(String),
     #[error("Channel {channel} has no member {actor}")]
     MemberNotFound { channel: ChannelId, actor: ActorId },
     /// Reached, but not the viewer's to read: what an agent saw.
@@ -75,16 +121,52 @@ pub enum ViewError {
 
 pub type ViewResult<T> = std::result::Result<T, ViewError>;
 
+/// What a model is told when a tool of its agent could not follow an edge:
+/// what cannot be reached is the model's to correct; a failure is the
+/// tool's.
+impl From<ViewError> for ToolError {
+    fn from(error: ViewError) -> Self {
+        match error {
+            ViewError::Forbidden { .. } => ToolError::PermissionDenied(error.to_string()),
+            ViewError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
+            _ => ToolError::InvalidParameter(error.to_string()),
+        }
+    }
+}
+
+/// Where the running sessions are: a root of views reaches a session
+/// through its loop if it runs. The `SessionManager` knows them all; an
+/// agent knows its own.
+pub(crate) trait RunningSessions: Send + Sync {
+    fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>>;
+}
+
+impl RunningSessions for SessionManager {
+    fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+        SessionManager::running(self, id)
+    }
+}
+
+/// The one session an agent is in.
+struct OwnSession(Arc<SessionLoop>);
+
+impl RunningSessions for OwnSession {
+    fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
+        (self.0.id() == id).then(|| self.0.clone())
+    }
+}
+
 /// The root of the navigation: every session the viewer may read.
 #[derive(Clone)]
 pub struct Views {
-    manager: Arc<SessionManager>,
+    runtime: Arc<RuntimeManager>,
+    running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
 
 impl Views {
-    pub(crate) fn new(manager: Arc<SessionManager>, viewer: Viewer) -> Self {
-        Self { manager, viewer }
+    pub(crate) fn new(runtime: Arc<RuntimeManager>, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
+        Self { runtime, running, viewer }
     }
 
     pub fn viewer(&self) -> &Viewer {
@@ -92,7 +174,7 @@ impl Views {
     }
 
     pub(crate) fn runtime(&self) -> &RuntimeManager {
-        self.manager.runtime_manager()
+        &self.runtime
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -101,12 +183,12 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
-        let sessions = self.runtime().entity_store().list_sessions(self.viewer.context()).await
+        let sessions = self.runtime.entity_store().list_sessions(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the sessions")))?;
         // The store lists what the viewer may read; a running session is
         // reached through its loop.
         Ok(sessions.into_iter()
-            .map(|session| match self.manager.running(session.id) {
+            .map(|session| match self.running.running(session.id) {
                 Some(session_loop) => Found::Running(session_loop),
                 None => Found::Stored(session),
             })
@@ -120,10 +202,31 @@ impl Views {
     /// `SessionNotFound` if there is no such session or the viewer may not
     /// read it.
     pub async fn session(&self, id: SessionId) -> ViewResult<SessionView> {
-        let found = self.manager.find(self.viewer.context(), id).await.map_err(|e| {
-            if crate::error::is_not_found(&e, "session") { ViewError::SessionNotFound(id) } else { ViewError::Failed(e) }
-        })?;
+        let not_found = || ViewError::SessionNotFound(id);
+        let found = match self.running.running(id) {
+            Some(session_loop) => {
+                let attributes = session_loop.session().security_attributes.clone();
+                if !self.runtime.security_manager().may_read_session(self.viewer.context(), &attributes).await {
+                    return Err(not_found());
+                }
+                Found::Running(session_loop)
+            }
+            None => Found::Stored(self.runtime.entity_store().get_session(self.viewer.context(), id).await.map_err(|e| {
+                let e = anyhow::Error::new(e);
+                if crate::error::is_not_found(&e, "session") || crate::error::is_forbidden(&e) { not_found() } else { ViewError::Failed(e) }
+            })?),
+        };
         Ok(SessionView::of(self.clone(), found))
+    }
+
+    /// Whether the viewer, reading from its place, may read what is
+    /// classified `classification` in `channel` of a session with privacy
+    /// `session` (`AccessQuestions::may_channel_read`, issue 133). A viewer
+    /// without a place reads by other questions and is not asked this one.
+    pub(crate) async fn may_read_from(&self, channel: &ChannelRef, classification: &Classification, session: &SessionPrivacy) -> bool {
+        let Some(from) = &self.viewer.from else { return true };
+        let source = Place { channel, classification, session };
+        self.runtime.security_manager().may_channel_read(self.viewer.context(), from.place(), source).await
     }
 
     /// The name of `participant` and, for an agent, its attributes; `None`
@@ -132,7 +235,7 @@ impl Views {
     /// it - it stands at every message - even where the record itself is
     /// not theirs to read (issue 120).
     async fn look_up(&self, participant: &Participant) -> (Option<String>, Option<SecurityAttributes>) {
-        let store = self.runtime().entity_store();
+        let store = self.runtime.entity_store();
         let system = SecurityContext::system();
         match participant {
             Participant::User(id) => (store.get_user(&system, *id).await.ok().map(|user| user.username), None),
@@ -148,13 +251,40 @@ impl Views {
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
     async fn roles(&self) -> Vec<String> {
-        self.runtime().roles_of(self.viewer.context().initiator_id).await.unwrap_or_default()
+        self.runtime.roles_of(self.viewer.context().initiator_id).await.unwrap_or_default()
     }
 }
 
 impl std::fmt::Debug for Views {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Views").field("viewer", &self.viewer).finish_non_exhaustive()
+    }
+}
+
+/// What an agent's views are built from, once per turn (`Turn::session`):
+/// its actor's runtime, which reaches its channel and session once they
+/// are attached, and its context. The place it reads from is completed
+/// with the turn's classification when the views are built.
+#[derive(Debug, Clone)]
+pub struct ViewsFactory {
+    runtime: ActorRuntime,
+    context: SecurityContext,
+}
+
+impl ViewsFactory {
+    pub(crate) fn of_actor(runtime: ActorRuntime, context: SecurityContext) -> Self {
+        Self { runtime, context }
+    }
+
+    /// The agent's own session, as it reads from its channel at
+    /// `classification`; `None` while the channel is not attached to its
+    /// session yet, or once it is gone.
+    pub(crate) fn session(&self, classification: Classification) -> Option<SessionView> {
+        let channel = self.runtime.channel_loop()?;
+        let session_loop = channel.session_loop()?;
+        let from = ReaderPlace { channel: channel.channel_ref(), classification, session: session_loop.privacy() };
+        let views = Views::new(self.runtime.runtime_manager().clone(), Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
+        Some(SessionView::of(views, Found::Running(session_loop)))
     }
 }
 
@@ -176,7 +306,10 @@ mod tests {
 
     /// A runtime under the ownership policy, and a manager on it.
     fn owned_runtime() -> (Arc<MemoryStore>, Arc<SessionManager>) {
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
+        owned_runtime_under(Arc::new(OwnershipSecurityManager::new()))
+    }
+
+    fn owned_runtime_under(policy: Arc<dyn SecurityManager>) -> (Arc<MemoryStore>, Arc<SessionManager>) {
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
@@ -374,5 +507,85 @@ mod tests {
         let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
         assert!(matches!(none, ViewError::NoContext { .. }), "{none}");
         assert!(matches!(for_alice.member(ActorId::System).await, Err(ViewError::MemberNotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
+        use caelumora_model::channel::ChannelState;
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::privacy::SessionPrivacy;
+        use caelumora_model::store::StateStore;
+
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
+        let (store, manager) = owned_runtime_under(Arc::new(OwnershipSecurityManager::with_compartments(compartments)));
+        let alice = user("alice");
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let template = main_channel(&session);
+        session.channels.clear();
+        let system = SecurityContext::system();
+        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let mut channel_of = |name: &str, classification: Classification| {
+            let channel = Channel { id: ChannelId::new(), name: name.to_string(), classification, ..template.clone() };
+            session.channels.push(channel.id);
+            channel
+        };
+        let public = channel_of("public", classified(Confidentiality::Public, &[]));
+        let team = channel_of("team", classified(Confidentiality::Internal, &[]));
+        let secret = channel_of("secret", classified(Confidentiality::Confidential, &[]));
+        let hr = channel_of("hr", classified(Confidentiality::Internal, &["hr"]));
+        store.create_session(&system, &session).await.unwrap();
+        for channel in [&public, &team, &secret, &hr] {
+            store.create_channel(&system, channel).await.unwrap();
+        }
+
+        // Said and noted in secret: one of each released to everyone.
+        let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
+        let mut state = ChannelState::new(secret.id);
+        state.history.extend(vec![said("the plan", &secret.classification), said("the date", &public.classification)]);
+        store.put_channel_state(secret.id, &state).await.unwrap();
+        let mut agent_state = caelumora_model::agent::AgentChannelState::default();
+        let note = |id, text: &str, classification: &Classification| Change::Add { id: NoteId(id), text: text.to_string(), classification: classification.clone() };
+        agent_state.notes.push(note(1, "noted secretly", &secret.classification), NoteOrigin::default(), MessageId::default());
+        agent_state.notes.push(note(2, "noted openly", &public.classification), NoteOrigin::default(), MessageId::default());
+        store.put_agent_channel_state(helper.id, secret.id, &agent_state).await.unwrap();
+        let mut state = ChannelState::new(team.id);
+        state.history.extend(vec![said("internal", &team.classification)]);
+        store.put_channel_state(team.id, &state).await.unwrap();
+
+        // The agent, reading from one of its channels, as its components do.
+        let reading_from = |channel: &Channel| {
+            let context = SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id));
+            let from = ReaderPlace { channel: ChannelRef { session_id: session.id, channel_id: channel.id }, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
+            Viewer::from_place(context, from)
+        };
+        let names = |channels: Vec<ChannelView>| channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>();
+        let texts = |history: crate::channel::VisibleHistory| history.messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+
+        let from_team = manager.views(reading_from(&team)).session(session.id).await.unwrap();
+        assert_eq!(names(from_team.channels().await), ["public", "team"], "as a whole: what is public, and itself");
+        assert_eq!(names(from_team.all_channels().await), ["public", "team", "secret", "hr"], "the rest entry by entry");
+        let secret_from_team = from_team.channel_named("secret").await.expect("reachable for what was released");
+        assert_eq!(texts(secret_from_team.history().await.unwrap()), ["the date"]);
+        let notes = secret_from_team.notes().await.unwrap();
+        assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);
+        let refused = secret_from_team.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
+        assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
+        let hr_from_team = from_team.channel_named("hr").await.unwrap();
+        assert!(matches!(hr_from_team.history().await, Err(ViewError::NoChannelNamed(name)) if name == "hr"), "nothing released: as if it did not exist");
+        assert!(matches!(hr_from_team.notes().await, Err(ViewError::NoChannelNamed(_))));
+        assert!(matches!(from_team.channel_named("nope").await, Err(ViewError::NoChannelNamed(_))));
+
+        let from_secret = manager.views(reading_from(&secret)).session(session.id).await.unwrap();
+        assert_eq!(names(from_secret.channels().await), ["public", "team", "secret"], "confidential reads internal; HR's never a general channel");
+        assert_eq!(texts(from_secret.channel_named("team").await.unwrap().history().await.unwrap()), ["internal"]);
+        let whole = from_secret.channel(secret.id).await.unwrap();
+        assert_eq!(texts(whole.history().await.unwrap()), ["the plan", "the date"], "a channel reads itself as a whole");
+        assert!(whole.member(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
     }
 }

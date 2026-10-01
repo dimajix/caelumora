@@ -22,11 +22,12 @@ use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::session_reader::{ChannelNotes, SessionReader};
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::ChannelRef;
+use caelumora_model::digest::Digest;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -43,8 +44,6 @@ pub const RECLASSIFY_PRIVATE_NOTE_TOOL_NAME: &str = "reclassify_private_note";
 
 #[derive(Debug)]
 pub struct PrivateNotesComponent {
-    /// The agent's private notes in the session's other channels.
-    reader: Arc<dyn SessionReader>,
     /// The policy that decides whether a note may be reclassified, asked in
     /// `security_context` - the agent's (issues 131, 133).
     security_manager: Arc<dyn SecurityManager>,
@@ -145,16 +144,26 @@ impl PromptProvider for PrivateNotesComponent {
 
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
         let own = AgentNotes::current(turn, NoteKind::Private);
-        let mut elsewhere = self.reader.private_notes(turn.agent_id()).await.unwrap_or_else(|e| {
-            // The agent can still answer without them.
-            warn!("Reading the private notes of agent {} failed: {}", turn.agent_id(), e);
-            Vec::new()
-        });
-        elsewhere.retain(|c| !c.notes.is_empty());
-        elsewhere.sort_by(|l, r| l.channel.name.cmp(&r.channel.name));
+        let mut elsewhere = Vec::new();
+        if let Some(session) = turn.session() {
+            for channel in session.all_channels().await {
+                if channel.id() == turn.channel().channel_id {
+                    continue;
+                }
+                // Not a member there: nothing noted there.
+                let Ok(me) = channel.member(ActorId::Agent(turn.agent_id())).await else { continue };
+                match me.private_notes().await {
+                    Ok((notes, digest)) if !notes.is_empty() => elsewhere.push(Elsewhere { channel: channel.channel_ref(), name: channel.name().to_string(), notes, digest }),
+                    Ok(_) => {}
+                    // The agent can still answer without them.
+                    Err(e) => warn!("Reading the private notes of agent {} in channel {} failed: {}", turn.agent_id(), channel.id(), e),
+                }
+            }
+        }
+        elsewhere.sort_by(|l, r| l.name.cmp(&r.name));
 
         let private = |channel, digest| KnowledgeRef { channel, source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest } };
-        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(ChannelRef { session_id: turn.channel().session_id, channel_id: c.channel.id }, c.digest)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel, c.digest)).collect();
         if !own.is_empty() {
             knowledge.push(private(turn.channel(), AgentNotes::digest(turn, NoteKind::Private)));
         }
@@ -162,16 +171,25 @@ impl PromptProvider for PrivateNotesComponent {
     }
 }
 
+/// The agent's private notes in another channel of the session, as far as
+/// they may be read here.
+struct Elsewhere {
+    channel: ChannelRef,
+    name: String,
+    notes: Vec<Note>,
+    digest: Option<Digest>,
+}
+
 /// The prompt part for the private notes of this channel (`own`) and of
 /// others; empty if there are none.
-fn render(own: &[Note], elsewhere: &[ChannelNotes]) -> String {
+fn render(own: &[Note], elsewhere: &[Elsewhere]) -> String {
     let mut sections = vec![Section::new(
         format!("In this channel (change them with `{NOTE_PRIVATE_TOOL_NAME}` and `{REVOKE_PRIVATE_NOTE_TOOL_NAME}`):"),
         own.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect(),
     )];
     // Notes of other channels cannot be revoked here, so they go unnumbered.
     sections.extend(elsewhere.iter().map(|c| Section::new(
-        format!("From channel {}:", c.channel.name),
+        format!("From channel {}:", c.name),
         c.notes.iter().map(|n| n.text.clone()).collect(),
     )));
     render_sections(
@@ -185,7 +203,6 @@ pub fn register(registry: &mut ComponentRegistry) {
         ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
             let component = Arc::new(PrivateNotesComponent {
-                reader: context.session_reader.clone(),
                 security_manager: context.security_manager.clone(),
                 security_context: context.security_context.clone(),
             });
@@ -200,7 +217,6 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session_reader::ChannelInfo;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
 
@@ -215,7 +231,7 @@ mod tests {
 
     #[test]
     fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
-        let elsewhere = [ChannelNotes { channel: ChannelInfo { id: Default::default(), name: "research".to_string() }, notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
+        let elsewhere = [Elsewhere { channel: ChannelRef::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
         let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
         assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research:").unwrap(), "{text}");
         assert!(text.contains("- Kaya prefers short answers."));
@@ -225,7 +241,6 @@ mod tests {
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
         let tools = PrivateNotesComponent {
-            reader: crate::session_reader::detached(),
             security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
             security_context: Default::default(),
         };

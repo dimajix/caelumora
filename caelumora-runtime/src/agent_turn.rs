@@ -41,6 +41,7 @@ use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolDefinition};
 use crate::tool_calls::ToolCalls;
+use crate::view::{SessionView, ViewsFactory};
 
 /// What a turn reads as when none runs.
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
@@ -133,6 +134,10 @@ pub struct Turn<'a> {
     /// property of that model (`LLMClient::profile`), fixed in the context
     /// of every turn that begins (`next_turn`).
     profile: ModelProfile,
+    /// What the turn navigates (issue 163): the agent's session, read from
+    /// its channel at the turn's classification. `None` for a turn outside
+    /// of a channel - in tests - which reads nothing elsewhere.
+    views: Option<ViewsFactory>,
 }
 
 impl<'a> Turn<'a> {
@@ -145,7 +150,23 @@ impl<'a> Turn<'a> {
             agent_channel_state,
             agent_state,
             profile,
+            views: None,
         }
+    }
+
+    /// With what the turn navigates: the agent's views.
+    pub fn with_views(mut self, views: ViewsFactory) -> Self {
+        self.views = Some(views);
+        self
+    }
+
+    /// The agent's session as the turn reads it from its channel (issue
+    /// 163): the root of what it may read elsewhere - the other channels'
+    /// notes and histories, its own private notes there - at the
+    /// classification the turn began with (issue 67). `None` for a turn
+    /// outside of a channel, which reads nothing elsewhere.
+    pub fn session(&self) -> Option<SessionView> {
+        self.views.as_ref()?.session(self.classification())
     }
 
     /// The agent whose turn this is.

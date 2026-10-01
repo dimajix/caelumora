@@ -120,7 +120,7 @@ pub struct PublishedNotesResponse {
     pub notes: Vec<caelumora_model::note::Note>,
 }
 
-impl From<caelumora_runtime::session_reader::PublishedNotes> for PublishedNotesResponse {
+impl From<caelumora_runtime::view::PublishedNotes> for PublishedNotesResponse {
     fn from(published: caelumora_runtime::session_reader::PublishedNotes) -> Self {
         Self { agent_id: published.agent, name: published.name, notes: published.notes }
     }

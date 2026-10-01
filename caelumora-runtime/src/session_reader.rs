@@ -17,7 +17,6 @@ use crate::channel::ChannelLoop;
 use crate::runtime::ActorRuntime;
 use crate::tool::ToolError;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
@@ -30,15 +29,7 @@ use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-/// The notes one agent published in a channel.
-#[derive(Debug, Clone)]
-pub struct PublishedNotes {
-    pub agent: ActorId,
-    pub name: String,
-    pub notes: Vec<Note>,
-    /// The digest of the agent's note chain: the state of knowledge read.
-    pub digest: Option<Digest>,
-}
+pub use crate::view::PublishedNotes;
 
 /// A channel of the session, as a reader names it.
 #[derive(Debug, Clone, PartialEq, Eq)]

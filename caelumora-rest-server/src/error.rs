@@ -180,7 +180,7 @@ impl ApiError {
         if let Some(e) = error.downcast_ref::<ViewError>() {
             match e {
                 ViewError::SessionNotFound(_) => return Self::not_found("session_not_found", detail),
-                ViewError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
+                ViewError::ChannelNotFound { .. } | ViewError::NoChannelNamed(_) => return Self::not_found("channel_not_found", detail),
                 ViewError::MemberNotFound { .. } => return Self::not_found("actor_not_found", detail),
                 ViewError::NoContext { .. } => return Self::not_found("context_not_recorded", detail),
                 ViewError::Forbidden { .. } => return Self::forbidden(Subject::Context.forbidden(), detail),

@@ -659,11 +659,7 @@ impl SessionManager {
     /// The root of the views (issue 163): every session `viewer` may
     /// read, and from there their channels and members, running or not.
     pub fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
-        Views::new(self.clone(), viewer)
-    }
-
-    pub(crate) fn runtime_manager(&self) -> &RuntimeManager {
-        &self.runtime_manager
+        Views::new(self.runtime_manager.clone(), self.clone(), viewer)
     }
 
     /// The loop of session `id`, if it runs.

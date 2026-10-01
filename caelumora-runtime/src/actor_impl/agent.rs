@@ -1,5 +1,6 @@
 use crate::actor::Actor;
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
+use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
@@ -49,6 +50,8 @@ pub struct AgentActor {
     /// Who sees its reasoning at least (issues 61, 133), from the
     /// personality.
     reasoning_visibility: Visibility,
+    /// What its turns navigate (issue 163), as the agent.
+    views: ViewsFactory,
 
     // State
     /// The agent's own state, shared with its actors in other channels and
@@ -108,6 +111,7 @@ impl AgentActor {
         }
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let processing_state = Arc::new(ProcessingStateHolder::new(agent_channel_state.processing_state));
+        let views = actor_runtime.views(security_context);
 
         Ok(AgentActor {
             agent_id,
@@ -119,6 +123,7 @@ impl AgentActor {
             emit_out_processors,
             tool_executor,
             reasoning_visibility: personality.reasoning_visibility,
+            views,
             agent_state,
             state: Mutex::new(agent_channel_state),
             processing_state,
@@ -838,7 +843,8 @@ impl Actor for AgentActor {
                 &mut state,
                 self.agent_state.clone(),
                 self.llm_client.facet.profile(),
-            );
+            )
+            .with_views(self.views.clone());
 
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.

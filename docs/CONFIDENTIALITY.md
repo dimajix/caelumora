@@ -243,7 +243,7 @@ Otherwise the ownership policy allows it if
 So a channel reads the entries of another that were released to it, even
 where it may not read that channel as a whole. Whether it may, is the
 question asked with the source channel's own classification: a channel is
-listed among the readable ones (`SessionReader::readable_channels`) only
+listed among the readable ones (`SessionView::channels`) only
 then, and one that may not be read as a whole and of which nothing was
 released reads as absent, so that channels cannot be probed.
 
@@ -271,7 +271,7 @@ agent remembered keeps the policy it was said under
 ([MEMORY.md](MEMORY.md)): a policy that lets more sessions read holds for
 what is said from then on, one that lets fewer takes back what it let go.
 
-How an agent reads other channels - the `SessionReader`, `read_notes`,
+How an agent reads other channels - the turn's views, `read_notes`,
 `read_history` - is described in [MEMORY.md](MEMORY.md).
 
 ## What only the owner sees
