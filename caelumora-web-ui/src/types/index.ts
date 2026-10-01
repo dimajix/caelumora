@@ -331,6 +331,17 @@ export interface SeenPrompt {
   digest: string;
   role: Message['role'];
   text: string;
+  /** How the part was classified; null if not known - it counts as the channel (issue 168). */
+  classification: Classification | null;
+  /** Whether it set the label of the message (issue 170). */
+  sets_label: boolean;
+}
+
+/** A message of a context, with whether it - or a tool result in it - set the label of the message (issue 170). */
+export interface SeenMessage {
+  kind: 'message';
+  message: Message;
+  sets_label: boolean;
 }
 
 /** What an agent's model saw when it produced a message (issues 06, 47). */
@@ -339,7 +350,7 @@ export interface MessageContextResponse {
   actor_id: ActorId;
   transcript_digest: string | null;
   /** The messages of the context and the prompt parts, in the order the model was given them. */
-  items: (SeenPrompt | {kind: 'message'; message: Message})[];
+  items: (SeenPrompt | SeenMessage)[];
   /** What was read from notes and histories before the message was produced (issue 17). */
   knowledge: KnowledgeRef[];
   /** The digest of the set of tools the model was offered, null if none (issue 137). */
@@ -373,5 +384,9 @@ export interface KnowledgeRef {
    * limit (issue 72) - from or after that message; absent means all of it.
    */
   history_start?: {from: string} | {after: string};
+  /** How what was read was classified when it was read; null if not known - it counts as the channel (issue 168). */
+  classification: Classification | null;
+  /** Whether it set the label of the message (issue 170). */
+  sets_label: boolean;
 }
 

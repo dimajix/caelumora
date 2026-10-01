@@ -1,11 +1,15 @@
 // What an agent's model saw when it produced a message (issue 41): the
 // messages of its context and the prompt parts of that turn, in the order the
 // model was given them (issue 47) - including internal steps and tool
-// results the chat hides - and the tools it was offered (issue 137).
+// results the chat hides - and the tools it was offered (issue 137). Every
+// part shows how it was classified, and those that set the message's label
+// are marked (issue 170).
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenPrompt, ToolDefinition} from '../types';
+import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolDefinition} from '../types';
+import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
+import {clsx as cn} from 'clsx';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
@@ -55,18 +59,31 @@ const DigestLine: React.FC<{label: string; digest: string | null}> = ({label, di
 );
 
 /** What the panel shows, in order: prompt parts, and runs of messages with their tool results merged. */
-type Row = SeenPrompt | {kind: 'message'; message: Message};
+type Row = SeenPrompt | SeenMessage;
+
+/**
+ * `run` with the tool results merged into the messages that called them; a
+ * merged message set the label if any message merged into it did.
+ */
+function mergedRun(run: SeenMessage[]): SeenMessage[] {
+  return mergeToolResults(run.map(item => item.message)).map(message => {
+    const results = new Set((message.tool_results ?? []).map(result => result.id));
+    const merged = run.filter(item =>
+      item.message.id === message.id || (item.message.tool_results ?? []).some(result => results.has(result.id)));
+    return {kind: 'message' as const, message, sets_label: merged.some(item => item.sets_label)};
+  });
+}
 
 function rowsOf(items: MessageContextResponse['items']): Row[] {
   const rows: Row[] = [];
-  let run: Message[] = [];
+  let run: SeenMessage[] = [];
   const flush = () => {
-    rows.push(...mergeToolResults(run).map(message => ({kind: 'message' as const, message})));
+    rows.push(...mergedRun(run));
     run = [];
   };
   for (const item of items) {
     if (item.kind === 'message') {
-      run.push(item.message);
+      run.push(item);
     } else {
       flush();
       rows.push(item);
@@ -76,10 +93,38 @@ function rowsOf(items: MessageContextResponse['items']): Row[] {
   return rows;
 }
 
+/** The border of a part of the context: marked if it set the message's label. */
+const partBorder = (setsLabel: boolean) => setsLabel
+  ? 'border-amber-400 dark:border-amber-500'
+  : 'border-gray-200 dark:border-gray-700';
+
+/**
+ * How a part of the context was classified - `null`: not known, so it
+ * counted as the channel - marked if it set the message's label.
+ */
+const ClassificationTag: React.FC<{classification: Classification | null; setsLabel: boolean}> = ({classification, setsLabel}) => (
+  <span
+    className={cn(
+      'shrink-0 px-1.5 rounded-sm border text-[11px] font-normal',
+      setsLabel
+        ? 'border-amber-400 text-amber-700 bg-amber-50 dark:border-amber-500 dark:text-amber-300 dark:bg-amber-950'
+        : 'border-gray-300 text-gray-500 dark:border-gray-600 dark:text-gray-400',
+    )}
+    title={[
+      classification ? classificationDescription(classification) : 'Not classified: counts as the channel.',
+      ...(setsLabel ? ['This set the label of the message.'] : []),
+    ].join(' ')}
+  >
+    {classification ? classificationLabel(classification) : 'counts as the channel'}
+  </span>
+);
+
 const PromptView: React.FC<{prompt: SeenPrompt; leading: boolean}> = ({prompt, leading}) => (
-  <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm">
+  <details className={cn('rounded-md border text-sm', partBorder(prompt.sets_label))}>
     <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
       {leading && prompt.role === 'System' ? 'System prompt' : `Prompt part (as ${prompt.role.toLowerCase()} message)`}
+      {' '}
+      <ClassificationTag classification={prompt.classification} setsLabel={prompt.sets_label} />
     </summary>
     <div className="px-3 pb-2">
       <DigestLine label="Digest" digest={prompt.digest} />
@@ -114,7 +159,12 @@ const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]; sessionId: string}> = 
     </summary>
     <div className="px-3 pb-2 space-y-1">
       {knowledge.map((k, idx) => (
-        <DigestLine key={idx} label={knowledgeLabel(k, sessionId)} digest={k.digest} />
+        <div key={idx} className="flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <DigestLine label={knowledgeLabel(k, sessionId)} digest={k.digest} />
+          </div>
+          <ClassificationTag classification={k.classification} setsLabel={k.sets_label} />
+        </div>
       ))}
     </div>
   </details>
@@ -194,6 +244,12 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
             <X size={16} />
           </button>
         </div>
+        {message.classification && (
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            Labelled <span className="text-gray-700 dark:text-gray-300">{classificationLabel(message.classification)}</span> by
+            what it saw; marked is what set the label.
+          </div>
+        )}
         {context && (
           <div className="space-y-0.5">
             <DigestLine label="Transcript" digest={context.transcript_digest} />
@@ -229,10 +285,12 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
                 key={row.message.id ?? idx}
                 message={row.message}
                 members={members}
-                className="max-w-full"
+                className={cn('max-w-full', row.sets_label && 'ring-2 ring-amber-400 dark:ring-amber-500')}
                 badges={[
                   ...(row.message.internal ? ['internal'] : []),
                   ...(row.message.role === 'Tool' ? ['tool result'] : []),
+                  ...(row.message.classification ? [classificationLabel(row.message.classification)] : []),
+                  ...(row.sets_label ? ['set the label'] : []),
                 ]}
               />
             ))}

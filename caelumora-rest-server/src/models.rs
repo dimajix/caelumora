@@ -353,6 +353,47 @@ pub struct MessageContextResponse {
     pub tools: Vec<caelumora_model::tool::ToolDefinition>,
 }
 
+/// Which of the classifications in a message's context set its label
+/// (issue 170). The label of a message is the join of everything its turn
+/// had seen, at most the channel's classification (issue 168); what set it
+/// is derived from that, nothing about it is stored:
+///
+/// - what was not classified counted as the channel, and so set the label
+///   to the channel's;
+/// - if the classified parts had no audience in common, the label is the
+///   channel's, set by the parts with an audience;
+/// - otherwise the parts at the label's level set it.
+#[derive(Debug)]
+pub struct LabelCauses {
+    label: Classification,
+    disjoint: bool,
+}
+
+impl LabelCauses {
+    /// The causes of `label`, the classification of a message whose
+    /// context's parts are classified `classifications` - those known.
+    pub fn new<'a>(label: Classification, classifications: impl IntoIterator<Item = &'a Classification>) -> Self {
+        let disjoint = Classification::join_all(classifications).is_none();
+        Self { label, disjoint }
+    }
+
+    /// Whether a part classified `classification` - `None`: not known -
+    /// set the label.
+    pub fn set_by(&self, classification: Option<&Classification>) -> bool {
+        match classification {
+            None => true,
+            Some(c) if self.disjoint => !c.compartments().is_empty(),
+            Some(c) => c.level() == self.label.level(),
+        }
+    }
+
+    /// Whether `message` set the label, by its own classification or that
+    /// of a tool result in it.
+    pub fn set_by_message(&self, message: &Message) -> bool {
+        self.set_by(Some(&message.classification)) || message.tool_results.iter().any(|r| self.set_by(Some(&r.classification)))
+    }
+}
+
 /// Knowledge a message was produced with, with the names of what it names
 /// where they are still known.
 #[derive(Debug, Serialize)]
@@ -373,12 +414,18 @@ pub struct KnowledgeRefResponse {
     /// with a limit (issue 72) - `{"from": id}` or `{"after": id}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_start: Option<caelumora_model::channel::HistoryStart>,
+    /// How what was read was classified when it was read, `null` if that
+    /// is not known (issue 168).
+    pub classification: Option<Classification>,
+    /// Whether it set the label of the message (issue 170).
+    pub sets_label: bool,
 }
 
 impl KnowledgeRefResponse {
     /// `knowledge` with the names of its channel and agent, as far as
-    /// `session` still has them.
-    pub async fn describe(session: &SessionView, knowledge: &KnowledgeRef) -> Self {
+    /// `session` still has them, and whether it set the label of the
+    /// message, which `causes` tells.
+    pub async fn describe(session: &SessionView, knowledge: &KnowledgeRef, causes: &LabelCauses) -> Self {
         // Named only if the viewer may read it - of this session or another
         // (issue 134) - and it is still there; by id alone otherwise.
         let channel = session.views().channel_of(knowledge.channel).await.unwrap_or_else(|e| {
@@ -404,25 +451,41 @@ impl KnowledgeRefResponse {
             agent_name,
             digest,
             history_start,
+            classification: knowledge.classification.clone(),
+            sets_label: causes.set_by(knowledge.classification.as_ref()),
         }
     }
 }
 
-/// One element of a `MessageContextResponse`.
+/// One element of a `MessageContextResponse`, with whether it set the
+/// label of the message (issue 170).
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SeenItemResponse {
-    /// A prompt part - the system prompt, notes, ... - and the role it was
-    /// given as.
-    Prompt { digest: caelumora_model::digest::Digest, role: caelumora_model::message::MessageRole, text: String },
-    Message { message: Message },
+    /// A prompt part - the system prompt, notes, ... - the role it was
+    /// given as, and how it was classified, `null` if that is not known.
+    Prompt {
+        digest: caelumora_model::digest::Digest,
+        role: caelumora_model::message::MessageRole,
+        text: String,
+        classification: Option<Classification>,
+        sets_label: bool,
+    },
+    Message { message: Message, sets_label: bool },
 }
 
-impl From<caelumora_model::context::ContextItem> for SeenItemResponse {
-    fn from(item: caelumora_model::context::ContextItem) -> Self {
+impl SeenItemResponse {
+    /// `item`, with whether it set the label, which `causes` tells.
+    pub fn of(item: caelumora_model::context::ContextItem, causes: &LabelCauses) -> Self {
         match item {
-            caelumora_model::context::ContextItem::Prompt { digest, role, text } => SeenItemResponse::Prompt { digest, role, text },
-            caelumora_model::context::ContextItem::Conversation { message, .. } => SeenItemResponse::Message { message },
+            caelumora_model::context::ContextItem::Prompt { digest, role, text, classification } => {
+                let sets_label = causes.set_by(classification.as_ref());
+                SeenItemResponse::Prompt { digest, role, text, classification, sets_label }
+            }
+            caelumora_model::context::ContextItem::Conversation { message } => {
+                let sets_label = causes.set_by_message(&message);
+                SeenItemResponse::Message { message, sets_label }
+            }
         }
     }
 }
@@ -432,6 +495,31 @@ mod tests {
     use super::*;
     use caelumora_model::approval::ApproverId;
     use caelumora_model::user::UserId;
+
+    #[test]
+    fn what_set_a_label_is_told_by_level_by_audience_and_by_what_is_not_known() {
+        use caelumora_model::confidentiality::Confidentiality::{Confidential, Internal};
+        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
+        let (internal, confidential) = (Classification::general(Internal), Classification::general(Confidential));
+
+        let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
+        assert!(causes.set_by(Some(&confidential)), "a part at the label's level set it");
+        assert!(!causes.set_by(Some(&internal)), "one below did not");
+        assert!(causes.set_by(None), "what is not known counted as the channel");
+
+        let sales = classified(Internal, &["sales"]);
+        let causes = LabelCauses::new(confidential.clone(), [&sales, &classified(Internal, &["hr"])]);
+        assert!(causes.set_by(Some(&sales)), "without an audience in common, the parts with one set the channel's label");
+        assert!(!causes.set_by(Some(&internal)), "a general part did not");
+
+        let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
+        let result = caelumora_model::tool::ToolCallResult::of(
+            &caelumora_model::tool::ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default() },
+            Default::default(), "secret".to_string(), confidential.clone());
+        let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
+        assert!(causes.set_by_message(&message), "a tool result in a message sets the label as the message");
+        assert!(!causes.set_by_message(&Message::new(internal)));
+    }
 
     #[test]
     fn a_turn_given_up_is_answered_with_its_reason_and_messages() {

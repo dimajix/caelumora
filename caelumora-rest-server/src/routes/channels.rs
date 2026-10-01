@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, MessageContextResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -16,6 +16,7 @@ use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::ContextItem;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -336,19 +337,32 @@ pub async fn message_context(
 ) -> Result<Json<MessageContextResponse>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let member = member_of(&channel, aid).await?;
-    let seen = member.context().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?
-        .context_of(MessageId(mid))
+    let view = member.context().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
+    let seen = view.context_of(MessageId(mid))
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
+    // What set the message's label, of the parts classified (issue 170).
+    let label = view.classification_of(MessageId(mid)).unwrap_or_default();
+    let mut classified: Vec<&Classification> = seen.reference.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
+    for item in &seen.items {
+        match item {
+            ContextItem::Prompt { classification, .. } => classified.extend(classification),
+            ContextItem::Conversation { message } => {
+                classified.push(&message.classification);
+                classified.extend(message.tool_results.iter().map(|r| &r.classification));
+            }
+        }
+    }
+    let causes = LabelCauses::new(label, classified);
     let mut knowledge = Vec::with_capacity(seen.reference.knowledge.len());
     for read in &seen.reference.knowledge {
-        knowledge.push(KnowledgeRefResponse::describe(channel.session(), read).await);
+        knowledge.push(KnowledgeRefResponse::describe(channel.session(), read, &causes).await);
     }
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
         actor_id: member.id(),
         transcript_digest: seen.reference.transcript,
-        items: seen.items.into_iter().map(Into::into).collect(),
+        items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes)).collect(),
         knowledge,
         tools_digest: seen.reference.tools,
         tools: seen.tools,

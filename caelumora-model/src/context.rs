@@ -51,8 +51,16 @@ pub enum ContextItem {
     Conversation { message: Message },
     /// A prompt part - the system prompt, notes, ... - that is not part of
     /// the conversation, given to the model in `role`; `digest` is the
-    /// digest of `text`, by which the part is kept once and referred to.
-    Prompt { digest: Digest, role: MessageRole, text: String },
+    /// digest of `text`, by which the part is kept once and referred to;
+    /// `classification` how it was classified, `None` if that is not known
+    /// (`PromptRef::classification`).
+    Prompt {
+        digest: Digest,
+        role: MessageRole,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        classification: Option<Classification>,
+    },
 }
 
 impl ContextItem {
@@ -327,7 +335,7 @@ impl<'a> ContextResolver<'a> {
         let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
             prompts.iter()
                 .filter(|p| p.after == after)
-                .map(|p| Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone() }))
+                .map(|p| Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone(), classification: p.classification.clone() }))
                 .collect()
         };
 

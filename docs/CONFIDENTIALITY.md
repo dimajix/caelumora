@@ -415,7 +415,19 @@ channels.
 
 What the label was made of can be told afterwards: every prompt part
 (`PromptRef`) and every knowledge read (`KnowledgeRef`) of a message's
-context records the classification it had when it was read.
+context records the classification it had when it was read. The context of
+a message tells it, and which parts set the label (issue 170) - derived when
+it is asked for, against the message's classification, nothing about it is
+stored:
+
+*   a part that was not classified counted as the channel, and set the label
+    to the channel's;
+*   if the classified parts had no audience in common, the label is the
+    channel's, set by the parts with an audience;
+*   otherwise the parts at the label's level set it. The label's audience is
+    what the parts' audiences have in common, which each part shows.
+
+A message reclassified since is compared with what it is classified now.
 
 In detail:
 

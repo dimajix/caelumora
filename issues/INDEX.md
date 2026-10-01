@@ -178,7 +178,7 @@ against it, and what came out of the last attempt.
 | [146](146-show-given-up-turns.md) | open | The web UI does not show the turns an agent gave up, so what their tools did can be read only through the API. |
 | [162](162-ui-keeps-a-removed-agents-turn.md) | done | The web UI keeps showing the turn of an agent removed during it as under way, with its stop button, until the page is reloaded. |
 | [165](165-ask-the-user-tool.md) | open | An agent cannot ask the user a question and wait for the answer - yes/no, a choice, free text - and the web UI has no way to show a tool call other than generically. |
-| [170](170-context-panel-shows-the-label.md) | open | The context panel does not show how each part of a message's context was classified, so nobody can tell why the message was classified as it was. |
+| [170](170-context-panel-shows-the-label.md) | done | The context panel does not show how each part of a message's context was classified, so nobody can tell why the message was classified as it was. |
 
 ## Context and knowledge
 

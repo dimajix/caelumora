@@ -194,7 +194,10 @@ the messages of the context and the prompt parts where they were given, a
 leading system prompt on top (issue 47), the knowledge the turn read as
 "Knowledge read" - a channel of another session, which an agent's memory
 came from, is not named (issue 134) - and - collapsed - the tools the model was offered as
-"Tools offered", each with its description and parameters (issue 137). The panel shows internal messages and tool results, which
+"Tools offered", each with its description and parameters (issue 137). Every
+prompt part, message and knowledge read shows how it was classified - "counts
+as the channel" where that is not known - and what set the message's label,
+which the panel's head names, is marked in amber (issue 170). The panel shows internal messages and tool results, which
 the chat hides; `MessageView` renders a message the same way in both. A
 context never changes, so what was fetched once is kept. See
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).

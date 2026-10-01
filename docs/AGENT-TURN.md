@@ -506,7 +506,11 @@ answers `403 context_forbidden`, `404 context_not_recorded` (not produced
 by that actor) or `404 context_unavailable` (recorded, but no longer
 resolvable). The response lists the knowledge read with channel and agent
 names - a channel of another session is not named - and the tools offered
-with the digest of their set. `GET …/actors/{aid}/given-up-turns` lists the
+with the digest of their set. Every prompt part and every knowledge read
+carries its `classification` (`null` if not known), and every item and
+knowledge read `sets_label`: whether it set the message's label (issue 170,
+`LabelCauses` in the REST server; the rule is in
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md)). `GET …/actors/{aid}/given-up-turns` lists the
 turns given up, oldest first, and answers `403 context_forbidden` alike.
 
 So that a client offers this only where it works, every member of a channel

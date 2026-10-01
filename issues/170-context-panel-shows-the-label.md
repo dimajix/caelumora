@@ -1,6 +1,6 @@
 # 170 — The context panel does not show why a message was classified as it was
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -52,3 +52,16 @@ where it ended. `KnowledgeRefResponse` and the prompt parts of
 - **2026-10-01** — Opened when [168](168-turn-label-as-high-water-mark.md)
   was done: the classification of every reference is recorded, the panel
   that would show it was left to this issue.
+- **2026-10-01** — Done. `ContextItem::Prompt` carries the classification of
+  its `PromptRef`, which the resolver used to drop. The REST server derives
+  what set the label (`LabelCauses`, decided with the maintainer: in the
+  server, not in the UI, which does not know the order of classifications):
+  a part without a classification, counted as the channel; the parts with
+  an audience, if the classified parts had none in common; otherwise the
+  parts at the label's level. Leave-one-out ("without it the label would be
+  lower") was rejected: two parts at the same level would mark neither. The
+  label compared with is the message's classification
+  (`AgentContextView::classification_of`), so a message reclassified since
+  is compared with its new one. `SeenItemResponse` and
+  `KnowledgeRefResponse` gained `classification` and `sets_label`; the
+  context panel shows both and names the label in its head.

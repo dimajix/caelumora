@@ -3,6 +3,7 @@
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::MessageId;
@@ -62,6 +63,16 @@ impl AgentContextView {
         ContextResolver::of(&self.state).resolve(&reference, self.actor).ok_or(ContextError::Unavailable { actor: self.actor, message })
     }
 
+    /// The classification of the message `message` the agent produced, as
+    /// its history holds it: the label of the turn that produced it (issue
+    /// 168), unless it was reclassified since. `None` if the agent's
+    /// history does not hold it.
+    pub fn classification_of(&self, message: MessageId) -> Option<Classification> {
+        self.state.history.all_entries()
+            .find(|e| e.message.id == message)
+            .map(|e| e.message.classification.clone())
+    }
+
     /// The turns the agent gave up in the channel, with their messages
     /// (issue 145).
     pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
@@ -73,7 +84,6 @@ impl AgentContextView {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
     use caelumora_model::digest::prompt;
     use caelumora_model::message::{Message, MessageRole};
@@ -98,6 +108,17 @@ mod tests {
         }).collect();
         assert_eq!(ids, vec![question.id]);
         assert!(matches!(view.context_of(question.id), Err(ContextError::NotRecorded { .. })), "someone else wrote it");
+        assert_eq!(view.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "the label it was written with");
+        assert_eq!(view.classification_of(MessageId::new()), None);
+
+        // A prompt part is told with how it was classified (issue 170).
+        let confidential = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
+        state.prompts.insert(system.text, "system".to_string());
+        let told = text("told");
+        state.history.push(told.clone(), Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
+        let seen = AgentContextView::of(actor, state.clone()).context_of(told.id).expect("resolved");
+        assert!(matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = text("lost");
