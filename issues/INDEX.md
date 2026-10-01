@@ -169,6 +169,7 @@ against it, and what came out of the last attempt.
 | [106](106-rest-small-findings.md) | done | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
 | [146](146-show-given-up-turns.md) | open | The web UI does not show the turns an agent gave up, so what their tools did can be read only through the API. |
 | [162](162-ui-keeps-a-removed-agents-turn.md) | open | The web UI keeps showing the turn of an agent removed during it as under way, with its stop button, until the page is reloaded. |
+| [165](165-ask-the-user-tool.md) | open | An agent cannot ask the user a question and wait for the answer - yes/no, a choice, free text - and the web UI has no way to show a tool call other than generically. |
 
 ## Context and knowledge
 
