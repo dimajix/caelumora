@@ -427,10 +427,5 @@ mod tests {
         assert!(actor.subscriber.lock().unwrap().is_none(), "a closed subscriber is removed");
     }
 
-    #[tokio::test]
-    async fn a_user_has_no_message_context() {
-        let (actor, _channel) = user_actor().await;
-        let result = actor.message_context(&SecurityContext::default(), MessageId::new()).await;
-        assert!(matches!(result, Err(crate::actor::MessageContextError::NotRecorded { .. })));
-    }
+
 }

@@ -11,7 +11,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
-use caelumora_runtime::view::Viewer;
+use caelumora_runtime::view::{ChannelView, MemberView, Viewer};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
@@ -91,12 +91,11 @@ pub async fn get_channel_messages(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<Message>>, ApiError> {
-    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     // As much of it as the user may see (issue 46).
-    let messages = channel.visible_history(user.actor_id()).await.messages;
-
-    Ok(Json(messages))
+    let history = channel.history().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("reading the history of channel {cid}")))?;
+    Ok(Json(history.messages))
 }
 
 /// The notes every agent of the channel published (issue 17) - what a
@@ -106,9 +105,9 @@ pub async fn get_notes(
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PublishedNotesResponse>>, ApiError> {
-    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let notes = channel.published_notes().await
-        .map_err(|e| ApiError::internal("notes_failed", &format!("reading the notes of channel {}", cid), &e))?;
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let notes = channel.notes().await
+        .map_err(|e| ApiError::internal("notes_failed", &format!("reading the notes of channel {}", cid), &e.into()))?;
     Ok(Json(notes.into_iter().map(Into::into).collect()))
 }
 
@@ -118,25 +117,32 @@ pub async fn get_notes(
 /// their watch ends.
 async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> Option<ChannelSnapshot> {
     let views = state.session_manager.views(Viewer::new(viewer.clone()));
-    let described = match views.session(channel.session_id()).await {
+    let reached = match views.session(channel.session_id()).await {
         Ok(session) => session.channel(channel.id()).await,
         Err(e) => Err(e),
     };
-    let view = match described {
-        Ok(view) => view.snapshot().await,
+    let view = match reached {
+        Ok(view) => view,
         Err(e) => {
             tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel.id(), e);
             return None;
         }
     };
-    let (messages, has_more) = recent_messages(channel.visible_history(viewer.initiator_id).await.messages);
-    let notes = channel.published_notes().await.unwrap_or_else(|e| {
+    let history = match view.history().await {
+        Ok(history) => history,
+        Err(e) => {
+            tracing::warn!("Cannot read the history of channel {} for its snapshot: {:#}", channel.id(), e);
+            return None;
+        }
+    };
+    let (messages, has_more) = recent_messages(history.messages);
+    let notes = view.notes().await.unwrap_or_else(|e| {
         // The conversation can be shown without them.
         tracing::warn!("Reading the notes of channel {} failed: {:#}", channel.id(), e);
         Vec::new()
     });
     Some(ChannelSnapshot {
-        channel: view.into(),
+        channel: view.snapshot().await.into(),
         messages,
         has_more,
         notes: notes.into_iter().map(Into::into).collect(),
@@ -225,6 +231,12 @@ pub async fn send_message(
 /// names an actor by its UUID alone.
 fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
     channel.actor_ids().into_iter().find(|actor| actor.id() == id)
+}
+
+/// The member of `channel` whose id is `id`, whatever kind it is.
+async fn member_of(channel: &ChannelView, id: Uuid) -> Result<MemberView, ApiError> {
+    channel.members().await.into_iter().find(|member| member.id().id() == id)
+        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", id, channel.id())))
 }
 
 /// The actor the authenticated user acts through in `channel` (issue 30).
@@ -320,16 +332,19 @@ pub async fn message_context(
     Path((id, cid, aid, mid)): Path<(Uuid, Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<MessageContextResponse>, ApiError> {
-    let (session, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let actor = actor_in(&channel, aid)
-        .and_then(|actor| channel.actor_by_id(actor))
-        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
-    let seen = actor.message_context(&user.security_context(), MessageId(mid)).await
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let member = member_of(&channel, aid).await?;
+    let seen = member.context().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?
+        .context_of(MessageId(mid))
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the context"))?;
-    let knowledge = seen.reference.knowledge.iter().map(|k| KnowledgeRefResponse::describe(&session, k)).collect();
+    let mut knowledge = Vec::with_capacity(seen.reference.knowledge.len());
+    for read in &seen.reference.knowledge {
+        knowledge.push(KnowledgeRefResponse::describe(channel.session(), read).await);
+    }
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
-        actor_id: actor.id(),
+        actor_id: member.id(),
         transcript_digest: seen.reference.transcript,
         items: seen.items.into_iter().map(Into::into).collect(),
         knowledge,
@@ -345,12 +360,10 @@ pub async fn given_up_turns(
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<GivenUpTurnResponse>>, ApiError> {
-    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let actor = actor_in(&channel, aid)
-        .and_then(|actor| channel.actor_by_id(actor))
-        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))?;
-    let turns = actor.given_up_turns(&user.security_context()).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?;
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let turns = member_of(&channel, aid).await?.context().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?
+        .given_up_turns();
     Ok(Json(turns.into_iter().map(Into::into).collect()))
 }
 
@@ -376,7 +389,7 @@ pub async fn send_approval(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::actor::MessageContextError;
+    use caelumora_runtime::view::{ContextError, ViewError};
     use caelumora_runtime::command::CommandError;
     use caelumora_model::message::MessageId;
 
@@ -426,10 +439,11 @@ mod tests {
     fn a_context_that_cannot_be_shown_says_why() {
         let actor = caelumora_model::actor::ActorId::None;
         let message = MessageId::new();
-        let status = |error: MessageContextError| ApiError::from_runtime(error.into(), Subject::Context, "reading the context").status();
-        assert_eq!(status(MessageContextError::Forbidden { actor }), StatusCode::FORBIDDEN);
-        assert_eq!(status(MessageContextError::NotRecorded { actor, message }), StatusCode::NOT_FOUND);
-        assert_eq!(status(MessageContextError::Unavailable { actor, message }), StatusCode::NOT_FOUND);
-        assert_eq!(status(MessageContextError::Failed { actor }), StatusCode::INTERNAL_SERVER_ERROR);
+        let status = |error: anyhow::Error| ApiError::from_runtime(error, Subject::Context, "reading the context");
+        assert_eq!(status(ViewError::Forbidden { actor }.into()).status(), StatusCode::FORBIDDEN);
+        assert_eq!(status(ViewError::NoContext { actor }.into()).code(), "context_not_recorded");
+        assert_eq!(status(ContextError::NotRecorded { actor, message }.into()).code(), "context_not_recorded");
+        assert_eq!(status(ContextError::Unavailable { actor, message }.into()).code(), "context_unavailable");
+        assert_eq!(status(ViewError::Failed(anyhow::anyhow!("disk")).into()).status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

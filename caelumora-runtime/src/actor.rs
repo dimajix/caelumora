@@ -5,10 +5,6 @@ use std::fmt::Debug;
 
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorId, ActorState, Envelope};
-use caelumora_model::context::ResolvedContext;
-use caelumora_model::message::MessageId;
-use caelumora_model::transcript::GivenUpTurn;
-use caelumora_model::security::SecurityContext;
 
 #[async_trait]
 pub trait Actor: Any + Debug + Send + Sync {
@@ -48,64 +44,4 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// that state is stored consistent, the channel closes its inbox and
     /// aborts it only if it does not end by itself.
     fn stop(&self) {}
-
-    /// What this actor's model saw when it produced the message `message`:
-    /// its context and system prompt (issue 06), on behalf of `caller`.
-    /// Only agents have one; every other actor answers `NotRecorded`.
-    ///
-    /// # Errors
-    /// `MessageContextError::Forbidden` if `caller` may not read it,
-    /// `NotRecorded` if this actor did not produce the message,
-    /// `Unavailable` if what was recorded cannot be resolved any more.
-    async fn message_context(&self, _caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
-        Err(MessageContextError::NotRecorded { actor: self.id(), message })
-    }
-
-    /// The turns this actor gave up in its channel, with their messages
-    /// (issue 145), for `caller` - who may read them where they may read
-    /// the actor's context. Only agents take turns; every other actor has
-    /// none.
-    ///
-    /// # Errors
-    /// `ReadStateError::Forbidden` if `caller` may not read them,
-    /// `Failed` if the actor's state cannot be read.
-    async fn given_up_turns(&self, _caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, ReadStateError> {
-        Ok(Vec::new())
-    }
-}
-
-/// Why a message's context cannot be shown. The messages are meant for users
-/// (see `crate::error::user_message`).
-#[derive(Debug, thiserror::Error)]
-pub enum MessageContextError {
-    #[error("You are not permitted to see what {actor} saw")]
-    Forbidden { actor: ActorId },
-    #[error("No context is recorded for message {message} by {actor}")]
-    NotRecorded { actor: ActorId, message: MessageId },
-    #[error("The context of message {message} by {actor} is no longer available")]
-    Unavailable { actor: ActorId, message: MessageId },
-    /// Reading the actor's state failed; the cause is in the log.
-    #[error("What {actor} saw cannot be read")]
-    Failed { actor: ActorId },
-}
-
-/// Why an actor's state cannot be read for someone else - its context
-/// (`MessageContextError` takes it over), the turns it gave up. The messages
-/// are meant for users (see `crate::error::user_message`).
-#[derive(Debug, thiserror::Error)]
-pub enum ReadStateError {
-    #[error("You are not permitted to see what {actor} saw")]
-    Forbidden { actor: ActorId },
-    /// Reading the actor's state failed; the cause is in the log.
-    #[error("What {actor} saw cannot be read")]
-    Failed { actor: ActorId },
-}
-
-impl From<ReadStateError> for MessageContextError {
-    fn from(error: ReadStateError) -> Self {
-        match error {
-            ReadStateError::Forbidden { actor } => Self::Forbidden { actor },
-            ReadStateError::Failed { actor } => Self::Failed { actor },
-        }
-    }
 }

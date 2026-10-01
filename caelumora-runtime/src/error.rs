@@ -7,13 +7,12 @@
 //! store backend failure, may carry file paths or other internals and belong
 //! in the log only.
 
-use crate::actor::{MessageContextError, ReadStateError};
 use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::llm::LLMError;
 use crate::session::SessionError;
 use crate::tool::ToolError;
-use crate::view::ViewError;
+use crate::view::{ContextError, ViewError};
 use crate::channel::ChannelError;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
@@ -32,9 +31,7 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<CommandError>() {
             Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<MessageContextError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ReadStateError>() {
+        } else if let Some(e) = e.downcast_ref::<ContextError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ViewError>() {
             // What it names is safe; why reaching it failed is for the log.

@@ -98,7 +98,9 @@ answered as absent and left out of lists and snapshots. The runtime decides
 that, not the REST server: `SessionLoop::channel_for(ctx, id)` returns a
 channel only to whoever may read it, and `SessionError::ChannelNotFound`
 otherwise - the same as for one that does not exist. Every REST handler
-reaches a channel through one `open_channel` (issue 102).
+that acts on a channel reaches it through one `open_channel` (issue 102);
+one that reads it goes through the views (`SessionView::channel`, issue
+163), which answer the same way.
 
 What a client lists and offers - which channels, which members, whether it may
 change a channel - comes from views the runtime builds for one viewer (issue
@@ -159,8 +161,9 @@ last n days. It is fixed at once as a `HistoryStart` (a message id) in
 `Channel::history_limits`, so "the last three days" does not move day by day.
 
 The model only holds these limits as data.
-`ChannelLoop::visible_history(participant)` is the one place they are
-applied. It answers with a
+`ChannelLoop::visible_history(participant)` applies them for a running
+channel, `ChannelView::history()` for a stored one too (issue 163). Both
+answer with a
 `VisibleHistory` - the messages, the digest of the history (up to where) and
 the participant's start (from where) - which is used for the history over
 REST, in the snapshot, for `read_history` (which records digest and start
@@ -264,8 +267,9 @@ An **actor** is anything that sends and receives events in a channel.
     task is `async fn run`, which receives envelopes and sends its output
     through the transport it is given. `wakeup`, `cancel` and `stop` are
     synchronous, because they come from other tasks and must take effect at
-    once; `message_context` answers what an agent's model saw (see
-    [AGENT-TURN.md](AGENT-TURN.md)). The implementations are `AgentActor`,
+    once. What an agent's model saw is not asked of its actor but read
+    through the views (see [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)).
+    The implementations are `AgentActor`,
     `UserActor` and `ApproverActor` (`caelumora_runtime::actor_impl`).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`,
     or `System` - the runtime itself, set only deliberately through

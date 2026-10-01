@@ -6,8 +6,9 @@
 //! permission when it acts (issue 80).
 //!
 //! What a node shows is what is stored - the documents from the
-//! `EntityStore` - reached through the running loop where there is one,
-//! which holds the truth in memory and writes the store after. So one
+//! `EntityStore`, the agents' states from the `StateStore` - reached
+//! through the running loop where there is one, which holds the truth in
+//! memory and writes the store after. So one
 //! navigation serves running and stopped sessions alike, and reaching a
 //! session does not start it. The root is [`SessionManager::views`].
 //!
@@ -16,9 +17,11 @@
 //! answered at one moment.
 
 mod channel;
+mod context;
 mod session;
 
 pub use channel::{ChannelView, MemberView};
+pub use context::{AgentContextView, ContextError};
 pub use session::SessionView;
 
 use crate::runtime::RuntimeManager;
@@ -59,6 +62,12 @@ pub enum ViewError {
     ChannelNotFound { session: SessionId, channel: ChannelId },
     #[error("Channel {channel} has no member {actor}")]
     MemberNotFound { channel: ChannelId, actor: ActorId },
+    /// Reached, but not the viewer's to read: what an agent saw.
+    #[error("You are not permitted to see what {actor} saw")]
+    Forbidden { actor: ActorId },
+    /// Only agents have a context.
+    #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]
+    NoContext { actor: ActorId },
     /// Reaching it failed; the cause is in the log.
     #[error("Reading failed")]
     Failed(#[source] anyhow::Error),
@@ -308,5 +317,62 @@ mod tests {
         assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
         assert!(approver.handle.is_none(), "an approver cannot be mentioned");
         assert!(view.members.iter().all(|m| !m.can_read_context), "no member is an agent");
+    }
+
+    #[tokio::test]
+    async fn what_a_channel_holds_is_read_through_its_nodes_and_a_members_context_by_who_may() {
+        use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let (alice, bob) = (user("alice"), user("bob"));
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id), ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice, &bob]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let mut channel = main_channel(&session);
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+
+        // What was said, of which bob - who joined later - sees the end only.
+        let said = |t: &str| Message { content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let (first, second) = (said("first"), said("second"));
+        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(first.id) });
+        store.create_channel(&system, &channel).await.unwrap();
+        let mut state = ChannelState::new(channel.id);
+        state.history.extend(vec![first.clone(), second.clone()]);
+        store.put_channel_state(channel.id, &state).await.unwrap();
+        // What the agent noted and saw.
+        let mut agent_state = caelumora_model::agent::AgentChannelState::default();
+        agent_state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+        agent_state.private_notes.push(Change::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+        agent_state.transcript.push(first.clone());
+        store.put_agent_channel_state(helper.id, channel.id, &agent_state).await.unwrap();
+
+        let reach = |viewer: Viewer| {
+            let manager = &manager;
+            async move { manager.views(viewer).session(session.id).await.unwrap().channel(channel.id).await.unwrap() }
+        };
+        let for_alice = reach(as_user(alice.id)).await;
+        let texts = |messages: &[Message]| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(texts(&for_alice.history().await.unwrap().messages), ["first", "second"]);
+        assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages), ["second"], "bob joined after the first");
+        let notes = for_alice.notes().await.unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!((notes[0].agent, notes[0].name.as_str(), notes[0].notes[0].text.as_str()), (ActorId::Agent(helper.id), "Helper", "noted"));
+
+        let agent = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
+        let seen = agent.context().await.expect("alice made the agent");
+        assert_eq!(seen.private_notes().0[0].text, "mine");
+        assert_eq!(seen.transcript().messages().len(), 1);
+        assert!(matches!(seen.context_of(first.id), Err(ContextError::NotRecorded { .. })), "the agent did not produce it");
+        let refused = reach(as_user(bob.id)).await.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not bob's to read");
+        assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
+        let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
+        assert!(matches!(none, ViewError::NoContext { .. }), "{none}");
+        assert!(matches!(for_alice.member(ActorId::System).await, Err(ViewError::MemberNotFound { .. })));
     }
 }

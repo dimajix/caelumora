@@ -64,8 +64,8 @@ in the channel.
     without content - before `FullResponseGenerated` ends the turn. Whoever
     reacts to the end of the turn thus reads the state it left.
 *   **Reading.** Others read published notes from the agents' states in the
-    `StateStore` (`ChannelLoop::published_notes`), so only notes of finished
-    turns are ever seen.
+    `StateStore` (`ChannelView::notes`, `ChannelLoop::published_notes`), so
+    only notes of finished turns are ever seen.
 *   **Prompt part.** The notes prompt part is a `BeforeTurnInput` part,
     empty when nothing is noted: the agent's own notes first, then those of
     the other agents of the channel.

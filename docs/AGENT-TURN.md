@@ -454,26 +454,27 @@ reference, resolved by one implementation, and therefore cannot diverge.
 
 ## Asking what an agent saw
 
-Asking for a message's context is an operation of the actor that produced
-the message, not of the channel: the same message is in every
-participant's history, but only one of them produced it.
+What an agent saw is read through the views (`caelumora_runtime::view`,
+issue 163), from the member of the channel that produced the message: the
+same message is in every participant's history, but only one of them
+produced it.
 
-*   `Actor::message_context(caller, message_id)` answers with the context
-    and the prompt parts. Only `AgentActor` has one; every other actor
-    answers `NotRecorded`.
-*   The agent asks the `SecurityManager` with
-    `ActionType::ReadAgentContext` and its own attributes. Under the
+*   `MemberView::context()` is the edge: it asks the `SecurityManager` with
+    `ActionType::ReadAgentContext` and the agent's attributes (`Forbidden`
+    otherwise; `NoContext` for a member that is no agent). Under the
     ownership policy only the agent's owner may, since a context holds more
     than the conversation: the system prompt, internal steps, tool results.
-*   It reads its state from the `StateStore`, where it is written after
-    every step; the running loop holds the in-memory state. Both reads
-    below go through `AgentActor::readable_state`, which asks the question
-    and loads the state; its `ReadStateError` (`Forbidden`, `Failed`) is
-    what `MessageContextError` takes over.
-*   `Actor::given_up_turns(caller)` answers, under the same question, with
-    the turns the agent gave up in the channel (issue 145): each with its
-    reason, time and messages. The context of each of those messages is
-    asked for like that of any other.
+*   It reads the agent's state from the `StateStore`, where it is written
+    after every step; the running loop holds the in-memory state. The
+    `AgentContextView` it answers with holds that state: the transcript,
+    the private notes, and
+*   `context_of(message_id)`, the context and the prompt parts the message
+    was produced from (`ContextError::NotRecorded` if the agent did not
+    produce it, `Unavailable` if what was recorded cannot be resolved any
+    more), and
+*   `given_up_turns()`, the turns the agent gave up in the channel (issue
+    145): each with its reason, time and messages. The context of each of
+    those messages is asked for like that of any other.
 
 REST exposes it as
 `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
@@ -486,9 +487,9 @@ turns given up, oldest first, and answers `403 context_forbidden` alike.
 
 So that a client offers this only where it works, every member of a channel
 response carries `can_read_context`, decided for the requesting user when
-the runtime builds the channel's view (see [SECURITY.md](SECURITY.md)): for
-agents only, the same policy question `message_context` checks, whether the
-channel runs or not.
+the channel's snapshot is taken (see [SECURITY.md](SECURITY.md#views)): for
+agents only, the same policy question `MemberView::context` asks, whether
+the channel runs or not.
 
 The web UI shows it in its context panel (issue 41), with the prompt parts
 where they were given, the knowledge read and the tools offered; see

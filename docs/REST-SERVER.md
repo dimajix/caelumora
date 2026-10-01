@@ -31,10 +31,14 @@ A handler translates; it does not decide.
     store and started - and only if the user may read it (issue 11). It tells
     a session that does not exist (`404`) from one that cannot be started
     (`500`, naming e.g. the broken component).
-*   **It reaches a channel through `open_channel`** (issue 102), the one way
-    a handler gets a channel. A channel the user may not read is answered as
-    absent, like one that does not exist; the runtime decides that
-    (`SessionLoop::channel_for`).
+*   **It acts on a channel through `open_channel`** (issue 102), the one
+    way a handler that writes, approves, runs a command or joins the event
+    stream gets the running channel. A handler that only reads - the
+    history, the notes, what an agent saw - reaches the channel through the
+    views (`routes::channel_of`, issue 163), running or not. Either way a
+    channel the user may not read is answered as absent, like one that does
+    not exist; the runtime decides that (`SessionLoop::channel_for`,
+    `SessionView::channel`).
 *   **It acts through the user's actor.** Writing, approving and running
     commands go through `user_actor_of`, which returns the authenticated
     user's own actor in the channel. Someone who is not a participant has

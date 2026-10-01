@@ -9,7 +9,7 @@ use axum::{
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::view::{Viewer, Views};
+use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
 
 mod channels;
@@ -47,12 +47,17 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 /// 80) - what a handler answers with a channel. Described by the runtime,
 /// which decides what the user may read and do; does not start the session.
 pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
-    let describing = || format!("describing channel {channel_id}");
+    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot().await.into())
+}
+
+/// Channel `channel_id` of session `session_id` as `user` reaches it
+/// (issue 163) - what a handler reads a channel through, running or not.
+pub async fn channel_of(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelView, ApiError> {
+    let reaching = || format!("reaching channel {channel_id}");
     let session = views(state, user).session(session_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &describing()))?;
-    let channel = session.channel(channel_id).await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &describing()))?;
-    Ok(channel.snapshot().await.into())
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &reaching()))?;
+    session.channel(channel_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &reaching()))
 }
 
 /// The views as `user` navigates them (issue 163): what a handler reads

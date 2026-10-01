@@ -1,4 +1,4 @@
-use crate::actor::{Actor, MessageContextError, ReadStateError};
+use crate::actor::Actor;
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
@@ -12,16 +12,15 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::context::{ContextResolver, ResolvedContext};
 use crate::controller::AgentController;
 use caelumora_model::approval::ApprovalStatus;
-use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::{Classification, Visibility};
-use caelumora_model::message::{Message, MessageEvent, MessageId};
-use caelumora_model::transcript::{GivenUpReason, GivenUpTurn};
+use caelumora_model::message::{Message, MessageEvent};
+use caelumora_model::transcript::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -34,7 +33,6 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug)]
 pub struct AgentActor {
     agent_id: AgentId,
-    channel_id: ChannelId,
     agent_controller: Arc<AgentController>,
     actor_runtime: ActorRuntime,
 
@@ -113,7 +111,6 @@ impl AgentActor {
 
         Ok(AgentActor {
             agent_id,
-            channel_id: channel.id,
             agent_controller,
             actor_runtime,
             context_provider,
@@ -765,23 +762,7 @@ impl AgentActor {
             Ok(ActorState::WaitingForApproval)
         }
     }
-
-    /// The agent's state in this channel, for `caller` to read who may read
-    /// the agent's context (`ReadAgentContext`): from the store, where it is
-    /// written after every step - the running loop holds the in-memory state
-    /// for as long as it runs.
-    async fn readable_state(&self, caller: &SecurityContext) -> Result<AgentChannelState, ReadStateError> {
-        let attributes = self.agent_controller.load().security_attributes.clone();
-        self.actor_runtime.security_manager()
-            .require(caller, ActionType::ReadAgentContext(&attributes), || ReadStateError::Forbidden { actor: self.id() }).await?;
-        self.actor_runtime.load_channel_state().await
-            .map_err(|e| {
-                warn!("Cannot read the state of agent {} in channel {}: {}", self.agent_id, self.channel_id, e);
-                ReadStateError::Failed { actor: self.id() }
-            })
-    }
 }
-
 
 /// What `cancel` or `stop` asked of the run loop, which takes it after every
 /// step and alone decides what follows (issue 152). A stop wins over a
@@ -806,13 +787,6 @@ enum TurnFlow {
     Lowered(Classification),
     /// The channel is gone.
     NoChannel,
-}
-
-/// What `state` says the agent saw when it produced `message`.
-fn context_of(state: &AgentChannelState, actor: ActorId, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
-    let reference = state.recorded_context_of(message)
-        .ok_or(MessageContextError::NotRecorded { actor, message })?;
-    ContextResolver::of(state).resolve(&reference, actor).ok_or(MessageContextError::Unavailable { actor, message })
 }
 
 #[async_trait]
@@ -962,14 +936,6 @@ impl Actor for AgentActor {
         self.processing_state.replace(ActorState::Sleeping, ActorState::Idle);
     }
 
-    async fn message_context(&self, caller: &SecurityContext, message: MessageId) -> Result<ResolvedContext, MessageContextError> {
-        context_of(&self.readable_state(caller).await?, self.id(), message)
-    }
-
-    async fn given_up_turns(&self, caller: &SecurityContext) -> Result<Vec<GivenUpTurn>, ReadStateError> {
-        Ok(self.readable_state(caller).await?.transcript.given_up_turns())
-    }
-
     fn cancel(&self) {
         info!(
             "Cancelling agent {} {}",
@@ -1000,7 +966,7 @@ mod tests {
     use crate::component_impl::state_history_appender::StateHistoryAppender;
     use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::message::MessageProcessor;
-    use caelumora_model::message::MessageRole;
+    use caelumora_model::message::{MessageId, MessageRole};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -1206,34 +1172,5 @@ mod tests {
         assert!(turn.messages().next().is_none() && turn.agent_channel_state().turn.is_none(), "nothing of the turn's work is stored with the state");
     }
 
-    #[test]
-    fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_resolve() {
-        use caelumora_model::digest::prompt;
-        use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
-        use caelumora_model::message::MessageRole;
 
-        let actor = ActorId::Agent(AgentId::new());
-        let text = |content: &str| Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
-        let mut state = AgentChannelState::default();
-        let question = text("question");
-        state.transcript.push(question.clone());
-        state.history.extend(vec![question.clone()]);
-        let answer = text("answer");
-        let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
-
-        let seen = context_of(&state, actor, answer.id).expect("the agent produced it");
-        let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
-            ContextItem::Conversation { message } => Some(message.id),
-            ContextItem::Prompt { .. } => None,
-        }).collect();
-        assert_eq!(ids, vec![question.id]);
-        assert!(matches!(context_of(&state, actor, question.id), Err(MessageContextError::NotRecorded { .. })), "someone else wrote it");
-
-        // A reference to a prompt that was never kept cannot be resolved.
-        let lost = text("lost");
-        let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None };
-        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
-        assert!(matches!(context_of(&state, actor, lost.id), Err(MessageContextError::Unavailable { .. })));
-    }
 }

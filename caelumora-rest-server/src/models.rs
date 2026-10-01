@@ -6,7 +6,7 @@ use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use caelumora_model::snapshot;
-use caelumora_runtime::session::SessionLoop;
+use caelumora_runtime::view::SessionView;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -369,22 +369,27 @@ pub struct KnowledgeRefResponse {
 impl KnowledgeRefResponse {
     /// `knowledge` with the names of its channel and agent, as far as
     /// `session` still has them.
-    pub fn describe(session: &SessionLoop, knowledge: &KnowledgeRef) -> Self {
-        // A channel of another session is not named here (issue 134).
-        let channel = (knowledge.channel.session_id == session.id())
-            .then(|| session.channel_by_id(knowledge.channel.channel_id))
-            .flatten();
+    pub async fn describe(session: &SessionView, knowledge: &KnowledgeRef) -> Self {
+        // A channel of another session is not named here (issue 134), nor
+        // one the viewer may not read.
+        let channel = match knowledge.channel.session_id == session.id() {
+            true => session.channel(knowledge.channel.channel_id).await.ok(),
+            false => None,
+        };
         let (source, agent_id, digest, history_start) = match knowledge.source {
             KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::History { digest, start } => ("history", None, digest, start),
             KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
         };
-        let agent_name = agent_id.and_then(|id| channel.as_ref()?.members().into_iter().find(|m| m.id == id).map(|m| m.name));
+        let agent_name = match (agent_id, &channel) {
+            (Some(id), Some(channel)) => channel.member(id).await.ok().and_then(|m| m.name().map(str::to_string)),
+            _ => None,
+        };
         Self {
             session_id: knowledge.channel.session_id,
             channel_id: knowledge.channel.channel_id,
-            channel_name: channel.map(|c| c.name()),
+            channel_name: channel.map(|c| c.name().to_string()),
             source,
             agent_id,
             agent_name,

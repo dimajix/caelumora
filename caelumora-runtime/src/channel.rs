@@ -999,7 +999,7 @@ pub struct VisibleHistory {
 }
 
 /// `history` as seen from `start`: all of it if there is none.
-fn visible_part(start: Option<HistoryStart>, history: Vec<Message>) -> Vec<Message> {
+pub(crate) fn visible_part(start: Option<HistoryStart>, history: Vec<Message>) -> Vec<Message> {
     match start {
         Some(start) => visible_from(start, history),
         None => history,
@@ -1769,7 +1769,7 @@ mod tests {
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),
         }] };
-        let Stuck { channel, context, agent, helper, mut events, running } =
+        let Stuck { channel, context: _, agent, helper, mut events, running } =
             with_an_agent(Arc::new(FailsAfter(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
 
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -1783,12 +1783,13 @@ mod tests {
 
         // The turn's messages are a branch no longer active, marked as given
         // up; what the model saw for them can still be told.
-        let turns = helper.given_up_turns(&context).await.expect("permitted");
+        let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), stored.clone());
+        let turns = seen.given_up_turns();
         assert_eq!(turns.len(), 1);
         assert!(matches!(turns[0].given_up.reason, GivenUpReason::Failed { .. }));
         let roles: Vec<_> = turns[0].messages.iter().map(|m| m.role).collect();
         assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
-        assert!(helper.message_context(&context, calculate.id).await.is_ok(), "the call's context is resolved on its branch");
+        assert!(seen.context_of(calculate.id).is_ok(), "the call's context is resolved on its branch");
 
         // On the active branch the agent is told what ran, and nothing else
         // of the turn is there - neither in its transcript nor its history.

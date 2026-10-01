@@ -413,3 +413,27 @@ each step, for running and stopped sessions alike.
   root (step 4) is its own `SessionLoop`, for which the root will become
   a small trait over "where the running sessions are". The tests on views
   moved from `session.rs` to `view/`.
+- **2026-10-01** — Steps 2 and 3 done together: the reads on the nodes
+  and the REST handlers that use them went in one, since the `Actor`
+  trait's reads could only go once nothing called them.
+  - `ChannelView::history()` (the running loop's `visible_history`, or
+    the stored `ChannelState` with the channel's `history_limits`) and
+    `notes()`; `MemberView::notes()` and `context()`, which asks
+    `ReadAgentContext` and answers an `AgentContextView` with
+    `transcript()`, `private_notes()`, `context_of(message)` and
+    `given_up_turns()`. `ViewError` gained `Forbidden` and `NoContext`;
+    `ContextError` (`NotRecorded`, `Unavailable`) is the context's own.
+  - Gone: `Actor::message_context` and `given_up_turns`, with
+    `MessageContextError` and `ReadStateError`; `AgentActor::readable_state`
+    and `context_of` (now `AgentContextView::context_of`, test moved).
+  - REST: `GET …/messages`, `…/notes`, `…/actors/{aid}/messages/{mid}/context`
+    and `…/given-up-turns` read through `routes::channel_of` and no longer
+    start the session; `open_channel` is left to the operations and the
+    event stream. `KnowledgeRefResponse::describe` names a channel through
+    the views now, so a channel the viewer may not read is named by id only
+    (before, every channel of the session was named).
+  - Not moved yet: `ChannelLoop::published_notes` and `private_notes`,
+    which `SessionReader` still uses (step 5); `AgentView` and the memory,
+    which only the memory component needs (step 4).
+  - A member is still one of the channel's participants: a removed agent's
+    context stays unreachable until step 6.
