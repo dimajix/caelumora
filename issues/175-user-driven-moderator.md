@@ -1,6 +1,6 @@
 # 175 — No moderator lets agents act only when a person writes
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -109,3 +109,10 @@ before.
 - **2026-10-01** — [174](174-moderator-as-component.md) made the moderator and
   its policy components; `ResponderPolicy::choose` now receives the sender, as
   recommended above. The new moderator is a new policy component.
+- **2026-10-01** — Done: the `user_driven_policy` component
+  (`moderator_impl/user_driven_policy.rs`) asks every candidate when a user
+  wrote and nobody when an agent did; mentions stay with `PolicyModerator`.
+  The web UI offers it as "Only to you", [CHANNELS.md](../docs/CHANNELS.md#moderators)
+  describes it, and `examples/seed.yaml` has a `user-driven-session` template
+  whose channel uses it. That an agent's mention asks the mentioned agent
+  comes with [45](45-agent-mentions.md), which remains open.

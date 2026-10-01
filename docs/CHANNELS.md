@@ -371,9 +371,13 @@ a new policy:
 | `round_robin_policy` (default) | the agents take turns, in the order of their ids; a mention does not take a turn |
 | `random_policy` | one agent, chosen at random |
 | `mentions_only_policy` | nobody: agents respond only when a user mentions them |
+| `user_driven_policy` | every agent if a user wrote, nobody if an agent did |
 
 Under the first three, an agent's answer makes other agents answer too: the
-agents can discuss with each other.
+agents can discuss with each other. Under `user_driven_policy` (issue 175) the
+agents answer when a person writes and are quiet in between: an agent's
+message is still delivered to the other agents, into their transcripts, but
+starts no turn. Loops come from asking to respond, not from delivering.
 
 The REST API returns each channel's `moderator` and `responder_policy` -
 their kinds as configured, `null` for a preconfigured component

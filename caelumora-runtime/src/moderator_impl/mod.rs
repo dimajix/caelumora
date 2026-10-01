@@ -11,6 +11,7 @@ pub mod mentions_only_policy;
 pub mod policy_moderator;
 pub mod random_policy;
 pub mod round_robin_policy;
+pub mod user_driven_policy;
 
 use crate::component::ComponentRegistry;
 use crate::moderator::Moderator;
@@ -40,4 +41,5 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     policy_moderator::register(registry);
     random_policy::register(registry);
     round_robin_policy::register(registry);
+    user_driven_policy::register(registry);
 }

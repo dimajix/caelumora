@@ -12,6 +12,7 @@ const RESPONDER_POLICIES: Record<string, ResponderPolicyInfo> = {
   mentions_only_policy: {label: 'Mentions only', description: 'Agents answer only when you @-mention them.'},
   random_policy: {label: 'Random', description: 'One agent, chosen at random, answers each message.'},
   round_robin_policy: {label: 'Round robin', description: 'The agents take turns answering.'},
+  user_driven_policy: {label: 'Only to you', description: 'Every agent answers your messages, but not each other.'},
 };
 
 /** The policy kinds this UI knows, for choosing one (issue 09). */

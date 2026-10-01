@@ -172,3 +172,33 @@ session_templates:
     - approval
     - Jonathan
     - Sassy
+- id: 9ea5159d-3f05-466b-8d4f-6fa3078aad60
+  metadata:
+    name: user-driven-session
+    description: Two assistants that both answer you, but not each other
+    scope: GlobalScope
+  scope: SessionScope
+  participants:
+  - User:
+      name: user
+  - Approver:
+      name: approval
+  - Agent:
+      name: Jonathan
+      scope: UserScope
+      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  - Agent:
+      name: Sassy
+      scope: SessionScope
+      personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+  channels:
+  - name: main
+    components:
+      component_nodes:
+      - id: responders
+        kind: user_driven_policy
+    participants:
+    - user
+    - approval
+    - Jonathan
+    - Sassy

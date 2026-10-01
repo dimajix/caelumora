@@ -248,7 +248,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::moderator::Moderator;
-    use crate::moderator_impl::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy};
+    use crate::moderator_impl::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
@@ -330,12 +330,14 @@ mod tests {
         ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(policy) }
     }
 
-    /// The moderators that ask someone to respond when nobody is mentioned.
+    /// The moderators that ask someone to respond to a user when nobody is
+    /// mentioned.
     fn answering_moderators() -> Vec<PolicyModerator> {
         vec![
             PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy)),
             PolicyModerator::new(policy(random_policy::RandomPolicy::new())),
             PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default())),
+            PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy)),
         ]
     }
 
@@ -432,6 +434,23 @@ mod tests {
 
         let decision = moderator.route(&message_from(agents[0], "@b, your turn", vec![agents[1]])).await;
         assert!(responders(&decision).is_empty(), "an agent's mention is not routed");
+    }
+
+    #[tokio::test]
+    async fn user_driven_asks_every_agent_for_a_user_and_nobody_for_an_agent() {
+        let moderator = PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy));
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+
+        let decision = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await;
+        assert_eq!(responders(&decision).into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every awake agent answers a user");
+
+        let decision = moderator.route(&message_from(user, "@b", vec![agents[1]])).await;
+        assert_eq!(responders(&decision), vec![agents[1]], "a user's mention asks only the mentioned agent");
+
+        let decision = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await;
+        assert!(responders(&decision).is_empty(), "an agent's message asks nobody");
+        assert_eq!(receivers(&decision), HashSet::from([agents[1], agents[2]]), "but is delivered to the other agents");
     }
 
     #[tokio::test]
