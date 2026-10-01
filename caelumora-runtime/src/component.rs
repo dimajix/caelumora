@@ -234,13 +234,14 @@ impl ComponentRegistry {
     }
 
     /// A registry with every built-in component kind
-    /// (`component_impl::register_all`), resolving references to
+    /// (`component_impl::register_all`, `moderator_impl::register_all`), resolving references to
     /// preconfigured components in `entity_store`. A binary passes it to
     /// the `RuntimeManager` as it is; a test may register kinds of its own
     /// first, such as a stand-in for the model.
     pub fn built_in(entity_store: Arc<dyn EntityStore>) -> Self {
         let mut registry = Self::new(entity_store);
         crate::component_impl::register_all(&mut registry);
+        crate::moderator_impl::register_all(&mut registry);
         registry
     }
 
@@ -324,6 +325,27 @@ impl ComponentRegistry {
         }
         self.defaults = defaults;
         Ok(())
+    }
+
+    /// The kind of the component of `config` that provides `T`, a facet of
+    /// which there is one - or else of the default built for it - as
+    /// configured, without building anything (issue 174). `None` if `T` is
+    /// no such facet, or if `config` refers to a preconfigured component
+    /// (`ref`) and none of its own provides `T`: what that one provides only
+    /// its descriptor in the store tells.
+    pub fn kind_of<T: ?Sized + 'static>(&self, config: &ComponentConfig) -> Option<String> {
+        let facet = FacetType::of::<T>();
+        if !self.singles.contains_key(&facet.id) {
+            return None;
+        }
+        let provides = |kind: &str| self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id));
+        if let Some(node) = config.component_nodes.iter().find(|node| provides(&node.kind)) {
+            return Some(node.kind.clone());
+        }
+        if config.component_nodes.iter().any(|node| node.kind == PRECONFIGURED_REF_KIND) {
+            return None;
+        }
+        self.default_of(facet.id).map(|descriptor| descriptor.kind)
     }
 
     /// The facets `kind` provides; `None` for a kind that is not registered.
@@ -902,6 +924,18 @@ mod tests {
         let container = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.unwrap();
         assert_eq!(container.one::<dyn Choice>().await.unwrap().id, "configured");
         assert_eq!(built.load(Ordering::SeqCst), 0, "the built-in default is not built");
+    }
+
+    #[test]
+    fn the_kind_of_a_single_is_told_from_the_configuration_without_building_it() {
+        let (mut registry, built) = choices();
+        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part"), ("mine", "other")])).as_deref(), Some("other"));
+        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("a", "part")])).as_deref(), Some("default"), "the default if none provides it");
+        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[("shared", PRECONFIGURED_REF_KIND)])), None, "a preconfigured one might provide it");
+        assert_eq!(registry.kind_of::<dyn Named>(&config(&[("a", "part")])), None, "of Named there may be any number");
+        registry.set_defaults(&config(&[("configured", "other")])).unwrap();
+        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("other"), "the configured default");
+        assert_eq!(built.load(Ordering::SeqCst), 0, "nothing is built");
     }
 
     #[test]

@@ -3,12 +3,6 @@ use crate::command::{CommandExecutor, CommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
-use crate::moderator::Moderator;
-use crate::moderator_impl::broadcast::BroadcastPolicy;
-use crate::moderator_impl::mentions_only::MentionsOnlyPolicy;
-use crate::moderator_impl::random::RandomPolicy;
-use crate::moderator_impl::round_robin::RoundRobinPolicy;
-use crate::moderator_impl::PolicyModerator;
 use crate::recorder::Recorder;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -79,6 +73,10 @@ impl ChannelRuntime {
 
     pub fn security_manager(&self) -> Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
 
+    pub fn secret_manager(&self) -> Arc<SecretManager> { self.runtime_manager.secret_manager() }
+
+    pub fn component_registry(&self) -> Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
+
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.runtime_manager.state_store() }
 
 
@@ -91,7 +89,6 @@ impl ChannelRuntime {
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
-    pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> { self.runtime_manager.new_moderator(kind) }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
@@ -348,16 +345,6 @@ impl RuntimeManager {
     /// The owner of every running agent's `AgentState` (issue 62).
     pub fn agent_states(&self) -> Arc<crate::agent_state::AgentStates> {
         self.agent_states.clone()
-    }
-
-    pub fn new_moderator(&self, kind: &String) -> Result<Box<dyn Moderator>> {
-        match kind.as_str() {
-            "broadcast" => Ok(Box::new(PolicyModerator::new(BroadcastPolicy))),
-            "mentions_only" => Ok(Box::new(PolicyModerator::new(MentionsOnlyPolicy))),
-            "random" => Ok(Box::new(PolicyModerator::new(RandomPolicy::new()))),
-            "round_robin" => Ok(Box::new(PolicyModerator::new(RoundRobinPolicy::default()))),
-            _ => Err(crate::session::SessionError::UnknownModerator(kind.clone()).into())
-        }
     }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {

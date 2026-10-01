@@ -541,7 +541,7 @@ mod tests {
             id: ChannelId(Uuid::new_v4()),
             session_id,
             name: "general".to_string(),
-            moderator: "broadcast".to_string(),
+            components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: Vec::new(),

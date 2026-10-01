@@ -70,8 +70,10 @@ impl ScopeTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelTemplate {
     pub name: String,
-    #[serde(default = "default_moderator")]
-    pub moderator: String,
+    /// The channel's components (issue 174): its moderator and the policy
+    /// that fills its slot; the defaults if none are named.
+    #[serde(default)]
+    pub components: ComponentConfig,
     /// The classification of the channel's contents (issue 133);
     /// `internal` without compartments unless named.
     #[serde(default)]
@@ -80,10 +82,6 @@ pub struct ChannelTemplate {
     /// the template. A channel that names no approver gets one anyway
     /// (`Channel::build`).
     pub participants: Vec<String>,
-}
-
-fn default_moderator() -> String {
-    crate::channel::DEFAULT_MODERATOR.to_string()
 }
 
 impl ChannelTemplate {
@@ -99,7 +97,7 @@ impl ChannelTemplate {
                 .map(|(_, participant)| participant.clone())
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
-        Ok(Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.moderator.clone(), self.classification.clone(), participants))
+        Ok(Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), participants))
     }
 }
 
@@ -253,13 +251,13 @@ mod tests {
             channels: vec![
                 ChannelTemplate {
                     name: "main".to_string(),
-                    moderator: "broadcast".to_string(),
+                    components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
                 },
                 ChannelTemplate {
                     name: "side".to_string(),
-                    moderator: "broadcast".to_string(),
+                    components: crate::component::ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string()],
                 },

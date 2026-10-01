@@ -44,8 +44,14 @@ pub struct ParticipantSnapshot {
 pub struct ChannelSnapshot {
     pub id: ChannelId,
     pub name: String,
-    /// The kind of moderator, e.g. `round_robin` (issue 44).
-    pub moderator: String,
+    /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
+    /// 174); `None` if it is a preconfigured component, whose kind is not
+    /// known without reading it.
+    pub moderator: Option<String>,
+    /// The kind of the policy configured for the moderator's slot, e.g.
+    /// `round_robin_policy` (issues 44, 174): whom it asks to respond.
+    /// `None` like `moderator`.
+    pub responder_policy: Option<String>,
     /// The classification of the channel's contents (issue 133).
     pub classification: Classification,
     /// Whether the viewer may rename the channel and add or remove its

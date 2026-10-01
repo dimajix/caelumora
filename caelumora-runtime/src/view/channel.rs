@@ -2,6 +2,8 @@
 
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
+use crate::moderator::Moderator;
+use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::channel::{Channel, ChannelState, Participant};
@@ -70,9 +72,17 @@ impl ChannelView {
         &self.channel.name
     }
 
-    /// The kind of moderator, e.g. `round_robin` (issue 44).
-    pub fn moderator(&self) -> &str {
-        &self.channel.moderator
+    /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
+    /// 174); `None` if it is a preconfigured component.
+    pub fn moderator(&self) -> Option<String> {
+        self.views().runtime.component_registry().kind_of::<dyn Moderator>(&self.channel.components)
+    }
+
+    /// The kind of the policy configured for the moderator's slot, e.g.
+    /// `round_robin_policy` (issues 44, 174); `None` if it is a
+    /// preconfigured component.
+    pub fn responder_policy(&self) -> Option<String> {
+        self.views().runtime.component_registry().kind_of::<dyn ResponderPolicy>(&self.channel.components)
     }
 
     /// The classification of the channel's contents (issue 133).
@@ -215,7 +225,8 @@ impl ChannelView {
         ChannelSnapshot {
             id: self.channel.id,
             name: self.channel.name.clone(),
-            moderator: self.channel.moderator.clone(),
+            moderator: self.moderator(),
+            responder_policy: self.responder_policy(),
             classification: self.channel.classification.clone(),
             can_change: self.may_change().await,
             members,

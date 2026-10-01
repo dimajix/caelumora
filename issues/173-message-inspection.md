@@ -159,3 +159,6 @@ without an actor) for the other.
   the runtime repairs an agent's transcript, inspectors as components of the
   channel. Open: derived notes and memory, which models may inspect which
   channels.
+- **2026-10-01** — [174](174-moderator-as-component.md) gave channels their
+  components (`Channel::components`, built by `ChannelLoop::new` in the name
+  of the channel's owner); inspectors can be added to them.

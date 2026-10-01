@@ -13,6 +13,7 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{ChannelView, MemberView, Viewer};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
+use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageId};
@@ -52,7 +53,8 @@ pub async fn create_channel(
     let session = crate::routes::ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
 
-    let spec = ChannelSpec { name: payload.name, moderator: payload.moderator, participants: payload.participants, classification: payload.classification };
+    let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
+    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification };
     let channel = session.create_channel(&context, spec).await
         .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("creating a channel in session {session_id}")))?;
     Ok(Json(crate::routes::channel_view(&state, &user, session_id, channel.id()).await?))

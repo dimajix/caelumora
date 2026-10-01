@@ -51,7 +51,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the model |
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
-| `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of moderators and classifications |
+| `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
@@ -115,7 +115,7 @@ policy that lets other sessions read says that it holds for what is said
 from then on.
 
 A new session is created from a template; the one used last in this browser
-is preselected (issue 40). A new channel is created with its name, moderator,
+is preselected (issue 40). A new channel is created with its name, responder policy,
 classification - a level and, if any are configured, compartments from
 `GET /compartments` (issue 133) - and participants (`NewChannelDialog`,
 issue 09).
@@ -171,9 +171,10 @@ fetches its messages again, which lowering it may have changed.
 
 The member list is sorted by name and uses the members' handles for `@`
 completion and for highlighting mentions; participants that cannot be
-mentioned, such as approvers, have none. The channel's moderator is shown
-above it, and for `mentions_only` the input says that agents answer only when
-mentioned (`moderator.ts`).
+mentioned, such as approvers, have none. Who answers - the channel's
+`responder_policy` (issue 174) - is shown above it as its moderator, and for
+`mentions_only_policy` the input says that agents answer only when mentioned
+(`moderator.ts`).
 
 Where `can_change` is set, the member list offers adding a participant of the
 session - with how much of the history they may see (`AddParticipantDialog`,

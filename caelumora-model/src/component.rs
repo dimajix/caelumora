@@ -31,6 +31,21 @@ pub struct ComponentDescriptor {
     pub security_attributes: SecurityAttributes,
 }
 
+impl ComponentDescriptor {
+    /// The component `id` of `kind`, with everything else as it is when
+    /// left out by hand.
+    pub fn new(id: &str, kind: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            params: Value::Null,
+            tags: Vec::new(),
+            fail_policy: Default::default(),
+            security_attributes: Default::default(),
+        }
+    }
+}
+
 impl Secured for ComponentDescriptor {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes

@@ -79,7 +79,7 @@ fn session_template() -> SessionTemplate {
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
             name: "general".to_string(),
-            moderator: "broadcast".to_string(),
+            components: crate::channel::moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             participants: vec!["user".to_string()],
         }],
@@ -105,7 +105,7 @@ fn channel() -> Channel {
         id: ChannelId(Uuid::new_v4()),
         session_id: SessionId(Uuid::new_v4()),
         name: "general".to_string(),
-        moderator: "broadcast".to_string(),
+        components: crate::channel::moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         history_limits: Vec::new(),
         participants: Vec::new(),

@@ -202,8 +202,12 @@ pub struct AddParticipantRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
     pub name: String,
-    /// The moderator kind, e.g. `mentions_only`; the default if absent.
+    /// The kind of the moderator, e.g. `policy_moderator`; the default if
+    /// absent (issue 174).
     pub moderator: Option<String>,
+    /// The kind of the policy for the moderator's slot, e.g.
+    /// `mentions_only_policy`; the default if absent.
+    pub responder_policy: Option<String>,
     /// Participants of the session to take part. The requesting user takes
     /// part anyway.
     #[serde(default)]
@@ -223,9 +227,13 @@ pub struct ChannelResponse {
     /// `@`-mentioned by - used by the web UI for the member list, completion
     /// and to render the `mentions` of a message.
     pub members: Vec<ChannelMemberResponse>,
-    /// The kind of moderator, e.g. `round_robin` or `mentions_only` - who is
-    /// asked to respond to a message (issue 44).
-    pub moderator: String,
+    /// The kind of the moderator, e.g. `policy_moderator` (issue 174);
+    /// `null` if it is a preconfigured component.
+    pub moderator: Option<String>,
+    /// The kind of the policy for the moderator's slot, e.g.
+    /// `round_robin_policy` or `mentions_only_policy` - who is asked to
+    /// respond to a message (issues 44, 174); `null` like `moderator`.
+    pub responder_policy: Option<String>,
     /// The classification of the channel's contents (issue 133).
     pub classification: Classification,
     /// Whether the requesting user may rename the channel and add or remove
@@ -241,6 +249,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             // Every member is a user, an agent or an approver.
             members: view.members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
             moderator: view.moderator,
+            responder_policy: view.responder_policy,
             classification: view.classification,
             can_change: view.can_change,
         }
@@ -443,7 +452,8 @@ mod tests {
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
-            moderator: "broadcast".to_string(),
+            moderator: Some("policy_moderator".to_string()),
+            responder_policy: Some("broadcast_policy".to_string()),
             classification: Classification::CHANNEL_DEFAULT,
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],

@@ -334,7 +334,7 @@ mod tests {
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: "main".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,

@@ -112,7 +112,6 @@ session_templates:
       personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
   channels:
   - name: main
-    moderator: round_robin
     participants:
     - user
     - approval
@@ -138,7 +137,6 @@ session_templates:
       personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   channels:
   - name: main
-    moderator: round_robin
     participants:
     - user
     - approval
@@ -165,7 +163,10 @@ session_templates:
       personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   channels:
   - name: main
-    moderator: mentions_only
+    components:
+      component_nodes:
+      - id: responders
+        kind: mentions_only_policy
     participants:
     - user
     - approval

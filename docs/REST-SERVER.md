@@ -72,7 +72,7 @@ logged-in user.
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session |
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
-| `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) |
+| `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |

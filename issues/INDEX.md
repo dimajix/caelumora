@@ -99,7 +99,7 @@ against it, and what came out of the last attempt.
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [171](171-readded-while-still-stopping.md) | open | A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state. |
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
-| [174](174-moderator-as-component.md) | open | The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended. |
+| [174](174-moderator-as-component.md) | done | The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended. |
 | [175](175-user-driven-moderator.md) | open | There is no moderator under which every agent answers a person's message but no agent's message makes another agent answer. |
 
 ## Identity and access management

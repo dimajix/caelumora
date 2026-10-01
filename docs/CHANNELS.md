@@ -72,15 +72,18 @@ channel has none - a template may name its own, with its strategy - and makes
 every user and agent in the channel a contributor.
 
 The participants of a requested channel come from the session's
-participants, the creator always among them. Its moderator defaults to
-`round_robin` and its classification to `internal` without compartments, as
-in a template (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+participants, the creator always among them. Its moderator defaults to the
+`policy_moderator` with the `round_robin_policy` and its classification to
+`internal` without compartments, as in a template (see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md) and [Moderators](#moderators)).
 
 A request that cannot be met is a `SessionError`, refused before anything is
-stored: no name, a name the session already has, an unknown moderator,
-someone who is not a participant of the session, or a classification the
-policy refuses (`ActionType::Classify`: a compartment that is not configured).
-The last is asked for channels from a template too.
+stored: no name, a name the session already has, someone who is not a
+participant of the session, or a classification the policy refuses
+(`ActionType::Classify`: a compartment that is not configured). The last is
+asked for channels from a template too. Components that make no moderator
+(`SessionError::InvalidModerator`) are found when the channel is built, after
+it was stored; it is then taken back out of the session and deleted.
 
 ### Running channels
 
@@ -332,30 +335,50 @@ Components are not given their actor's `ActorRuntime`, only what their
 
 ## Moderators
 
-A moderator decides how messages are routed and who is asked to respond. A
-channel's moderator is named in its template (`ChannelTemplate.moderator`,
-default `round_robin`) and built by `RuntimeManager::new_moderator`.
+A moderator decides how messages are routed and who is asked to respond. It
+is a component of the channel (issue 174): a channel has components
+(`Channel::components`, from `ChannelTemplate.components` or the request),
+which `ChannelLoop::new` builds as an agent builds its own - in the name of
+the channel's owner - and takes the one `Moderator` of. `Moderator` and
+`ResponderPolicy` are facets of which a channel has exactly one, each with a
+default (see [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one)):
 
-All moderators route the same way:
+```yaml
+channels:
+- name: main
+  components:
+    component_nodes:
+    - id: responders
+      kind: mentions_only_policy
+```
+
+The built-in moderator, `policy_moderator` (the default), routes the way
+every channel routes:
 
 *   every message goes to every other participant;
 *   approvals, failed turns and announced commands go to whom they concern;
 *   every agent a user `@`-mentioned is asked to respond.
 
-They differ only in whom they ask when a message mentions no agent. That
-difference is a `ResponderPolicy`, and `PolicyModerator` is everything else
-(`caelumora-runtime/src/moderator_impl/`), so a new moderator is a new
-policy:
+Whom it asks when a message mentions no agent is its slot, the channel's
+`ResponderPolicy`, which it asks for when it is built
+(`caelumora-runtime/src/moderator_impl/`). The policy is told who wrote the
+message and which agents could answer. A new way of choosing who answers is
+a new policy:
 
-| Moderator | Who responds to a message without a mention |
+| Policy | Who responds to a message without a mention |
 |---|---|
-| `broadcast` | every agent |
-| `round_robin` | the agents take turns, in the order of their ids; a mention does not take a turn |
-| `random` | one agent, chosen at random |
-| `mentions_only` | nobody: agents respond only when a user mentions them |
+| `broadcast_policy` | every agent |
+| `round_robin_policy` (default) | the agents take turns, in the order of their ids; a mention does not take a turn |
+| `random_policy` | one agent, chosen at random |
+| `mentions_only_policy` | nobody: agents respond only when a user mentions them |
 
-The REST API returns each channel's `moderator`, which the web UI explains
-to the user (see [WEB-UI.md](WEB-UI.md)); the TUI prints it when the chat
+Under the first three, an agent's answer makes other agents answer too: the
+agents can discuss with each other.
+
+The REST API returns each channel's `moderator` and `responder_policy` -
+their kinds as configured, `null` for a preconfigured component
+(`ComponentRegistry::kind_of`) - and the web UI explains the policy to the
+user (see [WEB-UI.md](WEB-UI.md)); the TUI prints both when the chat
 starts.
 
 ### `@`-Mentions

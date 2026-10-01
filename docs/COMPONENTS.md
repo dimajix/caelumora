@@ -2,6 +2,7 @@
 
 An agent's behaviour is assembled from components: what tools it has, what
 its prompt contains, how its context is built and how its tool calls run.
+A session's user commands and a channel's moderator are components too.
 This document describes how components are declared, registered, wired and
 built, and lists the built-in ones. The tools and commands that components
 contribute are described in [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md);
@@ -10,8 +11,8 @@ how the agent uses its components during a turn is in
 
 ## Configuration, registry and container
 
-*   **`ComponentConfig`** declares the components of a personality (or of a
-    session's commands). Their order matters: it is the order in which they
+*   **`ComponentConfig`** declares the components of a personality, of a
+    session's commands or of a channel (its moderator, issue 174). Their order matters: it is the order in which they
     are handed out.
 *   **`ComponentDescriptor`** configures one component: its `id`, its
     `kind`, its `params`, its `tags` and its `fail_policy` (`FailOpen`, the
@@ -49,6 +50,8 @@ in the agent loop.
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
 | `PerceiveInProcessor` | handling of incoming messages | `crate::message` |
 | `EmitOutProcessor` | handling of outgoing messages | `crate::message` |
+| `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
+| `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator_impl` |
 
 `EmitOutProcessor` has no implementation yet; it is kept as an extension
 point (issue 99). Each facet trait lives next to the code that uses it, not
@@ -79,17 +82,22 @@ Components are wired the way Spring Boot wires beans (issue 99).
 ### Facets of which there is exactly one
 
 Of some facets an agent has exactly one: the `ContextProvider` (issue 98),
-the `ToolExecutor` (issue 127) and the `LLMClient` (issue 130). They are
+the `ToolExecutor` (issue 127) and the `LLMClient` (issue 130); a channel
+has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
 registered with
 `ComponentRegistry::single::<T>(default_kind)` in
-`component_impl::register_all`.
+`component_impl::register_all` and `moderator_impl::register_all`.
 
 *   Two components of one container that provide such a facet are refused
     before anything is built.
 *   If none does, a default is built the first time the facet is asked for
     (`ComponentContainer::one`, `ComponentContext::one`). A container that
     never asks - a session's commands, say - never builds one.
-*   The default comes from, in this order: the personality's own
+*   What a container's single is, is known without building it:
+    `ComponentRegistry::kind_of` names the kind of the component that
+    provides it, or of the default - `None` if the container refers to a
+    preconfigured component, which might provide it.
+*   The default comes from, in this order: the container's own
     component, the configuration (`AppConfig::component_defaults`, one
     component per such facet, checked when the `RuntimeManager` is made,
     see [CONFIGURATION.md](CONFIGURATION.md)), and finally the kind
@@ -110,7 +118,7 @@ registered with
 `ComponentContext`. The context holds:
 
 *   the `SecurityContext` of the whole graph - for an agent's components,
-    the agent's, in whose name they ask,
+    the agent's, in whose name they ask; for a channel's, its owner's,
 *   the `SecurityManager`, for the questions a component asks in that
     context (`AccessQuestions`; the memory asks what it may recall, issue
     131),
@@ -131,7 +139,8 @@ reading other channels did.
 
 ## Writing a component
 
-The built-in components live in `caelumora-runtime/src/component_impl/`,
+The built-in components live in `caelumora-runtime/src/component_impl/` -
+the moderators and policies in `caelumora-runtime/src/moderator_impl/` -
 **one file per component kind**, named after the kind
 (`calculator_tool.rs`, `notes.rs`, ...). Each file holds the kind constant,
 its `register` function and its tests; `component_impl::register_all`
@@ -180,6 +189,11 @@ with `?`.
 | `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |
 | `transcript_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's transcript. |
 | `state_history_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's history. |
+| `policy_moderator` | `Moderator` | - | The default moderator of a channel: routes as every channel does and asks its `ResponderPolicy` whom to ask ([CHANNELS.md](CHANNELS.md#moderators)). |
+| `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
+| `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |
+| `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
+| `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `help_command` | `CommandProvider` | - | The user command `/help`. |
 | `wakeup_command` | `CommandProvider` | - | The user command `/wakeup`. |
 

@@ -22,7 +22,7 @@ misspelt section doesn't silently fall back to its default (issue 96).
 | `server` | Where the REST server listens (`address`). | `127.0.0.1:3000` - this machine only, as long as `accept_any` may be enabled |
 | `logging` | The log `format` (`text` or `json`) and an optional `file`. What is logged is selected with `RUST_LOG`. See [CODING-GUIDELINES.md](CODING-GUIDELINES.md). | `text`; stderr (REST server) or `local/tui.log` (TUI) |
 | `commands` | The user commands every session has, as components (`component_nodes`); a session template can add its own. An empty list switches them off. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md). | `help_command` and `wakeup_command` |
-| `component_defaults` | Components that replace the built-in default of a facet of which an agent has exactly one (`LLMClient`, `ContextProvider`, `ToolExecutor`), for every personality that does not configure its own. One component per such facet, checked when the `RuntimeManager` is made. See [COMPONENTS.md](COMPONENTS.md). | the built-in defaults |
+| `component_defaults` | Components that replace the built-in default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`, `ToolExecutor`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own. One component per such facet, checked when the `RuntimeManager` is made. See [COMPONENTS.md](COMPONENTS.md). | the built-in defaults |
 
 ## The model
 

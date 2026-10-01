@@ -7,7 +7,7 @@ import {X} from 'lucide-react';
 import type {ActorId, ChannelResponse, Compartment, SessionSnapshot, UserResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {DEFAULT_MODERATOR, MODERATOR_KINDS, moderatorInfo} from '../moderator';
+import {DEFAULT_RESPONDER_POLICY, RESPONDER_POLICY_KINDS, responderPolicyInfo} from '../moderator';
 import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
 
 /** The key an `ActorId` is told apart by. */
@@ -33,7 +33,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     .filter(p => p.kind !== 'approver' && !isUser(p.id, user))
     .sort((l, r) => l.name.localeCompare(r.name));
   const [name, setName] = useState('');
-  const [moderator, setModerator] = useState(DEFAULT_MODERATOR);
+  const [responderPolicy, setResponderPolicy] = useState(DEFAULT_RESPONDER_POLICY);
   const [level, setLevel] = useState<ConfidentialityLevel>(DEFAULT_CLASSIFICATION.level);
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   const [chosenCompartments, setChosenCompartments] = useState<Set<string>>(new Set());
@@ -73,7 +73,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     try {
       const channel = await api.createChannel(session.id, {
         name: name.trim(),
-        moderator,
+        responder_policy: responderPolicy,
         // Public takes no compartment.
         classification: {level, compartments: level === 'public' ? [] : [...chosenCompartments]},
         participants: candidates.filter(p => chosen.has(actorKey(p.id))).map(p => p.id),
@@ -127,15 +127,15 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
           <label className="block space-y-1">
             <span className="text-xs text-gray-400">Moderator</span>
             <select
-              value={moderator}
-              onChange={(e) => setModerator(e.target.value)}
+              value={responderPolicy}
+              onChange={(e) => setResponderPolicy(e.target.value)}
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
             >
-              {MODERATOR_KINDS.map(kind => (
-                <option key={kind} value={kind}>{moderatorInfo(kind).label}</option>
+              {RESPONDER_POLICY_KINDS.map(kind => (
+                <option key={kind} value={kind}>{responderPolicyInfo(kind).label}</option>
               ))}
             </select>
-            <span className="block text-xs text-gray-500">{moderatorInfo(moderator).description}</span>
+            <span className="block text-xs text-gray-500">{responderPolicyInfo(responderPolicy).description}</span>
           </label>
 
           <label className="block space-y-1">

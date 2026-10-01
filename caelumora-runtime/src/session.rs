@@ -3,7 +3,8 @@ use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{Channel, DEFAULT_MODERATOR};
+use caelumora_model::channel::Channel;
+use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
@@ -27,8 +28,11 @@ pub enum SessionError {
     EmptyChannelName,
     #[error("Session {session} already has a channel named \"{name}\"")]
     DuplicateChannelName { session: SessionId, name: String },
-    #[error("There is no moderator \"{0}\"")]
-    UnknownModerator(String),
+    /// The channel's components do not make a moderator (issue 174): a kind
+    /// that does not exist, two moderators, two policies. Found when the
+    /// channel is built; a channel created so is taken back out.
+    #[error("The channel's moderator cannot be built: {0}")]
+    InvalidModerator(#[source] crate::component::ComponentError),
     #[error("{participant} is not a participant of session {session}")]
     NotAParticipant { session: SessionId, participant: ActorId },
     /// Only a user owns a session made from a template (issue 88).
@@ -76,8 +80,10 @@ async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeMa
 #[derive(Debug, Clone)]
 pub struct ChannelSpec {
     pub name: String,
-    /// The moderator kind; `None` for the default, as in a template.
-    pub moderator: Option<String>,
+    /// The channel's components (issue 174): its moderator and the policy
+    /// for the moderator's slot; the defaults for what is left out, as in a
+    /// template.
+    pub components: ComponentConfig,
     /// Who takes part, from the session's participants. Whoever creates the
     /// channel takes part anyway, if they are a participant of the session.
     pub participants: Vec<ActorId>,
@@ -226,7 +232,8 @@ impl SessionLoop {
     ///
     /// # Errors
     /// - [`SessionError`] if `spec` asks for something that cannot be: no
-    ///   name, a name the session already has, an unknown moderator, or a
+    ///   name, a name the session already has, components that make no
+    ///   moderator, or a
     ///   participant who is not one of the session's.
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session; nothing is changed then.
@@ -241,10 +248,6 @@ impl SessionLoop {
         }
         let classification = spec.classification.unwrap_or_default();
         require_classification(&self.runtime_manager, context, &classification).await?;
-        let moderator = spec.moderator.unwrap_or_else(|| DEFAULT_MODERATOR.to_string());
-        // Asked for here, before anything is stored, rather than found out
-        // when the channel is built.
-        self.runtime_manager.new_moderator(&moderator)?;
 
         // The creator first, if they take part in the session at all.
         let mut ids = vec![context.initiator_id];
@@ -261,7 +264,7 @@ impl SessionLoop {
             }
         }
 
-        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, moderator, classification, participants);
+        let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, participants);
         drop(session);
         require_cleared(&self.runtime_manager, context, &channel).await?;
         let store = self.runtime_manager.entity_store();
@@ -723,7 +726,7 @@ mod tests {
             id: session.channels[0],
             session_id: session.id,
             name: "main".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: Vec::new(),
@@ -937,7 +940,7 @@ mod tests {
     }
 
     fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
-        ChannelSpec { name: name.to_string(), moderator: None, participants, classification: None }
+        ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None }
     }
 
     #[tokio::test]
@@ -963,7 +966,7 @@ mod tests {
             ],
             channels: vec![ChannelTemplate {
                 name: "main".to_string(),
-                moderator: "broadcast".to_string(),
+                components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
                 classification: Classification::CHANNEL_DEFAULT,
                 participants: vec!["user".to_string(), "approval".to_string()],
             }],
@@ -1029,7 +1032,6 @@ mod tests {
         let channel = session.create_channel(&ctx, spec(" side ", vec![other])).await.expect("the channel is created");
 
         assert_eq!(channel.name(), "side", "the name is trimmed");
-        assert_eq!(channel.moderator(), DEFAULT_MODERATOR);
         let kinds: Vec<String> = channel.members().into_iter().map(|m| m.kind).collect();
         assert_eq!(kinds.iter().filter(|k| *k == "user").count(), 2, "the creator and the other user: {kinds:?}");
         assert!(kinds.iter().any(|k| k == "approver"), "an approver is added: {kinds:?}");
@@ -1063,8 +1065,13 @@ mod tests {
         assert!(matches!(refusal(session.create_channel(&ctx, spec("  ", vec![])).await), SessionError::EmptyChannelName));
         assert!(matches!(refusal(session.create_channel(&ctx, spec("main", vec![])).await), SessionError::DuplicateChannelName { .. }));
         assert!(matches!(refusal(session.create_channel(&ctx, spec("x", vec![stranger])).await), SessionError::NotAParticipant { .. }));
-        let unknown = ChannelSpec { moderator: Some("nobody".to_string()), ..spec("x", vec![]) };
-        assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::UnknownModerator(_)));
+        let unknown = ChannelSpec { components: caelumora_model::channel::moderation_components(None, Some("nobody")), ..spec("x", vec![]) };
+        assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::InvalidModerator(_)));
+        let two = caelumora_model::component::ComponentConfig { component_nodes: vec![
+            caelumora_model::component::ComponentDescriptor::new("one", crate::moderator_impl::broadcast_policy::BROADCAST_POLICY_KIND),
+            caelumora_model::component::ComponentDescriptor::new("two", crate::moderator_impl::random_policy::RANDOM_POLICY_KIND),
+        ] };
+        assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidModerator(_)), "a channel has one policy");
 
         assert_eq!(session.channels().len(), 1);
         assert_eq!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.len(), 1);

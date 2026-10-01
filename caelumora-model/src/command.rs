@@ -85,16 +85,8 @@ pub fn parse_input(input: &str) -> UserInput {
 /// The commands a deployment has unless its configuration says otherwise:
 /// `/help` and `/wakeup`.
 pub fn default_commands() -> ComponentConfig {
-    let builtin = |id: &str, kind: &str| ComponentDescriptor {
-        id: id.to_string(),
-        kind: kind.to_string(),
-        params: serde_json::Value::Null,
-        tags: Vec::new(),
-        fail_policy: Default::default(),
-        security_attributes: Default::default(),
-    };
     ComponentConfig {
-        component_nodes: vec![builtin("help", HELP_COMMAND_KIND), builtin("wakeup", WAKEUP_COMMAND_KIND)],
+        component_nodes: vec![ComponentDescriptor::new("help", HELP_COMMAND_KIND), ComponentDescriptor::new("wakeup", WAKEUP_COMMAND_KIND)],
     }
 }
 

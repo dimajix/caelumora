@@ -423,7 +423,7 @@ mod tests {
             id: channel_id,
             session_id,
             name: "test".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
@@ -544,7 +544,7 @@ mod tests {
             id: channel_id,
             session_id,
             name: "test".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
@@ -660,7 +660,7 @@ mod tests {
             id: channel_id,
             session_id,
             name: "test".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![
@@ -736,7 +736,7 @@ mod tests {
             id: channel_id,
             session_id,
             name: "test".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
             participants: vec![Participant::Approver(approver.clone()), Participant::User(user.id)],

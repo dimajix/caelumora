@@ -11,6 +11,7 @@ use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
+use caelumora_runtime::view::Viewer;
 use clap::Parser;
 use caelumora_runtime::logging::{self, LogTarget};
 use rustyline::error::ReadlineError;
@@ -55,7 +56,6 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
         .collect();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
-    println!("Moderator: {}", channel.moderator());
     loop {
         tokio::select! {
             maybe_envelope = receiver.recv() => {
@@ -265,13 +265,18 @@ async fn main() -> anyhow::Result<()> {
         .find(|t| t.metadata.name == args.template)
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
-    let session_manager = SessionManager::new(runtime.clone());
+    let session_manager = Arc::new(SessionManager::new(runtime.clone()));
     let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session".to_string())).await?;
     let session_id = session_loop.id();
 
     let channel = session_loop
         .channel_by_name("main")
         .ok_or_else(|| anyhow::anyhow!("Cannot find main channel in session"))?;
+
+    // Who answers, as the views tell it (issue 174).
+    let view = session_manager.views(Viewer::new(security.clone())).session(session_id).await?.channel(channel.id()).await?;
+    let unknown = || "preconfigured".to_string();
+    println!("Moderator: {}, responders: {}", view.moderator().unwrap_or_else(unknown), view.responder_policy().unwrap_or_else(unknown));
 
     // Start the interactive loop
     run_repl(channel, owner).await?;

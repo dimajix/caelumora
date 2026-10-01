@@ -2,7 +2,9 @@ use crate::actor::Actor;
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
+use crate::component::{ComponentContainer, ComponentContext};
 use crate::moderator::Moderator;
+use crate::session::SessionError;
 use crate::recorder::Recorder;
 use crate::runtime::ChannelRuntime;
 use crate::transport::{EventSender, TransportError};
@@ -154,7 +156,7 @@ pub struct ChannelLoop {
     /// The actors of the participants; replaced as a whole when someone
     /// joins or leaves (issue 46), so that every reader sees one set.
     actors: ArcSwap<HashMap<ActorId, Arc<dyn Actor>>>,
-    moderator: Mutex<Box<dyn Moderator>>,
+    moderator: Arc<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
     changes_tx: mpsc::UnboundedSender<ActorChange>,
@@ -182,7 +184,17 @@ impl ChannelLoop {
         let id = channel.id;
         let session_id = channel.session_id;
         let state_store = runtime.state_store();
-        let moderator = runtime.new_moderator(&channel.moderator)?;
+        // Its components (issue 174) act on behalf of the channel's owner,
+        // as an agent's act on behalf of its owner.
+        let security_context = SecurityContext::new(channel.security_attributes.owner_id, session_id, id);
+        let components = ComponentContainer::from_config(
+            &channel.components,
+            &runtime.component_registry(),
+            &ComponentContext::new(security_context, runtime.security_manager(), runtime.secret_manager()),
+        )
+        .await
+        .map_err(SessionError::InvalidModerator)?;
+        let moderator = components.one::<dyn Moderator>().await.map_err(SessionError::InvalidModerator)?.facet;
         
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
@@ -207,7 +219,7 @@ impl ChannelLoop {
             channel: channel_controller,
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
-            moderator: Mutex::new(moderator),
+            moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
             changes_rx: Mutex::new(changes_rx),
@@ -253,7 +265,7 @@ impl ChannelLoop {
     /// an actor enters the channel - when the channel is built and when a
     /// participant joins (issue 91). Its task is `run`'s to start.
     async fn adopt(&self, actor: Arc<dyn Actor>) {
-        self.moderator.lock().await.add_actor(actor.clone());
+        self.moderator.add_actor(actor.clone());
         let id = actor.id();
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
@@ -280,11 +292,6 @@ impl ChannelLoop {
     
     pub fn name(&self) -> String {
         self.channel.name()
-    }
-
-    /// The kind of moderator the channel was built with, e.g. `round_robin`.
-    pub fn moderator(&self) -> String {
-        self.channel.load().moderator.clone()
     }
 
     /// Who the channel belongs to and who contributes to it (issue 11).
@@ -483,7 +490,7 @@ impl ChannelLoop {
             actors.remove(&participant);
             actors
         });
-        self.moderator.lock().await.remove_actor(participant);
+        self.moderator.remove_actor(participant);
         self.rebuild_mentions();
         actor.stop();
         let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
@@ -904,9 +911,7 @@ impl ChannelLoop {
 
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
-        let mut moderator = self.moderator.lock().await;
-        let decision = moderator.route(event).await;
-        drop(moderator);
+        let decision = self.moderator.route(event).await;
         let quiet = self.quiet.load(Ordering::SeqCst);
 
         // First, route all messages to all agents...
@@ -1094,13 +1099,19 @@ mod tests {
 
     /// A channel of `participants`, whose actors are read from `store`.
     async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
+        let registry = crate::component::ComponentRegistry::built_in(store.clone());
+        channel_built(store, participants, security, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
+    }
+
+    /// A channel of `participants` with `components`, built by `registry`.
+    async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, security, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, security, default_commands(), Default::default(), registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: "main".to_string(),
-            moderator: "broadcast".to_string(),
+            components,
             participants,
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
@@ -1337,11 +1348,31 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::moderator::Moderator for AskBack {
-        async fn route(&mut self, event: &Envelope) -> crate::moderator::RouteDecision {
+        async fn route(&self, event: &Envelope) -> crate::moderator::RouteDecision {
             vec![(self.0, event.clone()), (self.0, event.forward(ActorEvent::ResponseRequested))].into()
         }
-        fn add_actor(&mut self, _: Arc<dyn Actor>) {}
-        fn remove_actor(&mut self, _: ActorId) {}
+        fn add_actor(&self, _: Arc<dyn Actor>) {}
+        fn remove_actor(&self, _: ActorId) {}
+    }
+
+    /// A channel of `users` whose moderator is `moderator`: a component of a
+    /// kind of its own (issue 174).
+    async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn crate::moderator::Moderator>) -> Arc<ChannelLoop> {
+        use crate::component::{ComponentFacets, ComponentKind};
+        let store = Arc::new(MemoryStore::new());
+        let mut participants = Vec::new();
+        for user in users {
+            store.create_user(&SecurityContext::system(), user).await.unwrap();
+            participants.push(Participant::User(user.id));
+        }
+        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        registry.register(ComponentKind::new("test_moderator").provides::<dyn crate::moderator::Moderator>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn crate::moderator::Moderator>(moderator.clone());
+            Ok(facets)
+        });
+        let components = caelumora_model::channel::moderation_components(Some("test_moderator"), None);
+        channel_built(store, participants, Arc::new(DummySecurityManager::new()), registry, components).await
     }
 
     #[tokio::test]
@@ -1349,9 +1380,8 @@ mod tests {
         use caelumora_model::actor::EventContext;
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let bob = ActorId::Agent(caelumora_model::agent::AgentId::new());
-        *channel.moderator.lock().await = Box::new(AskBack(bob));
+        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(bob))).await;
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
         let actors = HashMap::from([(bob, ActorHandle { id: bob, abort_handle, sender: Box::new(InMemoryEventSender::new(tx)) })]);
@@ -1519,7 +1549,7 @@ mod tests {
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: "main".to_string(),
-            moderator: "broadcast".to_string(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
             participants: vec![
                 Participant::User(alice.id),
                 Participant::Agent(agent_id),

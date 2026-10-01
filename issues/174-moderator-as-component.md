@@ -1,6 +1,6 @@
 # 174 — The moderator is a name the runtime knows, not a component of the channel
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -96,3 +96,22 @@ first:
 - **2026-10-01** — [175](175-user-driven-moderator.md) shows that a
   `ResponderPolicy` has to know who wrote the message (`choose(sender,
   candidates)`); a policy as a component should get at least that.
+- **2026-10-01** — Done. Decided with the maintainer, differing from the
+  recommendation above: the moderator itself is a component (facet
+  `Moderator`, kind `policy_moderator`), and the `ResponderPolicy` is its
+  slot, a facet of its own that the `policy_moderator` asks for
+  (`context.one`). Both are facets of which a channel has exactly one, with
+  the defaults `policy_moderator` and `round_robin_policy`. The policies are
+  named `broadcast_policy`, `round_robin_policy`, `random_policy` and
+  `mentions_only_policy` and stay in `moderator_impl/`. `Channel` and
+  `ChannelTemplate` have `components` instead of `moderator`; the
+  `ChannelLoop` builds them itself, like the `AgentActor`, in the name of the
+  channel's owner - `RuntimeManager::new_moderator` is gone, and components
+  that make no moderator are found when the channel is built
+  (`SessionError::InvalidModerator`), after which it is taken back out.
+  `ResponderPolicy::choose` is async, takes `&self` and the sender
+  ([175](175-user-driven-moderator.md)). The REST API takes and returns
+  `moderator` and `responder_policy` as kinds (`null` for a preconfigured
+  component, `ComponentRegistry::kind_of`); the web UI explains the policy.
+  Stored channels and templates naming a `moderator` fall back to the
+  defaults; `examples/seed.yaml` is updated.

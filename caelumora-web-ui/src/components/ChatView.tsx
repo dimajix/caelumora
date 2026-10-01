@@ -28,7 +28,7 @@ import type {
   UserResponse,
 } from '../types';
 import {NotesList} from './NotesList';
-import {answersOnlyWhenMentioned, moderatorInfo} from '../moderator';
+import {answersOnlyWhenMentioned, responderPolicyInfo} from '../moderator';
 import {
   CONFIDENTIALITY_LEVELS,
   type Classification,
@@ -732,7 +732,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                 onKeyDown={handleInputKeyDown}
                 onBlur={() => setDismissedMention(suggestionStart)}
                 onFocus={() => setDismissedMention(null)}
-                placeholder={answersOnlyWhenMentioned(channel?.moderator)
+                placeholder={answersOnlyWhenMentioned(channel?.responder_policy)
                   ? "Agents answer only when @-mentioned... (/ for commands)"
                   : "Type your message... (@ to mention, / for commands)"}
                 // Read-only rather than disabled while sending: a disabled
@@ -833,11 +833,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           {channel && (
             <div
               className="flex items-center gap-2 mb-4 text-xs text-gray-500 dark:text-gray-400"
-              title={moderatorInfo(channel.moderator).description}
+              title={responderPolicyInfo(channel.responder_policy).description}
             >
               <Scale size={14} />
               <span>Moderator:</span>
-              <span className="text-gray-700 dark:text-gray-300">{moderatorInfo(channel.moderator).label}</span>
+              <span className="text-gray-700 dark:text-gray-300">{responderPolicyInfo(channel.responder_policy).label}</span>
             </div>
           )}
           {channel && (

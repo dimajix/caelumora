@@ -5,11 +5,15 @@ use std::sync::Arc;
 use crate::actor::Actor;
 use caelumora_model::actor::{ActorId, Envelope};
 
+/// Decides how the events of a channel are routed and who is asked to
+/// respond. A component of the channel, of which it has exactly one (issue
+/// 174); shared like every facet, so it keeps what it changes behind its own
+/// lock.
 #[async_trait]
 pub trait Moderator : Send + Sync + Debug {
-    async fn route(&mut self, event: &Envelope) -> RouteDecision;
-    fn add_actor(&mut self, actor: Arc<dyn Actor>) -> ();
-    fn remove_actor(&mut self, actor: ActorId) -> ();
+    async fn route(&self, event: &Envelope) -> RouteDecision;
+    fn add_actor(&self, actor: Arc<dyn Actor>);
+    fn remove_actor(&self, actor: ActorId);
 }
 
 pub struct RouteDecision {

@@ -45,8 +45,10 @@ export interface ChannelResponse {
   name: string;
   /** All participants, in no particular order. */
   members: ChannelMember[];
-  /** The kind of moderator, e.g. `round_robin` or `mentions_only` (issue 44). */
-  moderator: string;
+  /** The kind of the moderator, e.g. `policy_moderator`; `null` if preconfigured (issue 174). */
+  moderator: string | null;
+  /** The kind of the policy in the moderator's slot - who answers - e.g. `round_robin_policy` or `mentions_only_policy` (issues 44, 174); `null` if preconfigured. */
+  responder_policy: string | null;
   /** The classification of the channel's contents (issue 133). */
   classification: Classification;
   /** Whether you may rename it and add or remove participants (issue 46). */
@@ -281,8 +283,10 @@ export interface CreateSessionRequest {
 /** A channel to create in a running session (issue 09). */
 export interface CreateChannelRequest {
   name: string;
-  /** The moderator kind; the server's default if absent. */
+  /** The kind of the moderator; the server's default if absent (issue 174). */
   moderator?: string;
+  /** The kind of the policy in the moderator's slot; the server's default if absent. */
+  responder_policy?: string;
   /** Participants of the session; you take part anyway. */
   participants: ActorId[];
   /** The classification of the channel's contents; the server's default if absent. */

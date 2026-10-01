@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
+use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::{ChannelRef, Classification};
 use crate::message::MessageId;
 use crate::message_history::MessageHistory;
@@ -9,9 +10,6 @@ use crate::session::SessionId;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-/// The moderator of a channel whose template or request names none.
-pub const DEFAULT_MODERATOR: &str = "round_robin";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
@@ -22,12 +20,26 @@ pub enum ChannelUpdateEvent {
 
 define_id!(ChannelId);
 
+/// The components of a channel whose moderator and the policy for the
+/// moderator's slot are named by their kinds, as a request names them
+/// (issue 174). Each one left out is its default.
+pub fn moderation_components(moderator: Option<&str>, responder_policy: Option<&str>) -> ComponentConfig {
+    let component_nodes = [("moderator", moderator), ("responder_policy", responder_policy)].into_iter()
+        .filter_map(|(id, kind)| kind.map(|kind| ComponentDescriptor::new(id, kind)))
+        .collect();
+    ComponentConfig { component_nodes }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
     pub id: ChannelId,
     pub session_id: SessionId,
     pub name: String,
-    pub moderator: String,
+    /// The channel's components (issue 174): its moderator and the policy
+    /// that fills the moderator's slot. A facet nobody here provides is
+    /// built from its default.
+    #[serde(default)]
+    pub components: ComponentConfig,
     pub participants: Vec<Participant>,
     pub security_attributes: SecurityAttributes,
     /// The classification of the channel's contents (issue 133): what may
@@ -86,7 +98,7 @@ impl Channel {
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and with every user and agent in it as a
     /// contributor (see `participant_attributes`).
-    pub fn build(session_id: SessionId, owner: ActorId, name: String, moderator: String, classification: Classification, mut participants: Vec<Participant>) -> Self {
+    pub fn build(session_id: SessionId, owner: ActorId, name: String, components: ComponentConfig, classification: Classification, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {
                 id: ApproverId(Uuid::new_v4()),
@@ -98,7 +110,7 @@ impl Channel {
             id: ChannelId::new(),
             session_id,
             name,
-            moderator,
+            components,
             participants,
             security_attributes,
             classification,

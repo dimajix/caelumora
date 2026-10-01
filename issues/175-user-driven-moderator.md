@@ -106,3 +106,6 @@ before.
   agents answer each other is intended, hence a new moderator; mentions
   between agents and their bound are [45](45-agent-mentions.md), not part of
   this issue; the `ResponderPolicy` needs to know who wrote.
+- **2026-10-01** — [174](174-moderator-as-component.md) made the moderator and
+  its policy components; `ResponderPolicy::choose` now receives the sender, as
+  recommended above. The new moderator is a new policy component.

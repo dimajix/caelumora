@@ -191,7 +191,7 @@ impl ApiError {
             match e {
                 SessionError::ChannelNotFound { .. } => return Self::not_found("channel_not_found", detail),
                 SessionError::DuplicateChannelName { .. } => return Self::conflict("channel_exists", detail),
-                SessionError::EmptyChannelName | SessionError::UnknownModerator(_) | SessionError::NotAParticipant { .. }
+                SessionError::EmptyChannelName | SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. }
                 | SessionError::ClassificationRefused(_) => return bad_request("invalid_channel"),
                 // A caller that is no user: not the client's request.
                 SessionError::OwnerNotAUser(_) => {}
