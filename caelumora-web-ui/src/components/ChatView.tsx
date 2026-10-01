@@ -49,7 +49,7 @@ import {MessageFooter, MessageView} from './MessageView';
 import {formatArguments, mergeToolResults} from '../messages';
 import {ContextPanel} from './ContextPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
-import {actorKey, actorUuid, mentionQueryAt} from '../mention';
+import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
@@ -131,7 +131,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       : members
           .filter((m): m is MentionableMember => {
             const query = (mentionQuery?.query ?? '').toLowerCase();
-            return !!m.handle && (m.handle.startsWith(query) || m.name.toLowerCase().includes(query));
+            return !!m.handle && (m.handle.startsWith(handleOf(query)) || m.name.toLowerCase().includes(query));
           })
           .map(member => ({kind: 'mention', member}));
 

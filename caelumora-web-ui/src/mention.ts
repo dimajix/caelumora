@@ -3,6 +3,7 @@
 // to find them in the text again to highlight the resolved ones, and to
 // derive handles for completion.
 
+import anyAscii from 'any-ascii';
 import type {ActorId, ChannelMember, Message} from './types';
 
 const HANDLE_CHAR = /[\p{L}\p{N}_-]/u;
@@ -11,10 +12,14 @@ function isHandleChar(c: string): boolean {
   return HANDLE_CHAR.test(c);
 }
 
-/** The handle a participant called `name` is mentioned by, e.g. "Dr. Who" -> "dr-who". */
+/**
+ * The handle a participant called `name` is mentioned by, e.g. "Dr. Who" ->
+ * "dr-who", "Zoë" -> "zoe": its ASCII form, by `any-ascii` - the version the
+ * server's `any_ascii` crate has, so that both derive the same handles.
+ */
 export function handleOf(name: string): string {
   let handle = '';
-  for (const c of name) {
+  for (const c of anyAscii(name)) {
     if (isHandleChar(c)) {
       handle += c.toLowerCase();
     } else if (!handle.endsWith('-')) {
@@ -45,7 +50,7 @@ export function mentionSpans(text: string): MentionSpan[] {
     if (prev && (isHandleChar(prev) || prev === '.')) continue;
     const raw = match[1].replace(/-+$/, '');
     if (!raw) continue;
-    spans.push({start, end: start + 1 + raw.length, handle: raw.toLowerCase()});
+    spans.push({start, end: start + 1 + raw.length, handle: handleOf(raw)});
   }
   return spans;
 }

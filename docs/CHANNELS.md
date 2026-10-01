@@ -388,9 +388,11 @@ starts.
 ### `@`-Mentions
 
 A user can address participants directly with `@handle` (e.g. `@sassy` for
-"Sassy"). A handle is the participant's name lowercased, with every run of
-other characters collapsed into `-` (`caelumora_model::mention`). Unknown
-handles stay plain text, and text in backticks is ignored.
+"Sassy"). A handle is the participant's name transliterated to ASCII
+(`any_ascii`, issue 177) and lowercased, with every run of other characters
+collapsed into `-` (`caelumora_model::mention`): "Zoë" is `@zoe`. A mention
+is normalised alike, so `@Zoë` addresses her too. Unknown handles stay plain
+text, and text in backticks is ignored.
 
 The `ChannelLoop` resolves mentions once, as a message enters the channel,
 and stores the resolved `ActorId`s in `Message::mentions`. Nothing downstream

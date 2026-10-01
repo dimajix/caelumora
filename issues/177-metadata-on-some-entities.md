@@ -90,3 +90,13 @@ name differently per kind is a small trap at every call site.
   so a text that is no name is a malformed request (`invalid_request_body`)
   and `SessionError::EmptyChannelName` is gone. Uniqueness per scope is
   still issue [178](178-scoped-lookup-by-name.md).
+- **2026-10-01** — Names are compared by their ASCII form, at the
+  maintainer's request: a `Name` keeps its text as written and, made once
+  with it, the key it is compared and hashed by - transliterated by
+  `any_ascii`, lowercased, whitespace tidied - so "Zoë" and "Zoe" are one
+  name. Made eagerly rather than lazily (`OnceLock`): a name never changes
+  and is made in two places only. Handles follow the same form - "Zoë" is
+  `@zoe`, and a mention typed as `@Zoë` is normalised alike - for users,
+  whose handle comes from their `username`, too. The web UI derives handles
+  with the npm package `any-ascii`; crate and package are pinned to the same
+  version (0.3.3), so that their tables agree.

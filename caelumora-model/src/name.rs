@@ -27,12 +27,18 @@ pub enum NameError {
 /// A name that something is looked up by: an agent's, a personality's, a
 /// session template's, a channel's. Kept as written, with its whitespace
 /// tidied - no leading or trailing whitespace, every run of it one space -
-/// and compared regardless of case: "Jonathan" and "jonathan" are one name,
-/// in a lookup, in a map and as a key. Written down as a string, and checked
-/// when read.
+/// and compared by its ASCII form regardless of case (`fold`): "Jonathan",
+/// "jonathan" and "JONATHAN" are one name, and so are "Zoë" and "Zoe", in a
+/// lookup, in a map and as a key. Written down as a string, and checked when
+/// read.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct Name(String);
+pub struct Name {
+    text: String,
+    /// What it is compared and hashed by, made once with the name: a name
+    /// never changes.
+    key: String,
+}
 
 impl Name {
     /// `text` as a name, its whitespace tidied.
@@ -51,29 +57,35 @@ impl Name {
         if name.chars().count() > MAX_NAME_CHARS {
             return Err(NameError::TooLong);
         }
-        Ok(Self(name))
+        let key = fold(&name);
+        Ok(Self { text: name, key })
     }
 
     /// The name as written.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.text
     }
 
     /// The handle the name is `@`-mentioned by (see `crate::mention`);
     /// empty if it has no character a handle may have.
     pub fn handle(&self) -> String {
-        handle_of(&self.0)
+        handle_of(&self.text)
     }
+}
 
-    /// What the name is compared and hashed by.
-    fn key(&self) -> String {
-        self.0.to_lowercase()
-    }
+/// What a name is compared by: transliterated to ASCII (`any_ascii` - the
+/// web UI uses the npm package of the same name), in lower case, every run
+/// of whitespace one space. A name of which nothing is left so is compared
+/// by its lower case.
+fn fold(name: &str) -> String {
+    let ascii = any_ascii::any_ascii(name).to_lowercase();
+    let key = ascii.split_whitespace().collect::<Vec<_>>().join(" ");
+    if key.is_empty() { name.to_lowercase() } else { key }
 }
 
 impl PartialEq for Name {
     fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
+        self.key == other.key
     }
 }
 
@@ -81,7 +93,7 @@ impl Eq for Name {}
 
 impl Hash for Name {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.key().hash(state);
+        self.key.hash(state);
     }
 }
 
@@ -108,25 +120,25 @@ impl TryFrom<String> for Name {
 
 impl From<Name> for String {
     fn from(name: Name) -> Self {
-        name.0
+        name.text
     }
 }
 
 impl AsRef<str> for Name {
     fn as_ref(&self) -> &str {
-        &self.0
+        &self.text
     }
 }
 
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.text)
     }
 }
 
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
+        fmt::Debug::fmt(&self.text, f)
     }
 }
 
@@ -183,6 +195,8 @@ mod tests {
     fn names_are_one_regardless_of_case_in_a_lookup_and_a_map() {
         assert_eq!(name("Jonathan"), name("jonathan"));
         assert!(name("Zoë") == "ZOË", "beyond ASCII, too");
+        assert!(name("Zoë") == "zoe" && name("Straße") == "STRASSE" && name("Иван") == "ivan", "by their ASCII form");
+        assert_eq!(name("Zoë").as_str(), "Zoë", "kept as written");
         assert!(name("Jonathan") != "", "a text that is no name is none");
         let set: std::collections::HashSet<Name> = [name("Sassy"), name("sassy")].into_iter().collect();
         assert_eq!(set.len(), 1);

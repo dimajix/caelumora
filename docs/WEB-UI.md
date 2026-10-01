@@ -33,8 +33,10 @@ The UI shows what the server says and repeats no rule of its own:
     (`command.ts`, mirroring `caelumora_model::command::parse_input`) and how
     a participant's handle is derived (`mention.ts`, mirroring
     `caelumora_model::mention`) are repeated here, because the UI needs them
-    while the user types. What a command means and whom a mention addresses
-    is decided by the server.
+    while the user types. A handle is the name's ASCII form, made by the npm
+    package `any-ascii` in the version the server's `any_ascii` crate has -
+    both are pinned, so that their tables agree. What a command means and
+    whom a mention addresses is decided by the server.
 *   **The types mirror the server.** `src/types` holds the request and
     response types of `caelumora-rest-server/src/models.rs`; a change to the
     REST API changes them too.

@@ -17,6 +17,10 @@ thiserror = "2.0.21"
 derive_more = { version = "2.1.1", features = ["display"] }
 async-trait = "0.1"
 tracing = "0.1.44"
+# Names and handles are compared by their ASCII form (issue 177); the web UI
+# uses the npm package of the same name. Both pinned to one version, so that
+# their tables agree.
+any_ascii = "=0.3.3"
 # The JSON store reads and writes files asynchronously.
 tokio = { version = "1.53.1", features = ["fs"] }
 

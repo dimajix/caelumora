@@ -1,9 +1,11 @@
 //! `@`-mentions: addressing a channel participant by its handle (see issue 29).
 //!
-//! A *handle* is a normalised form of a participant's name — lowercase, with
-//! every run of characters that cannot appear in a mention collapsed into a
-//! single `-` — so that "Sassy" is addressed as `@sassy` and "Dr. Who" as
-//! `@dr-who`. Mentions are resolved to `ActorId`s once, when a message enters
+//! A *handle* is a normalised form of a participant's name — transliterated
+//! to ASCII, lowercase, with every run of characters that cannot appear in a
+//! mention collapsed into a single `-` — so that "Sassy" is addressed as
+//! `@sassy`, "Dr. Who" as `@dr-who` and "Zoë" as `@zoe` (issue 177). A
+//! mention typed with the original characters, `@zoë`, is normalised alike
+//! and addresses the same participant. Mentions are resolved to `ActorId`s once, when a message enters
 //! the channel, and stored with the message in `Message::mentions`; nothing
 //! downstream re-parses the text.
 
@@ -17,11 +19,14 @@ fn is_handle_char(c: char) -> bool {
 }
 
 /// Derives the handle under which a participant called `name` can be
-/// mentioned. Returns an empty string if the name contains no character that
-/// may appear in a handle, in which case the participant cannot be mentioned.
+/// mentioned: its ASCII form (`any_ascii`, as `Name` compares names; the web
+/// UI uses the npm package of the same name), lowercase, every run of other
+/// characters one `-`. Returns an empty string if nothing of it may appear
+/// in a handle, in which case the participant cannot be mentioned.
 pub fn handle_of(name: &str) -> String {
-    let mut handle = String::with_capacity(name.len());
-    for c in name.chars() {
+    let ascii = any_ascii::any_ascii(name);
+    let mut handle = String::with_capacity(ascii.len());
+    for c in ascii.chars() {
         if is_handle_char(c) {
             handle.extend(c.to_lowercase());
         } else if !handle.ends_with('-') {
@@ -69,7 +74,7 @@ pub fn mention_spans(text: &str) -> Vec<MentionSpan> {
                 }
             }
             if end > start + c.len_utf8() {
-                spans.push(MentionSpan { range: start..end, handle: text[start + 1..end].to_lowercase() });
+                spans.push(MentionSpan { range: start..end, handle: handle_of(&text[start + 1..end]) });
             }
             prev = Some(last);
             continue;
@@ -80,8 +85,8 @@ pub fn mention_spans(text: &str) -> Vec<MentionSpan> {
     spans
 }
 
-/// Extracts the handles mentioned in `text`, lowercased, deduplicated and in
-/// order of first occurrence. See `mention_spans` for what counts as a
+/// Extracts the handles mentioned in `text`, normalised as `handle_of` does,
+/// deduplicated and in order of first occurrence. See `mention_spans` for what counts as a
 /// mention.
 pub fn parse_mentions(text: &str) -> Vec<String> {
     let mut handles: Vec<String> = Vec::new();
@@ -163,7 +168,8 @@ mod tests {
         assert_eq!(handle_of("Dr. Who"), "dr-who");
         assert_eq!(handle_of("  Mr   Smith  "), "mr-smith");
         assert_eq!(handle_of("data_bot-2"), "data_bot-2");
-        assert_eq!(handle_of("Zoë"), "zoë");
+        assert_eq!(handle_of("Zoë"), "zoe", "by its ASCII form");
+        assert_eq!(handle_of("Иван Петров"), "ivan-petrov");
         assert_eq!(handle_of("!!!"), "");
     }
 
@@ -183,7 +189,7 @@ mod tests {
         let spans = mention_spans(text);
         assert_eq!(spans.len(), 2);
         assert_eq!(&text[spans[0].range.clone()], "@Zoë");
-        assert_eq!(spans[0].handle, "zoë");
+        assert_eq!(spans[0].handle, "zoe", "normalised as a handle: the text keeps what was typed");
         assert_eq!(&text[spans[1].range.clone()], "@bob");
     }
 
@@ -206,6 +212,13 @@ mod tests {
         assert_eq!(directory.resolve("@bob, ask @SASSY and @nobody"), vec![bob, sassy]);
         assert!(directory.resolve("no mentions here").is_empty());
         assert!(directory.ambiguous().is_empty());
+    }
+
+    #[test]
+    fn a_name_beyond_ascii_is_mentioned_by_its_ascii_form_or_as_written() {
+        let zoe = ActorId::User(UserId::new());
+        let directory = MentionDirectory::new(vec![(zoe, "Zoë")]);
+        assert_eq!(directory.resolve("@zoe, @Zoë and @ZOË"), vec![zoe]);
     }
 
     #[test]

@@ -41,8 +41,10 @@ The type of a name says what it is for (`caelumora_model::name`):
 *   **`Name`** - a name something is looked up by: a channel's. It is
     checked when it is made or read (not empty, no control characters, at
     most `MAX_NAME_CHARS`), kept as written with its whitespace tidied, and
-    compared regardless of case - "Jonathan" and "jonathan" are one name, in
-    a lookup, a map and a key. Its `handle` is what it is `@`-mentioned by.
+    compared by its ASCII form (`any_ascii`) regardless of case -
+    "Jonathan" and "jonathan" are one name, and so are "Zoë" and "Zoe", in
+    a lookup, a map and a key. The form it is compared by is made once,
+    with the name. Its `handle` is what it is `@`-mentioned by.
 *   **`ScopedName`** - a `Name` with the `Scope` it lies in: what a
     definition is found by. Written into the document as the fields `name`
     and `scope`, the scope global unless named.
