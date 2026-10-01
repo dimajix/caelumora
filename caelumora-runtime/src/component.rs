@@ -20,6 +20,7 @@ use serde::Deserialize;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
@@ -427,6 +428,9 @@ impl ComponentNode {
     }
 }
 
+/// A built component as one of its facets: the facet with the component's id
+/// and fail policy. It dereferences to the facet, so that the facet's methods
+/// are called on it directly; `facet` is needed only for the `Arc` itself.
 #[derive(Debug, Clone)]
 pub struct ComponentImpl<T>
 where
@@ -435,6 +439,17 @@ where
     pub id: String,
     pub fail_policy: ComponentFailPolicy,
     pub facet: Arc<T>,
+}
+
+impl<T> Deref for ComponentImpl<T>
+where
+    T: ?Sized + Send + Sync,
+{
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.facet
+    }
 }
 
 /// A component of a graph, as far as it has been built.
@@ -821,7 +836,7 @@ mod tests {
             let recorded = recorded.clone();
             async move {
                 let parts = context.all::<dyn Named>().await?;
-                recorded.lock().unwrap().extend(parts.iter().map(|part| part.facet.name()));
+                recorded.lock().unwrap().extend(parts.iter().map(|part| part.name()));
                 Ok(named(&descriptor.id))
             }
         });

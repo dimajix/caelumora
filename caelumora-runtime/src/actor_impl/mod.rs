@@ -26,7 +26,6 @@ where
     for stage_processor in processors {
         let current = mem::take(&mut input);
         match stage_processor
-            .facet
             .process_messages(current, turn)
             .await
         {

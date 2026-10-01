@@ -115,3 +115,9 @@ first:
   component, `ComponentRegistry::kind_of`); the web UI explains the policy.
   Stored channels and templates naming a `moderator` fall back to the
   defaults; `examples/seed.yaml` is updated.
+- **2026-10-01** — The channel keeps its moderator, and the `policy_moderator`
+  its policy, as the `ComponentImpl` that `one` returned, like the agent
+  keeps its components, instead of only its facet;
+  [COMPONENTS.md](../docs/COMPONENTS.md#wiring) states this for every holder
+  of a component. `ComponentImpl` dereferences to its facet, so that the
+  facet's methods are called on it without `.facet`.

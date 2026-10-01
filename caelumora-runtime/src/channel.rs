@@ -2,7 +2,7 @@ use crate::actor::Actor;
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::approval::ApproverActor;
 use crate::actor_impl::user::UserActor;
-use crate::component::{ComponentContainer, ComponentContext};
+use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::recorder::Recorder;
@@ -156,7 +156,7 @@ pub struct ChannelLoop {
     /// The actors of the participants; replaced as a whole when someone
     /// joins or leaves (issue 46), so that every reader sees one set.
     actors: ArcSwap<HashMap<ActorId, Arc<dyn Actor>>>,
-    moderator: Arc<dyn Moderator>,
+    moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
     changes_tx: mpsc::UnboundedSender<ActorChange>,
@@ -194,7 +194,7 @@ impl ChannelLoop {
         )
         .await
         .map_err(SessionError::InvalidModerator)?;
-        let moderator = components.one::<dyn Moderator>().await.map_err(SessionError::InvalidModerator)?.facet;
+        let moderator = components.one::<dyn Moderator>().await.map_err(SessionError::InvalidModerator)?;
         
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
@@ -1042,7 +1042,6 @@ mod tests {
     use super::*;
     use caelumora_model::store::EntityStore;
     use crate::command::CommandExecutor;
-    use crate::component::ComponentImpl;
     use crate::component_impl::help_command::HelpCommandProvider;
     use crate::component_impl::wakeup_command::WakeupCommandProvider;
     use caelumora_model::component::ComponentFailPolicy;

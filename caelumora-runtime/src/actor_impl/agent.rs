@@ -191,7 +191,7 @@ impl AgentActor {
         // whatever its fail policy: without a context there is nothing to
         // give the model. Parts that may be left out are the prompt
         // providers', each by its own policy.
-        self.context_provider.facet.current_context(turn).await
+        self.context_provider.current_context(turn).await
             .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
     }
 
@@ -206,7 +206,7 @@ impl AgentActor {
         turn: &mut Turn<'_>,
     ) -> Result<BoxStream<'static, crate::llm::LLMResult<MessageEvent>>> {
         let context = turn.full_context()?;
-        Ok(self.llm_client.facet
+        Ok(self.llm_client
             .chat_completion(&context.messages, &context.tools)
             .await)
     }
@@ -719,7 +719,7 @@ impl Actor for AgentActor {
                 self.agent_controller.name(),
                 &mut state,
                 self.agent_state.clone(),
-                self.llm_client.facet.profile(),
+                self.llm_client.profile(),
             )
             .with_views(self.views.clone());
 

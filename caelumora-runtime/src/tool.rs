@@ -307,7 +307,7 @@ impl GuardedToolExecutor {
             return self.failed(call, e, turn);
         }
         let started_at = chrono::Utc::now();
-        let outcome = self.executor.facet.execute(call, turn).await;
+        let outcome = self.executor.execute(call, turn).await;
         let finished_at = chrono::Utc::now();
         // A call of a tool that does not exist never ran: no timing.
         if matches!(outcome, Err(ToolError::UnknownTool(_))) {
@@ -365,7 +365,7 @@ impl GuardedToolExecutor {
             info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
-        let description = match self.executor.facet.describe(call) {
+        let description = match self.executor.describe(call) {
             Ok(description) => description,
             Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
                 info!("Tool call '{}' by agent {} cannot run: {}", call.function_name, agent, e);
@@ -386,7 +386,7 @@ impl GuardedToolExecutor {
     }
 
     pub fn tools(&self) -> Vec<Tool> {
-        self.executor.facet.tools()
+        self.executor.tools()
     }
 
     /// Nothing if `call` may be run now: the caller is an agent and the

@@ -204,5 +204,5 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     let container = build_container(json!({ "url": "http://127.0.0.1:1/mcp" })).await;
     let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
-    assert_eq!(providers[0].facet.tools().len(), 0);
+    assert_eq!(providers[0].tools().len(), 0);
 }

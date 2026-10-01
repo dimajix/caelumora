@@ -32,7 +32,7 @@ impl DefaultToolExecutor {
     pub fn new(providers: Vec<ComponentImpl<dyn ToolProvider>>) -> ComponentResult<Self> {
         let mut seen: Vec<(String, String)> = Vec::new();
         for provider in &providers {
-            for tool in provider.facet.tools() {
+            for tool in provider.tools() {
                 if let Some((_, component)) = seen.iter().find(|(name, _)| *name == tool.name) {
                     return Err(ComponentError::InvalidConfig(format!(
                         "tool '{}' is provided by both component '{}' and component '{}'",

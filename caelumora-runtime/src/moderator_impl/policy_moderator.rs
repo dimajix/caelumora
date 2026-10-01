@@ -6,7 +6,7 @@
 //! channel, its slot, whom to ask when nobody was mentioned (issue 44).
 
 use crate::actor::Actor;
-use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::moderator::{Moderator, RouteDecision};
 use crate::moderator_impl::ResponderPolicy;
 use async_trait::async_trait;
@@ -23,11 +23,11 @@ pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
 #[derive(Debug)]
 pub struct PolicyModerator {
     actors: Mutex<ModeratorActors>,
-    policy: Arc<dyn ResponderPolicy>,
+    policy: ComponentImpl<dyn ResponderPolicy>,
 }
 
 impl PolicyModerator {
-    pub fn new(policy: Arc<dyn ResponderPolicy>) -> Self {
+    pub fn new(policy: ComponentImpl<dyn ResponderPolicy>) -> Self {
         Self { actors: Mutex::new(ModeratorActors::new()), policy }
     }
 
@@ -238,7 +238,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy.facet)));
+            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy)));
             Ok(facets)
         },
     );
@@ -325,18 +325,23 @@ mod tests {
             .collect()
     }
 
+    /// `policy` as a component.
+    fn policy(policy: impl ResponderPolicy + 'static) -> ComponentImpl<dyn ResponderPolicy> {
+        ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(policy) }
+    }
+
     /// The moderators that ask someone to respond when nobody is mentioned.
     fn answering_moderators() -> Vec<PolicyModerator> {
         vec![
-            PolicyModerator::new(Arc::new(broadcast_policy::BroadcastPolicy)),
-            PolicyModerator::new(Arc::new(random_policy::RandomPolicy::new())),
-            PolicyModerator::new(Arc::new(round_robin_policy::RoundRobinPolicy::default())),
+            PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy)),
+            PolicyModerator::new(policy(random_policy::RandomPolicy::new())),
+            PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default())),
         ]
     }
 
     fn moderators() -> Vec<PolicyModerator> {
         let mut all = answering_moderators();
-        all.push(PolicyModerator::new(Arc::new(mentions_only_policy::MentionsOnlyPolicy)));
+        all.push(PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy)));
         all
     }
 
@@ -406,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn mentions_written_by_agents_are_not_routed() {
-        let moderator = PolicyModerator::new(Arc::new(broadcast_policy::BroadcastPolicy));
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy));
         let agents = add_agents(&moderator);
         let event = message_from(agents[0], "@b, your turn", vec![agents[1]]);
 
@@ -417,7 +422,7 @@ mod tests {
 
     #[tokio::test]
     async fn mentions_only_asks_nobody_without_a_mention() {
-        let moderator = PolicyModerator::new(Arc::new(mentions_only_policy::MentionsOnlyPolicy));
+        let moderator = PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy));
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
@@ -431,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn round_robin_takes_turns_and_a_mention_does_not_advance_it() {
-        let moderator = PolicyModerator::new(Arc::new(round_robin_policy::RoundRobinPolicy::default()));
+        let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()));
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         let mut awake = vec![agents[0], agents[2]];

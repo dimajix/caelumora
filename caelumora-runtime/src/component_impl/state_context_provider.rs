@@ -34,7 +34,7 @@ impl ContextProvider for StateContextProvider {
             // Each part as its component's fail policy says: a part that
             // fails open is left out of this turn, one that fails closed
             // fails the turn.
-            let contribution = match provider.facet.get_prompt(state).await {
+            let contribution = match provider.get_prompt(state).await {
                 Ok(contribution) => contribution,
                 Err(e) => match provider.fail_policy {
                     ComponentFailPolicy::FailOpen => {
@@ -54,7 +54,7 @@ impl ContextProvider for StateContextProvider {
                 state.record_knowledge(reference);
             }
             let part = (prompt, contribution.classification);
-            match provider.facet.position() {
+            match provider.position() {
                 PromptPosition::Start => start.push(part),
                 PromptPosition::BeforeTurnInput => before_input.push(part),
             }

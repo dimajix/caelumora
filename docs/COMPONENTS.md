@@ -71,6 +71,13 @@ Components are wired the way Spring Boot wires beans (issue 99).
     builds the components that provide the facet on demand, recursively,
     and returns every *other* one in the order of the configuration, each
     with its id and fail policy.
+*   **What is asked for is kept as it comes.** Whoever holds a component -
+    an agent, a channel, another component - keeps the `ComponentImpl`
+    that `one` or `all` returned, not just its `facet`. It dereferences to
+    the facet, so the facet's methods are called on it directly
+    (`self.moderator.route(…)`); `facet` is needed only to hand on the
+    `Arc`. Id and fail policy are then at hand when a call fails, whether or
+    not the component needs them today.
 *   **Nothing is wired by hand.** There are no `deps`, so no dependency can
     be forgotten.
 *   **Cycles are refused.** If a component that is still being built

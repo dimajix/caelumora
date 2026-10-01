@@ -103,7 +103,7 @@ impl CommandExecutor {
     pub fn new(security_manager: Arc<dyn SecurityManager>, providers: Vec<ComponentImpl<dyn CommandProvider>>) -> ComponentResult<Self> {
         let mut entries: Vec<CommandEntry> = Vec::new();
         for provider in providers {
-            for command in provider.facet.commands() {
+            for command in provider.commands() {
                 if let Some(existing) = entries.iter().find(|e| e.command.name == command.name) {
                     return Err(ComponentError::InvalidConfig(format!(
                         "command /{} is provided by both component '{}' and component '{}'",
