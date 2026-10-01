@@ -97,6 +97,24 @@ impl<'t> ToolCalls<'t> {
         }
     }
 
+    /// Ends the step as its turn ends (issue 148): answers every call still
+    /// without a result as not executed, `because` - why the turn ended -
+    /// and keeps the tool message as `collect` does, so that no call is left
+    /// unanswered and the results of those that ran are kept. `None` if the
+    /// step has no calls.
+    pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Option<Message> {
+        if self.is_empty() {
+            return None;
+        }
+        // A fixed text of the runtime's: as the turn (issue 168).
+        let label = self.turn.label();
+        for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
+            let content = crate::tool::abandoned_result(because);
+            call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone()));
+        }
+        self.collect(internal)
+    }
+
     /// Once every call has its result: the tool message that gives them to
     /// the model, kept in the turn - `internal` like the step that made the
     /// calls - and the step's calls done. `None` while a call still waits

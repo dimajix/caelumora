@@ -319,7 +319,7 @@ mod tests {
         turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), &mut turn).await.unwrap();
-        turn.commit_turn().await;
+        turn.commit_turn(false).await;
     }
 
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
@@ -351,7 +351,7 @@ mod tests {
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
             assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
-            turn.commit_turn().await;
+            turn.commit_turn(false).await;
         }
 
         // ... which another actor of the agent recalls in a channel that may
@@ -370,7 +370,7 @@ mod tests {
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default()).with_views(sessions.views_in(&team, &memory));
         turn.next_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new());
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
-        turn.commit_turn().await;
+        turn.commit_turn(false).await;
         assert!(handle.current().memory.current().is_empty());
     }
 
@@ -393,7 +393,7 @@ mod tests {
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err(), "forgotten already");
         let forgotten = memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), &mut turn).await;
         assert!(matches!(forgotten, Err(ToolError::InvalidParameter(_))), "a forgotten entry is not reclassified");
-        turn.commit_turn().await;
+        turn.commit_turn(false).await;
         assert!(handle.current().memory.current().is_empty());
     }
 
@@ -407,7 +407,7 @@ mod tests {
         let mut turn = Turn::new(agent, "agent".to_string(), &mut state, handle.clone(), Default::default());
         turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), &mut turn).await.unwrap();
-        turn.commit_turn().await;
+        turn.commit_turn(false).await;
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy::default(), "private: nobody agreed to anything");
         turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         assert!(memory.get_prompt(&turn).await.unwrap().text.is_empty(), "no session to recall in");
@@ -464,7 +464,7 @@ mod tests {
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
-            turn.commit_turn().await;
+            turn.commit_turn(false).await;
         }
         let remembered = handle.current().memory.current();
         assert_eq!(remembered[0].classification, Classification::general(Confidentiality::Internal));
@@ -511,7 +511,7 @@ mod tests {
         assert!(matches!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &unknown, &mut turn).await, Err(ToolError::InvalidParameter(_))));
         let released = serde_json::json!({ "id": 1, "level": "internal", "compartments": ["hr", "finance"] });
         memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &released, &mut turn).await.expect("the agent releases what it remembers");
-        turn.commit_turn().await;
+        turn.commit_turn(false).await;
 
         let there = recall(&memory, &sessions, &handle, agent, finance).await;
         assert!(there.text.contains("The budget is tight."), "released to finance: {}", there.text);

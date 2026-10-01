@@ -1,6 +1,6 @@
 # 148 — A cancelled turn takes over tool calls that have no result
 
-**Status:** open
+**Status:** in progress
 **Area:** Tools and approvals
 
 ## The problem
@@ -45,3 +45,16 @@ before as well, when the approval came after the cancel.
 - **2026-09-30** — Found while implementing
   [141](141-turn-during-reclassification.md), and confirmed with a probe
   in the test `a_cancel_ends_a_turn_waiting_for_approval_at_once`.
+- **2026-10-01** — Calls without a result are answered when their turn
+  ends (the first consideration). The open step had a further gap: the
+  results of calls that already ran sit in `TurnState::tool_calls` until
+  every call of the step has one, so a cancel lost them as well, and a
+  turn given up did not tell them (`executed_calls` only looks at the
+  messages). Now `Turn::commit_turn` and `give_up_turn` first end the open
+  step (`ToolCalls::abandon`): every call without a result is answered
+  with the new status `NotExecuted`, saying why the turn ended, and the
+  tool message is kept with the results of those that ran. The calls
+  answered after a restart (issue 75) take the same status instead of
+  `Failed`. Still open, and to be done in this issue: the approvals of
+  such calls stay pending at the approver and in the user interface after
+  the cancel.

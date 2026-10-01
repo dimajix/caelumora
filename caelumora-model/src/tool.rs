@@ -169,6 +169,9 @@ pub enum ToolResultStatus {
     InvalidArguments,
     /// The tool ran and failed.
     Failed,
+    /// The tool never ran: the turn that made the call ended first (issue
+    /// 148), or the server restarted before it ran (issue 75).
+    NotExecuted,
     /// No tool of that name exists.
     UnknownTool,
     /// The tool ran, but its result is classified so that it may not flow

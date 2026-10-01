@@ -1992,7 +1992,7 @@ mod tests {
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),
         }] };
-        let Stuck { channel, context, helper, running, .. } =
+        let Stuck { channel, context, agent, helper, running, .. } =
             with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
         settled(&helper, ActorState::WaitingForApproval).await;
 
@@ -2001,6 +2001,12 @@ mod tests {
         // Without anyone deciding on the call.
         settled(&helper, ActorState::Idle).await;
         running.abort();
+
+        // The call is answered as not executed (issue 148).
+        let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let last = stored.transcript.messages().pop().expect("the turn was taken over");
+        let answered: Vec<_> = last.tool_results.iter().map(|r| r.status).collect();
+        assert_eq!(answered, [caelumora_model::tool::ToolResultStatus::NotExecuted]);
     }
 
     #[tokio::test]

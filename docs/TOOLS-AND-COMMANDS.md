@@ -181,12 +181,20 @@ Every call ends with a result the model can act on (issue 15).
     `{"status": ..., "message": ...}`, whose message says what happened and
     what to do next. The statuses are `denied` (by a user), `forbidden` (by
     policy - without the reason, which stays in the log), `timed_out` (no
-    approval in time), `invalid_arguments`, `failed` (with the tool's error)
-    and `unknown_tool` (with the tools that do exist).
+    approval in time), `invalid_arguments`, `failed` (with the tool's error),
+    `not_executed` (the tool never ran: its turn ended first, or the server
+    restarted before it ran) and `unknown_tool` (with the tools that do
+    exist).
 *   The same status is stored as `ToolCallResult::status`, so the UI and an
     audit trail can tell refusals and failures from results.
 *   The wording lives in `crate::tool` (`ToolError::to_result`,
-    `denied_result`, `timed_out_result`, `forbidden_result`).
+    `denied_result`, `timed_out_result`, `forbidden_result`,
+    `abandoned_result`, `not_executed_result`).
+*   No call is left without a result. A turn that ends while calls of its
+    step have none - cancelled while waiting for an approval, given up -
+    answers them as `not_executed`, saying why the turn ended, and keeps
+    the tool message with the results of those that did run
+    (`ToolCalls::abandon`, issue 148).
 
 A call that ran also records when: `ToolCallResult::started_at` and
 `finished_at`, set by the executor around the tool's own run (not the

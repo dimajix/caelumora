@@ -86,17 +86,22 @@ pub struct CommittedTurn {
     pub ended: EndedTurn,
 }
 
+/// Why a turn was given up, as the agent is told: "… because it failed".
+fn because(reason: &GivenUpReason) -> &'static str {
+    match reason {
+        GivenUpReason::Failed { .. } => "it failed",
+        GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
+        GivenUpReason::Stopped => "you were stopped",
+    }
+}
+
 /// What the agent is told of the calls that ran in a turn given up
 /// (`executed`), and why it was given up: with arguments and results
 /// `in_full`, else only which tools ran - the turn does no longer flow into
 /// the channel, whose classification was lowered meanwhile (issue 141), so
 /// what it saw may not either.
 fn told_of_executed(reason: &GivenUpReason, executed: &[(Option<&ToolCall>, &ToolCallResult)], in_full: bool) -> String {
-    let because = match reason {
-        GivenUpReason::Failed { .. } => "it failed",
-        GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
-        GivenUpReason::Stopped => "you were stopped",
-    };
+    let because = because(reason);
     let calls: Vec<String> = executed.iter().map(|(call, result)| match in_full {
         true => {
             let arguments = call.map(|c| c.arguments.to_string()).unwrap_or_default();
@@ -247,9 +252,13 @@ impl<'a> Turn<'a> {
     ///   now. The answer is already out, so a state that cannot be stored
     ///   costs the turn's memory, not the turn: it is logged.
     ///
+    /// A step whose calls do not all have their result yet - only a
+    /// `cancelled` turn is taken over so - is ended first (`abandon_step`).
+    ///
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
-    pub(crate) async fn commit_turn(&mut self) -> CommittedTurn {
+    pub(crate) async fn commit_turn(&mut self, cancelled: bool) -> CommittedTurn {
+        self.abandon_step(if cancelled { "it was cancelled" } else { "it ended" });
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
         // Every part is used up exactly once.
@@ -272,8 +281,11 @@ impl<'a> Turn<'a> {
     /// What its tools did stays done. If any of its calls ran, the agent is
     /// told on the active branch, in a message of the runtime in its
     /// transcript: in full, classified as the turn's label (issue 168) - or,
-    /// with `names_only`, only which tools ran, classified so.
+    /// with `names_only`, only which tools ran, classified so. A step whose
+    /// calls do not all have their result yet is ended first
+    /// (`abandon_step`), so that those that ran are told too.
     pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
+        self.abandon_step(because(&reason));
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(self.agent_id, &turn);
         let label = turn.label();
@@ -302,6 +314,19 @@ impl<'a> Turn<'a> {
             self.agent_channel_state.transcript.push(message);
         }
         ended
+    }
+
+    /// Ends the current step as the turn ends, `because` - why it ends
+    /// (issue 148): its calls without a result are answered as not
+    /// executed, and the tool message is kept like any other, internal like
+    /// the step. No call of the turn is left unanswered in the transcript,
+    /// and the results of those that ran are not lost with the turn's
+    /// working state.
+    fn abandon_step(&mut self, because: &str) {
+        let internal = self.in_plan_step();
+        if let Some(turn) = self.agent_channel_state.turn.as_mut() {
+            ToolCalls::new(turn, self.agent_id, &self.agent_name).abandon(because, internal);
+        }
     }
 
     /// Begins a turn: fixes what it is - the envelope it answers, whose
@@ -793,6 +818,57 @@ mod tests {
         assert_eq!(told.classification, lowered, "as the channel");
     }
 
+    /// A turn begun on `state`, whose model called `send_mail` and `delete`
+    /// in one step: `send_mail` ran, `delete` waits for its approval.
+    fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
+        use caelumora_model::approval::{ApprovalId, ApprovalStatus};
+        use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
+        let mut turn = Turn::new(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        turn.begin();
+        let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN };
+        let calls = vec![call("1", "send_mail"), call("2", "delete")];
+        turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
+        let states: Vec<ToolCallState> = calls.into_iter().zip([ApprovalStatus::Approved, ApprovalStatus::Pending])
+            .map(|(tool_call, status)| ToolCallState { id: ApprovalId::new(), status, tool_call, description: String::new(), result: None })
+            .collect();
+        turn.tool_calls().register(states);
+        let (id, ran) = turn.tool_calls().to_run().remove(0);
+        let mut result = ToolCallResult::of(&ran, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
+        result.started_at = Some(chrono::Utc::now());
+        turn.tool_calls().record(id, result);
+        turn
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_turn_is_taken_over_with_every_call_answered() {
+        use caelumora_model::tool::ToolResultStatus;
+        let mut state = a_state_with("mail bob, then delete");
+        let mut turn = a_turn_with_an_open_step(&mut state);
+        let committed = turn.commit_turn(true).await;
+
+        let messages = state.transcript.messages();
+        let roles: Vec<MessageRole> = messages.iter().map(|m| m.role).collect();
+        assert_eq!(roles, [MessageRole::User, MessageRole::Assistant, MessageRole::Tool], "the calls are answered right after they were made");
+        let results: Vec<_> = messages[2].tool_results.iter().map(|r| (r.tool_name.as_str(), r.status)).collect();
+        assert_eq!(results, [("send_mail", ToolResultStatus::Ok), ("delete", ToolResultStatus::NotExecuted)], "what ran is kept");
+        assert!(messages[2].tool_results[1].content.contains("cancelled"), "the model is told why: {}", messages[2].tool_results[1].content);
+        assert!(committed.final_messages.iter().any(|m| m.role == MessageRole::Tool), "observers learn of it too");
+    }
+
+    #[test]
+    fn a_turn_given_up_with_an_open_step_tells_what_ran_in_it() {
+        use caelumora_model::tool::ToolResultStatus;
+        let mut state = a_state_with("mail bob, then delete");
+        let mut turn = a_turn_with_an_open_step(&mut state);
+        turn.give_up_turn(GivenUpReason::Failed { message: "boom".to_string() }, None);
+
+        let told = state.transcript.messages().pop().unwrap().content.unwrap();
+        assert!(told.contains("send_mail") && !told.contains("delete"), "only what ran: {told}");
+        let turns = state.transcript.given_up_turns();
+        let answered: Vec<_> = turns[0].messages.last().unwrap().tool_results.iter().map(|r| r.status).collect();
+        assert_eq!(answered, [ToolResultStatus::Ok, ToolResultStatus::NotExecuted], "the branch holds no call without a result");
+    }
+
     #[test]
     fn a_turn_given_up_before_it_said_anything_leaves_nothing() {
         let mut state = a_state_with("hello");
@@ -887,7 +963,7 @@ mod tests {
             use MessageRole::{Assistant, System, User};
             assert_eq!(roles, [System, User, System, Assistant, System], "a model that keeps them in place is given system messages");
             turn.push_message(answer.clone());
-            turn.commit_turn().await;
+            turn.commit_turn(false).await;
         }
 
         let recorded = seen(&state, agent, answer.id).expect("the agent produced it");
@@ -1000,7 +1076,7 @@ mod tests {
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().messages), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
-            turn.commit_turn().await;
+            turn.commit_turn(false).await;
         }
 
         // What was recorded says what the model was given - not what the
@@ -1046,7 +1122,7 @@ mod tests {
             assert_eq!(given[0].role, MessageRole::System);
             turn.push_message(first.clone());
             turn.push_message(second.clone());
-            turn.commit_turn().await;
+            turn.commit_turn(false).await;
         }
 
         assert_eq!(order(&seen(&state, agent, first.id).expect("the agent produced it")),
@@ -1069,7 +1145,7 @@ mod tests {
             turn.record_knowledge(read.clone());
             turn.record_knowledge(read.clone());
             turn.push_message(after.clone());
-            turn.commit_turn().await;
+            turn.commit_turn(false).await;
         }
         let knowledge_of = |id| state.recorded_context_of(id).unwrap().knowledge;
         assert!(knowledge_of(before.id).is_empty(), "produced before the read");
@@ -1107,7 +1183,7 @@ mod tests {
             for message in messages {
                 turn.push_message((*message).clone());
             }
-            futures::executor::block_on(turn.commit_turn());
+            futures::executor::block_on(turn.commit_turn(false));
         };
         take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
         take_turn(&mut state, Vec::new(), &[&third]);
@@ -1209,7 +1285,7 @@ mod tests {
         turn.push_message(internal);
         turn.push_message(final_answer.clone());
 
-        let committed = turn.commit_turn().await;
+        let committed = turn.commit_turn(false).await;
         assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
         assert_eq!(committed.final_messages[0].id, final_answer.id);
         assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "but of the transcript");

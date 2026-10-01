@@ -250,7 +250,7 @@ impl AgentActor {
     async fn end_turn(&self, turn: &mut Turn<'_>, cancelled: bool, output: &dyn EventSender) -> Result<ActorState> {
         // Read before the turn is taken over, which ends it.
         let next = if cancelled { ActorState::Idle } else { turn.requested_state().unwrap_or(ActorState::Idle) };
-        let CommittedTurn { final_messages, channel_state_changed, ended } = turn.commit_turn().await;
+        let CommittedTurn { final_messages, channel_state_changed, ended } = turn.commit_turn(cancelled).await;
         self.store_channel_state(turn).await;
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
@@ -646,7 +646,7 @@ fn prepare_resume(state: &mut AgentChannelState) -> usize {
     let classification = turn.classification.clone();
     for call in &mut turn.tool_calls {
         if call.status == ApprovalStatus::Approved && call.result.is_none() {
-            call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::Failed, crate::tool::not_executed_result(), classification.clone()));
+            call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::not_executed_result(), classification.clone()));
             answered += 1;
         }
     }
@@ -930,7 +930,7 @@ mod tests {
         let executing = calls(&executing);
         let [unfinished, finished, pending] = executing.as_slice() else { panic!("three calls") };
         let unfinished = unfinished.result.as_ref().expect("answered");
-        assert_eq!(unfinished.status, ToolResultStatus::Failed);
+        assert_eq!(unfinished.status, ToolResultStatus::NotExecuted);
         assert!(unfinished.content.contains("not executed"), "the model is told: {}", unfinished.content);
         assert_eq!(finished.result.as_ref().map(|r| r.content.as_str()), Some("done"), "a stored result stays");
         assert!(pending.result.is_none(), "a call nobody approved is still waiting");

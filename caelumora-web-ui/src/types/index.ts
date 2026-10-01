@@ -75,7 +75,7 @@ export interface ToolCall {
 
 /** How a tool call ended; absent means `ok`. */
 export type ToolResultStatus =
-  | 'ok' | 'denied' | 'forbidden' | 'timed_out' | 'invalid_arguments' | 'failed' | 'unknown_tool' | 'withheld';
+  | 'ok' | 'denied' | 'forbidden' | 'timed_out' | 'invalid_arguments' | 'failed' | 'not_executed' | 'unknown_tool' | 'withheld';
 
 export interface ToolResult {
   id?: string;

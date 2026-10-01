@@ -49,7 +49,10 @@ between turns, five belong to a turn.
     or in `Idle`.
 *   **`Cancelling`** is entered when the channel cancels the turn. It takes
     the turn over like `Reflecting` - so observers learn that generation
-    stopped - and returns to `Idle`.
+    stopped - and returns to `Idle`. Calls of the step still without a
+    result - waiting for an approval, or approved but not yet run - are
+    answered as not executed because the turn was cancelled, so that the
+    transcript holds no call without an answer (issue 148).
 
 Every message that leaves the agent passes its `EmitOutProcessor`s first,
 of which there is no implementation yet (issue 99), and is published
@@ -145,7 +148,10 @@ channel, in tests, has none and reads nothing.
         into the channel (`ActionType::Publish`); only the names of the
         tools, classified as the channel, once the channel was lowered
         below the turn (issue 141) or is gone. A call that did not run -
-        denied, or given up while waiting for approval - is not told.
+        denied, or given up while waiting for approval - is not told. A
+        step whose calls do not all have their result is ended first, as on
+        a cancel: those without one are answered as not executed on the
+        dead branch, and those that ran are told (issue 148).
 
     A turn that produced no message leaves nothing: there is nothing to
     keep. `cancel` does not give a turn up; it takes it over - unless the

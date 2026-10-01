@@ -154,8 +154,18 @@ pub(crate) fn timed_out_result() -> String {
 /// it never runs the call again - the model decides.
 pub(crate) fn not_executed_result() -> String {
     unsuccessful_result(
-        ToolResultStatus::Failed,
+        ToolResultStatus::NotExecuted,
         "This tool call was not executed: the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
+    )
+}
+
+/// The result for a call that had no result when its turn ended (issue
+/// 148): it never ran, `because` - why the turn ended, as in "the turn
+/// ended before it ran, because it was cancelled".
+pub(crate) fn abandoned_result(because: &str) -> String {
+    unsuccessful_result(
+        ToolResultStatus::NotExecuted,
+        &format!("This tool call was not executed: the turn ended before it ran, because {because}. Decide again whether to call it."),
     )
 }
 
