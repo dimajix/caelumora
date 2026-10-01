@@ -17,7 +17,8 @@ pub struct RouteDecision {
     /// Whether this event should also be broadcast to external subscribers (e.g. the UI).
     /// `false` only for the internal hops of an approval (agent -> approver, approver ->
     /// agent), which must not show; everything else - messages, the approver's request to
-    /// the users, `TurnFailed`, `CommandExecuted` - is broadcast.
+    /// the users, `TurnFailed`, `CommandExecuted`, `ParticipantRemoved` - is
+    /// broadcast.
     pub broadcast: bool,
 }
 

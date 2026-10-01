@@ -90,6 +90,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
   const [streamingSender, setStreamingSender] = useState<string | null>(null);
+  // Who is generating (`actorKey`), so that their removal can end it (issue 162).
+  const generatingActor = useRef<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
   // The snapshot holds the end of the history; older messages on request.
@@ -242,12 +244,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         const envelope: Envelope = JSON.parse(data);
         const actorEvent = envelope.event;
         if (actorEvent === 'ResponseStarted') {
+          generatingActor.current = actorKey(envelope.context.sender_id);
           setIsGenerating(true);
           setStreamingMessage('');
           setStreamingSender(envelope.context.sender_name || null);
         } else if (typeof actorEvent === 'string') {
           // The other payload-less events have nothing to show.
         } else if (actorEvent.PartialMessageGenerated) {
+          generatingActor.current = actorKey(envelope.context.sender_id);
           setIsGenerating(true);
           setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
           setStreamingSender(envelope.context.sender_name || null);
@@ -309,6 +313,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, notice]);
+        } else if (actorEvent.ParticipantRemoved) {
+          // Nothing of the removed participant follows (issue 162): what it
+          // had under way has ended - its answer, its calls of tools.
+          const removed = actorKey(actorEvent.ParticipantRemoved.participant);
+          setMessages(prev => prev.map(m =>
+            m.sender_id && actorKey(m.sender_id) === removed && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id))
+              ? {...m, abandoned: true}
+              : m
+          ));
+          if (generatingActor.current === removed) {
+            generatingActor.current = null;
+            setStreamingMessage(null);
+            setStreamingSender(null);
+            setIsGenerating(false);
+            setCurrentStep(null);
+          }
         } else if (actorEvent.PlanStepStarted) {
           setCurrentStep(actorEvent.PlanStepStarted);
         } else if (actorEvent.PlanStepFinished) {

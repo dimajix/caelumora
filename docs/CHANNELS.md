@@ -196,7 +196,17 @@ itself cannot be removed.
 ### How others learn of it
 
 A leave is announced on the event bus like every change of membership (issue
-73). A removed user's live stream of the channel ends because it is theirs:
+73). In the channel itself, the removal is announced with
+`ActorEvent::ParticipantRemoved`, in the name of whoever removed the
+participant - `System` if the runtime did. The run loop sends it as it stops
+the actor, between the events it routes, and from then on drops whatever the
+actor still sends while it finishes its step: what the participant sent
+before is in the channel, nothing of it follows the announcement. That is how
+a frontend knows that a turn it shows has ended - a stopped agent announces
+nothing itself, it has left (issue 162). Like `TurnFailed`, every moderator
+forwards it to the users only, and it is never stored.
+
+A removed user's live stream of the channel ends because it is theirs:
 it is followed through their actor (`UserActor::watch`), which ends when it is
 stopped, so no one has to listen for the announcement (issue 104).
 

@@ -177,6 +177,9 @@ export interface Message {
   // UI only: the answer to a user command (never part of the history).
   // `command` is its name; `private` if only the issuer sees it.
   commandOutput?: {command: string; private: boolean};
+  // UI only: its sender was removed from the channel before its tool calls
+  // were answered (issue 162) - those without a result never will be.
+  abandoned?: boolean;
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -213,6 +216,12 @@ export interface ActorEvent {
   TurnFailed?: { message: string };
   /** A user ran a command whose answer concerns the whole channel (issue 28). */
   CommandExecuted?: { command: string; output: string };
+  /**
+   * `participant` was removed from the channel by the envelope's sender
+   * (issue 162); nothing of it follows, so whatever of it was under way has
+   * ended.
+   */
+  ParticipantRemoved?: { participant: ActorId };
 }
 
 /** A user command, as `/help` and completion show it (issue 28). */

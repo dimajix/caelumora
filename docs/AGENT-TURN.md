@@ -185,7 +185,9 @@ agent starts `Idle`.
 A deliberate end never leaves a turn in the store. `cancel` and the stop
 tool commit the turn. An agent removed from its channel is told to `stop`:
 it gives up a turn under way, stores itself idle and ends its task. The
-channel aborts it only if it does not - a tool that hangs, say.
+channel aborts it only if it does not - a tool that hangs, say. The agent
+announces nothing, since it has left; the channel announces its removal
+(`ParticipantRemoved`, see [CHANNELS.md](CHANNELS.md)).
 
 ## What an agent saw
 

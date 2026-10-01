@@ -84,6 +84,10 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     Some(ActorEvent::CommandExecuted { command, output }) => {
                         println!("\r{} ran /{}: {}", sender, command, output);
                     }
+                    Some(ActorEvent::ParticipantRemoved { participant }) => {
+                        let removed = handles.get(&participant).map(|handle| format!("@{handle}")).unwrap_or_else(|| participant.to_string());
+                        println!("\r{} removed {} from the channel", sender, removed);
+                    }
                     Some(ActorEvent::ApprovalRequested(request)) => {
                         pending_approvals.insert(request.id.0, request.agent_id);
                         println!("\r--- Approval requested (id: {}) ---", request.id.0);

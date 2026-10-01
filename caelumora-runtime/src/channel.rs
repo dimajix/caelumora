@@ -9,7 +9,7 @@ use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, UserController};
 use caelumora_model::approval::Approver;
@@ -140,7 +140,9 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 /// `run`, which owns their tasks.
 enum ActorChange {
     Start(Arc<dyn Actor>),
-    Stop(ActorId),
+    /// The actor to stop, and on whose behalf it was removed - in whose name
+    /// `run` announces it (`ParticipantRemoved`, issue 162).
+    Stop(ActorId, SecurityContext),
 }
 
 #[derive(Debug)]
@@ -460,9 +462,10 @@ impl ChannelLoop {
     /// 46): stored first (`UpdateChannel`), then its actor stopped - an agent
     /// at once, without finishing a turn; the approver discards its pending
     /// approvals. The leave is announced by the `ChannelController` on the
-    /// event bus, which is how anyone following the channel learns of it
-    /// (issue 73). Its state is kept, for the record and for when it joins
-    /// again.
+    /// event bus (issue 73), and in the channel by `run` with a
+    /// `ParticipantRemoved` in the name of `context`'s caller, after which
+    /// nothing of the participant enters the channel any more (issue 162).
+    /// Its state is kept, for the record and for when it joins again.
     ///
     /// # Errors
     /// `ChannelError::ApproverStays` or `NotAParticipant`; a `StoreError` if
@@ -483,7 +486,7 @@ impl ChannelLoop {
         self.moderator.lock().await.remove_actor(participant);
         self.rebuild_mentions();
         actor.stop();
-        let _ = self.changes_tx.send(ActorChange::Stop(participant));
+        let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
         info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
         Ok(())
     }
@@ -504,6 +507,25 @@ impl ChannelLoop {
             self.state_store.put_agent_channel_state(agent, self.id, &state).await?;
         }
         Ok(())
+    }
+
+    /// The name `actor` is shown with: a participant's own, a user's name
+    /// otherwise; for the runtime itself, `system`.
+    async fn name_of(&self, actor: ActorId) -> String {
+        if let Some(participant) = self.actor_by_id(actor) {
+            return participant.name();
+        }
+        match actor {
+            ActorId::User(user) => match self.runtime.controller_manager().user_controller(user).await {
+                Ok(user) => user.username(),
+                Err(e) => {
+                    warn!("Cannot name user {} for channel {}: {}", user, self.id, e);
+                    actor.to_string()
+                }
+            },
+            ActorId::System => "system".to_string(),
+            other => other.to_string(),
+        }
     }
 
     fn rebuild_mentions(&self) {
@@ -687,7 +709,7 @@ impl ChannelLoop {
                     }
                 }
                 Some(change) = changes_rx.recv() => {
-                    self.apply_change(change, &mut running, &event_tx, &mut join_set);
+                    self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
                 }
                 // Finished tasks are dropped as they end; once the last one
                 // is gone, the channel stops - the sender kept for actors
@@ -705,7 +727,7 @@ impl ChannelLoop {
     }
 
     /// Starts or stops an actor as a participant joined or left (issue 46).
-    fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, ActorHandle>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
+    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, ActorHandle>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
             ActorChange::Start(actor) => {
                 // Joined before `run` started: already running.
@@ -714,7 +736,7 @@ impl ChannelLoop {
                     running.insert(handle.id, handle);
                 }
             }
-            ActorChange::Stop(id) => {
+            ActorChange::Stop(id, remover) => {
                 // Dropping the handle closes the actor's inbox; told to stop
                 // (`Actor::stop`), it ends its task itself once its state is
                 // stored consistent. Only if it does not - a tool that hangs -
@@ -731,12 +753,25 @@ impl ChannelLoop {
                     });
                     info!("Actor {} is stopping: it left channel {}", id, self.id);
                 }
+                // Announced here, between the events `run` routes: what the
+                // actor sent before is routed, what it sends after is not
+                // (`handle_actor_event`), so that nothing of it follows the
+                // announcement (issue 162).
+                let sender = EventContext::new(self.session_id, self.id, remover.caller_id, self.name_of(remover.caller_id).await);
+                let removed = Envelope::new(remover, sender, ActorEvent::ParticipantRemoved { participant: id });
+                self.process_envelope(removed, running).await;
             }
         }
     }
 
     async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId,ActorHandle>) -> bool {
         if let Some(event) = maybe_event {
+            // An actor that was removed may still finish the step it was in;
+            // what it sends then no longer enters the channel (issue 162).
+            if !running.contains_key(&event.context.sender_id) {
+                debug!("Dropped {}: its sender left channel {}", event.describe(), self.id);
+                return false;
+            }
             let span = crate::logging::envelope_span(&event.context, event.event.kind());
             self.process_envelope(event, running).instrument(span).await;
             false
@@ -2151,5 +2186,39 @@ mod tests {
         // The channel is still running: alice is still in it.
         assert!(!running.is_finished());
         running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_removal_is_announced_in_the_channel_in_the_name_of_who_removed() {
+        let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
+
+        channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
+
+        // What a frontend needs to end the turn it shows: who is gone.
+        let removed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if let ActorEvent::ParticipantRemoved { participant } = envelope.event {
+                    break (envelope.context.sender_id, envelope.context.sender_name, participant);
+                }
+            }
+        }).await.expect("the removal is announced");
+        assert_eq!(removed, (context.caller_id, "alice".to_string(), ActorId::Agent(agent)));
+        settled(&helper, ActorState::Idle).await;
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn nothing_of_a_removed_participant_enters_the_channel() {
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let mut events = channel.subscribe();
+        let gone = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnFailed { message: "too late".to_string() });
+
+        // Its actor no longer runs: it was removed while finishing a step.
+        channel.handle_actor_event(Some(late), &HashMap::new()).await;
+
+        assert!(events.try_recv().is_err(), "what a removed participant sends is dropped");
     }
 }

@@ -132,7 +132,10 @@ shown its history and no input.
     public is marked with how far it may travel (issues 54, 61, 100).
 *   **While an agent answers**, its partial message is shown as it streams.
     A failed turn and the channel-wide answer of a command are shown in the
-    chat but never stored.
+    chat but never stored. When a participant is removed, the channel says so
+    with `ParticipantRemoved`, and nothing of it follows: its partial answer
+    and the stop button go, and its calls still without a result are shown as
+    abandoned (issue 162).
 *   **Approvals.** A tool call that needs approval is shown with approve and
     deny, and disappears once it is decided.
 *   **Stop.** The stop button ends the current turn of every agent

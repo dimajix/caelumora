@@ -97,6 +97,7 @@ against it, and what came out of the last attempt.
 | [124](124-observer-participants.md) | open | Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live. |
 | [141](141-turn-during-reclassification.md) | done | A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
+| [171](171-readded-while-still-stopping.md) | open | A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state. |
 
 ## Identity and access management
 
@@ -171,7 +172,7 @@ against it, and what came out of the last attempt.
 | [104](104-sse-stream-and-subscribe.md) | done | Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler. |
 | [106](106-rest-small-findings.md) | done | Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state. |
 | [146](146-show-given-up-turns.md) | open | The web UI does not show the turns an agent gave up, so what their tools did can be read only through the API. |
-| [162](162-ui-keeps-a-removed-agents-turn.md) | open | The web UI keeps showing the turn of an agent removed during it as under way, with its stop button, until the page is reloaded. |
+| [162](162-ui-keeps-a-removed-agents-turn.md) | done | The web UI keeps showing the turn of an agent removed during it as under way, with its stop button, until the page is reloaded. |
 | [165](165-ask-the-user-tool.md) | open | An agent cannot ask the user a question and wait for the answer - yes/no, a choice, free text - and the web UI has no way to show a tool call other than generically. |
 | [170](170-context-panel-shows-the-label.md) | open | The context panel does not show how each part of a message's context was classified, so nobody can tell why the message was classified as it was. |
 

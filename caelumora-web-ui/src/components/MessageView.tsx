@@ -216,6 +216,11 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
                   </div>
                 ) : result ? (
                   <CheckCircle2 size={12} className="text-green-500" />
+                ) : msg.abandoned ? (
+                  <div className="flex items-center gap-1 opacity-60" title="Its caller was removed from the channel">
+                    <XCircle size={12} />
+                    <span className="text-[11px] uppercase">Abandoned</span>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />

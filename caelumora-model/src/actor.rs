@@ -109,6 +109,16 @@ pub enum ActorEvent {
         command: String,
         output: String,
     },
+    /// `participant` was removed from the channel (issue 162). The envelope's
+    /// sender is who removed it - the runtime itself, `ActorId::System`, if
+    /// nobody did. Sent by the channel once the participant's actor no longer
+    /// runs in it: nothing of the participant follows, so whatever of it was
+    /// under way - a turn, a call of a tool - has ended.
+    ///
+    /// Like `TurnFailed`, shown to users and never written to the history.
+    ParticipantRemoved {
+        participant: ActorId,
+    },
 }
 
 impl ActorEvent {
@@ -151,6 +161,7 @@ impl ActorEvent {
             ActorEvent::PlanStepFinished { .. } => "PlanStepFinished",
             ActorEvent::TurnFailed { .. } => "TurnFailed",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
+            ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
         }
     }
 }
@@ -260,6 +271,9 @@ impl Envelope {
             }
             ActorEvent::CommandExecuted { command, .. } => {
                 format!("CommandExecuted(sender_id={}, sender_name={}, command={})", ctx.sender_id, ctx.sender_name, command)
+            }
+            ActorEvent::ParticipantRemoved { participant } => {
+                format!("ParticipantRemoved(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
             }
             _ => {
                 format!("{:?}", self.event)
