@@ -46,3 +46,9 @@ by files, not by new types.
   personality's reasoning visibility, are free functions too, taking it as
   a parameter and the sender from the turn; `assemble_context` is inlined
   into `request_response`, its only caller.
+- **2026-10-01** — What the run loop shares with `cancel`, `stop` and
+  `wakeup` - the processing state, the turn's cancellation token and the
+  interrupt - is `RunControl` in `agent_run_control.rs`, with the rules of
+  cancel and stop and tests of its own, instead of three fields of the
+  actor and their handling spread over six places. How the run loop
+  decides the next state is unchanged.

@@ -12,6 +12,7 @@ mod tool_calls;
 pub mod actor;
 pub mod agent_memory;
 pub mod agent_notes;
+mod agent_run_control;
 pub mod agent_state;
 pub mod agent_turn;
 pub mod actor_impl;

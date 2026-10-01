@@ -1,5 +1,6 @@
 use super::{apply_stage_processors, event_for};
 use crate::actor::Actor;
+use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
@@ -11,7 +12,7 @@ use crate::tool::{GuardedToolExecutor, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, ProcessingStateHolder};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use crate::controller::AgentController;
@@ -25,10 +26,8 @@ use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct AgentActor {
@@ -59,16 +58,9 @@ pub struct AgentActor {
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
     state: Mutex<AgentChannelState>,
-    processing_state: Arc<ProcessingStateHolder>,
-    /// Cancelled by `cancel` and `stop` while a turn runs, replaced when the
-    /// next one begins: the streaming loop waits on it next to the model's
-    /// stream, so that a cancel drops the request instead of waiting for its
-    /// next chunk, and so does waiting for an approval. A `std` mutex,
-    /// because `cancel` is synchronous.
-    turn_cancel: std::sync::Mutex<CancellationToken>,
-    /// What `cancel` or `stop` asked of the run loop (an `Interrupt`, or
-    /// `NO_INTERRUPT`), taken after every step (issue 152).
-    interrupt: AtomicU8,
+    /// Where the run loop stands, and what `cancel`, `stop` and `wakeup`
+    /// asked of it.
+    control: RunControl,
 }
 
 impl AgentActor {
@@ -109,7 +101,7 @@ impl AgentActor {
             warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
         }
         let agent_state = actor_runtime.agent_state(attributes).await?;
-        let processing_state = Arc::new(ProcessingStateHolder::new(agent_channel_state.processing_state));
+        let control = RunControl::new(agent_channel_state.processing_state);
         let views = actor_runtime.views(security_context);
 
         Ok(AgentActor {
@@ -125,9 +117,7 @@ impl AgentActor {
             views,
             agent_state,
             state: Mutex::new(agent_channel_state),
-            processing_state,
-            turn_cancel: std::sync::Mutex::new(CancellationToken::new()),
-            interrupt: AtomicU8::new(NO_INTERRUPT),
+            control,
         })
     }
 
@@ -193,10 +183,7 @@ impl AgentActor {
             classification,
             self.tool_executor.tools(),
         );
-        *self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = CancellationToken::new();
-        // A cancel that came as the turn before ended has nothing to end
-        // here; a stop still has.
-        let _ = self.interrupt.compare_exchange(Interrupt::Cancel as u8, NO_INTERRUPT, Ordering::SeqCst, Ordering::SeqCst);
+        self.control.begin_turn();
 
         debug!("Starting generating messages for agent {} {}", self.id(), turn.agent_name());
         turn.send_event(ActorEvent::ResponseStarted, output).await?;
@@ -228,7 +215,7 @@ impl AgentActor {
     /// where the actor stands now. A failure is logged: the actor carries
     /// on with the state in memory.
     async fn store_channel_state(&self, turn: &mut Turn<'_>) {
-        turn.set_processing_state(self.processing_state.load());
+        turn.set_processing_state(self.control.state());
         if let Err(e) = self.actor_runtime.store_channel_state(turn.agent_channel_state()).await {
             warn!("Cannot store agent channel state of agent {}: {:#}", self.agent_id, e);
         }
@@ -236,34 +223,8 @@ impl AgentActor {
 
     /// Moves the actor to `state` and stores its state in the channel.
     async fn settle(&self, turn: &mut Turn<'_>, state: ActorState) {
-        self.processing_state.store(state);
+        self.control.go_to(state);
         self.store_channel_state(turn).await;
-    }
-
-    /// The token of the current turn, cancelled by `cancel` and `stop`.
-    fn turn_token(&self) -> CancellationToken {
-        self.turn_cancel.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
-    }
-
-    /// Asks the run loop for `interrupt` - a stop is not turned back into a
-    /// cancel - and interrupts the step under way.
-    fn interrupt(&self, interrupt: Interrupt) {
-        match interrupt {
-            Interrupt::Cancel => {
-                let _ = self.interrupt.compare_exchange(NO_INTERRUPT, Interrupt::Cancel as u8, Ordering::SeqCst, Ordering::SeqCst);
-            }
-            Interrupt::Stop => self.interrupt.store(Interrupt::Stop as u8, Ordering::SeqCst),
-        }
-        self.turn_token().cancel();
-    }
-
-    /// What was asked of the run loop since it last looked, if anything.
-    fn take_interrupt(&self) -> Option<Interrupt> {
-        match self.interrupt.swap(NO_INTERRUPT, Ordering::SeqCst) {
-            v if v == Interrupt::Cancel as u8 => Some(Interrupt::Cancel),
-            v if v == Interrupt::Stop as u8 => Some(Interrupt::Stop),
-            _ => None,
-        }
     }
 
     /// Runs the approved calls of the step that have no result yet - the
@@ -357,7 +318,7 @@ impl AgentActor {
             })
         }.instrument(span).await?;
         rx.commit().await?;
-        Ok(Some(if started { ActorState::Planning } else { self.processing_state.load() }))
+        Ok(Some(if started { ActorState::Planning } else { self.control.state() }))
     }
 
     /// Ends the current turn after `error`: logs the full error, gives the
@@ -434,7 +395,7 @@ impl AgentActor {
 
         // A cancel or a stop ends the waiting, not only an approval: the run
         // loop then finds what it was told to do.
-        let cancelled = self.turn_token();
+        let cancelled = self.control.token();
         let received = tokio::select! {
             received = rx.recv_matching(is_approval_event) => received,
             _ = cancelled.cancelled() => return Ok(Some(ActorState::WaitingForApproval)),
@@ -509,7 +470,7 @@ impl AgentActor {
             return Ok(ActorState::Reflecting);
         }
 
-        let cancelled = self.turn_token();
+        let cancelled = self.control.token();
         let mut response = self.call_llm(turn).await?;
         use futures::stream::TryStreamExt;
         loop {
@@ -606,22 +567,6 @@ impl AgentActor {
         }
     }
 }
-
-/// What `cancel` or `stop` asked of the run loop, which takes it after every
-/// step and alone decides what follows (issue 152). A stop wins over a
-/// cancel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum Interrupt {
-    /// End the turn under way and take it over (`Cancelling`).
-    Cancel = 1,
-    /// Give the turn under way up and end the run loop: the actor left the
-    /// channel.
-    Stop = 2,
-}
-
-/// `AgentActor::interrupt` when nothing was asked.
-const NO_INTERRUPT: u8 = 0;
 
 /// Whether a turn may still flow into its channel (`AgentActor::turn_flow`).
 enum TurnFlow {
@@ -753,12 +698,12 @@ impl Actor for AgentActor {
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
-        if self.processing_state.load().in_turn() {
-            info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.processing_state.load());
+        if self.control.state().in_turn() {
+            info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.control.state());
         }
 
         loop {
-            let current_state = self.processing_state.load();
+            let current_state = self.control.state();
             // The name as the agent's controller has it now.
             let mut turn = Turn::new(
                 self.agent_id,
@@ -819,7 +764,7 @@ impl Actor for AgentActor {
             // stop, the actor is leaving the channel: a turn under way is
             // not resumed later, so it is given up rather than stored to be
             // resumed (issues 75, 145).
-            let interrupt = self.take_interrupt();
+            let interrupt = self.control.take_interrupt();
             if interrupt == Some(Interrupt::Stop) {
                 self.give_up(&mut turn, GivenUpReason::Stopped, &*output).await;
                 self.settle(&mut turn, ActorState::Idle).await;
@@ -836,7 +781,7 @@ impl Actor for AgentActor {
                 // returned; one that came as the turn ended finds nothing
                 // left to end.
                 let cancelled = interrupt == Some(Interrupt::Cancel) && next.in_turn();
-                self.processing_state.store(if cancelled { ActorState::Cancelling } else { next });
+                self.control.go_to(if cancelled { ActorState::Cancelling } else { next });
             }
             self.store_channel_state(&mut turn).await;
             // Channel is closed, actor wants to quit
@@ -850,7 +795,7 @@ impl Actor for AgentActor {
     }
 
     fn state(&self) -> ActorState {
-        self.processing_state.load()
+        self.control.state()
     }
 
     fn wakeup(&self) {
@@ -860,9 +805,7 @@ impl Actor for AgentActor {
             self.id(),
             self.agent_controller.name()
         );
-        // Only a sleeping agent should be woken; forcing Idle from any other
-        // state (e.g. mid-Planning) would corrupt an in-flight turn.
-        self.processing_state.replace(ActorState::Sleeping, ActorState::Idle);
+        self.control.wakeup();
     }
 
     fn cancel(&self) {
@@ -871,18 +814,12 @@ impl Actor for AgentActor {
             self.id(),
             self.agent_controller.name()
         );
-        // Outside a turn there is nothing to cancel, and a turn already
-        // ending is ended anyway. The run loop decides after the step.
-        if matches!(self.processing_state.load(), ActorState::WaitingForApproval | ActorState::ExecutingTools | ActorState::Planning) {
-            self.interrupt(Interrupt::Cancel);
-        }
+        self.control.cancel();
     }
 
     fn stop(&self) {
         info!("Stopping agent {} {}: it left the channel", self.id(), self.agent_controller.name());
-        // Interrupts a model call in flight; the run loop then gives the
-        // turn up instead of taking it over.
-        self.interrupt(Interrupt::Stop);
+        self.control.stop();
     }
 }
 
