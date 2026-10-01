@@ -202,6 +202,7 @@ mod tests {
 
     async fn agent_in(store: &MemoryStore) -> Agent {
         let personality = Personality {
+            introduction: None,
             id: PersonalityId::new(),
             metadata: Metadata::default(),
             components: Default::default(),

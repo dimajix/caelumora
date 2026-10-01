@@ -45,9 +45,11 @@ authority (`SecurityContext`) and in reply to what (`EventContext`).
 
 An **agent** is an identity with a **personality**. The personality says
 what the agent consists of: a list of components (its tools, its system
-prompt, its notes, ...) and how confidential its reasoning is. One agent can
-take part in many sessions and channels at the same time; it has one actor
-in each channel and one state across them.
+prompt, its notes, ...), how its agents are introduced to the others
+(issue 176) and how confidential its reasoning is. An agent is read through
+its personality, not copied from it. One agent can take part in many
+sessions and channels at the same time; it has one actor in each channel
+and one state across them.
 
 Sessions are made from **session templates**. A template names every
 participant of the session - users, agents with their personality and scope,
@@ -167,7 +169,7 @@ Details: [SECURITY.md](SECURITY.md#views),
 Two stores, configured separately:
 
 *   the **`EntityStore`** keeps long-lived documents - personalities,
-    templates, agents, users, sessions and channels;
+    templates, agents, users and their profiles, sessions and channels;
 *   the **`StateStore`** keeps what changes while a session runs - the
     channel's history, each agent's state in each channel, and each agent's
     own state.

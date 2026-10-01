@@ -31,6 +31,12 @@ define_id!(PersonalityId);
 pub struct Personality {
     pub id: PersonalityId,
     pub metadata: Metadata,
+    /// How its agents are introduced (issue 176) - to the others in their
+    /// channel and to themselves: who they are, what they are there for.
+    /// Public, like an agent's name. Not `metadata.description`, which says
+    /// what the personality is, to whoever chooses one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub introduction: Option<String>,
     /// Whether the agent first analyzes the request and proposes a
     /// structured plan requiring user approval before executing it, instead
     /// of answering directly, is derived from whether `components` wires in
@@ -73,7 +79,10 @@ pub struct Agent {
 impl Agent {
     /// A new agent of `personality`, owned by `owner` - whoever creates it.
     /// Whose authority it acts with is not stored with it: its actor derives
-    /// that from the owner, in the channel it runs in (issue 87).
+    /// that from the owner, in the channel it runs in (issue 87). Nothing of
+    /// the personality is copied into it: what the agent is - its
+    /// components, its introduction - is read through `personality_id`, so
+    /// that a change of the personality reaches it (issue 176).
     pub fn new(name:String, scope:Scope, personality: &Personality, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
         // The agent itself contributes, so that it may read its own
@@ -88,7 +97,6 @@ impl Agent {
             metadata: Metadata {
                 name,
                 scope,
-                description: personality.metadata.description.clone(),
                 ..Metadata::default()
             },
             security_attributes,

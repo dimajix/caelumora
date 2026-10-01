@@ -155,6 +155,15 @@ pub(crate) const USERS: Actions = Actions {
     delete: |a| ActionType::DeleteUser(a),
 };
 
+pub(crate) const USER_PROFILES: Actions = Actions {
+    entity: "user_profile",
+    get: |a| ActionType::GetUserProfile(a),
+    list: ActionType::ListUserProfiles,
+    create: |a| ActionType::CreateUserProfile(a),
+    update: |a| ActionType::UpdateUserProfile(a),
+    delete: |a| ActionType::DeleteUserProfile(a),
+};
+
 pub(crate) const COMPONENTS: Actions = Actions {
     entity: "component",
     get: |a| ActionType::GetComponent(a),

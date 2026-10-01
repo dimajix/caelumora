@@ -104,6 +104,7 @@ mod tests {
 
     async fn store_with_personality(store: MemoryStore) -> (Arc<MemoryStore>, PersonalityId) {
         let personality = Personality {
+            introduction: None,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
             components: Default::default(),

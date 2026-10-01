@@ -9,7 +9,7 @@ use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use crate::security::{DummySecurityManager, Secured, SecurityManager};
-use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS};
+use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -22,6 +22,7 @@ pub struct MemoryStore {
     sessions: RwLock<HashMap<SessionId, Session>>,
     channels: RwLock<HashMap<ChannelId, Channel>>,
     users: RwLock<HashMap<UserId, User>>,
+    user_profiles: RwLock<HashMap<UserId, UserProfile>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
@@ -51,6 +52,7 @@ impl MemoryStore {
             sessions: Default::default(),
             channels: Default::default(),
             users: Default::default(),
+            user_profiles: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
@@ -137,7 +139,7 @@ fn require_entity<T>(value: Option<T>, entity: &'static str, id: String) -> Stor
 }
 
 use crate::security::SecurityContext;
-use crate::user::{User, UserId};
+use crate::user::{User, UserId, UserProfile};
 
 #[async_trait]
 impl EntityStore for MemoryStore {
@@ -247,6 +249,23 @@ impl EntityStore for MemoryStore {
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let users = self.list_in(ctx, &self.users, &USERS).await?;
         require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
+    }
+
+    // User profiles (issue 176)
+    async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
+        self.create_in(ctx, &self.user_profiles, &USER_PROFILES, value.user_id(), value).await
+    }
+    async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
+        self.get_in(ctx, &self.user_profiles, &USER_PROFILES, &id).await
+    }
+    async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
+        self.update_in(ctx, &self.user_profiles, &USER_PROFILES, value.user_id(), value).await
+    }
+    async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.delete_in(ctx, &self.user_profiles, &USER_PROFILES, &id).await
+    }
+    async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
+        self.list_in(ctx, &self.user_profiles, &USER_PROFILES).await
     }
 
     // Components

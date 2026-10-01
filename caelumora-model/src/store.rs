@@ -7,7 +7,7 @@ use crate::component::ComponentDescriptor;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
-use crate::user::{User, UserId};
+use crate::user::{User, UserId, UserProfile};
 
 
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +81,15 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>>;
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
+
+    // User profiles - what a user says about themselves (issue 176), one
+    // per user, under the user's id. Unlike the user, a profile belongs to
+    // its user.
+    async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
+    async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
+    async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
+    async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
+    async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
 
     // Preconfigured components (referenceable elsewhere via `kind: "ref"`)
     async fn create_component(&self, ctx: &SecurityContext, value: &ComponentDescriptor) -> StoreResult<()>;

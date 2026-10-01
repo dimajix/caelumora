@@ -1507,6 +1507,7 @@ mod tests {
 
         let store = Arc::new(MemoryStore::new());
         let personality = Personality {
+            introduction: None,
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },

@@ -2,11 +2,11 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::security::{Secured, SecurityManager};
-use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS};
+use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
-use crate::user::{User, UserId};
+use crate::user::{User, UserId, UserProfile};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 use serde::de::DeserializeOwned;
@@ -47,6 +47,7 @@ impl JsonFileStore {
             self.sessions_dir(),
             self.channels_dir(),
             self.users_dir(),
+            self.user_profiles_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
             self.channel_states_dir(),
@@ -73,6 +74,10 @@ impl JsonFileStore {
 
     fn users_dir(&self) -> PathBuf {
         self.root.join("runtime").join("users")
+    }
+
+    fn user_profiles_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("user_profiles")
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -121,6 +126,10 @@ impl JsonFileStore {
 
     fn user_path(&self, id: UserId) -> PathBuf {
         self.users_dir().join(format!("{id}.json"))
+    }
+
+    fn user_profile_path(&self, id: UserId) -> PathBuf {
+        self.user_profiles_dir().join(format!("{id}.json"))
     }
 
     fn agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
@@ -392,6 +401,23 @@ impl EntityStore for JsonFileStore {
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let users: Vec<User> = self.list_dir(ctx, &USERS, self.users_dir()).await?;
         require_entity(users.into_iter().find(|u| u.username == name), "user", name.to_string())
+    }
+
+    // User profiles (issue 176)
+    async fn create_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
+        self.create_file(ctx, &USER_PROFILES, self.user_profile_path(value.user_id()), value.user_id().to_string(), value).await
+    }
+    async fn get_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
+        self.get_file(ctx, &USER_PROFILES, self.user_profile_path(id), id.to_string()).await
+    }
+    async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()> {
+        self.update_file(ctx, &USER_PROFILES, self.user_profile_path(value.user_id()), value.user_id().to_string(), value).await
+    }
+    async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.delete_file::<UserProfile>(ctx, &USER_PROFILES, self.user_profile_path(id)).await
+    }
+    async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
+        self.list_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
     }
 
     // Components

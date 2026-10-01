@@ -1,6 +1,6 @@
 # 176 — An agent is not told who it is and who else is in the channel
 
-**Status:** open
+**Status:** in progress
 **Area:** Context & knowledge
 
 ## The problem
@@ -212,3 +212,30 @@ as catalogue lines and would make poor self-descriptions.
   `Personality::metadata.description` keeps its catalogue meaning - what
   the personality is, for whoever chooses one - and is not put into
   prompts.
+- **2026-10-01** — Decided with the maintainer before implementing:
+  - An introduction is plain text and always public - a personality's as
+    well as a user's. It carries no classification, so the prompt part is
+    public, and nothing has to be left out of it for its channel.
+  - The personality's field is `Personality::introduction`; the user's is
+    `UserProfile::introduction`.
+  - The component is `channel_members_prompt_provider` (parameter
+    `position`, `start` by default); it lists the current members without
+    approvers and former members, and marks the agent's own entry.
+  - REST: `GET /profile` and `PUT /profile` for one's own profile, with a
+    limit on the length; the web UI edits it in a dialog reached from the
+    user's name in the sidebar.
+  - Left for later: introductions from user providers (a directory),
+    removing a profile with its user, showing introductions in the UI's
+    channel view.
+
+  Implemented in three steps: the model, the prompt part, REST and UI.
+- **2026-10-01** — Step 1, the model. `Personality::introduction:
+  Option<String>`; `Agent::new` no longer copies the personality's
+  description. `UserProfile` (`caelumora-model/src/user.rs`) with
+  `user_id` and `introduction`, owned by its user - derived from `user_id`,
+  not stored. It is an entity kind of the `EntityStore` like the others
+  (`create/get/update/delete/list_user_profile`, `ActionType::…UserProfile`,
+  `store_impl::access::USER_PROFILES`), kept by the `MemoryStore` and in
+  `runtime/user_profiles/` by the `JsonFileStore`; under the ownership
+  policy only its user writes it. The store suite's `lifecycle!` compares
+  entities by their key, so that it runs for profiles, too.

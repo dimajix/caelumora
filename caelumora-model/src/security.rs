@@ -70,6 +70,13 @@ pub enum ActionType<'a> {
     CreateUser(&'a SecurityAttributes),
     UpdateUser(&'a SecurityAttributes),
     DeleteUser(&'a SecurityAttributes),
+    /// Reading a user's profile (issue 176), carrying its attributes. A
+    /// profile belongs to its user: see `UserProfile`'s `Secured`.
+    GetUserProfile(&'a SecurityAttributes),
+    ListUserProfiles,
+    CreateUserProfile(&'a SecurityAttributes),
+    UpdateUserProfile(&'a SecurityAttributes),
+    DeleteUserProfile(&'a SecurityAttributes),
     /// Ending the current turn of every agent in a channel, carrying the
     /// channel's attributes.
     CancelChannel(&'a SecurityAttributes),
@@ -164,6 +171,11 @@ impl ActionType<'_> {
             ActionType::CreateUser(_) => "CreateUser".into(),
             ActionType::UpdateUser(_) => "UpdateUser".into(),
             ActionType::DeleteUser(_) => "DeleteUser".into(),
+            ActionType::GetUserProfile(_) => "GetUserProfile".into(),
+            ActionType::ListUserProfiles => "ListUserProfiles".into(),
+            ActionType::CreateUserProfile(_) => "CreateUserProfile".into(),
+            ActionType::UpdateUserProfile(_) => "UpdateUserProfile".into(),
+            ActionType::DeleteUserProfile(_) => "DeleteUserProfile".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::ReadChannel { reader, source } => {
@@ -497,6 +509,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::GetChannel(a)
             | ActionType::GetComponent(a)
             | ActionType::GetUser(a)
+            | ActionType::GetUserProfile(a)
             | ActionType::CancelChannel(a)
             | ActionType::WakeChannel(a) => Self::may_read(a, me),
             ActionType::ReadChannel { reader, source } => self.rules.may_read_from(reader, source),
@@ -517,6 +530,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::CreateSession(a)
             | ActionType::CreateChannel(a)
             | ActionType::CreateUser(a)
+            | ActionType::CreateUserProfile(a)
             | ActionType::CreateComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::UpdatePersonality(a)
             | ActionType::DeletePersonality(a)
@@ -532,6 +546,8 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::DeleteChannel(a)
             | ActionType::UpdateUser(a)
             | ActionType::DeleteUser(a)
+            | ActionType::UpdateUserProfile(a)
+            | ActionType::DeleteUserProfile(a)
             | ActionType::UpdateComponent(a)
             | ActionType::DeleteComponent(a) => a.owner_id == me && me != ActorId::None,
             ActionType::ListPersonalities
@@ -540,6 +556,7 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::ListSessions
             | ActionType::ListChannels
             | ActionType::ListUsers
+            | ActionType::ListUserProfiles
             | ActionType::ListComponents => true,
             ActionType::ShowCommand(_)
             | ActionType::ExecuteCommand(_)

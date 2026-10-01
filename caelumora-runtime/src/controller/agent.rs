@@ -91,6 +91,7 @@ mod tests {
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
         let personality = Personality {
+            introduction: None,
             id: PersonalityId::new(),
             metadata: Metadata::default(),
             components: Default::default(),

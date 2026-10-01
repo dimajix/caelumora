@@ -12,13 +12,14 @@ use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
-use crate::user::{User, UserId};
+use crate::user::{User, UserId, UserProfile};
 use chrono::Utc;
 use uuid::Uuid;
 
 /// Runs one kind through its whole life: create, create again, update, get,
 /// list, delete, delete again, and get and update once it is gone.
-/// `$field` is a text field of the entity that the update changes.
+/// `$field` is a text field of the entity that the update changes, `$key`
+/// what the entity is stored under.
 macro_rules! lifecycle {
     ($store:expr, $value:expr, $key:expr, $($field:ident).+, $entity:literal,
      $create:ident, $get:ident, $update:ident, $delete:ident, $list:ident) => {{
@@ -30,14 +31,14 @@ macro_rules! lifecycle {
         let conflict = store.$create(&ctx, &value).await;
         assert!(matches!(conflict, Err(StoreError::Conflict(_))), concat!($entity, ": creating twice is a conflict, got {:?}"), conflict);
 
-        value.$($field).+ = "renamed".to_string();
+        value.$($field).+ = "renamed".to_string().into();
         store.$update(&ctx, &value).await.expect(concat!($entity, ": update"));
         let found = store.$get(&ctx, ($key)(&value)).await.expect(concat!($entity, ": get"));
-        assert_eq!(found.$($field).+, "renamed", concat!($entity, ": get sees the update"));
+        assert_eq!(found.$($field).+, value.$($field).+, concat!($entity, ": get sees the update"));
 
         let listed = store.$list(&ctx).await.expect(concat!($entity, ": list"));
         assert_eq!(listed.len(), 1, concat!($entity, ": list holds exactly what was created"));
-        assert!(listed[0].id == value.id, concat!($entity, ": list holds the entity"));
+        assert!(($key)(&listed[0]) == ($key)(&value), concat!($entity, ": list holds the entity"));
 
         assert!(store.$delete(&ctx, ($key)(&value)).await.expect(concat!($entity, ": delete")), concat!($entity, ": delete reports the removal"));
         assert!(!store.$delete(&ctx, ($key)(&value)).await.expect(concat!($entity, ": delete again")), concat!($entity, ": deleting again removes nothing"));
@@ -60,6 +61,7 @@ fn metadata(name: &str) -> Metadata {
 
 fn personality() -> Personality {
     Personality {
+        introduction: None,
         reasoning_visibility: Visibility::Channel,
         security_attributes: Default::default(),
         id: PersonalityId(Uuid::new_v4()),
@@ -154,6 +156,8 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
         create_channel, get_channel, update_channel, delete_channel, list_channels);
     lifecycle!(store, user("alice"), |v: &User| v.id, username, "user",
         create_user, get_user, update_user, delete_user, list_users);
+    lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction, "user_profile",
+        create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
     lifecycle!(store, component(), component_id, kind, "component",
         create_component, get_component, update_component, delete_component, list_components);
 

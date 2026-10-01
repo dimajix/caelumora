@@ -17,6 +17,10 @@ entities:
 *   **Identities**: `Agent`, `Session`, `Channel` and `User` records. A
     channel is a document of its own, which its session lists by id (issue
     70).
+*   **User profiles**: what a user says about themselves - so far their
+    introduction (issue 176). One `UserProfile` per user, stored under the
+    user's id; see [SECURITY.md](SECURITY.md#ownership) for why it is not
+    part of the `User` record.
 *   **Preconfigured components**: `ComponentDescriptor`s kept by id.
 
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`,

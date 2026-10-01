@@ -428,6 +428,7 @@ mod tests {
 
     async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
         let personality = Personality {
+            introduction: None,
             reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
             metadata: Metadata { name: "plain".to_string(), ..Metadata::default() },
