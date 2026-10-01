@@ -52,7 +52,40 @@ pub struct UserProfile {
     security_attributes: SecurityAttributes,
 }
 
+/// The longest introduction of a user, in characters: it goes into the
+/// system prompt of every agent in every channel the user takes part in.
+pub const MAX_INTRODUCTION_CHARS: usize = 1000;
+
+/// Why a text is no introduction. The messages are meant for users.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum IntroductionError {
+    #[error("an introduction must not be longer than {MAX_INTRODUCTION_CHARS} characters")]
+    TooLong,
+    #[error("an introduction must not contain control characters other than line breaks and tabs")]
+    ControlCharacter,
+}
+
 impl UserProfile {
+    /// The profile of user `user_id`, introducing them as `introduction`
+    /// says, trimmed - none if nothing is left of it. What a user writes
+    /// about themselves is checked so, wherever it comes from.
+    ///
+    /// # Errors
+    /// `IntroductionError` if it is longer than `MAX_INTRODUCTION_CHARS` or
+    /// contains a control character that is no whitespace.
+    pub fn introducing(user_id: UserId, introduction: Option<&str>) -> Result<Self, IntroductionError> {
+        let introduction = introduction.map(str::trim).filter(|text| !text.is_empty());
+        if let Some(text) = introduction {
+            if text.chars().count() > MAX_INTRODUCTION_CHARS {
+                return Err(IntroductionError::TooLong);
+            }
+            if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
+                return Err(IntroductionError::ControlCharacter);
+            }
+        }
+        Ok(Self::new(user_id, introduction.map(str::to_string)))
+    }
+
     /// The profile of user `user_id`, owned by them.
     pub fn new(user_id: UserId, introduction: Option<String>) -> Self {
         let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
@@ -102,6 +135,16 @@ mod tests {
         assert_eq!(profile.introduction.as_deref(), Some("I run the budget."));
         let written = serde_json::to_value(&profile).unwrap();
         assert!(written.get("security_attributes").is_none(), "the owner is not written: {written}");
+    }
+
+    #[test]
+    fn an_introduction_is_trimmed_and_checked() {
+        let user = UserId::new();
+        let profile = UserProfile::introducing(user, Some("  I run the budget.\nAsk me.  ")).unwrap();
+        assert_eq!(profile.introduction.as_deref(), Some("I run the budget.\nAsk me."));
+        assert_eq!(UserProfile::introducing(user, Some(" \n ")).unwrap().introduction, None, "nothing in it is none");
+        assert_eq!(UserProfile::introducing(user, Some(&"x".repeat(MAX_INTRODUCTION_CHARS + 1))).unwrap_err(), IntroductionError::TooLong);
+        assert_eq!(UserProfile::introducing(user, Some("a\u{1b}[2Jb")).unwrap_err(), IntroductionError::ControlCharacter);
     }
 
     #[tokio::test]

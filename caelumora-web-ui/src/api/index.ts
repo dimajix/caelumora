@@ -12,6 +12,7 @@ import type {
   SessionSnapshot,
   SessionTemplate,
   Compartment,
+  ProfileResponse,
   UserResponse
 } from '../types';
 import type {Classification} from '../confidentiality';
@@ -67,6 +68,24 @@ export const api = {
     const res = await request('/auth/me');
     if (res.status === 401) return null;
     await ensureOk(res, 'Failed to fetch current user');
+    return res.json();
+  },
+
+  /** The logged-in user's profile (issue 176). */
+  async getProfile(): Promise<ProfileResponse> {
+    const res = await request('/profile');
+    await ensureOk(res, 'Failed to fetch the profile');
+    return res.json();
+  },
+
+  /** Sets the logged-in user's introduction; `null` or blank removes it. */
+  async setIntroduction(introduction: string | null): Promise<ProfileResponse> {
+    const res = await request('/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ introduction }),
+    });
+    await ensureOk(res, 'Failed to save the profile');
     return res.json();
   },
 

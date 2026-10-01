@@ -15,6 +15,7 @@ use std::sync::Arc;
 mod channels;
 mod compartments;
 mod events;
+mod profile;
 mod sessions;
 mod templates;
 
@@ -72,6 +73,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/templates", get(templates::list_templates))
         .route("/compartments", get(compartments::list_compartments))
+        .route("/profile", get(profile::get_profile).put(profile::update_profile))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",

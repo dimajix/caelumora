@@ -20,6 +20,7 @@ import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
+import {ProfileDialog} from './ProfileDialog';
 import {privacyInfo} from '../privacy';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
@@ -78,6 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(() => loadLastTemplate());
   const [expandedSessions, setExpandedSessions] = useState<Record<string, boolean>>({});
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
   // The session a new channel is being created in (issue 09).
@@ -449,9 +451,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
       )}
 
+      {showProfile && (
+        <ProfileDialog username={user.username} onClose={() => setShowProfile(false)} />
+      )}
+
       <div className="p-3 border-t border-gray-800 flex items-center gap-2 text-sm">
-        <User size={16} className="text-gray-400 shrink-0" />
-        <span className="flex-1 truncate" title={user.username}>{user.username}</span>
+        <button
+          onClick={() => setShowProfile(true)}
+          className="flex flex-1 min-w-0 items-center gap-2 rounded-md p-1 -m-1 text-left hover:bg-gray-800 transition-colors"
+          title="Your profile"
+        >
+          <User size={16} className="text-gray-400 shrink-0" />
+          <span className="flex-1 truncate">{user.username}</span>
+        </button>
         <button
           onClick={onLogout}
           className="p-1 hover:bg-gray-800 rounded-md transition-colors"

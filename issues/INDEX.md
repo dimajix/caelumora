@@ -217,7 +217,7 @@ against it, and what came out of the last attempt.
 | [135](135-sender-names-in-model-input.md) | open | In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what. |
 | [136](136-virtual-transcript.md) | done | A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet. |
 | [137](137-tools-in-recorded-context.md) | done | Which tools a model was offered, and how they were described to it, is recorded nowhere, so what an agent saw cannot be told in full. |
-| [176](176-participants-in-system-prompt.md) | in progress | An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are. |
+| [176](176-participants-in-system-prompt.md) | done | An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are. |
 
 ## Maintenance
 

@@ -116,6 +116,12 @@ a session other sessions may read is marked in the list, and its menu opens
 policy that lets other sessions read says that it holds for what is said
 from then on.
 
+The user's name at the foot of the sidebar opens `ProfileDialog` (issue
+176), where they write how they introduce themselves to the agents
+(`GET`/`PUT /profile`). It counts the characters against the limit the
+server names, and says that every agent in every channel they take part in
+is given it.
+
 A new session is created from a template; the one used last in this browser
 is preselected (issue 40). A new channel is created with its name, responder policy,
 classification - a level and, if any are configured, compartments from

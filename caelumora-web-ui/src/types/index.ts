@@ -16,6 +16,15 @@ export interface UserResponse {
   token_lifetime_secs: number;
 }
 
+/**
+ * The logged-in user's profile (issue 176): how they introduce themselves to
+ * the agents of every channel they take part in.
+ */
+export interface ProfileResponse {
+  introduction: string | null;
+  max_introduction_chars: number;
+}
+
 export interface SessionResponse {
   id: string;
   name: string;

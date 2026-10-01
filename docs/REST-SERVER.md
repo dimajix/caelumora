@@ -68,6 +68,7 @@ logged-in user.
 | `POST /auth/refresh` | Renew the session |
 | `GET /templates` | The session templates a new session can be made from |
 | `GET /compartments` | The configured compartments a channel's classification may name (issue 133) |
+| `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, and `max_introduction_chars`; `PUT` sets it - `null` or blank removes it - and answers `400 invalid_introduction` for one that is too long or contains control characters |
 | `GET /sessions`, `POST /sessions` | List the user's sessions; create one from a template (`SessionManager::create_from_template`) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session |

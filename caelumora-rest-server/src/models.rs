@@ -56,6 +56,23 @@ impl From<&SessionTemplate> for TemplateResponse {
     }
 }
 
+/// The logged-in user's profile (issue 176): how they introduce themselves
+/// to the agents of every channel they take part in, and how long that may
+/// be.
+#[derive(Debug, Serialize)]
+pub struct ProfileResponse {
+    pub introduction: Option<String>,
+    pub max_introduction_chars: usize,
+}
+
+/// A change of the logged-in user's profile: their introduction, `null` or
+/// blank for none.
+#[derive(Debug, Deserialize)]
+pub struct ProfileRequest {
+    #[serde(default)]
+    pub introduction: Option<String>,
+}
+
 /// A compartment a classification may name (issue 133), as configured.
 #[derive(Debug, Serialize)]
 pub struct CompartmentResponse {

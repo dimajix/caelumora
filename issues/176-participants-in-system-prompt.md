@@ -1,6 +1,6 @@
 # 176 — An agent is not told who it is and who else is in the channel
 
-**Status:** in progress
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -252,3 +252,13 @@ as catalogue lines and would make poor self-descriptions.
   introductions, and its prompts no longer name the agent - a store seeded
   before keeps its personalities as they are. Documented in
   `docs/AGENT-TURN.md` (*Who is in the channel*) and `docs/COMPONENTS.md`.
+- **2026-10-01** — Step 3, REST and web UI; done. `GET /profile` and
+  `PUT /profile` (`routes/profile.rs`) read and set the logged-in user's
+  introduction, through the store in the user's name: a profile is created
+  on its first change and changed after. What may be written is a rule of
+  the model, `UserProfile::introducing`: trimmed, blank is none, at most
+  `MAX_INTRODUCTION_CHARS` (1000), no control characters but line breaks and
+  tabs - `400 invalid_introduction` otherwise. The web UI's `ProfileDialog`,
+  opened from the user's name in the sidebar, edits it, counts against the
+  limit the server names, and says who is given it. Documented in
+  `docs/REST-SERVER.md` and `docs/WEB-UI.md`.
