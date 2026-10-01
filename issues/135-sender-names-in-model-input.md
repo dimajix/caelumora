@@ -77,3 +77,9 @@ user it does not matter, which is why it went unnoticed.
   little. Two problems found on the way are their own issues:
   [149](149-special-tokens-in-content.md) (special tokens in content) and
   [150](150-impersonation-towards-the-agent.md) (faked sender markers).
+- **2026-10-01** — The roster of a channel is now a prompt part of its own,
+  `channel_members_prompt_provider` (issue
+  [176](176-participants-in-system-prompt.md)): the agent is told its own
+  name and handle and those of the others. How senders are marked in the
+  conversation is to be explained beside it, worded together with it, when
+  this issue is done.

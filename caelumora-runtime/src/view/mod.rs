@@ -37,11 +37,13 @@ use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::security::{AccessQuestions, Place, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::store::StoreError;
 use std::sync::Arc;
 
 /// Where an agent reads from: its channel, the classification it reads at
@@ -251,21 +253,49 @@ impl Views {
         self.runtime.security_manager().may_channel_read(self.viewer.context(), from.place(), source).await
     }
 
-    /// The name of `participant` and, for an agent, its attributes; `None`
-    /// for a user or agent that no longer exists. Read in the runtime's
-    /// name: taking part in a session makes a name known to everybody in
-    /// it - it stands at every message - even where the record itself is
-    /// not theirs to read (issue 120).
-    async fn look_up(&self, participant: &Participant) -> (Option<String>, Option<SecurityAttributes>) {
+    /// The name of `participant`; `None` for a user or agent that no
+    /// longer exists. Read in the runtime's name: taking part in a session
+    /// makes a name known to everybody in it - it stands at every message -
+    /// even where the record itself is not theirs to read (issue 120).
+    async fn name_of(&self, participant: &Participant) -> Option<String> {
+        match participant {
+            Participant::User(id) => self.runtime.entity_store().get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
+            Participant::Agent(id) => self.agent_of(*id).await.map(|agent| agent.metadata.name),
+            Participant::Approver(_) => participant.actor_id().fixed_name().map(str::to_string),
+        }
+    }
+
+    /// The document of agent `id` - its name, its attributes, its
+    /// personality - or `None` if it no longer exists. Read in the
+    /// runtime's name, like its name.
+    async fn agent_of(&self, id: AgentId) -> Option<Agent> {
+        self.runtime.entity_store().get_agent(&SecurityContext::system(), id).await.ok()
+    }
+
+    /// The introduction of `participant` (issue 176): an agent's - `agent`,
+    /// its document - is its personality's, a user's is in their profile.
+    /// `None` for an approver, for one who has none, and for one that no
+    /// longer exists. Read in the runtime's name, like the name:
+    /// introductions are public.
+    ///
+    /// # Errors
+    /// `Failed` if it cannot be read.
+    async fn introduction_of(&self, participant: &Participant, agent: Option<&Agent>) -> ViewResult<Option<String>> {
         let store = self.runtime.entity_store();
         let system = SecurityContext::system();
-        match participant {
-            Participant::User(id) => (store.get_user(&system, *id).await.ok().map(|user| user.username), None),
-            Participant::Agent(id) => match store.get_agent(&system, *id).await {
-                Ok(agent) => (Some(agent.metadata.name), Some(agent.security_attributes)),
-                Err(_) => (None, None),
+        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", participant.actor_id())));
+        match (participant, agent) {
+            (Participant::User(id), _) => match store.get_user_profile(&system, *id).await {
+                Ok(profile) => Ok(profile.introduction),
+                Err(StoreError::NotFound { .. }) => Ok(None),
+                Err(e) => Err(failed(e)),
             },
-            Participant::Approver(_) => (participant.actor_id().fixed_name().map(str::to_string), None),
+            (Participant::Agent(_), Some(agent)) => match store.get_personality(&system, agent.personality_id).await {
+                Ok(personality) => Ok(personality.introduction),
+                Err(StoreError::NotFound { .. }) => Ok(None),
+                Err(e) => Err(failed(e)),
+            },
+            _ => Ok(None),
         }
     }
 
@@ -282,7 +312,7 @@ impl Views {
     pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
         match self.runtime.entity_store().get_session(&SecurityContext::system(), id).await {
             Ok(session) => Ok(Some(SessionPrivacy::of(&session))),
-            Err(caelumora_model::store::StoreError::NotFound { .. }) => Ok(None),
+            Err(StoreError::NotFound { .. }) => Ok(None),
             Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}")))),
         }
     }
@@ -364,7 +394,7 @@ mod tests {
     use caelumora_model::confidentiality::{Classification, Visibility};
     use caelumora_model::meta::{Metadata, Scope};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+    use caelumora_model::security::{OwnershipSecurityManager, SecurityAttributes, SecurityManager};
     use caelumora_model::session::Session;
     use caelumora_model::store::EntityStore;
     use caelumora_model::store_impl::memory::MemoryStore;

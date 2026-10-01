@@ -239,3 +239,16 @@ as catalogue lines and would make poor self-descriptions.
   `runtime/user_profiles/` by the `JsonFileStore`; under the ownership
   policy only its user writes it. The store suite's `lifecycle!` compares
   entities by their key, so that it runs for profiles, too.
+- **2026-10-01** — Step 2, the prompt part. `MemberView::introduction()`
+  reads a member's introduction in the runtime's name - an agent's through
+  its personality, a user's from their profile. A `MemberView` of an agent
+  now holds the agent's document, which has its name, attributes and
+  personality; `Views::look_up` became `name_of` and `agent_of`. The component `channel_members_prompt_provider`
+  (`component_impl/channel_members_prompt_provider.rs`) lists the agent
+  itself ("You are Jonathan (@jonathan)", "About you: ...") and every other
+  current user and agent with handle and introduction, a person's marked as
+  their own words; each introduction is put on one line. The part is
+  public. `examples/seed.yaml` wires it into both personalities, gives them
+  introductions, and its prompts no longer name the agent - a store seeded
+  before keeps its personalities as they are. Documented in
+  `docs/AGENT-TURN.md` (*Who is in the channel*) and `docs/COMPONENTS.md`.

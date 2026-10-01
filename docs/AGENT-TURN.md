@@ -403,6 +403,35 @@ The parts may be left out, each by the fail policy of its own component: a
 part that fails open is left out of that turn with a warning; one that
 fails closed fails the turn.
 
+### Who is in the channel
+
+An agent is told who it is and who else is in its channel by the component
+`channel_members_prompt_provider` (issue 176), which a personality wires in
+next to its static system prompt. It reads the channel's members through the
+turn's views (`ChannelView::members`) at the start of every turn, so it
+follows joins and leaves, and lists
+
+*   the agent itself, by its name and `@` handle as the channel knows them,
+    with its personality's introduction - so a personality's prompt should
+    not name its agents: two agents of one personality have different names;
+*   every other current member that is a user or an agent, by name and
+    handle, with their introduction (`MemberView::introduction`). Approvers,
+    former members and participants that no longer exist are left out.
+
+An agent's introduction is its personality's (`Personality::introduction`),
+read through `Agent::personality_id` like its components; a user's is the
+one they wrote in their `UserProfile`. A person's introduction is marked as
+written by them ("In their own words: ..."): the system prompt is what
+models trust most, and a participant's text about themselves must not read
+as an instruction of the system (issue 150). Each introduction is put on one
+line, so that it cannot break out of its entry. Names and introductions are
+public, and so is the part.
+
+It goes into the system prompt by default (`position`): the roster changes
+rarely, and a change ought to reach the model at once, at the cost of the
+prompt cache from there on. How the senders of messages are marked in the
+conversation (issue 135) is to be explained beside it, once they are.
+
 ### Instructions within a turn
 
 The runtime steers the model within a turn, too: while a plan is executed,

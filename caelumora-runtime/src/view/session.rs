@@ -196,7 +196,7 @@ impl SessionView {
         }
         let mut participants = Vec::with_capacity(self.session.participants.len());
         for participant in &self.session.participants {
-            let (name, _) = self.views.look_up(participant).await;
+            let name = self.views.name_of(participant).await;
             participants.push(ParticipantSnapshot { id: participant.actor_id(), name });
         }
         SessionSnapshot {

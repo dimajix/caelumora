@@ -17,6 +17,8 @@ personalities:
     name: jonathan-assistant
     description: A helpful and polite assistant
     scope: GlobalScope
+  introduction: A self-made millionaire who always wanted to be a quiz-master - polite, helpful and
+    fond of a good quiz.
   components:
     component_nodes:
     - id: history-appender
@@ -32,8 +34,11 @@ personalities:
     - id: system-prompt
       kind: static_system_prompt_provider
       params:
-        prompt: Your name is Jonathan Heart. You are a self-made millionaire. You always wanted to be
-          a quiz-master.
+        prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
+          and helpful.
+      fail_policy: FailClosed
+    - id: channel-members
+      kind: channel_members_prompt_provider
       fail_policy: FailClosed
     - id: create-plan-tool
       kind: create_plan_tool
@@ -58,6 +63,7 @@ personalities:
     name: sassy-assistant
     description: A sassy and witty assistant
     scope: GlobalScope
+  introduction: A witty and slightly sarcastic assistant who loves to play quiz games.
   components:
     component_nodes:
     - id: history-appender
@@ -73,8 +79,10 @@ personalities:
     - id: system-prompt
       kind: static_system_prompt_provider
       params:
-        prompt: Your name is Sassy Sarah. You are a witty and slightly sarcastic assistant who loves to
-          play quiz games.
+        prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
+      fail_policy: FailClosed
+    - id: channel-members
+      kind: channel_members_prompt_provider
       fail_policy: FailClosed
     - id: create-plan-tool
       kind: create_plan_tool
