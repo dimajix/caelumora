@@ -273,6 +273,7 @@ argues against it, and what came out of the last attempt.
 | [191](191-channel-runtime-hands-out-runtime-manager.md) | done | `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it. |
 | [196](196-perceive-processors-write-state.md) | done | Whether an agent's history is complete depends on two configurable components, and an external agent has no stage to filter what it perceives. |
 | [197](197-one-chain-one-model-of-change.md) | done | The ledger appends every change while the message chains amend entries in place, and six types stand between a chain and what it stores. |
+| [201](201-component-nodes-wrapper.md) | open | Components are written under a `component_nodes` key inside their own key, a level that exists only because `ComponentConfig` is a struct with one field. |
 
 ## Integrations
 
