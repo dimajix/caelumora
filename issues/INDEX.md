@@ -267,7 +267,7 @@ argues against it, and what came out of the last attempt.
 | [177](177-metadata-on-some-entities.md) | done | Name, scope and description sit in `Metadata` on some entities only, which brings fields to entities that mean nothing there. |
 | [189](189-agent-kind-decided-twice.md) | done | An agent's kind is decided from its personality in two places, by different rules for a missing personality. |
 | [190](190-channel-seeds-actor-state.md) | done | The channel writes each actor kind's private state itself when a participant joins. |
-| [191](191-channel-runtime-hands-out-runtime-manager.md) | open | `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it. |
+| [191](191-channel-runtime-hands-out-runtime-manager.md) | done | `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it. |
 | [196](196-perceive-processors-write-state.md) | done | Whether an agent's history is complete depends on two configurable components, and an external agent has no stage to filter what it perceives. |
 | [197](197-one-chain-one-model-of-change.md) | done | The ledger appends every change while the message chains amend entries in place, and six types stand between a chain and what it stores. |
 

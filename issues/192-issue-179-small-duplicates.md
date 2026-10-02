@@ -34,3 +34,5 @@ Found by a cleanup review of the issue-179 series, each small, none worth an iss
   `unoffered` with issue 196 and no longer repeats `missing_from`; what it computed on the history
   is `MessageHistory::messages_after`. `member_state` and `Views::name_of` keep their own `match`:
   three lines that log differently, which the maintainer chose to leave.
+- **2026-10-02** — An eighth "not found means none" was left in `seed.rs` (`missing`); with issue
+  191 it became `.optional()?.is_none()`.

@@ -288,7 +288,9 @@ An **actor** is anything that sends and receives events in a channel.
 A `ChannelLoop` is built with a `ChannelRuntime`, not with the `RuntimeManager` itself. It carries
 what everything in the channel shares:
 
-*   the process-wide services of the `RuntimeManager`;
+*   the process-wide services of the `RuntimeManager`, each by an accessor of its own - the stores,
+    the security manager, the controllers - and never the `RuntimeManager` itself, so that what a
+    channel can reach is what its runtime offers (issue 191);
 *   the user commands of the session: a `CommandExecutor`, built once per session by
     `RuntimeManager::new_command_executor`;
 *   a handle to the channel. It is a `Weak`, set once by `ChannelLoop::new` when the channel exists:

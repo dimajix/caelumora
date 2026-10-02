@@ -1,6 +1,6 @@
 use caelumora_model::name::Name;
 use arc_swap::ArcSwap;
-use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent};
+use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent, Personality};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{EntityStore, StoreResult};
@@ -42,6 +42,21 @@ impl AgentController {
 
     pub fn name(&self) -> String {
         self.agent.load().name.to_string()
+    }
+
+    /// The agent's personality - what the agent is, read through
+    /// `personality_id` each time, so that a change of the personality
+    /// reaches it (issue 176). Read in the runtime's name, as the controller
+    /// holds the agent's document: a controller is the runtime's, and
+    /// whoever acts with what it hands out in someone's name checks that
+    /// themselves - running the agent, whether it may read its personality
+    /// (issue 191).
+    ///
+    /// # Errors
+    /// Whatever the store reports: also that the personality is gone.
+    pub async fn personality(&self) -> StoreResult<Personality> {
+        let id = self.agent.load().personality_id;
+        self.entity_store.get_personality(&SecurityContext::system(), id).await
     }
 
     /// Renames the agent on behalf of `ctx`: stored first - which is where

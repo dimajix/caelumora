@@ -15,14 +15,14 @@ use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
-use crate::controller::{AgentController, ChannelController, UserController};
+use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
@@ -114,15 +114,17 @@ enum Member {
 
 impl Member {
     /// `participant` of `channel` with its controller - an agent also with
-    /// its personality, read once, as the agent may read it, for its actor
-    /// to be built from - or `None` if its user or agent no longer exists.
+    /// its personality, read once, for its actor to be built from - or
+    /// `None` if its user or agent no longer exists. An agent runs only with
+    /// a personality it may read, in the channel, as `security` decides
+    /// (`GetPersonality`): one whose owner lost it - a share withdrawn - is
+    /// not run (issue 191).
     ///
     /// # Errors
     /// Whatever else the store reports when loading it - also that an
-    /// agent's personality is gone or not its to read: the agent exists, but
-    /// cannot be run.
-    async fn of(participant: &Participant, channel: &Channel, runtime: &RuntimeManager) -> Result<Option<Self>> {
-        let controllers = runtime.controller_manager();
+    /// agent's personality is gone - and `StoreError::PermissionDenied` if
+    /// it is not the agent's to read: the agent exists, but cannot be run.
+    async fn of(participant: &Participant, channel: &Channel, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
         let agent = match participant {
             Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(Member::User)),
             Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
@@ -131,8 +133,9 @@ impl Member {
                 None => return Ok(None),
             },
         };
-        let (security, id) = { let loaded = agent.load(); (loaded.security_context(channel.session_id, channel.id), loaded.personality_id) };
-        let personality = runtime.entity_store().get_personality(&security, id).await?;
+        let personality = agent.personality().await?;
+        let context = agent.load().security_context(channel.session_id, channel.id);
+        security.require(&context, ActionType::GetPersonality(&personality.security_attributes), || StoreError::PermissionDenied).await?;
         Ok(Some(match personality.kind {
             PersonalityKind::Internal => Member::Agent(agent, personality),
             PersonalityKind::External => Member::ExternalAgent(agent, personality),
@@ -180,11 +183,11 @@ impl Member {
     /// # Errors
     /// `ChannelError::NotCleared` if it is not; whatever reading its roles
     /// reports.
-    async fn require_cleared(&self, runtime: &RuntimeManager, context: &SecurityContext, classification: &Classification, channel: ChannelId) -> Result<()> {
+    async fn require_cleared(&self, store: &dyn EntityStore, security: &dyn SecurityManager, context: &SecurityContext, classification: &Classification, channel: ChannelId) -> Result<()> {
         let participant = self.actor_id();
-        for roles in self.clearances(runtime.entity_store().as_ref()).await? {
+        for roles in self.clearances(store).await? {
             let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
-            runtime.security_manager().require(context, action, || ChannelError::NotCleared { participant, channel }).await?;
+            security.require(context, action, || ChannelError::NotCleared { participant, channel }).await?;
         }
         Ok(())
     }
@@ -199,8 +202,8 @@ impl Member {
 /// participant reports.
 pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
     for participant in &channel.participants {
-        if let Some(member) = Member::of(participant, channel, runtime).await? {
-            member.require_cleared(runtime, context, &channel.classification, channel.id).await?;
+        if let Some(member) = Member::of(participant, channel, &runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
+            member.require_cleared(runtime.entity_store().as_ref(), runtime.security_manager().as_ref(), context, &channel.classification, channel.id).await?;
         }
     }
     Ok(())
@@ -316,7 +319,7 @@ impl ChannelLoop {
         for participant in &participants {
             // A user or agent deleted since it joined: the channel runs
             // without it rather than not at all (issue 120).
-            let Some(member) = Member::of(participant, &channel_loop.channel.load(), channel_loop.runtime.runtime_manager()).await? else {
+            let Some(member) = Member::of(participant, &channel_loop.channel.load(), &channel_loop.runtime.controller_manager(), channel_loop.runtime.security_manager().as_ref()).await? else {
                 warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
                 continue;
             };
@@ -424,8 +427,9 @@ impl ChannelLoop {
         self.require(context, action, "reclassifying").await?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
+        let (store, security) = (self.runtime.entity_store(), self.runtime.security_manager());
         for (_, member) in self.actors.load().values() {
-            member.require_cleared(self.runtime.runtime_manager(), context, &classification, self.id).await?;
+            member.require_cleared(store.as_ref(), security.as_ref(), context, &classification, self.id).await?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
         let lowered = !self.runtime.security_manager().may_publish(context, context.caller_id, &channel, &classification).await;
@@ -508,9 +512,9 @@ impl ChannelLoop {
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let member = Member::of(&found, &self.channel.load(), self.runtime.runtime_manager()).await?
+        let member = Member::of(&found, &self.channel.load(), &self.runtime.controller_manager(), self.runtime.security_manager().as_ref()).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        member.require_cleared(self.runtime.runtime_manager(), context, &self.classification(), self.id).await?;
+        member.require_cleared(self.runtime.entity_store().as_ref(), self.runtime.security_manager().as_ref(), context, &self.classification(), self.id).await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());

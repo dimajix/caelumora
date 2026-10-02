@@ -84,7 +84,9 @@ impl ChannelRuntime {
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
-    pub(crate) fn runtime_manager(&self) -> &Arc<RuntimeManager> { &self.runtime_manager }
+    /// The entities - for what a channel checks of its participants (issue
+    /// 191).
+    pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.runtime_manager.entity_store() }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }

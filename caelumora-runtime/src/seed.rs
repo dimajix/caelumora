@@ -7,7 +7,7 @@ use anyhow::Context;
 use caelumora_model::agent::Personality;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::store::{EntityStore, StoreResultExt};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -43,13 +43,13 @@ impl Seed {
     pub async fn apply(&self, store: &dyn EntityStore) -> anyhow::Result<()> {
         let system = SecurityContext::system();
         for personality in &self.personalities {
-            if missing(store.get_personality(&system, personality.id).await)? {
+            if store.get_personality(&system, personality.id).await.optional()?.is_none() {
                 store.create_personality(&system, personality).await?;
                 info!("Seeded personality {} ({})", personality.name, personality.id);
             }
         }
         for template in &self.session_templates {
-            if missing(store.get_session_template(&system, template.id).await)? {
+            if store.get_session_template(&system, template.id).await.optional()?.is_none() {
                 store.create_session_template(&system, template).await?;
                 info!("Seeded session template {} ({})", template.name, template.id);
             }
@@ -68,15 +68,6 @@ pub async fn load(store: &dyn EntityStore, paths: &[PathBuf]) -> anyhow::Result<
             .with_context(|| format!("Cannot seed the entity store from {}", path.display()))?;
     }
     Ok(())
-}
-
-/// Whether a lookup found nothing - as opposed to failing.
-fn missing<T>(found: Result<T, StoreError>) -> Result<bool, StoreError> {
-    match found {
-        Ok(_) => Ok(false),
-        Err(StoreError::NotFound { .. }) => Ok(true),
-        Err(error) => Err(error),
-    }
 }
 
 #[cfg(test)]
