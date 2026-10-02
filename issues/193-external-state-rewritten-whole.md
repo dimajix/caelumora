@@ -31,3 +31,9 @@ its length; tool results can be large.
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series; a trade-off against the
   decision of `7e22f5b`, to be weighed by the maintainer.
+- **2026-10-02** — Clarified with the maintainer: "a second copy of every message given" means that
+  a given message is stored twice in the same document - in the history and in the transcript -
+  not that it is given twice. The transcript grows by exactly the messages given in each exchange,
+  once each, as intended (`exchange`, `unheard`); it is the record of what was given, and keeps
+  whole messages as an agent's own transcript does. What remains is the cost: the whole state is
+  written for every message heard, and the history keeps what is never given.
