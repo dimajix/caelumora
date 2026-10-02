@@ -12,7 +12,7 @@
 //! that is kept (`ExternalAgentChannelState`); it reads nothing of the
 //! channel itself.
 
-use super::{apply_stage_processors, missing_after};
+use super::apply_stage_processors;
 use crate::actor::Actor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::controller::AgentController;
@@ -611,7 +611,7 @@ impl Actor for ExternalAgentActor {
     /// the remote agent is given it when it is next asked.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        let missed = missing_after(&state.history.messages(), visible);
+        let missed = state.history.missing_from(visible);
         if !missed.is_empty() {
             state.history.extend(missed);
             self.actor_runtime.store_external_channel_state(&state).await?;

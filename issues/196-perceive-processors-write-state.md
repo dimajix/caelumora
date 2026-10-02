@@ -71,3 +71,6 @@ write into the agent's state through the `&mut Turn` every `MessageProcessor` is
   a processor that adds or replaces messages leaves no message of the history at its end; what was
   dropped is not offered again. A state stored before `offered_up_to` offers its whole history once
   more; old data may be deleted.
+- **2026-10-02** — What a joining participant is given now passes the same way (issue
+  [190](190-channel-seeds-actor-state.md)): an agent's `catch_up` goes through `perceive`, an
+  external agent's into its history, offered to its processors when it gives.

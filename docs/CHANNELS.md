@@ -144,14 +144,18 @@ The model only holds these limits as data. `ChannelLoop::visible_history(partici
 for a running channel, `ChannelView::history()` for a stored one too (issue 163). Both answer with a
 `VisibleHistory` - the messages, the digest of the history (up to where) and the participant's start
 (from where) - which is used for the history over REST, in the snapshot, for `read_history` (which
-records digest and start together, see [MEMORY.md](MEMORY.md)) and for the transcript of a joining
-agent.
+records digest and start together, see [MEMORY.md](MEMORY.md)) and for what a joining actor is
+given.
 
-*   A **joining agent** gets the visible part into its transcript.
-*   A **rejoining agent** gets only what was said after the last message it has - what it missed
-    while away. The transcript is only ever appended to, so older messages that a wider grant makes
-    visible would land after the agent's own later answers. The agent reaches them through
-    `read_history`, and its transcript stays in the order things were said.
+*   A **joining actor** is given the visible part (`Actor::catch_up`, issue 190) and takes it in as
+    what it hears: an agent keeps all of it in its history and what passes its perceive processors
+    in its transcript (issue 196), an external agent keeps it in its history and gives it to the
+    remote agent when it is next asked. Users and approvers keep nothing.
+*   A **rejoining actor** keeps only what was said after the last message it has - what it missed
+    while away (`MessageHistory::missing_from`). The history is only ever appended to, so older
+    messages that a wider grant makes visible would land after the agent's own later answers. The
+    agent reaches them through `read_history`, and what it keeps stays in the order things were
+    said.
 
 Notes stay visible to everyone in the channel: they are written on paper, not part of the
 conversation.
@@ -249,16 +253,16 @@ An **actor** is anything that sends and receives events in a channel.
     it, and hands it to the actor to be built from; the agent is `ActorId::Agent` either way, and
     nothing else - the participants, the REST API, the moderator - tells the two apart.
 *   **An external agent** has no turn and no tools. Its actor hears what others say, as every
-    participant does, and keeps all of it in its history, with its own answers - seeded, when it
-    joins, with what it may see of the channel's, as an agent's transcript is; it reads nothing of
-    the channel itself. When it is asked to respond, it offers what it heard since it last offered
-    anything (`offered_up_to`) to the `PerceiveInProcessor`s of its personality, as an agent does
-    (issue 196), gives the remote agent what passes - recorded in its transcript, as an agent's
-    transcript records what its model is given - and publishes what comes back: pieces as
-    `PartialMessageGenerated`, the answer as `FullResponseGenerated`, a task the remote agent failed
-    as `TurnFailed`. A question back from the remote agent is its answer; the next request continues
-    that task. A cancel cancels the remote task and publishes what came so far; a stop cancels it -
-    and every other open task of the agent - and publishes nothing.
+    participant does, and keeps all of it in its history, with its own answers - and, when it joins,
+    what it may see of the channel's, as an agent does; it reads nothing of the channel itself. When
+    it is asked to respond, it offers what it heard since it last offered anything (`offered_up_to`)
+    to the `PerceiveInProcessor`s of its personality, as an agent does (issue 196), gives the remote
+    agent what passes - recorded in its transcript, as an agent's transcript records what its model
+    is given - and publishes what comes back: pieces as `PartialMessageGenerated`, the answer as
+    `FullResponseGenerated`, a task the remote agent failed as `TurnFailed`. A question back from
+    the remote agent is its answer; the next request continues that task. A cancel cancels the
+    remote task and publishes what came so far; a stop cancels it - and every other open task of the
+    agent - and publishes nothing.
 *   **An external agent speaks on its own** when a task outlives the request it was given for: the
     answer broke off before the task ended, or the channel was restarted meanwhile. A request whose
     answer broke off - its stream ended or failed - before its task ended is answered with nothing

@@ -1542,6 +1542,12 @@ mod tests {
 
     /// `with_an_agent`, under `security`.
     async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> Stuck {
+        start(agent_channel(security, model, components).await).await
+    }
+
+    /// A channel of alice and an agent that talks to `model` and has
+    /// `components`, under `security`, built but not running.
+    async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn crate::llm::LLMClient>, components: caelumora_model::component::ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId) {
         use caelumora_model::agent::{Agent, Personality, PersonalityId};
         use caelumora_model::scope::Scope;
         use caelumora_model::store::EntityStore;
@@ -1608,13 +1614,7 @@ mod tests {
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         let executor = CommandExecutor::empty(runtime.security_manager());
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await.unwrap();
-        let events = channel.subscribe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
-
-        // The message makes the agent start a turn.
-        channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
-        let helper = channel.actor_by_id(ActorId::Agent(agent_id)).unwrap();
-        Stuck { channel, context, agent: agent_id, helper, events, running }
+        (channel, context, agent_id, alice.id)
     }
 
     /// A model that gives the answers it was given, one per call, and then
@@ -2466,6 +2466,25 @@ mod tests {
                 Ok(facets)
             },
         );
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
+        use caelumora_model::message::{MessageId, MessageRole};
+        let components = caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets")] };
+        let (channel, context, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), components).await;
+        let said = |text: &str| Message {
+            id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+
+        actor.catch_up(vec![said("hello"), said("the secret is 42")]).await.unwrap();
+
+        let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(contents(state.history.messages()), ["hello", "the secret is 42"], "its history keeps all it missed");
+        assert_eq!(contents(state.transcript.messages()), ["hello"], "its transcript what passed its processors");
     }
 
     #[tokio::test]

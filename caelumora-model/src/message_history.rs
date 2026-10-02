@@ -52,6 +52,19 @@ impl MessageHistory {
         self.messages.all_entries()
     }
 
+    /// The messages of `visible` after the last of them the history has,
+    /// and not in it - on any branch: what an actor that joins missed (issue
+    /// 190), for one that joins again what was said while it was away. A
+    /// history is only ever appended to, so older messages that a wider
+    /// history grants on rejoining would land after the actor's own later
+    /// answers; they are left out, and the history stays in the order things
+    /// were said.
+    pub fn missing_from(&self, visible: Vec<Message>) -> Vec<Message> {
+        let known: std::collections::HashSet<_> = self.all_entries().map(|e| e.message.id).collect();
+        let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
+        visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
+    }
+
     pub fn last_message_id(&self) -> MessageId {
         last_message_id_of(&self.messages)
     }
@@ -111,6 +124,19 @@ mod tests {
     use super::*;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
+
+    #[test]
+    fn what_was_missed_is_what_came_after_the_last_message_kept_and_nothing_older() {
+        let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        let (one, two, three, four) = (make_message(id(1)), make_message(id(2)), make_message(id(3)), make_message(id(4)));
+        let mut history = MessageHistory::default();
+        assert_eq!(ids(history.missing_from(vec![three.clone()])), [id(3)], "joined seeing the last message only");
+        history.extend(vec![three.clone()]);
+        // Rejoined with all of it: "four" was missed, "one" and "two" are
+        // older than what it has and would come after it.
+        assert_eq!(ids(history.missing_from(vec![one, two, three.clone(), four])), [id(4)], "in the order things were said");
+        assert!(history.missing_from(vec![three]).is_empty(), "nothing new");
+    }
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {

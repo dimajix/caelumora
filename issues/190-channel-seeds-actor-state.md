@@ -1,6 +1,6 @@
 # 190 — The channel writes each actor kind's private state when someone joins
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -38,3 +38,11 @@ state is known outside the actor.
   moved to `actor_impl`, beside the actors that use it. Step 2 follows: an agent run here takes in
   what it missed as what it hears - its history, then its perceive processors, then its transcript
   (issue [196](196-perceive-processors-write-state.md)).
+- **2026-10-02** — Step 2, done: an agent run here takes in what it missed as what it hears -
+  `catch_up` passes it to `perceive`: all of it into its history, what passes its perceive
+  processors into its transcript (issue [196](196-perceive-processors-write-state.md)). What is
+  missing is now told against the history for both actors, so `missing_after` became
+  `MessageHistory::missing_from`, in the model; it counts a message on any branch as known. A
+  joining agent now keeps the visible part in its history too, not only in its transcript. The
+  channel tests build an agent's channel without running it (`agent_channel`), as they did for an
+  external agent, so that `catch_up` is tested on the actor itself.

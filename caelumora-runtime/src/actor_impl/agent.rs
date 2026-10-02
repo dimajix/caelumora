@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, event_for, missing_after};
+use super::{apply_stage_processors, event_for};
 use crate::actor::Actor;
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, EndedTurn, Turn, MAX_MODEL_CALLS};
@@ -717,15 +717,18 @@ impl Actor for AgentActor {
         }
     }
 
-    /// Keeps in its transcript what it missed (issue 190).
+    /// Takes in what it missed as what it hears (issues 190, 196): all of
+    /// it into its history, what passes its perceive processors into its
+    /// transcript.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        let missed = missing_after(&state.transcript.messages(), visible);
-        if !missed.is_empty() {
-            state.transcript.extend(missed);
-            self.actor_runtime.store_channel_state(&state).await?;
+        let missed = state.history.missing_from(visible);
+        if missed.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let mut turn = Turn::new(self.agent_id, self.agent_controller.name(), &mut state, self.agent_state.clone(), self.llm_client.profile());
+        self.perceive(&mut turn, missed).await;
+        self.actor_runtime.store_channel_state(&state).await
     }
 
     async fn run(
