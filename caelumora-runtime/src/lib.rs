@@ -4,6 +4,7 @@ pub mod moderator;
 pub mod runtime;
 pub mod llm;
 pub mod external;
+pub mod remote;
 pub mod logging;
 pub mod recorder;
 pub mod error;

@@ -1,6 +1,7 @@
 use crate::agent_turn::Turn;
 use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
+use crate::remote::RemoteAuthConfig;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
@@ -40,16 +41,10 @@ fn default_timeout_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum McpAuthConfig {
-    Bearer { secret: String },
-}
-
-#[derive(Debug, Clone, Deserialize)]
 struct McpToolConfig {
     pub url: String,
     #[serde(default)]
-    pub auth: Option<McpAuthConfig>,
+    pub auth: Option<RemoteAuthConfig>,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
     /// Whether calls to this MCP server's tools require human approval.
@@ -93,17 +88,11 @@ impl McpToolProvider {
 }
 
 async fn resolve_auth_header(
-    auth: &Option<McpAuthConfig>,
+    auth: &Option<RemoteAuthConfig>,
     secret_manager: &SecretManager,
     security_context: &SecurityContext,
 ) -> McpResult<Option<String>> {
-    match auth {
-        None => Ok(None),
-        Some(McpAuthConfig::Bearer { secret }) => {
-            let token = secret_manager.resolve(security_context, secret).await?;
-            Ok(Some(token))
-        }
-    }
+    Ok(RemoteAuthConfig::bearer_token(auth.as_ref(), secret_manager, security_context).await?)
 }
 
 async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningService<RoleClient, ()>> {
@@ -316,7 +305,7 @@ mod tests {
         assert_eq!(config.url, "http://127.0.0.1:1234/mcp");
         assert_eq!(config.timeout_secs, 5);
         match config.auth {
-            Some(McpAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
+            Some(RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
             _ => panic!("Expected Bearer auth"),
         }
     }

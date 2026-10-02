@@ -162,7 +162,7 @@ component kind**, named after the kind (`calculator_tool.rs`, `notes.rs`,
 | `tool_impl/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
 | `command_impl/` | command providers (`help_command`, `wakeup_command`) |
 | `llm_impl/` | language models (`ollama_client`) |
-| `external_impl/` | the ways to reach an external agent (issue 179) |
+| `external_impl/` | the ways to reach an external agent (`a2a_agent`, issue 179) |
 | `moderator_impl/` | the moderator and its responder policies |
 | `component_impl/` | everything else, and every component that offers several facets |
 
@@ -212,6 +212,7 @@ with `?`.
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `position` (`start` or `before_turn_input`, default `start`), `classification` (default public, issue 168) | A fixed prompt part. |
 | `channel_members_prompt_provider` | `PromptProvider` | `position` (`start` or `before_turn_input`, default `start`) | Tells the agent its own name and handle and who else is in its channel, with their introductions ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
 | `state_context_provider` | `ContextProvider` | - | The default context provider: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
+| `a2a_agent` | `ExternalAgent` | `url` (the agent's base URL, or its card's own), `auth`, `timeout_secs` (30, per request), `classification` (the channel's) | An external agent reached over A2A 1.x by JSON-RPC (issue 179): reads its agent card, streams over server-sent events where the card offers it, waits for the task to end or ask back where not. A card it cannot read, or one that offers no JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. |
 | `ollama_client` | `LLMClient` | `base_url` (`http://127.0.0.1:11434`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends (issue 149). |
 | `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |
 | `transcript_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's transcript. |

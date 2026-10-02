@@ -683,3 +683,27 @@ Each step compiles, is tested, and leaves `main` working.
   with the scripted stand-in: an answer that breaks off and whose task is
   then finished and said unasked; a restart that follows a working task
   and leaves one that asked back waiting.
+- **2026-10-02** — Step 6 done: `a2a_agent` (`external_impl/a2a_agent.rs`)
+  speaks A2A v1.0 over JSON-RPC, as the normative `a2a.proto` defines it
+  in ProtoJSON: it reads the agent card below the configured URL (or the
+  card's own URL), chooses the interface with `protocolBinding` `JSONRPC`
+  and a `protocolVersion` 1.x, and sends `A2A-Version: 1.0` and the bearer
+  token with every request. `SendStreamingMessage` and `SubscribeToTask`
+  stream server-sent events where the card offers streaming; otherwise
+  `SendMessage` waits for the task to end or ask back and `GetTask` tells
+  where a task stands. What comes back is translated: a task's context is
+  the conversation, told once; artifacts arrive as partial pieces and are
+  given whole at their last chunk; a task's status tells its end, its
+  question back or why it failed - what it says while it works is not the
+  answer; a message without a task is the whole answer. `CancelTask` past
+  cancelling (`-32002`) is no error. A card that cannot be read is a
+  warning when the component is built, and is read again when the agent
+  is asked; one without JSON-RPC of A2A 1.x is refused then, naming what
+  it offers. What was said goes as one text part per speaker, "name:
+  text". The bearer configuration moved to `crate::remote`
+  (`RemoteAuthConfig`), shared with `mcp_tool`. Tested against an axum
+  stub: streaming with chunked artifacts, version and token sent; waiting
+  with a question back and a reply that continues the task; resuming,
+  cancelling past cancelling; an unreachable agent and a card of A2A 0.3
+  refused when asked; a refused request saying why. Not yet tried against
+  Hermes Agent.
