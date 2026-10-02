@@ -22,11 +22,11 @@ use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::agent::{AgentChannelState, TurnEntry};
 use crate::digest::Digest;
+use crate::kept::Kept;
 use crate::message::{Message, MessageRole};
 use crate::transcript::{Transcript, TranscriptEntry};
 use crate::tool::ToolDefinition;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
@@ -290,8 +290,8 @@ impl<'a> TranscriptView<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
     transcript: TranscriptView<'a>,
-    prompts: &'a BTreeMap<Digest, String>,
-    tool_sets: &'a BTreeMap<Digest, Vec<ToolDefinition>>,
+    prompts: &'a Kept<String>,
+    tool_sets: &'a Kept<Vec<ToolDefinition>>,
 }
 
 impl<'a> ContextResolver<'a> {
@@ -399,7 +399,7 @@ mod tests {
         let before_question = state.transcript.push(question.clone());
         let whole = state.transcript.digest();
         for part in ["system", "notes"] {
-            state.prompts.insert(prompt(part), part.to_string());
+            state.prompts.keep(prompt(part), || part.to_string());
         }
         let reference = ContextRef {
             transcript: whole,
@@ -434,7 +434,7 @@ mod tests {
     /// A prompt part `text` in `role` after the end of `state`'s turn so
     /// far, its text kept.
     fn place(state: &mut AgentChannelState, role: MessageRole, text: &str) {
-        state.prompts.insert(prompt(text), text.to_string());
+        state.prompts.keep(prompt(text), || text.to_string());
         let turn = state.turn.as_mut().unwrap();
         turn.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.context.transcript, classification: None });
     }
@@ -481,7 +481,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let offered = vec![ToolDefinition { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]) }];
         let digest = crate::digest::tools(&offered);
-        state.tool_sets.insert(digest, offered.clone());
+        state.tool_sets.keep(digest, || offered.clone());
 
         let resolver = ContextResolver::of(&state);
         let with = |tools| ContextRef { tools, ..ContextRef::default() };
@@ -498,7 +498,7 @@ mod tests {
 
         let roles = |system_messages| {
             let mut state = state.clone();
-            state.prompts.insert(prompt("system prompt"), "system prompt".to_string());
+            state.prompts.keep(prompt("system prompt"), || "system prompt".to_string());
             begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
             state.turn.as_mut().unwrap().context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
             place(&mut state, MessageRole::System, "instruction");

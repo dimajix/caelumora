@@ -414,3 +414,7 @@ is left open until a step needs the answer - then it is done at once or opened a
   (`ChainChange`: `Added`, `Head`, `Amended`; `changes`, `mark_stored`, `apply`), and `amend` and
   `amend_each` replace `entries_mut` as the only way to change an entry. `Transcript`,
   `MessageHistory` and `Ledger` delegate. The stored form of a chain is unchanged.
+- **2026-10-02** — Step 3 done: `Kept<V>` keeps the prompt texts and tool sets by digest and
+  records what was added; `Journaled` (in `store`) with `AgentChannelStateChange`,
+  `ExternalAgentChannelStateChange`, `ChannelStateChange` and `AgentStateChange`, each a variant
+  per part of its state. The stores still write whole states; nothing stored changes its form.

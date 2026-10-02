@@ -184,7 +184,7 @@ mod tests {
         // A prompt part is told with how it was classified (issue 170).
         let confidential = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
-        state.prompts.insert(system.text, "system".to_string());
+        state.prompts.keep(system.text, || "system".to_string());
         let told = text("told");
         state.history.push(told.clone(), Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default(), turn_entries: 0 }));
         let seen = InternalContext::of(actor, state.clone()).context_of(told.id).expect("resolved");

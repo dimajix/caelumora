@@ -393,7 +393,7 @@ impl<'a> Turn<'a> {
         }
         let definitions: Vec<ToolDefinition> = tools.iter().map(Tool::definition).collect();
         let digest = caelumora_model::digest::tools(&definitions);
-        self.agent_channel_state.tool_sets.entry(digest).or_insert(definitions);
+        self.agent_channel_state.tool_sets.keep(digest, || definitions);
         Some(digest)
     }
 
@@ -462,7 +462,7 @@ impl<'a> Turn<'a> {
     fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
         self.current_mut().see_classified(classification.as_ref());
         let digest = caelumora_model::digest::prompt(&text);
-        self.agent_channel_state.prompts.entry(digest).or_insert(text);
+        self.agent_channel_state.prompts.keep(digest, || text);
         PromptRef { text: digest, role, after, classification }
     }
 

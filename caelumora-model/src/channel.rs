@@ -1,13 +1,15 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
+use crate::chain::ChainChange;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::message::MessageId;
-use crate::message_history::MessageHistory;
+use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::name::Name;
 use crate::security::{Secured, SecurityAttributes};
 use crate::session::SessionId;
+use crate::store::Journaled;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -131,6 +133,32 @@ impl ChannelState {
     }
 }
 
+/// A change to a [`ChannelState`] since it was last stored (issue 193). The
+/// channel's id is what the state is stored under, not a part that changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelStateChange {
+    History(ChainChange<HistoryEntry>),
+}
+
+impl Journaled for ChannelState {
+    type Change = ChannelStateChange;
+
+    fn changes(&self) -> Vec<Self::Change> {
+        self.history.changes().into_iter().map(ChannelStateChange::History).collect()
+    }
+
+    fn mark_stored(&mut self) {
+        self.history.mark_stored();
+    }
+
+    fn apply(&mut self, change: Self::Change) -> Result<(), String> {
+        match change {
+            ChannelStateChange::History(change) => self.history.apply(change),
+        }
+    }
+}
+
 /// Who takes part in a session or channel. Users and agents by reference:
 /// their records live in the `EntityStore` and are read from there, so
 /// that no session keeps a copy that goes stale or shows more of them than
@@ -168,3 +196,25 @@ pub fn participant_attributes(owner: ActorId, participants: &[Participant]) -> S
     SecurityAttributes { owner_id: owner, contributors }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::tests::{replayed, stored};
+    use crate::confidentiality::Confidentiality;
+    use crate::message::tests::{id, make_message};
+
+    #[test]
+    fn what_changed_in_a_channels_state_replays_onto_what_was_stored() {
+        let mut state = ChannelState::new(ChannelId::new());
+        state.history.extend(vec![make_message(id(1))]);
+        let mut copy = stored(&mut state);
+        assert!(state.changes().is_empty());
+
+        state.history.extend(vec![make_message(id(2))]);
+        state.history.reclassify(id(1), Classification::general(Confidentiality::Public));
+        assert_eq!(state.changes().len(), 2, "appended and amended");
+        replayed(&state, &mut copy);
+        assert_eq!(copy.channel_id, state.channel_id);
+    }
+}

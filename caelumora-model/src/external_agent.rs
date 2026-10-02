@@ -4,9 +4,11 @@
 //! so what we keep is what passed between it and us, and the handles of the
 //! protocol that tie the next exchange to the last one.
 
+use crate::chain::ChainChange;
 use crate::message::MessageId;
-use crate::message_history::MessageHistory;
-use crate::transcript::Transcript;
+use crate::message_history::{HistoryEntry, MessageHistory};
+use crate::store::Journaled;
+use crate::transcript::{Transcript, TranscriptEntry};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -81,4 +83,75 @@ pub struct ExternalAgentChannelState {
     pub conversation: Option<ConversationId>,
     /// The tasks given to it that have not ended.
     pub open_tasks: Vec<OpenTask>,
+}
+
+/// A change to an [`ExternalAgentChannelState`] since it was last stored
+/// (issue 193): a variant per part of the state, the growing ones as what
+/// was added, the small ones whole.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAgentChannelStateChange {
+    History(ChainChange<HistoryEntry>),
+    Transcript(ChainChange<TranscriptEntry>),
+    OfferedUpTo(Option<MessageId>),
+    Conversation(Option<ConversationId>),
+    OpenTasks(Vec<OpenTask>),
+}
+
+impl Journaled for ExternalAgentChannelState {
+    type Change = ExternalAgentChannelStateChange;
+
+    fn changes(&self) -> Vec<Self::Change> {
+        let mut changes: Vec<Self::Change> = Vec::new();
+        changes.extend(self.history.changes().into_iter().map(ExternalAgentChannelStateChange::History));
+        changes.extend(self.transcript.changes().into_iter().map(ExternalAgentChannelStateChange::Transcript));
+        changes.push(ExternalAgentChannelStateChange::OfferedUpTo(self.offered_up_to));
+        changes.push(ExternalAgentChannelStateChange::Conversation(self.conversation.clone()));
+        changes.push(ExternalAgentChannelStateChange::OpenTasks(self.open_tasks.clone()));
+        changes
+    }
+
+    fn mark_stored(&mut self) {
+        self.history.mark_stored();
+        self.transcript.mark_stored();
+    }
+
+    fn apply(&mut self, change: Self::Change) -> Result<(), String> {
+        match change {
+            ExternalAgentChannelStateChange::History(change) => self.history.apply(change)?,
+            ExternalAgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
+            ExternalAgentChannelStateChange::OfferedUpTo(last) => self.offered_up_to = last,
+            ExternalAgentChannelStateChange::Conversation(conversation) => self.conversation = conversation,
+            ExternalAgentChannelStateChange::OpenTasks(tasks) => self.open_tasks = tasks,
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::tests::{replayed, stored};
+    use crate::message::tests::{id, make_message};
+
+    #[test]
+    fn what_changed_in_an_external_agents_state_replays_onto_what_was_stored() {
+        let mut state = ExternalAgentChannelState::default();
+        state.history.extend(vec![make_message(id(1))]);
+        let mut copy = stored(&mut state);
+
+        state.history.extend(vec![make_message(id(2))]);
+        state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
+        state.offered_up_to = Some(id(2));
+        state.conversation = Some(ConversationId("c-1".to_string()));
+        state.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()) });
+        assert_eq!(state.changes().len(), 3 + 3, "one history entry, two of the transcript, the three small parts");
+        replayed(&state, &mut copy);
+
+        state.mark_stored();
+        state.open_tasks.clear();
+        assert_eq!(state.changes().len(), 3, "the small parts alone");
+        replayed(&state, &mut copy);
+        assert!(copy.open_tasks.is_empty());
+    }
 }

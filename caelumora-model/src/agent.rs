@@ -4,17 +4,20 @@ use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::confidentiality::Classification;
 use crate::context::{ContextRef, KnowledgeRef};
+use crate::chain::ChainChange;
+use crate::kept::Kept;
+use crate::ledger::LedgerEntry;
 use crate::message::{Message, MessageId};
-use crate::memory::{MemoryChange, MemoryOrigin};
-use crate::message_history::MessageHistory;
+use crate::memory::{Memories, MemoryChain, MemoryChange, MemoryOrigin};
+use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{Transcript, TranscriptEntry};
-use crate::note::{NoteChain, NoteChange};
+use crate::note::{NoteChain, NoteChange, Notes};
 use crate::name::{Name, ScopedName};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
+use crate::store::Journaled;
 use crate::tool::{Tool, ToolCallState, ToolDefinition};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,11 +184,11 @@ pub struct AgentChannelState {
     /// Every prompt part the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
     /// in the history point to (issues 06, 47).
-    pub prompts: BTreeMap<Digest, String>,
+    pub prompts: Kept<String>,
     /// Every set of tools the agent's model was offered in this channel, by
     /// digest, each kept once: what the `ContextRef`s in the history point
     /// to (issue 137).
-    pub tool_sets: BTreeMap<Digest, Vec<ToolDefinition>>,
+    pub tool_sets: Kept<Vec<ToolDefinition>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
@@ -357,6 +360,66 @@ impl AgentChannelState {
     }
 }
 
+/// A change to an [`AgentChannelState`] since it was last stored (issue
+/// 193): a variant per part of the state. A change of the agent's *state* -
+/// what it heard, said, noted - as against an update of the agent itself.
+/// The growing parts record what was added, the small ones are recorded
+/// whole.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentChannelStateChange {
+    History(ChainChange<HistoryEntry>),
+    Transcript(ChainChange<TranscriptEntry>),
+    Notes(ChainChange<LedgerEntry<Notes>>),
+    PrivateNotes(ChainChange<LedgerEntry<Notes>>),
+    Prompt { digest: Digest, text: String },
+    ToolSet { digest: Digest, tools: Vec<ToolDefinition> },
+    ProcessingState(ActorState),
+    /// The turn under way, whole: it is changed in place at every step
+    /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
+    Turn(Option<TurnState>),
+}
+
+impl Journaled for AgentChannelState {
+    type Change = AgentChannelStateChange;
+
+    fn changes(&self) -> Vec<Self::Change> {
+        let mut changes: Vec<Self::Change> = Vec::new();
+        changes.extend(self.history.changes().into_iter().map(AgentChannelStateChange::History));
+        changes.extend(self.transcript.changes().into_iter().map(AgentChannelStateChange::Transcript));
+        changes.extend(self.notes.changes().into_iter().map(AgentChannelStateChange::Notes));
+        changes.extend(self.private_notes.changes().into_iter().map(AgentChannelStateChange::PrivateNotes));
+        changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
+        changes.extend(self.tool_sets.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::ToolSet { digest, tools }));
+        changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
+        changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
+        changes
+    }
+
+    fn mark_stored(&mut self) {
+        self.history.mark_stored();
+        self.transcript.mark_stored();
+        self.notes.mark_stored();
+        self.private_notes.mark_stored();
+        self.prompts.mark_stored();
+        self.tool_sets.mark_stored();
+    }
+
+    fn apply(&mut self, change: Self::Change) -> Result<(), String> {
+        match change {
+            AgentChannelStateChange::History(change) => self.history.apply(change)?,
+            AgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
+            AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
+            AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
+            AgentChannelStateChange::Prompt { digest, text } => self.prompts.apply(digest, text),
+            AgentChannelStateChange::ToolSet { digest, tools } => self.tool_sets.apply(digest, tools),
+            AgentChannelStateChange::ProcessingState(state) => self.processing_state = state,
+            AgentChannelStateChange::Turn(turn) => self.turn = turn,
+        }
+        Ok(())
+    }
+}
+
 /// The state of an agent itself, across its channels and - for agents of
 /// user or global scope - across sessions (issue 62). One owner per agent
 /// and process holds it; turns read a snapshot and stage their changes
@@ -365,11 +428,36 @@ impl AgentChannelState {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     /// What the agent remembers across its channels and sessions.
-    pub memory: crate::memory::MemoryChain,
+    pub memory: MemoryChain,
+}
+
+/// A change to an [`AgentState`] since it was last stored (issue 193).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStateChange {
+    Memory(ChainChange<LedgerEntry<Memories>>),
+}
+
+impl Journaled for AgentState {
+    type Change = AgentStateChange;
+
+    fn changes(&self) -> Vec<Self::Change> {
+        self.memory.changes().into_iter().map(AgentStateChange::Memory).collect()
+    }
+
+    fn mark_stored(&mut self) {
+        self.memory.mark_stored();
+    }
+
+    fn apply(&mut self, change: Self::Change) -> Result<(), String> {
+        match change {
+            AgentStateChange::Memory(change) => self.memory.apply(change),
+        }
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::actor::ActorState;
     use crate::confidentiality::{Compartment, Confidentiality};
@@ -443,4 +531,77 @@ mod tests {
         assert_eq!(decoded.turn.map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
     }
 
+    /// `state` as a store holds it, and the live state marked stored.
+    pub(crate) fn stored<T: Journaled>(state: &mut T) -> T {
+        let copy = serde_json::from_value(serde_json::to_value(&*state).unwrap()).unwrap();
+        state.mark_stored();
+        copy
+    }
+
+    /// Replays the changes of `state` onto `copy` - twice, since replaying
+    /// is idempotent - and asserts that both are the same afterwards.
+    pub(crate) fn replayed<T: Journaled>(state: &T, copy: &mut T) {
+        for _ in 0..2 {
+            for change in state.changes() {
+                copy.apply(change).unwrap();
+            }
+        }
+        assert_eq!(serde_json::to_value(&*copy).unwrap(), serde_json::to_value(state).unwrap());
+        // The small parts are told whole every time; the growing ones must
+        // have recorded nothing: as a copy loaded afresh.
+        let reloaded: T = serde_json::from_value(serde_json::to_value(&*copy).unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(copy.changes()).unwrap(), serde_json::to_value(reloaded.changes()).unwrap(), "replaying records nothing");
+    }
+
+    #[test]
+    fn what_changed_in_an_agents_channel_state_replays_onto_what_was_stored() {
+        use crate::message::tests::{id, make_message};
+        use crate::note::NoteId;
+        let mut state = AgentChannelState::default();
+        state.history.extend(vec![make_message(id(1))]);
+        state.transcript.push(make_message(id(1)));
+        let mut copy = stored(&mut state);
+
+        let before = state.transcript.push(make_message(id(2)));
+        state.history.push(make_message(id(2)), Some(ContextRef { transcript: before, ..ContextRef::default() }));
+        state.notes.push(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
+        state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
+        state.prompts.keep(crate::digest::prompt("system"), || "system".to_string());
+        state.tool_sets.keep(crate::digest::tools(&[]), Vec::new);
+        state.processing_state = ActorState::WaitingForApproval;
+        state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
+
+        let changes = state.changes();
+        let parts: Vec<&str> = changes.iter().map(|c| match c {
+            AgentChannelStateChange::History(_) => "history",
+            AgentChannelStateChange::Transcript(_) => "transcript",
+            AgentChannelStateChange::Notes(_) => "notes",
+            AgentChannelStateChange::PrivateNotes(_) => "private_notes",
+            AgentChannelStateChange::Prompt { .. } => "prompt",
+            AgentChannelStateChange::ToolSet { .. } => "tool_set",
+            AgentChannelStateChange::ProcessingState(_) => "processing_state",
+            AgentChannelStateChange::Turn(_) => "turn",
+        }).collect();
+        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "tool_set", "processing_state", "turn"], "what was added, then the small parts whole");
+        replayed(&state, &mut copy);
+
+        state.mark_stored();
+        state.turn = None;
+        assert_eq!(state.changes().len(), 2, "between turns a step is the small parts alone");
+        replayed(&state, &mut copy);
+        assert!(copy.turn.is_none());
+    }
+
+    #[test]
+    fn what_changed_in_an_agents_own_state_replays_onto_what_was_stored() {
+        use crate::memory::{MemoryChange, MemoryId};
+        let mut state = AgentState::default();
+        state.memory.push(MemoryChange::Add { id: MemoryId(1), text: "a".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), MessageId::default());
+        let mut copy = stored(&mut state);
+        assert!(state.changes().is_empty(), "nothing between turns");
+        state.memory.push(MemoryChange::Remove { id: MemoryId(1) }, Default::default(), MessageId::default());
+        assert!(matches!(state.changes().as_slice(), [AgentStateChange::Memory(_)]));
+        replayed(&state, &mut copy);
+        assert!(copy.memory.current().is_empty());
+    }
 }

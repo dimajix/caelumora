@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::fmt::Debug;
 
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
@@ -26,6 +28,30 @@ pub enum StoreError {
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
+
+
+/// A state the `StateStore` keeps (issue 193): it tells what changed since
+/// it was last stored, as a sequence of changes, so that a store writes only
+/// that, and replays such changes onto what it stored before. A state is
+/// small parts and growing ones - chains, values kept by digest - and its
+/// `Change` has a variant per part: a growing part's records what was
+/// added, a small part's its whole value, which `changes` puts at the end of
+/// every sequence. Order holds within a part; across parts it is the fixed
+/// order of `changes`, which loses nothing, since every reference between
+/// parts is a digest or an id, resolved when read and never while replaying.
+pub trait Journaled: Serialize + DeserializeOwned + Send {
+    type Change: Serialize + DeserializeOwned + Send;
+    /// What changed since `mark_stored`, in order.
+    fn changes(&self) -> Vec<Self::Change>;
+    /// Forgets the changes: they are stored.
+    fn mark_stored(&mut self);
+    /// Replays `change`, as a store does when loading what it appended -
+    /// idempotent, and no change to store again (`Chain::apply`).
+    ///
+    /// # Errors
+    /// If the change does not fit the state.
+    fn apply(&mut self, change: Self::Change) -> Result<(), String>;
+}
 
 
 /// The durable entities (issue 93): every kind has the same five
