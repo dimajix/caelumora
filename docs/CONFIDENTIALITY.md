@@ -133,8 +133,11 @@ never above its channel, and only with configured compartments.
 
     The web UI says so when a change releases the channel.
 *   **A message** (`ChannelLoop::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is
-    changed in place in the history - its digest does not cover its classification, so the record
-    stays what it was - and announced as `GlobalEvent::MessageReclassified`, without content.
+    recorded in the channel's history as an entry of its own, `HistoryEntry::Reclassified` (issue
+    197): the message stays what it was said as, and is read as it stands now
+    (`MessageHistory::messages`, `message`). Announced as `GlobalEvent::MessageReclassified`,
+    without content. Lowering a channel records one `HistoryEntry::Fitted`, which every message
+    said so far is read through.
 
 *   **A note or a memory entry** is reclassified by its agent, through a tool that asks for approval
     (`reclassify_note`, `reclassify_private_note`, `reclassify_memory`): a change of its chain
@@ -143,9 +146,9 @@ never above its channel, and only with configured compartments.
     only where it may be recalled. A reclassified memory entry is recalled where its new
     classification may be read. Agents do not reclassify channels or messages: people do.
 
-Who reclassified what, and when, is not recorded: that is an audit log
-([140](../issues/140-audit-log.md)); the chains of notes and memory keep the change, but not who
-made it or who approved it.
+Who reclassified what is not recorded: that is an audit log ([140](../issues/140-audit-log.md));
+the chains of the history, of notes and of memory keep the change and its place in what happened,
+but not who made it or who approved it.
 
 ## The flow rule
 

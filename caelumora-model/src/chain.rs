@@ -141,20 +141,6 @@ impl<E> Chain<E> {
         true
     }
 
-    /// Changes every entry of every branch `change` changes - it says
-    /// whether it did - in what their digests do not cover, as `amend`.
-    /// Returns how many changed.
-    pub(crate) fn amend_each(&mut self, mut change: impl FnMut(&mut E) -> bool) -> usize {
-        let mut changed = 0;
-        for (at, node) in self.nodes.iter_mut().enumerate() {
-            if change(&mut node.entry) {
-                self.pending.push(Pending::Amended(at));
-                changed += 1;
-            }
-        }
-        changed
-    }
-
     /// Appends `entry` with the digest `digest` computes for it after the
     /// head, makes it the head, and returns the digest before it. An entry
     /// with the digest of one already there is that entry - the same
@@ -517,17 +503,16 @@ mod tests {
         chain.move_head(Some(&after_a));
         push(&mut chain, "b");
         assert!(chain.amend(&after_a, |e| *e = "a!".to_string()));
-        assert_eq!(chain.amend_each(|e| { let is_b = e == "b"; if is_b { *e = "b!".to_string() }; is_b }), 1);
 
         let changes = chain.changes();
         let ops: Vec<&str> = changes.iter().map(|c| match c { ChainChange::Added(_) => "added", ChainChange::Head { .. } => "head", ChainChange::Amended { .. } => "amended" }).collect();
-        assert_eq!(ops, ["added", "head", "added", "head", "head", "amended", "amended"], "once each, in order; a move to where the head is is no change: {changes:?}");
+        assert_eq!(ops, ["added", "head", "added", "head", "head", "amended"], "once each, in order; a move to where the head is is no change: {changes:?}");
 
         for change in changes.clone() {
             copy.apply(change).unwrap();
         }
         assert!(same(&copy, &chain), "{copy:?}\n{chain:?}");
-        assert_eq!(labels(copy.all_entries()), ["a!", "b!", "c"]);
+        assert_eq!(labels(copy.all_entries()), ["a!", "b", "c"]);
         assert_eq!(copy.digest(), chain.digest(), "the digest is not what an amendment changes");
 
         for change in changes {

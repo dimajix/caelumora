@@ -356,7 +356,7 @@ impl AgentChannelState {
     /// was produced from, or `None` if this agent did not produce it (or it
     /// was before references were recorded).
     pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
-        self.history.all_entries().find(|e| e.entry.message.id == id)?.entry.context.clone()
+        self.history.all_entries().find_map(|e| e.entry.context_of(id)).cloned()
     }
 }
 

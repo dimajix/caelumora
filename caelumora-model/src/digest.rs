@@ -7,6 +7,7 @@
 //! change without old and new digests ever being mistaken for each other.
 
 use crate::message::Message;
+use crate::message_history::HistoryEntry;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -183,6 +184,30 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     e.json(&to_json(&message.tool_results));
     e.bytes(&[message.internal as u8]);
     e.finish()
+}
+
+/// The digest of a history (issue 06) ending in `entry`, whose predecessor
+/// chain has the digest `previous`: a message said as `message_chain`, so
+/// that every digest recorded before issue 197 names what it named; a
+/// reclassification (issue 133) by what it says - the message and the
+/// classification, or the channel - in a scheme of its own.
+pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
+    match entry {
+        HistoryEntry::Said { message, .. } => message_chain(previous, message),
+        HistoryEntry::Reclassified { message, classification } => {
+            let mut e = Encoder::new("caelumora.history-reclassified.v1");
+            e.opt_digest(previous);
+            e.bytes(message.0.as_bytes());
+            e.json(&to_json(classification));
+            e.finish()
+        }
+        HistoryEntry::Fitted { channel } => {
+            let mut e = Encoder::new("caelumora.history-fitted.v1");
+            e.opt_digest(previous);
+            e.json(&to_json(channel));
+            e.finish()
+        }
+    }
 }
 
 /// The digest of a ledger's chain (issue 92) ending in `change`, made at

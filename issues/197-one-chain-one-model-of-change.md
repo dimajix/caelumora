@@ -201,3 +201,7 @@ meaning. Step 4 is the removal the whole thing is for.
   with `digest`, `parent` and `entry`, `ChainEntry` is gone, `push_with` takes the entry and its
   digest scheme, `entries`, `prefix`, `last` and `children` answer nodes, and a turn's pending
   messages are nodes too (`TurnEntry::node`). The content types lost their `digest` field.
+- **2026-10-02** — Step 3 done: `HistoryEntry` is `Said`, `Reclassified` or `Fitted`; a
+  reclassification and a lowering are recorded as entries, covered by the digest
+  (`digest::history_chain`), and `messages()` and `message(id)` fold over every branch in the
+  order things happened. `amend_each` had no caller left and is gone.
