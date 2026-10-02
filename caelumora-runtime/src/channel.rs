@@ -24,7 +24,7 @@ use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError};
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
 use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
@@ -124,9 +124,9 @@ impl Member {
     async fn of(participant: &Participant, channel: &Channel, runtime: &RuntimeManager) -> Result<Option<Self>> {
         let controllers = runtime.controller_manager();
         let agent = match participant {
-            Participant::User(id) => return gone_is_none(controllers.user_controller(*id).await.map(Member::User)),
+            Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(Member::User)),
             Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
-            Participant::Agent(id) => match gone_is_none(controllers.agent_controller(*id).await)? {
+            Participant::Agent(id) => match controllers.agent_controller(*id).await.optional()? {
                 Some(agent) => agent,
                 None => return Ok(None),
             },
@@ -209,15 +209,6 @@ pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &Security
 /// The actors of a channel's participants, each with what it was built
 /// from.
 type Actors = HashMap<ActorId, (Arc<dyn Actor>, Member)>;
-
-/// What was loaded, or `None` if it no longer exists.
-fn gone_is_none<T>(found: Result<T, StoreError>) -> Result<Option<T>> {
-    match found {
-        Ok(found) => Ok(Some(found)),
-        Err(StoreError::NotFound { .. }) => Ok(None),
-        Err(error) => Err(error.into()),
-    }
-}
 
 /// How long a stopped actor gets to end its task by itself before it is
 /// aborted (issue 75): a tool that hangs is the case this is for.

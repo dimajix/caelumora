@@ -44,7 +44,7 @@ impl AgentMemory {
     /// recalls nothing. A turn in no session recalls nothing.
     pub async fn recalled(turn: &Turn<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
         let Some(own) = turn.session() else { return Vec::new() };
-        let here = Place { channel: turn.channel_id(), classification: turn.classification(), session: own.privacy() };
+        let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
         let memory = turn.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
         let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
@@ -150,7 +150,7 @@ impl AgentMemory {
             return Some(entry);
         };
         let own = turn.session()?;
-        let here = Place { channel: turn.channel_id(), classification: turn.classification(), session: own.privacy() };
+        let here = own.views().viewer().place()?.clone();
         Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), security, context).await.then_some(entry)
     }
 

@@ -198,7 +198,8 @@ What an actor is called is asked of it too: `actor_name(actor)` answers a user's
 current name from its controller, and for an actor that is no entity - an approver, the runtime
 itself - the name its kind fixes (`ActorId::fixed_name`).
 
-A missing record is `StoreError::NotFound`; a channel then leaves that participant out (see
+A missing record is `StoreError::NotFound`, which a lookup that expects it may be gone turns into
+`None` with `StoreResultExt::optional` (issue 192); a channel then leaves that participant out (see
 [CHANNELS.md](CHANNELS.md)).
 
 ### Following changes

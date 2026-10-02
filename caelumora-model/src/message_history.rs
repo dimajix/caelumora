@@ -76,6 +76,14 @@ impl Chain<HistoryEntry> {
         messages
     }
 
+    /// The messages of the active path as they stand that came after the
+    /// message `last` - all of them if `last` is `None` or not on it.
+    pub fn messages_after(&self, last: Option<MessageId>) -> Vec<Message> {
+        let messages = self.messages();
+        let after = last.and_then(|last| messages.iter().position(|m| m.id == last)).map_or(0, |at| at + 1);
+        messages.into_iter().skip(after).collect()
+    }
+
     /// The messages of `visible` after the last of them the history has,
     /// and not in it - on any branch: what an actor that joins missed (issue
     /// 190), for one that joins again what was said while it was away. A
@@ -171,6 +179,17 @@ mod tests {
         // older than what it has and would come after it.
         assert_eq!(ids(history.missing_from(vec![one, two, three.clone(), four])), [id(4)], "in the order things were said");
         assert!(history.missing_from(vec![three]).is_empty(), "nothing new");
+    }
+
+    #[test]
+    fn what_came_after_a_message_is_the_rest_of_the_active_path() {
+        let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        let mut history = MessageHistory::default();
+        history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
+        assert_eq!(ids(history.messages_after(Some(id(1)))), [id(2), id(3)]);
+        assert_eq!(ids(history.messages_after(Some(id(3)))), Vec::<MessageId>::new(), "nothing after the last");
+        assert_eq!(ids(history.messages_after(None)), [id(1), id(2), id(3)], "all, if nothing came before");
+        assert_eq!(ids(history.messages_after(Some(id(9)))), [id(1), id(2), id(3)], "all, if it is not on the path");
     }
 
     #[test]

@@ -239,7 +239,7 @@ argues against it, and what came out of the last attempt.
 | [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 | [129](129-documentation-structure.md) | done | AGENTS.md and ARCHITECTURE.md hold everything in two long files, so the architecture draws no overall picture and the details of one subject are hard to find. |
 | [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
-| [192](192-issue-179-small-duplicates.md) | open | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
+| [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 
 ## Code structure
 

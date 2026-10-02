@@ -29,6 +29,24 @@ pub enum StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
+/// What a lookup answers when what it looks for may no longer exist
+/// (issue 192).
+pub trait StoreResultExt<T> {
+    /// What was found, `None` if it is not there (`StoreError::NotFound`);
+    /// any other error stays one.
+    fn optional(self) -> StoreResult<Option<T>>;
+}
+
+impl<T> StoreResultExt<T> for StoreResult<T> {
+    fn optional(self) -> StoreResult<Option<T>> {
+        match self {
+            Ok(found) => Ok(Some(found)),
+            Err(StoreError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 
 /// A state the `StateStore` keeps (issue 193): it tells what changed since
 /// it was last stored, as a sequence of changes, so that a store writes only
@@ -162,6 +180,16 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
+
+    #[test]
+    fn what_is_not_found_is_none_and_every_other_error_stays_one() {
+        let found: StoreResult<u32> = Ok(1);
+        assert_eq!(found.optional().unwrap(), Some(1));
+        let gone: StoreResult<u32> = Err(StoreError::NotFound { entity: "user", id: "1".to_string() });
+        assert_eq!(gone.optional().unwrap(), None);
+        let failed: StoreResult<u32> = Err(StoreError::Backend("disk".to_string()));
+        assert!(matches!(failed.optional(), Err(StoreError::Backend(_))));
+    }
 
     #[tokio::test]
     async fn list_sessions_works() {

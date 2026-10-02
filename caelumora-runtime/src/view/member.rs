@@ -24,7 +24,7 @@ use caelumora_model::mention::handle_of;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError};
+use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
 use caelumora_model::user::UserId;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -132,11 +132,9 @@ impl MemberState for UserMember {
 
     async fn introduction(&self) -> ViewResult<Option<String>> {
         let introduction = self.introduction.get_or_try_init(|| async {
-            match self.store.get_user_profile(&SecurityContext::system(), self.id).await {
-                Ok(profile) => Ok(profile.introduction),
-                Err(StoreError::NotFound { .. }) => Ok(None),
-                Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", ActorId::User(self.id))))),
-            }
+            let profile = self.store.get_user_profile(&SecurityContext::system(), self.id).await.optional()
+                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", ActorId::User(self.id)))))?;
+            Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction))
         }).await?;
         Ok(introduction.clone())
     }
@@ -208,13 +206,11 @@ impl AgentMemberState {
     /// it has no state to read - as in the channel, where it is not run.
     async fn personal(&self) -> ViewResult<Option<&Personal>> {
         let personal = self.personal.get_or_try_init(|| async {
-            let personality = match self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await {
-                Ok(personality) => personality,
-                Err(StoreError::NotFound { .. }) => {
-                    warn!("The personality of agent {} is gone: its state is not read", self.agent.id);
-                    return Ok(None);
-                }
-                Err(e) => return Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id)))),
+            let found = self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
+                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))?;
+            let Some(personality) = found else {
+                warn!("The personality of agent {} is gone: its state is not read", self.agent.id);
+                return Ok(None);
             };
             let place = self.place.clone();
             let state: Box<dyn AgentMember> = match personality.kind {

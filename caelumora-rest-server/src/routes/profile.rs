@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::{UserProfile, MAX_INTRODUCTION_CHARS};
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json};
@@ -15,11 +15,9 @@ use crate::state::AppState;
 /// The user's profile; one without an introduction if they never wrote one.
 pub async fn get_profile(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<ProfileResponse>, ApiError> {
     let store = state.runtime_manager.entity_store();
-    let introduction = match store.get_user_profile(&user.security_context(), user.id).await {
-        Ok(profile) => profile.introduction,
-        Err(StoreError::NotFound { .. }) => None,
-        Err(e) => return Err(ApiError::internal("profile_failed", "reading the profile", &e.into())),
-    };
+    let profile = store.get_user_profile(&user.security_context(), user.id).await.optional()
+        .map_err(|e| ApiError::internal("profile_failed", "reading the profile", &e.into()))?;
+    let introduction = profile.and_then(|profile| profile.introduction);
     Ok(Json(ProfileResponse { introduction, max_introduction_chars: MAX_INTRODUCTION_CHARS }))
 }
 

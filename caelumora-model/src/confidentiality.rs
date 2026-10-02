@@ -15,7 +15,7 @@
 
 use crate::actor::ActorId;
 use crate::security::{Place, SecurityContext};
-use crate::store::{EntityStore, StoreError, StoreResult};
+use crate::store::{EntityStore, StoreResult, StoreResultExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -454,11 +454,7 @@ impl Roles {
 /// Whatever else reading the user reports.
 pub async fn user_roles(store: &dyn EntityStore, actor: ActorId) -> StoreResult<Vec<String>> {
     let ActorId::User(id) = actor else { return Ok(Vec::new()) };
-    match store.get_user(&SecurityContext::system(), id).await {
-        Ok(user) => Ok(user.roles),
-        Err(StoreError::NotFound { .. }) => Ok(Vec::new()),
-        Err(e) => Err(e),
-    }
+    Ok(store.get_user(&SecurityContext::system(), id).await.optional()?.map(|user| user.roles).unwrap_or_default())
 }
 
 /// The confidentiality rules as Caelumora applies them (issue 133): the

@@ -46,7 +46,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::StoreError;
+use caelumora_model::store::StoreResultExt;
 use std::sync::Arc;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
@@ -272,11 +272,9 @@ impl Views {
     /// # Errors
     /// `Failed` if it cannot be looked up.
     pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
-        match self.runtime.entity_store().get_session(&SecurityContext::system(), id).await {
-            Ok(session) => Ok(Some(SessionPrivacy::of(&session))),
-            Err(StoreError::NotFound { .. }) => Ok(None),
-            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}")))),
-        }
+        let session = self.runtime.entity_store().get_session(&SecurityContext::system(), id).await.optional()
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}"))))?;
+        Ok(session.as_ref().map(SessionPrivacy::of))
     }
 
     /// The roles of the viewer's user, which decide what they are cleared

@@ -1,6 +1,6 @@
 # 192 — Small duplicates left from issue 179
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -26,3 +26,11 @@ Found by a cleanup review of the issue-179 series, each small, none worth an iss
 ## History
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series.
+- **2026-10-02** — Done, as decided with the maintainer. The member states were one already since
+  issue 189: `MemberState` is implemented once, on `AgentMemberState`, and the two kinds differ only
+  in reading their state. "Not found means none" is `StoreResultExt::optional` in
+  `caelumora_model::store`, used at all seven places (`gone_is_none` and `not_found_as_none` are
+  gone). `agent_memory.rs` takes the reader's place from the turn's viewer. `unheard` had become
+  `unoffered` with issue 196 and no longer repeats `missing_from`; what it computed on the history
+  is `MessageHistory::messages_after`. `member_state` and `Views::name_of` keep their own `match`:
+  three lines that log differently, which the maintainer chose to leave.

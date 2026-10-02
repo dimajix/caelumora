@@ -1,5 +1,5 @@
 use crate::security::SecurityContext;
-use crate::store::{EntityStore, StoreError};
+use crate::store::{EntityStore, StoreError, StoreResultExt};
 use crate::user::{User, UserId};
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
 use async_trait::async_trait;
@@ -52,23 +52,20 @@ impl AcceptAnyUserProvider {
         SecurityContext::system()
     }
 
-    fn not_found_as_none(result: Result<User, StoreError>) -> AuthResult<Option<User>> {
-        match result {
-            Ok(user) => Ok(Some(user)),
-            Err(StoreError::NotFound { .. }) => Ok(None),
-            Err(e) => Err(AuthError::Backend(e.to_string())),
-        }
+    /// The user `result` found, `None` if there is none.
+    fn found(result: Result<User, StoreError>) -> AuthResult<Option<User>> {
+        result.optional().map_err(|e| AuthError::Backend(e.to_string()))
     }
 }
 
 #[async_trait]
 impl UserProvider for AcceptAnyUserProvider {
     async fn find_user(&self, username: &str) -> AuthResult<Option<User>> {
-        Self::not_found_as_none(self.store.find_user_by_name(&Self::context(), username).await)
+        Self::found(self.store.find_user_by_name(&Self::context(), username).await)
     }
 
     async fn get_user(&self, id: UserId) -> AuthResult<Option<User>> {
-        Self::not_found_as_none(self.store.get_user(&Self::context(), id).await)
+        Self::found(self.store.get_user(&Self::context(), id).await)
     }
 
     async fn authenticate(&self, username: &str, _credential: &Credential<'_>) -> AuthResult<Option<User>> {

@@ -559,11 +559,7 @@ fn worth_giving(message: &Message, own: ActorId) -> bool {
 /// offered - and is worth giving; with the last message heard, up to which
 /// it is offered now. `None` if it heard nothing new.
 fn unoffered(state: &ExternalAgentChannelState, own: ActorId) -> (Vec<Message>, Option<MessageId>) {
-    let heard = state.history.messages();
-    let after = state.offered_up_to.as_ref()
-        .and_then(|last| heard.iter().position(|m| &m.id == last))
-        .map_or(0, |last| last + 1);
-    let new = heard.into_iter().skip(after).collect::<Vec<_>>();
+    let new = state.history.messages_after(state.offered_up_to);
     let last = new.last().map(|m| m.id);
     (new.into_iter().filter(|m| worth_giving(m, own)).collect(), last)
 }
