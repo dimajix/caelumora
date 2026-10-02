@@ -27,7 +27,7 @@
 use super::control_tokens::ControlTokens;
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
-use crate::remote::{describe_chain, RemoteEndpoint};
+use crate::remote::{describe_chain, describe_request_error, RemoteEndpoint};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -348,7 +348,7 @@ async fn read_control_tokens(http: &reqwest::Client, remote: &RemoteEndpoint, mo
         return Err(LLMError::Rejected { endpoint, model: model.to_string(), status: status.as_u16(), message: backend_error_message(&body) });
     }
     let show: OllamaShowResponse = response.json().await
-        .map_err(|e| LLMError::InvalidResponse { endpoint: endpoint.clone(), reason: format!("cannot read the model's tokens: {}", describe_chain(&e)) })?;
+        .map_err(|e| LLMError::InvalidResponse { endpoint: endpoint.clone(), reason: format!("cannot read the model's tokens: {}", describe_request_error(e)) })?;
     let info = show.model_info;
     if info.tokens.is_empty() || info.tokens.len() != info.token_types.len() {
         return Err(LLMError::InvalidResponse {
@@ -439,7 +439,7 @@ async fn send(request: reqwest::RequestBuilder, endpoint: &RemoteEndpoint) -> LL
             .map_err(|_| LLMError::Connection { endpoint: endpoint.shown(), reason: format!("no answer within {secs} s") })?,
         None => sent.await,
     };
-    response.map_err(|e| LLMError::Connection { endpoint: endpoint.shown(), reason: describe_chain(&e) })
+    response.map_err(|e| LLMError::Connection { endpoint: endpoint.shown(), reason: describe_request_error(e) })
 }
 
 fn default_model() -> String {
@@ -652,7 +652,7 @@ impl LLMClient for OllamaClient {
                 yield Err(LLMError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
                 return;
             }
-            let mut answer = std::pin::pin!(answer_of(response.bytes_stream(), endpoint, model));
+            let mut answer = std::pin::pin!(answer_of(response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url)), endpoint, model));
             while let Some(event) = answer.next().await {
                 yield event;
             }
@@ -912,6 +912,17 @@ mod tests {
         }).collect();
         assert_eq!(parts, vec!["Grü", "ße"]);
         assert!(matches!(events.last(), Some(Ok(MessageEvent::Complete(m))) if m.content.as_deref() == Some("Grüße")), "{events:?}");
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_is_named_without_what_may_carry_a_credential() {
+        let client = client("http://user:secret@127.0.0.1:9/?key=secret");
+        let events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
+        let error = match events.as_slice() {
+            [Err(e)] => e.to_string(),
+            other => panic!("{other:?}"),
+        };
+        assert!(error.contains("at http://127.0.0.1:9") && !error.contains("secret"), "{error}");
     }
 
     #[tokio::test]

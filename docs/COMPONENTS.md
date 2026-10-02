@@ -187,8 +187,8 @@ endpoint:
 
 `auth` names a secret, resolved for whoever acts on every use (see [SECURITY.md](SECURITY.md)).
 What `timeout_secs` bounds, and how long a component waits without it, the component says. An
-unknown field is refused. In messages the endpoint is shown without credentials
-(`RemoteEndpoint::shown`).
+unknown field is refused. In messages the endpoint is shown without credentials, query or fragment
+(`RemoteEndpoint::shown`) - also where a library writes it into its own (`redact_in`).
 
 ### The components
 

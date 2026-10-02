@@ -10,7 +10,7 @@
 
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use crate::remote::{describe_chain, redact_endpoint, RemoteEndpoint};
+use crate::remote::{describe_chain, describe_request_error, redact_endpoint, RemoteEndpoint};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -138,7 +138,7 @@ impl A2aAgentComponent {
         if let Some(token) = self.token(security).await? {
             request = request.bearer_auth(token);
         }
-        let response = request.send().await.map_err(|e| self.connection(&e))?;
+        let response = request.send().await.map_err(|e| self.connection(e))?;
         let card: AgentCard = self.json_of(response).await?;
         let interface = card.supported_interfaces.iter()
             .find(|i| i.protocol_binding == JSONRPC_BINDING && is_version_1(&i.protocol_version))
@@ -155,14 +155,14 @@ impl A2aAgentComponent {
             .map_err(|source| ExternalAgentError::Credential { endpoint: self.shown(), source })
     }
 
-    fn connection(&self, e: &reqwest::Error) -> ExternalAgentError {
-        ExternalAgentError::Connection { endpoint: self.shown(), reason: describe_chain(e) }
+    fn connection(&self, e: reqwest::Error) -> ExternalAgentError {
+        ExternalAgentError::Connection { endpoint: self.shown(), reason: describe_request_error(e) }
     }
 
     /// The body of `response` as `T`, if it answered successfully.
     async fn json_of<T: DeserializeOwned>(&self, response: reqwest::Response) -> ExternalAgentResult<T> {
         self.require_success(&response)?;
-        let text = response.text().await.map_err(|e| self.connection(&e))?;
+        let text = response.text().await.map_err(|e| self.connection(e))?;
         serde_json::from_str(&text).map_err(|e| ExternalAgentError::InvalidResponse { endpoint: self.shown(), reason: e.to_string() })
     }
 
@@ -193,7 +193,7 @@ impl A2aAgentComponent {
         }
         let timeout = self.config.timeout();
         match tokio::time::timeout(timeout, request.send()).await {
-            Ok(response) => response.map_err(|e| self.connection(&e)),
+            Ok(response) => response.map_err(|e| self.connection(e)),
             Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", timeout.as_secs()) }),
         }
     }
@@ -217,7 +217,8 @@ impl A2aAgentComponent {
             let answer: RpcResponse<StreamResponse> = self.json_of(response).await?;
             return Ok(answered(answer.into_result(&self.shown())?));
         }
-        Ok(Box::pin(events_of(response.bytes_stream(), self.shown())))
+        let bytes = response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url));
+        Ok(Box::pin(events_of(bytes, self.shown())))
     }
 
     /// The events of `task` on an agent without streaming, asked for with
@@ -906,6 +907,9 @@ mod tests {
         let gone = component("http://127.0.0.1:9").await;
         let unreachable = gone.send(&SecurityContext::default(), None, hello()).await.err().expect("nobody there").to_string();
         assert!(unreachable.contains("cannot reach the external agent at http://127.0.0.1:9"), "{unreachable}");
+        let secret = component("http://user:secret@127.0.0.1:9/a2a.json?key=secret").await;
+        let unreachable = secret.send(&SecurityContext::default(), None, hello()).await.err().expect("nobody there").to_string();
+        assert!(unreachable.contains("at http://127.0.0.1:9/a2a.json") && !unreachable.contains("secret"), "{unreachable}");
 
         let (old, _) = agent("0.3", true, vec![]).await;
         let refused = old.send(&SecurityContext::default(), None, hello()).await.err().expect("not 1.x").to_string();

@@ -1,6 +1,6 @@
 # 188 — What every remote integration shares is not in `remote`
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -39,3 +39,15 @@ The third remote integration will copy one of two conventions, and MCP errors ca
 ## History
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series.
+- **2026-10-02** — Done in three steps. `redact_endpoint` and `describe_chain` are functions of
+  `remote`, `resolve_auth_header` is gone, and `remote` is visible only in the crate. Every remote
+  integration - `ollama_client` too - names its remote side as `endpoint`, the same
+  `RemoteEndpoint { url, auth, timeout_secs }`, nested rather than flattened, so that unknown
+  fields stay refused; each component says what the timeout bounds and its default. `ollama_client`
+  keeps a written timeout until its stream begins and refuses `auth`, since a model is asked
+  without knowing for whom a secret would be resolved. The seed and the examples were changed;
+  stored components were not migrated. An endpoint is shown without query and fragment as well,
+  since either may carry a credential. Found on the way: `reqwest` writes the full URL into its
+  error messages, so the errors of `a2a_agent` and `ollama_client` carried it unredacted too; a
+  failed request is now described without it (`describe_request_error`), and the messages of
+  `rmcp` have the URL replaced by the shown one (`RemoteEndpoint::redact_in`).

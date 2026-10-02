@@ -279,7 +279,7 @@ argues against it, and what came out of the last attempt.
 | [184](184-followed-task-ends-said-wrongly.md) | done | When a task an external agent follows fails or its stream breaks, the agent records a message nobody saw or publishes a half answer. |
 | [185](185-sse-decoded-per-chunk.md) | done | The A2A event stream is decoded chunk by chunk, so a character or a line end split by the network breaks the answer. |
 | [186](186-a2a-requests-and-long-tasks.md) | done | An external agent without streaming may not deliver tasks longer than its request timeout, and a streamed request can wait forever. |
-| [188](188-remote-helpers-on-llm-error.md) | open | What remote integrations share - redacting the endpoint, describing errors, the endpoint's configuration - is not in `remote`, and MCP errors show the URL unredacted. |
+| [188](188-remote-helpers-on-llm-error.md) | done | What remote integrations share - redacting the endpoint, describing errors, the endpoint's configuration - is not in `remote`, and MCP errors show the URL unredacted. |
 | [195](195-broken-answer-said-twice.md) | done | An external agent's answer that broke off before its task ended is published cut off, and said again in full when the followed task ends. |
 
 ## Open architecture questions

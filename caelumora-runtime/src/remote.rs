@@ -33,6 +33,23 @@ impl RemoteEndpoint {
         redact_endpoint(&self.url)
     }
 
+    /// `text` - a message of a library that writes the URL into its own -
+    /// with the URL shown instead: as written, as a parser normalizes it,
+    /// and as a client sends it, its credentials moved into a header.
+    pub(crate) fn redact_in(&self, text: &str) -> String {
+        let mut forms = vec![self.url.clone()];
+        if let Ok(mut parsed) = reqwest::Url::parse(&self.url) {
+            forms.push(parsed.to_string());
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            forms.push(parsed.to_string());
+        }
+        // The longest first, so that no form is left half replaced.
+        forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        let shown = self.shown();
+        forms.iter().fold(text.to_string(), |text, form| text.replace(form.as_str(), &shown))
+    }
+
     /// The timeout, `default` unless it is written.
     pub(crate) fn timeout_or(&self, default: Duration) -> Duration {
         self.timeout_secs.map_or(default, Duration::from_secs)
@@ -62,16 +79,26 @@ pub(crate) enum RemoteAuthConfig {
     Bearer { secret: String },
 }
 
-/// `url` without user name and password, for use in messages.
+/// `url` without user name, password, query and fragment, for use in
+/// messages: any of them may carry a credential (issue 188). Where it
+/// cannot be parsed, nothing of it is shown.
 pub(crate) fn redact_endpoint(url: &str) -> String {
     match reqwest::Url::parse(url) {
         Ok(mut parsed) => {
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);
+            parsed.set_query(None);
+            parsed.set_fragment(None);
             parsed.to_string().trim_end_matches('/').to_string()
         }
-        Err(_) => url.to_string(),
+        Err(_) => "(an invalid URL)".to_string(),
     }
+}
+
+/// The full chain of the causes of `error`, a failed request, without the
+/// URL that `reqwest` writes into its messages.
+pub(crate) fn describe_request_error(error: reqwest::Error) -> String {
+    describe_chain(&error.without_url())
 }
 
 /// The full chain of an error's causes as one line, e.g. "error sending
@@ -88,4 +115,25 @@ pub(crate) fn describe_chain(error: &(dyn std::error::Error + 'static)) -> Strin
         current = e.source();
     }
     parts.join(": ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_endpoint_is_shown_without_what_may_carry_a_credential() {
+        assert_eq!(redact_endpoint("https://user:secret@agent.example/a2a/?key=secret#secret"), "https://agent.example/a2a");
+        assert_eq!(redact_endpoint("http://127.0.0.1:11434"), "http://127.0.0.1:11434");
+        assert!(!redact_endpoint("not a url with secret").contains("secret"));
+    }
+
+    #[test]
+    fn the_url_a_library_writes_into_its_message_is_shown_instead() {
+        let endpoint = RemoteEndpoint::new("http://user:secret@mcp.example?key=secret");
+        let message = "error sending request for url (http://user:secret@mcp.example/?key=secret)";
+        assert_eq!(endpoint.redact_in(message), "error sending request for url (http://mcp.example)");
+        let sent = "error sending request for url (http://mcp.example/?key=secret)";
+        assert_eq!(endpoint.redact_in(sent), "error sending request for url (http://mcp.example)", "the credentials in a header");
+    }
 }

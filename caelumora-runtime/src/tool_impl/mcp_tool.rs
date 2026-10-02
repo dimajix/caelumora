@@ -91,8 +91,11 @@ impl McpToolProvider {
     }
 }
 
-async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningService<RoleClient, ()>> {
-    let mut transport_config = StreamableHttpClientTransportConfig::with_uri(url.to_string());
+/// A connection to the MCP server at `endpoint`. Its errors show the
+/// endpoint without credentials, also where `rmcp` writes it into its own
+/// messages (issue 188).
+async fn connect(endpoint: &RemoteEndpoint, auth_header: Option<String>) -> McpResult<RunningService<RoleClient, ()>> {
+    let mut transport_config = StreamableHttpClientTransportConfig::with_uri(endpoint.url.clone());
     if let Some(token) = auth_header {
         transport_config = transport_config.auth_header(token);
     }
@@ -100,19 +103,19 @@ async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningSer
     let service = ()
         .serve(transport)
         .await
-        .map_err(|e| McpError::Connect(url.to_string(), e.to_string()))?;
+        .map_err(|e| McpError::Connect(endpoint.shown(), endpoint.redact_in(&e.to_string())))?;
     Ok(service)
 }
 
 /// The tools of the MCP server `config` names, namespaced by `descriptor_id`
 /// and requiring approval as `config` says (issue 78).
 async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header: Option<String>) -> McpResult<Vec<Tool>> {
-    let url = config.endpoint.url.as_str();
-    let service = connect(url, auth_header).await?;
+    let endpoint = &config.endpoint;
+    let service = connect(endpoint, auth_header).await?;
     let remote_tools = service
         .list_all_tools()
         .await
-        .map_err(|e| McpError::ListTools(url.to_string(), e.to_string()));
+        .map_err(|e| McpError::ListTools(endpoint.shown(), endpoint.redact_in(&e.to_string())));
     let _ = service.cancel().await;
     let remote_tools = remote_tools?;
 
@@ -224,7 +227,7 @@ impl ToolProvider for McpToolProvider {
         let call_result: McpResult<Value> = async {
             let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, &security_context).await?;
 
-            let service = connect(&self.config.endpoint.url, auth_header).await?;
+            let service = connect(&self.config.endpoint, auth_header).await?;
             let mut request = CallToolRequestParams::new(remote_name.clone());
             if let Some(arguments) = params.as_object().cloned() {
                 request = request.with_arguments(arguments);
@@ -235,7 +238,7 @@ impl ToolProvider for McpToolProvider {
             let _ = service.cancel().await;
 
             let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
-                .map_err(|e| McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, e)))?;
+                .map_err(|e| McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.config.endpoint.redact_in(&e.to_string()))))?;
 
             call_tool_result_to_value(name, result)
         }.await;
@@ -258,7 +261,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             };
             let discovery_result: McpResult<Vec<Tool>> = match tokio::time::timeout(config.timeout(), discover).await {
                 Ok(result) => result,
-                Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.endpoint.url))),
+                Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.endpoint.shown()))),
             };
 
             let cached_tools = match discovery_result {
@@ -289,6 +292,14 @@ mod tests {
     use super::*;
     use caelumora_model::security::DummySecurityManager;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn an_unreachable_server_is_named_without_what_may_carry_a_credential() {
+        let endpoint = RemoteEndpoint::new("http://user:secret@127.0.0.1:1/mcp?key=secret");
+        let Err(error) = connect(&endpoint, None).await else { panic!("nobody there") };
+        let error = error.to_string();
+        assert!(error.contains("'http://127.0.0.1:1/mcp'") && !error.contains("secret"), "{error}");
+    }
 
     #[test]
     fn parses_bearer_auth_config() {
