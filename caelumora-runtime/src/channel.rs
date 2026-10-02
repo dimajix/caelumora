@@ -8,7 +8,7 @@ use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::recorder::Recorder;
-use crate::runtime::ChannelRuntime;
+use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::transport::{EventSender, TransportError};
 use crate::transport_impl::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender};
 use anyhow::{anyhow, Result};
@@ -24,7 +24,7 @@ use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::user::UserId;
 use tracing::{debug, info, trace, warn, Instrument};
 use std::any::Any;
@@ -103,7 +103,8 @@ pub enum ChannelError {
 /// A participant with what its actor is built from: the instance's
 /// controller of its user or agent (issue 121), or the approver itself. An
 /// agent is run here or elsewhere, as its personality's kind says (issue
-/// 179).
+/// 179). What it is cleared for follows from it as well (`clearances`).
+#[derive(Debug, Clone)]
 enum Member {
     User(Arc<UserController>),
     Agent(Arc<AgentController>, Personality),
@@ -120,7 +121,7 @@ impl Member {
     /// Whatever else the store reports when loading it - also that an
     /// agent's personality is gone or not its to read: the agent exists, but
     /// cannot be run.
-    async fn of(participant: &Participant, channel: &Channel, runtime: &ChannelRuntime) -> Result<Option<Self>> {
+    async fn of(participant: &Participant, channel: &Channel, runtime: &RuntimeManager) -> Result<Option<Self>> {
         let controllers = runtime.controller_manager();
         let agent = match participant {
             Participant::User(id) => return gone_is_none(controllers.user_controller(*id).await.map(Member::User)),
@@ -131,7 +132,7 @@ impl Member {
             },
         };
         let (security, id) = { let loaded = agent.load(); (loaded.security_context(channel.session_id, channel.id), loaded.personality_id) };
-        let personality = runtime.personality(&security, id).await?;
+        let personality = runtime.entity_store().get_personality(&security, id).await?;
         Ok(Some(match personality.kind {
             PersonalityKind::Internal => Member::Agent(agent, personality),
             PersonalityKind::External => Member::ExternalAgent(agent, personality),
@@ -144,6 +145,79 @@ impl Member {
             Member::Agent(agent, _) | Member::ExternalAgent(agent, _) => ActorId::Agent(agent.id()),
             Member::Approver(approver) => ActorId::Approver(approver.id),
         }
+    }
+
+    /// The sets of roles the member has to be cleared by, each of them
+    /// (issues 133, 179): a user's own; an agent's owner's - it must not
+    /// see more than the person responsible for it - and, if its
+    /// personality limits it, those roles too, which narrow the owner's and
+    /// never widen them. None for an approver. The roles are read from the
+    /// store each time, not from the controllers: they are changed past
+    /// them, at a login.
+    ///
+    /// # Errors
+    /// Whatever reading a user reports, but that they are gone.
+    async fn clearances(&self, store: &dyn EntityStore) -> Result<Vec<Vec<String>>> {
+        match self {
+            Member::User(user) => Ok(vec![user_roles(store, ActorId::User(user.id())).await?]),
+            Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => {
+                let owner = agent.load().security_attributes.owner_id;
+                let mut clearances = vec![user_roles(store, owner).await?];
+                if let Some(limit) = personality.limiting_roles() {
+                    clearances.push(limit.to_vec());
+                }
+                Ok(clearances)
+            }
+            Member::Approver(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// Nothing if the member is cleared for channel `channel`, classified
+    /// `classification` (`JoinChannel`), by every set of roles that binds
+    /// it - to join it, to take part in it when it is created, or for what
+    /// it would be reclassified to.
+    ///
+    /// # Errors
+    /// `ChannelError::NotCleared` if it is not; whatever reading its roles
+    /// reports.
+    async fn require_cleared(&self, runtime: &RuntimeManager, context: &SecurityContext, classification: &Classification, channel: ChannelId) -> Result<()> {
+        let participant = self.actor_id();
+        for roles in self.clearances(runtime.entity_store().as_ref()).await? {
+            let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
+            runtime.security_manager().require(context, action, || ChannelError::NotCleared { participant, channel }).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Nothing if every participant of `channel` that still exists is cleared
+/// for its classification (`Member::require_cleared`) - asked before
+/// anything of a new channel or session is stored.
+///
+/// # Errors
+/// `ChannelError::NotCleared` for the first who is not; whatever reading a
+/// participant reports.
+pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
+    for participant in &channel.participants {
+        if let Some(member) = Member::of(participant, channel, runtime).await? {
+            member.require_cleared(runtime, context, &channel.classification, channel.id).await?;
+        }
+    }
+    Ok(())
+}
+
+/// The roles of `actor` if it is a user (issues 133, 142), read in the
+/// runtime's name: what someone is cleared for decides, it is not shown.
+/// None for anyone else, and none for a user that no longer exists.
+///
+/// # Errors
+/// Whatever else reading the user reports.
+pub(crate) async fn user_roles(store: &dyn EntityStore, actor: ActorId) -> Result<Vec<String>> {
+    let ActorId::User(id) = actor else { return Ok(Vec::new()) };
+    match store.get_user(&SecurityContext::system(), id).await {
+        Ok(user) => Ok(user.roles),
+        Err(StoreError::NotFound { .. }) => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -187,6 +261,10 @@ pub struct ChannelLoop {
     /// The actors of the participants; replaced as a whole when someone
     /// joins or leaves (issue 46), so that every reader sees one set.
     actors: ArcSwap<HashMap<ActorId, Arc<dyn Actor>>>,
+    /// What the participants' actors were built from, by the same key and
+    /// replaced with them: what a reclassification asks their clearances
+    /// of.
+    members: ArcSwap<HashMap<ActorId, Member>>,
     moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
@@ -250,6 +328,7 @@ impl ChannelLoop {
             channel: channel_controller,
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
+            members: ArcSwap::from_pointee(HashMap::new()),
             moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
@@ -269,12 +348,12 @@ impl ChannelLoop {
         for participant in &participants {
             // A user or agent deleted since it joined: the channel runs
             // without it rather than not at all (issue 120).
-            let Some(member) = Member::of(participant, &channel_loop.channel.load(), &channel_loop.runtime).await? else {
+            let Some(member) = Member::of(participant, &channel_loop.channel.load(), channel_loop.runtime.runtime_manager()).await? else {
                 warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
                 continue;
             };
-            let actor = Self::create_actor(channel_loop.channel.clone(), member, &channel_loop.runtime).await?;
-            channel_loop.adopt(Arc::from(actor)).await;
+            let actor = Self::create_actor(channel_loop.channel.clone(), &member, &channel_loop.runtime).await?;
+            channel_loop.adopt(Arc::from(actor), member).await;
         }
         Ok(channel_loop)
     }
@@ -295,13 +374,18 @@ impl ChannelLoop {
     /// among the participants' actors, and it can be mentioned. The one way
     /// an actor enters the channel - when the channel is built and when a
     /// participant joins (issue 91). Its task is `run`'s to start.
-    async fn adopt(&self, actor: Arc<dyn Actor>) {
+    async fn adopt(&self, actor: Arc<dyn Actor>, member: Member) {
         self.moderator.add_actor(actor.clone());
         let id = actor.id();
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.insert(id, actor.clone());
             actors
+        });
+        self.members.rcu(|members| {
+            let mut members = HashMap::clone(members);
+            members.insert(id, member.clone());
+            members
         });
         self.rebuild_mentions();
     }
@@ -377,10 +461,8 @@ impl ChannelLoop {
         self.require(context, action, "reclassifying").await?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
-        for participant in self.channel.load().participants.iter().map(|p| p.actor_id()) {
-            if !matches!(participant, ActorId::Approver(_)) {
-                self.runtime.require_cleared(context, participant, &classification, self.id).await?;
-            }
+        for member in self.members.load().values() {
+            member.require_cleared(self.runtime.runtime_manager(), context, &classification, self.id).await?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
         let lowered = !self.runtime.security_manager().may_publish(context, context.caller_id, &channel, &classification).await;
@@ -465,9 +547,9 @@ impl ChannelLoop {
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let member = Member::of(&found, &self.channel.load(), &self.runtime).await?
+        let member = Member::of(&found, &self.channel.load(), self.runtime.runtime_manager()).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        self.runtime.require_cleared(context, participant, &self.classification(), self.id).await?;
+        member.require_cleared(self.runtime.runtime_manager(), context, &self.classification(), self.id).await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -480,7 +562,7 @@ impl ChannelLoop {
                 Member::ExternalAgent(agent, _) => self.seed_heard(agent.id(), visible).await?,
                 Member::User(_) | Member::Approver(_) => {}
             }
-            Self::create_actor(self.channel.clone(), member, &self.runtime).await
+            Self::create_actor(self.channel.clone(), &member, &self.runtime).await
         }.await;
         let actor: Arc<dyn Actor> = match started {
             Ok(actor) => Arc::from(actor),
@@ -493,7 +575,7 @@ impl ChannelLoop {
                 return Err(error);
             }
         };
-        self.adopt(actor.clone()).await;
+        self.adopt(actor.clone(), member).await;
         let _ = self.changes_tx.send(ActorChange::Start(actor));
         info!("{} joined channel {}", participant, self.id);
         Ok(())
@@ -523,6 +605,11 @@ impl ChannelLoop {
             let mut actors = HashMap::clone(actors);
             actors.remove(&participant);
             actors
+        });
+        self.members.rcu(|members| {
+            let mut members = HashMap::clone(members);
+            members.remove(&participant);
+            members
         });
         self.moderator.remove_actor(participant);
         self.rebuild_mentions();
@@ -715,10 +802,10 @@ impl ChannelLoop {
     }
 
     /// The actor of `member`.
-    async fn create_actor(channel: Arc<ChannelController>, member: Member, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
+    async fn create_actor(channel: Arc<ChannelController>, member: &Member, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
         let (session_id, channel_id) = { let c = channel.load(); (c.session_id, c.id) };
         let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
-        Ok(match member {
+        Ok(match member.clone() {
             Member::User(user) => Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?),
             Member::Agent(agent, personality) => Box::new(AgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
             Member::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),

@@ -312,7 +312,7 @@ impl Views {
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
     async fn roles(&self) -> Vec<String> {
-        self.runtime.roles_of(self.viewer.context().initiator_id).await.unwrap_or_default()
+        crate::channel::user_roles(self.runtime.entity_store().as_ref(), self.viewer.context().initiator_id).await.unwrap_or_default()
     }
 }
 

@@ -211,9 +211,30 @@ an agent's are its owner's, since it must not see more than the person
 responsible for it. A user whose roles grant nothing sees only what is
 public. Without a `roles` section, clearances are not checked.
 
+### Personalities limit their agents
+
+A personality may name `roles` its agents are limited to (issue 179): an
+agent is cleared only if its owner is *and* those roles are. They narrow
+the owner's clearance and never widen it - whoever may write a personality
+cannot clear anyone through it. A personality that names none limits
+nothing, except an **external** one: what is given to an external agent
+leaves the system, so naming none limits it to no roles, which see only
+what is public (`Personality::limiting_roles`). The same limit holds back
+an agent run here whose model or tools are outside the system.
+
+An external agent, once let into a channel, is given everything said in
+it, as a cleared person hears everything; that it may receive it was
+decided at the door. What it answers is classified as its component is
+configured, else as the channel.
+
 The question is `ActionType::JoinChannel { participant, roles, channel }`:
-the runtime looks up the roles (`RuntimeManager::roles_of`), the policy maps
-them to clearances. It is asked
+the channel knows the roles of a participant from what it resolves the
+participant to (`Member::clearances` in `caelumora_runtime::channel`) - a
+user's own, an agent's owner's - and the policy maps them to clearances.
+For an agent whose personality limits it, it is asked once more with those
+roles, and both must allow (`Member::require_cleared`). A user's roles are
+read from the store each time: they change at a login, past the
+controllers. It is asked
 
 *   when a participant is added to a channel (`ChannelError::NotCleared`),
 *   for every participant of a channel created on request or from a
@@ -494,6 +515,15 @@ still open:
 *   **Sessions.** An agent's memory is so far the one way across sessions;
     whoever is added to a channel later sees what it drew from other
     sessions ([143](../issues/143-joining-a-channel-with-foreign-knowledge.md)).
+*   **What an external agent keeps.** A session's privacy promises that what
+    was said stays in it. An external agent with a memory of its own runs
+    on, and carries what it heard into whatever it does next: the rules
+    decide whether it is let in, not what it keeps
+    ([179](../issues/179-external-agents-via-a2a.md)).
+*   **What leaves through tools.** What an agent writes into the arguments
+    of a remote tool leaves the system with no rule asked; only what comes
+    back is classified ([180](../issues/180-outbound-flow-unchecked.md)).
+    A personality's roles hold such an agent back as a whole.
 *   **The answer text.** It carries no label and is always published; the
     model is only told what not to quote
     ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge

@@ -76,3 +76,12 @@ To be reviewed, action by action (`ActionType` in `caelumora-model/src/security.
   the roles of an external agent belong (issue 179): agents are to have
   roles as users do, and it was unclear where roles enter a permission
   check at all.
+- **2026-10-02** — Moved with issue 179, step 4: the roles of a
+  participant are now `Member::clearances` in `caelumora_runtime::channel`
+  (a user's own, an agent's owner's, and the limit of its personality),
+  asked by `Member::require_cleared` and `channel::require_cleared`; the
+  roles of a user who views are `channel::user_roles`.
+  `RuntimeManager::roles_of` and `require_cleared` named above are gone.
+  Found on the way: the `UserController` does not follow role changes -
+  they are stored at a login with no event - so roles are read from the
+  store wherever they decide.

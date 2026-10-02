@@ -638,3 +638,28 @@ Each step compiles, is tested, and leaves `main` working.
   in one place for every kind. A `MemberView` trait was weighed and not
   taken: the access questions would be spread over its implementations,
   and the public API would hand out trait objects for nothing.
+- **2026-10-02** — Step 4 done: `JoinChannel` is asked for every set of
+  roles that binds a participant - its own, an agent's owner's, and for an
+  agent whose personality limits it, those - and all must allow. Where,
+  the maintainer decided after a first version had put it into the
+  `RuntimeManager` (which hands out global services and has no business
+  with roles): the roles of a participant follow from what the channel
+  resolves it to, so they are `Member::clearances` and
+  `Member::require_cleared` in `channel.rs`, with the personality the
+  member already holds; `channel::require_cleared` asks it for every
+  participant of a channel before it or its session is stored; the
+  `ChannelLoop` keeps its members beside its actors, so that raising the
+  channel asks them without reading them again. A user's roles are read
+  from the store each time (`channel::user_roles`), not from the
+  `UserController`, which does not follow role changes - they are made at
+  a login, past it. `RuntimeManager::roles_of` and `require_cleared` are
+  gone, and with them `ChannelRuntime::require_cleared` and `personality`.
+  Rejected: `ConfidentialityRules` (the policy's rules, pure, without a
+  store) and a service of its own (only agents lacked roles, and only at
+  the door). Tested in `session.rs`: an agent naming no roles is cleared
+  as its owner; one limited below the channel is refused when a channel is
+  created with it and when it joins; an external one naming none is
+  cleared for what is public only. CONFIDENTIALITY.md says how
+  personalities limit their agents, what an external agent is given, and
+  the two limits that stay open (what an external agent keeps; what leaves
+  through tools, issue 180).

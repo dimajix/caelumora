@@ -6,20 +6,19 @@ use crate::event::EventBus;
 use crate::recorder::Recorder;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId};
+use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_model::store::StoreResult;
 use crate::agent_state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityStore, StateStore};
 use std::sync::{Arc, OnceLock, Weak};
@@ -83,19 +82,9 @@ impl ChannelRuntime {
 
     pub fn event_bus(&self) -> Arc<EventBus> { self.runtime_manager.event_bus() }
 
-    /// See `RuntimeManager::require_cleared`.
-    pub async fn require_cleared(&self, context: &SecurityContext, participant: ActorId, classification: &Classification, channel: ChannelId) -> Result<()> {
-        self.runtime_manager.require_cleared(context, participant, classification, channel).await
-    }
-
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
-    /// The personality `id`, as `security` may read it: read once by the
-    /// channel for an agent it runs - which actor runs it (issue 179) - and
-    /// handed to that actor, which is built from it.
-    pub(crate) async fn personality(&self, security: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
-        self.runtime_manager.entity_store().get_personality(security, id).await
-    }
+    pub(crate) fn runtime_manager(&self) -> &Arc<RuntimeManager> { &self.runtime_manager }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
@@ -306,50 +295,6 @@ impl RuntimeManager {
     pub fn state_store(&self) -> Arc<dyn StateStore> { self.state_store.clone() }
 
     pub fn entity_store(&self) -> Arc<dyn EntityStore> { self.entity_store.clone() }
-
-    /// Nothing if `participant` is cleared for channel `channel`, classified
-    /// `classification` (`JoinChannel`, issue 133), by their roles
-    /// ([`roles_of`](Self::roles_of)) - to join it, to take part in it when
-    /// it is created, or for what it would be reclassified to.
-    ///
-    /// # Errors
-    /// `ChannelError::NotCleared` if they are not; whatever looking up their
-    /// roles reports.
-    pub async fn require_cleared(&self, context: &SecurityContext, participant: ActorId, classification: &Classification, channel: ChannelId) -> Result<()> {
-        let roles = self.roles_of(participant).await?;
-        let action = ActionType::JoinChannel { participant, roles: &roles, channel: classification };
-        Ok(self.security_manager.require(context, action, || crate::channel::ChannelError::NotCleared { participant, channel }).await?)
-    }
-
-    /// The roles `actor` is cleared by (issues 133, 142): a user's own, an
-    /// agent's owner's - it must not see more than the person responsible
-    /// for it. Nobody else has any, and neither has a user or agent that no
-    /// longer exists (issue 120). Read in the runtime's name: what someone
-    /// is cleared for decides, it is not shown.
-    ///
-    /// # Errors
-    /// Whatever else reading the user or agent reports.
-    pub async fn roles_of(&self, actor: ActorId) -> Result<Vec<String>> {
-        let system = SecurityContext::system();
-        let gone = |e: &StoreError| matches!(e, StoreError::NotFound { .. });
-        let user = match actor {
-            ActorId::User(user) => user,
-            ActorId::Agent(agent) => match self.entity_store.get_agent(&system, agent).await {
-                Ok(agent) => match agent.security_attributes.owner_id {
-                    ActorId::User(owner) => owner,
-                    _ => return Ok(Vec::new()),
-                },
-                Err(e) if gone(&e) => return Ok(Vec::new()),
-                Err(e) => return Err(e.into()),
-            },
-            _ => return Ok(Vec::new()),
-        };
-        match self.entity_store.get_user(&system, user).await {
-            Ok(user) => Ok(user.roles),
-            Err(e) if gone(&e) => Ok(Vec::new()),
-            Err(e) => Err(e.into()),
-        }
-    }
 
     pub fn secret_manager(&self) -> Arc<SecretManager> { self.secret_manager.clone() }
 
