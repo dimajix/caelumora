@@ -752,7 +752,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             </div>
             <button
               type="submit"
-              disabled={isSending || isGenerating || !inputText.trim()}
+              // Enabled while an agent answers too (issue 202): the runtime
+              // takes a message at any time, and an agent in a turn hears it
+              // once the turn ends.
+              disabled={isSending || !inputText.trim()}
               className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md transition-colors"
             >
               <Send size={20} />

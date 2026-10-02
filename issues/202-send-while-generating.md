@@ -1,6 +1,6 @@
 # 202 — A user cannot send a message while an agent is answering
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -63,3 +63,9 @@ it take a message in during its turn is a different, larger question and not par
 
 - **2026-10-03** — Issue created. The block is the send button's condition in `ChatView`; the
   runtime appears to handle a message during a turn already.
+- **2026-10-03** — Done. The send button in `ChatView` is no longer disabled while an agent
+  generates; `isSending` still holds it while a message is on its way. The runtime needed no
+  change: `what_a_user_says_during_a_turn_is_answered_after_it` (`channel.rs`) sends a message
+  while the agent waits for its model and shows that the running turn ends without it and a turn
+  of its own answers it. WEB-UI.md (*Input*) says so. Not checked: how the view shows several
+  agents answering at once - `isGenerating` and the streamed message are still one per channel.

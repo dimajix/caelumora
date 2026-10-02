@@ -1743,6 +1743,75 @@ mod tests {
         }
     }
 
+    /// A model that answers each call with the next of its answers only once
+    /// `gate` lets it, and remembers the contents each call was given.
+    #[derive(Debug)]
+    struct Gated {
+        answers: std::sync::Mutex<std::collections::VecDeque<&'static str>>,
+        gate: Arc<tokio::sync::Semaphore>,
+        seen: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::llm::LLMClient for Gated {
+        async fn chat_completion(&self, messages: &[Message], _: &[caelumora_model::tool::ToolDefinition])
+            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+        {
+            self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
+            let Some(answer) = self.answers.lock().unwrap().pop_front() else { return Box::pin(futures::stream::pending()) };
+            let gate = self.gate.clone();
+            Box::pin(futures::stream::once(async move {
+                gate.acquire().await.unwrap().forget();
+                Ok(caelumora_model::message::MessageEvent::Complete(Message {
+                    role: caelumora_model::message::MessageRole::Assistant,
+                    content: Some(answer.to_string()),
+                    ..Message::new(Classification::CHANNEL_DEFAULT)
+                }))
+            }))
+        }
+
+        fn profile(&self) -> caelumora_model::context::ModelProfile {
+            Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn what_a_user_says_during_a_turn_is_answered_after_it() {
+        let model = Arc::new(Gated {
+            answers: std::sync::Mutex::new(["first", "second"].into()),
+            gate: Arc::new(tokio::sync::Semaphore::new(0)),
+            seen: Default::default(),
+        });
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(model.clone(), Default::default()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.seen.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the agent asks its model about hello");
+
+        // Taken while the turn waits for its model: nothing holds the user back.
+        let alice = alice_of(&context);
+        channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) {
+                    break;
+                }
+            }
+        }).await.expect("the message is said in the channel");
+        model.gate.add_permits(2);
+
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["first"], "the running turn ends as it began");
+        assert_eq!(said(answered(&mut events, agent).await), ["second"], "and a turn of its own answers the message");
+        let seen = model.seen.lock().unwrap().clone();
+        let heard = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
+        assert!(heard(&seen[0], "hello") && !heard(&seen[0], "and this too"), "the running turn does not see it");
+        assert!(heard(&seen[1], "and this too"), "the next one does");
+        running.abort();
+    }
+
     #[tokio::test]
     async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
         use caelumora_model::approval::ApprovalResponse;

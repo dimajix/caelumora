@@ -131,7 +131,9 @@ else who may read it - the session's owner, say - is shown its history and no in
 *   **Stop.** The stop button ends the current turn of every agent (`POST …/cancel`).
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash
     (`command.ts`). Typing `@` completes the members' handles, `/` the commands the user may see. An
-    unsent draft survives a forced re-login, in the session storage.
+    unsent draft survives a forced re-login, in the session storage. A message can be sent while
+    an agent answers (issue 202): an agent in a turn hears it once the turn ends and answers it in
+    a turn of its own, if asked to; the turn under way does not see it.
 
 ### Classification
 
