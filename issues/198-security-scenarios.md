@@ -90,7 +90,7 @@ for themselves). Expected: the actor's permission first, as `delete_channel` and
 |---|---|---|---|---|
 | P1 | Bob's personality, not shared | Alice makes a session from her own template naming it | Refused as not found; no session, no agent is stored | `a_session_cannot_be_made_with_a_personality_the_user_may_not_read` |
 | P2 | Bob's personality shared with alice; the system's personality | Alice makes a session from a template naming it | An agent is made, owned by alice; bob, though the personality is his, neither reads nor changes it | `a_shared_personality_makes_an_agent_of_whoever_uses_it` |
-| P3 | Alice's agent of bob's shared personality, in her session | Bob withdraws the share (or deletes the personality, P3b); alice opens the session again | The session opens; the agent is not run, as a deleted agent is not (issue 120); everyone else is | `an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel`, `…_is_gone_…` - **fails today** |
+| P3 | Alice's agent of bob's shared personality, in her session | Bob withdraws the share (or deletes the personality, P3b); alice opens the session again | The session opens; the agent is not run, as a deleted agent is not (issue 120); everyone else is | `an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel`, `…_is_gone_…` |
 | P4 | As P3, the agent in the session but in no channel | Alice adds it to a channel | Refused; the channel is unchanged | `an_agent_whose_personality_was_withdrawn_cannot_join_a_channel` |
 | P5 | Bob's personality shared with alice | Alice changes or deletes it; carol reads or lists it | Alice reads but neither changes nor deletes it; carol does not find it, nor is it listed; bob changes it | `a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with` |
 | P6 | Alice's private personality; her agent of it in the shared session | Bob looks at the channel's members | He sees the agent, its name and its introduction - the public part of the personality - though he may not read the personality | `an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality` |
@@ -143,7 +143,7 @@ be given.
 ## Done when
 
 - Every scenario and every action above has a test in the suite, and all of them pass.
-- P3 and F2 are decided and the runtime behaves as decided.
+- P3 and F2 are decided and the runtime behaves as decided (P3 done).
 - New permission rules come with a scenario here.
 
 ## History
@@ -161,3 +161,7 @@ be given.
   table above. A second finding, F2: creating a channel and adding a participant ask about the
   participants before the actor's own permission. Its two tests are `#[ignore]` like P3's. 20 tests
   pass, 4 are ignored.
+- **2026-10-02** — P3 done as expected: `ChannelLoop::new` leaves out a member that cannot be run -
+  `Member::of` failing with not found or permission denied, its agent's personality gone or
+  withdrawn - with a warning, as it leaves out one that no longer exists; a failing store still
+  fails the channel. Its two tests run. CHANNELS.md says so under *Running channels*.

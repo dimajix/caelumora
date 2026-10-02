@@ -311,7 +311,6 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
 /// P3: an agent whose owner may no longer read its personality - a share
 /// withdrawn - is not run: its session opens without it.
 #[tokio::test]
-#[ignore = "issue 198, P3: today the session does not open at all"]
 async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
@@ -334,7 +333,6 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
 /// P3b: an agent whose personality is gone is not run either; its session
 /// opens without it.
 #[tokio::test]
-#[ignore = "issue 198, P3: today the session does not open at all"]
 async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     let world = World::new().await;
     let bobs = world.personality("bobs", Some(world.bob), &[world.alice]).await;

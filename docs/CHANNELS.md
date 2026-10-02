@@ -81,6 +81,11 @@ later, which it receives over a queue.
 *   Stopping the session aborts `run`, and with it every channel.
 *   Deleting a channel aborts that channel's task and deletes its state.
 *   A channel deleted while it waits to be started is never started.
+*   A participant that cannot be run is left out when the channel starts, with a warning, and the
+    channel runs with everyone else: a user or agent deleted since it joined (issue 120), or an
+    agent whose personality was withdrawn from its owner or deleted (issue 198) - a third party, the
+    personality's owner, must not keep someone's channel from starting. Such an agent is still a
+    participant; adding it to another channel is refused.
 
 ### Who may see a channel
 

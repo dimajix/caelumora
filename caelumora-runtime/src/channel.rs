@@ -209,6 +209,13 @@ pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &Security
     Ok(())
 }
 
+/// Whether `error` of `Member::of` says that the member cannot be run -
+/// its agent's personality is gone, or not the agent's to read - rather
+/// than that the store failed.
+fn cannot_run(error: &anyhow::Error) -> bool {
+    matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied))
+}
+
 /// The actors of a channel's participants, each with what it was built
 /// from.
 type Actors = HashMap<ActorId, (Arc<dyn Actor>, Member)>;
@@ -317,11 +324,23 @@ impl ChannelLoop {
         // The participants the channel has; `run` starts their tasks.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {
-            // A user or agent deleted since it joined: the channel runs
-            // without it rather than not at all (issue 120).
-            let Some(member) = Member::of(participant, &channel_loop.channel.load(), &channel_loop.runtime.controller_manager(), channel_loop.runtime.security_manager().as_ref()).await? else {
-                warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
-                continue;
+            // A user or agent deleted since it joined, or an agent that may
+            // not run - its personality withdrawn or gone: the channel runs
+            // without it rather than not at all (issues 120, 198). Its
+            // owner's loss must not keep everyone else out, nor can a third
+            // party - the personality's owner - stop someone's channel so.
+            let found = Member::of(participant, &channel_loop.channel.load(), &channel_loop.runtime.controller_manager(), channel_loop.runtime.security_manager().as_ref()).await;
+            let member = match found {
+                Ok(Some(member)) => member,
+                Ok(None) => {
+                    warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
+                    continue;
+                }
+                Err(e) if cannot_run(&e) => {
+                    warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
+                    continue;
+                }
+                Err(e) => return Err(e),
             };
             let actor = Self::create_actor(channel_loop.channel.clone(), &member, &channel_loop.runtime).await?;
             channel_loop.adopt(Arc::from(actor), member).await;
