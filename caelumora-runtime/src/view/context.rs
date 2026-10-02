@@ -1,8 +1,10 @@
 //! What an agent saw in a channel (issue 41): its state there, as stored,
-//! for a viewer who may read its context (`ReadAgentContext`).
+//! for a viewer who may read its context (`ReadAgentContext`). Of an
+//! external agent (issue 179), what it was given: its transcript.
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
+use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
@@ -16,7 +18,17 @@ use caelumora_model::transcript::{GivenUpTurn, Transcript};
 #[derive(Debug, Clone)]
 pub struct AgentContextView {
     actor: ActorId,
-    state: AgentChannelState,
+    seen: Seen,
+}
+
+/// The state the view reads, as the kind of agent keeps it.
+#[derive(Debug, Clone)]
+enum Seen {
+    /// An agent run here: what its model was given, turn by turn.
+    Internal(Box<AgentChannelState>),
+    /// An external agent: what the remote agent was given, and nothing of
+    /// what it made of it.
+    External(Box<ExternalAgentChannelState>),
 }
 
 /// Why a message's context cannot be shown. The messages are meant for
@@ -31,7 +43,12 @@ pub enum ContextError {
 
 impl AgentContextView {
     pub(crate) fn of(actor: ActorId, state: AgentChannelState) -> Self {
-        Self { actor, state }
+        Self { actor, seen: Seen::Internal(Box::new(state)) }
+    }
+
+    /// The view of an external agent (issue 179).
+    pub(crate) fn of_external(actor: ActorId, state: ExternalAgentChannelState) -> Self {
+        Self { actor, seen: Seen::External(Box::new(state)) }
     }
 
     /// The agent whose state this is.
@@ -40,27 +57,36 @@ impl AgentContextView {
     }
 
     /// What the agent's model is given of the conversation (issue 50), with
-    /// the turns it gave up as branches (issue 145).
+    /// the turns it gave up as branches (issue 145); of an external agent,
+    /// what the remote agent was given (issue 179).
     pub fn transcript(&self) -> &Transcript {
-        &self.state.transcript
+        match &self.seen {
+            Seen::Internal(state) => &state.transcript,
+            Seen::External(state) => &state.transcript,
+        }
     }
 
     /// The agent's private notes in the channel (issue 51), with the digest
-    /// of their chain.
+    /// of their chain; an external agent writes none.
     pub fn private_notes(&self) -> (Vec<Note>, Option<Digest>) {
-        (self.state.private_notes.current(), self.state.private_notes.digest())
+        match &self.seen {
+            Seen::Internal(state) => (state.private_notes.current(), state.private_notes.digest()),
+            Seen::External(_) => (Vec::new(), None),
+        }
     }
 
     /// What the agent's model saw when it produced the message `message`:
     /// its context and system prompt (issue 06).
     ///
     /// # Errors
-    /// `NotRecorded` if the agent did not produce the message, `Unavailable`
-    /// if what was recorded cannot be resolved any more.
+    /// `NotRecorded` if the agent did not produce the message - or is an
+    /// external agent, whose context is the remote agent's and not known
+    /// here; `Unavailable` if what was recorded cannot be resolved any more.
     pub fn context_of(&self, message: MessageId) -> Result<ResolvedContext, ContextError> {
-        let reference = self.state.recorded_context_of(message)
-            .ok_or(ContextError::NotRecorded { actor: self.actor, message })?;
-        ContextResolver::of(&self.state).resolve(&reference, self.actor).ok_or(ContextError::Unavailable { actor: self.actor, message })
+        let not_recorded = ContextError::NotRecorded { actor: self.actor, message };
+        let Seen::Internal(state) = &self.seen else { return Err(not_recorded) };
+        let reference = state.recorded_context_of(message).ok_or(not_recorded)?;
+        ContextResolver::of(state).resolve(&reference, self.actor).ok_or(ContextError::Unavailable { actor: self.actor, message })
     }
 
     /// The classification of the message `message` the agent produced, as
@@ -68,7 +94,11 @@ impl AgentContextView {
     /// 168), unless it was reclassified since. `None` if the agent's
     /// history does not hold it.
     pub fn classification_of(&self, message: MessageId) -> Option<Classification> {
-        self.state.history.all_entries()
+        let history = match &self.seen {
+            Seen::Internal(state) => &state.history,
+            Seen::External(state) => &state.history,
+        };
+        history.all_entries()
             .find(|e| e.message.id == message)
             .map(|e| e.message.classification.clone())
     }
@@ -76,7 +106,7 @@ impl AgentContextView {
     /// The turns the agent gave up in the channel, with their messages
     /// (issue 145).
     pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
-        self.state.transcript.given_up_turns()
+        self.transcript().given_up_turns()
     }
 }
 

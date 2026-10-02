@@ -37,7 +37,7 @@ use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::agent::{Agent, AgentId, PersonalityKind};
 use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::privacy::SessionPrivacy;
@@ -272,6 +272,21 @@ impl Views {
         self.runtime.entity_store().get_agent(&SecurityContext::system(), id).await.ok()
     }
 
+    /// What kind of agent `agent` is (issue 179), as its personality says:
+    /// an agent whose personality is gone counts as one run here. Read in the
+    /// runtime's name: it decides how the agent's state is read, not what
+    /// the viewer may see of it.
+    ///
+    /// # Errors
+    /// `Failed` if the personality cannot be read.
+    async fn kind_of(&self, agent: &Agent) -> ViewResult<PersonalityKind> {
+        match self.runtime.entity_store().get_personality(&SecurityContext::system(), agent.personality_id).await {
+            Ok(personality) => Ok(personality.kind),
+            Err(StoreError::NotFound { .. }) => Ok(PersonalityKind::Internal),
+            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", agent.id)))),
+        }
+    }
+
     /// The introduction of `participant` (issue 176): an agent's - `agent`,
     /// its document - is its personality's, a user's is in their profile.
     /// `None` for an approver, for one who has none, and for one that no
@@ -458,13 +473,17 @@ mod tests {
     }
 
     async fn an_agent_of(store: &MemoryStore, owner: ActorId) -> Agent {
+        an_agent_of_kind(store, owner, Default::default()).await
+    }
+
+    async fn an_agent_of_kind(store: &MemoryStore, owner: ActorId, kind: caelumora_model::agent::PersonalityKind) -> Agent {
         let personality = Personality {
             description: String::new(),
             introduction: None,
             reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
-            kind: Default::default(),
+            kind,
             roles: None,
             components: Default::default(),
             security_attributes: Default::default(),
@@ -473,6 +492,52 @@ mod tests {
         let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
         agent
+    }
+
+    #[tokio::test]
+    async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
+        use caelumora_model::agent::PersonalityKind;
+        use caelumora_model::external_agent::ExternalAgentChannelState;
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let alice = user("alice");
+        let remote = an_agent_of_kind(&store, ActorId::User(alice.id), PersonalityKind::External).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(remote.id)]);
+        session.participants = record_users(&store, &[&alice]).await;
+        session.participants.push(Participant::Agent(remote.id));
+        let channel = main_channel(&session);
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+
+        let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let (question, answer) = (said("question"), said("answer"));
+        let mut state = ExternalAgentChannelState::default();
+        state.history.extend(vec![question.clone(), answer.clone()]);
+        state.transcript.extend(vec![question.clone()]);
+        store.put_external_agent_channel_state(remote.id, channel.id, &state).await.unwrap();
+        // What an agent run here would have kept: not the external agent's.
+        let mut stray = caelumora_model::agent::AgentChannelState::default();
+        stray.notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+        stray.private_notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+        store.put_agent_channel_state(remote.id, channel.id, &stray).await.unwrap();
+
+        let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+        let member = for_alice.member(ActorId::Agent(remote.id)).await.unwrap();
+        let seen = member.context().await.expect("alice made the agent");
+        let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
+        assert_eq!(texts(seen.transcript().messages()), ["question"], "what it was given, not what it answered");
+        assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
+        assert!(seen.given_up_turns().is_empty());
+        assert!(matches!(seen.context_of(answer.id), Err(ContextError::NotRecorded { .. })), "what it made of it is the remote agent's");
+        assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
+        assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
+        assert!(member.notes().await.unwrap().is_none(), "no notes");
+        assert!(for_alice.notes().await.unwrap().is_empty());
     }
 
     #[tokio::test]

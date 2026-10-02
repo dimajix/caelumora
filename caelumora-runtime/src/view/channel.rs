@@ -5,7 +5,8 @@ use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
+use caelumora_model::agent::{Agent, AgentChannelState, AgentId, PersonalityKind};
+use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::{ChannelRef, Classification};
@@ -348,6 +349,9 @@ impl MemberView {
     /// `Failed` if the agent's state cannot be read.
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
         let Participant::Agent(agent) = self.participant else { return Ok(None) };
+        if self.is_external().await? {
+            return Ok(None);
+        }
         let state = self.stored_state(agent).await?;
         let notes = self.channel.released(state.notes.current()).await;
         Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest: state.notes.digest() }))
@@ -360,7 +364,7 @@ impl MemberView {
     /// `Failed` if the agent's state cannot be read.
     async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
         let Participant::Agent(agent) = self.participant else { return Ok(Vec::new()) };
-        if self.former {
+        if self.former || self.is_external().await? {
             return Ok(Vec::new());
         }
         let state = self.stored_state(agent).await?;
@@ -377,14 +381,18 @@ impl MemberView {
     /// not read what it saw, `Failed` if its state cannot be read.
     pub async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
         let (agent, _) = self.readable_agent().await?;
+        if self.is_external().await? {
+            return Ok((Vec::new(), None));
+        }
         let state = self.stored_state(agent).await?;
         Ok((self.channel.released(state.private_notes.current()).await, state.private_notes.digest()))
     }
 
     /// What the member saw in the channel (issue 41): its transcript, its
     /// private notes, the context of each of its messages, the turns it
-    /// gave up - for a viewer who may read its context (`ReadAgentContext`)
-    /// and the channel as a whole.
+    /// gave up - of an external agent, what the remote agent was given
+    /// (issue 179) - for a viewer who may read its context
+    /// (`ReadAgentContext`) and the channel as a whole.
     ///
     /// # Errors
     /// `NoContext` if the member is no agent, `Forbidden` if the viewer may
@@ -395,7 +403,22 @@ impl MemberView {
         if self.channel.readable == Readable::Released {
             return Err(ViewError::Forbidden { actor: self.id() });
         }
+        if self.is_external().await? {
+            return Ok(AgentContextView::of_external(self.id(), self.stored_external_state(agent).await?));
+        }
         Ok(AgentContextView::of(self.id(), self.stored_state(agent).await?))
+    }
+
+    /// Whether the member is an external agent (issue 179), whose state is
+    /// kept apart from an agent run here.
+    ///
+    /// # Errors
+    /// `Failed` if its personality cannot be read.
+    async fn is_external(&self) -> ViewResult<bool> {
+        match &self.agent {
+            Some(agent) => Ok(self.channel.views().kind_of(agent).await? == PersonalityKind::External),
+            None => Ok(false),
+        }
     }
 
     /// The member as an agent whose context the viewer may read.
@@ -416,6 +439,15 @@ impl MemberView {
         let channel = self.channel.id();
         self.channel.views().runtime().state_store().get_agent_channel_state(agent, channel).await.map_err(|e| {
             warn!("Cannot read the state of agent {} in channel {}: {}", agent, channel, e);
+            ViewError::Failed(anyhow::Error::new(e).context(format!("reading the state of {} in channel {}", self.id(), channel)))
+        })
+    }
+
+    /// The state of the external agent `agent` in the channel, as stored.
+    async fn stored_external_state(&self, agent: AgentId) -> ViewResult<ExternalAgentChannelState> {
+        let channel = self.channel.id();
+        self.channel.views().runtime().state_store().get_external_agent_channel_state(agent, channel).await.map_err(|e| {
+            warn!("Cannot read the state of external agent {} in channel {}: {}", agent, channel, e);
             ViewError::Failed(anyhow::Error::new(e).context(format!("reading the state of {} in channel {}", self.id(), channel)))
         })
     }

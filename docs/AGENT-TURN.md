@@ -559,6 +559,12 @@ produced it.
     145): each with its reason, time and messages. The context of each of
     those messages is asked for like that of any other.
 
+Of an external agent (issue 179) the view reads its own state
+(`ExternalAgentChannelState`), as its personality's kind says: its
+transcript is what the remote agent was given, it has no private notes and
+no given-up turns, and `context_of` answers `NotRecorded` for every message
+- what the remote agent made of what it was given is its own.
+
 REST exposes it as
 `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
 answers `403 context_forbidden`, `404 context_not_recorded` (not produced

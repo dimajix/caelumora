@@ -603,3 +603,10 @@ Each step compiles, is tested, and leaves `main` working.
   is what it heard after the last message of its transcript. What is
   worth giving (by others, with text, no plan steps) is decided when it is
   given, not when it is heard, so that the history stays complete.
+- **2026-10-02** — The views read an external agent's state, at the
+  maintainer's request: `MemberView` asks the personality's kind
+  (`Views::kind_of`) and answers `context()` with an `AgentContextView` of
+  the `ExternalAgentChannelState` - its transcript is what the remote
+  agent was given; no private notes, no given-up turns, `context_of`
+  `NotRecorded`. Its notes, private notes and pending approvals are none,
+  rather than read from an `AgentChannelState` it never writes.
