@@ -5,7 +5,6 @@ use crate::remote::RemoteAuthConfig;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
@@ -85,14 +84,6 @@ impl McpToolProvider {
             .and_then(|rest| rest.strip_prefix(NAME_SEPARATOR))
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
     }
-}
-
-async fn resolve_auth_header(
-    auth: &Option<RemoteAuthConfig>,
-    secret_manager: &SecretManager,
-    security_context: &SecurityContext,
-) -> McpResult<Option<String>> {
-    Ok(RemoteAuthConfig::bearer_token(auth.as_ref(), secret_manager, security_context).await?)
 }
 
 async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningService<RoleClient, ()>> {
@@ -226,7 +217,7 @@ impl ToolProvider for McpToolProvider {
         let security_context = turn.security_context().clone();
 
         let call_result: McpResult<Value> = async {
-            let auth_header = resolve_auth_header(&self.config.auth, &self.secret_manager, &security_context).await?;
+            let auth_header = RemoteAuthConfig::bearer_token(self.config.auth.as_ref(), &self.secret_manager, &security_context).await?;
 
             let service = connect(&self.config.url, auth_header).await?;
             let mut request = CallToolRequestParams::new(remote_name.clone());
@@ -257,7 +248,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 
             let secret_manager = context.secret_manager.clone();
             let discover = async {
-                let auth_header = resolve_auth_header(&config.auth, &secret_manager, &context.security_context).await?;
+                let auth_header = RemoteAuthConfig::bearer_token(config.auth.as_ref(), &secret_manager, &context.security_context).await?;
                 discover_tools(&descriptor.id, &config, auth_header).await
             };
             let discovery_result: McpResult<Vec<Tool>> = match tokio::time::timeout(Duration::from_secs(config.timeout_secs), discover).await {

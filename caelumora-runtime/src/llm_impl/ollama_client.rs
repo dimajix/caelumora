@@ -24,6 +24,7 @@
 use super::control_tokens::ControlTokens;
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
+use crate::remote::{describe_chain, redact_endpoint};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -335,17 +336,17 @@ impl ControlTokenCache {
 /// Reads the control tokens of `model` from `/api/show`.
 async fn read_control_tokens(http: &reqwest::Client, base_url: &str, model: &str) -> LLMResult<Arc<ControlTokens>> {
     let url = format!("{}/api/show", base_url.trim_end_matches('/'));
-    let endpoint = LLMError::redact_endpoint(base_url);
+    let endpoint = redact_endpoint(base_url);
     let request = serde_json::json!({ "model": model, "verbose": true });
     let response = http.post(url).json(&request).send().await
-        .map_err(|e| LLMError::Connection { endpoint: endpoint.clone(), reason: LLMError::describe_chain(&e) })?;
+        .map_err(|e| LLMError::Connection { endpoint: endpoint.clone(), reason: describe_chain(&e) })?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(LLMError::Rejected { endpoint, model: model.to_string(), status: status.as_u16(), message: backend_error_message(&body) });
     }
     let show: OllamaShowResponse = response.json().await
-        .map_err(|e| LLMError::InvalidResponse { endpoint: endpoint.clone(), reason: format!("cannot read the model's tokens: {}", LLMError::describe_chain(&e)) })?;
+        .map_err(|e| LLMError::InvalidResponse { endpoint: endpoint.clone(), reason: format!("cannot read the model's tokens: {}", describe_chain(&e)) })?;
     let info = show.model_info;
     if info.tokens.is_empty() || info.tokens.len() != info.token_types.len() {
         return Err(LLMError::InvalidResponse {
@@ -468,7 +469,7 @@ where
                     return;
                 }
                 Err(e) => {
-                    yield Err(LLMError::Connection { endpoint, reason: LLMError::describe_chain(&e) });
+                    yield Err(LLMError::Connection { endpoint, reason: describe_chain(&e) });
                     return;
                 }
             };
@@ -588,7 +589,7 @@ impl LLMClient for OllamaClient {
 
         let http = self.http.clone();
         let model = self.model.clone();
-        let endpoint = LLMError::redact_endpoint(&self.base_url);
+        let endpoint = redact_endpoint(&self.base_url);
         let base_url = self.base_url.clone();
         let control_tokens = self.control_tokens.clone();
 
@@ -609,7 +610,7 @@ impl LLMClient for OllamaClient {
             let response = match http.post(url).json(&request).send().await {
                 Ok(response) => response,
                 Err(e) => {
-                    yield Err(LLMError::Connection { endpoint, reason: LLMError::describe_chain(&e) });
+                    yield Err(LLMError::Connection { endpoint, reason: describe_chain(&e) });
                     return;
                 }
             };

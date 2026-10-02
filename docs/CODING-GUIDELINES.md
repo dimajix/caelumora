@@ -59,8 +59,9 @@ Errors carry what failed, and only what may be shown goes to users (issue 02).
     `ComponentError::Build` wraps every failure of a component graph with the component's id and
     kind.
 *   An error caused by a remote system names the endpoint, without credentials
-    (`LLMError::redact_endpoint`). `LLMError` names the endpoint, the model and the backend's own
-    explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
+    (`remote::redact_endpoint`), and the chain of its causes (`remote::describe_chain`). `LLMError`
+    names the endpoint, the model and the backend's own explanation (`Connection`, `Rejected`,
+    `Backend`, `InvalidResponse`).
 *   Messages never contain secret values or file paths, because they may be shown to users.
 
 ### What users see

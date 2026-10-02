@@ -10,8 +10,7 @@
 
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use crate::llm::LLMError;
-use crate::remote::RemoteAuthConfig;
+use crate::remote::{describe_chain, redact_endpoint, RemoteAuthConfig};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -120,7 +119,7 @@ impl A2aAgentComponent {
 
     /// The URL of the agent, for messages: without credentials.
     fn shown(&self) -> String {
-        LLMError::redact_endpoint(&self.config.url)
+        redact_endpoint(&self.config.url)
     }
 
     /// Where to reach the agent, read from its card the first time.
@@ -147,7 +146,7 @@ impl A2aAgentComponent {
                 endpoint: self.shown(),
                 message: format!("its agent card offers no JSON-RPC interface of A2A 1.x, only {}", card.offered()),
             })?;
-        debug!("A2A agent component '{}' reaches its agent at {}", self.id, LLMError::redact_endpoint(&interface.url));
+        debug!("A2A agent component '{}' reaches its agent at {}", self.id, redact_endpoint(&interface.url));
         Ok(Endpoint { url: interface.url.clone(), streaming: card.capabilities.streaming.unwrap_or(false) })
     }
 
@@ -157,7 +156,7 @@ impl A2aAgentComponent {
     }
 
     fn connection(&self, e: &reqwest::Error) -> ExternalAgentError {
-        ExternalAgentError::Connection { endpoint: self.shown(), reason: LLMError::describe_chain(e) }
+        ExternalAgentError::Connection { endpoint: self.shown(), reason: describe_chain(e) }
     }
 
     /// The body of `response` as `T`, if it answered successfully.
@@ -289,7 +288,7 @@ where
             let data = match event {
                 Ok(event) => event.data.unwrap_or_default(),
                 Err(sse_stream::Error::Body(e)) => {
-                    yield Err(ExternalAgentError::Connection { endpoint: endpoint.clone(), reason: LLMError::describe_chain(e.as_ref()) });
+                    yield Err(ExternalAgentError::Connection { endpoint: endpoint.clone(), reason: describe_chain(e.as_ref()) });
                     return;
                 }
                 Err(e) => {

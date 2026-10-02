@@ -26,36 +26,6 @@ pub enum LLMError {
     InvalidResponse { endpoint: String, reason: String },
 }
 
-impl LLMError {
-    /// The full chain of an error's causes as one line, e.g. "error sending
-    /// request: connection refused", for errors whose own `Display` stops at
-    /// the outermost layer.
-    pub fn describe_chain(error: &(dyn std::error::Error + 'static)) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
-        while let Some(e) = current {
-            let text = e.to_string();
-            if !parts.iter().any(|p| p.contains(&text)) {
-                parts.push(text);
-            }
-            current = e.source();
-        }
-        parts.join(": ")
-    }
-
-    /// `url` without user name and password, for use in messages.
-    pub fn redact_endpoint(url: &str) -> String {
-        match reqwest::Url::parse(url) {
-            Ok(mut parsed) => {
-                let _ = parsed.set_username("");
-                let _ = parsed.set_password(None);
-                parsed.to_string().trim_end_matches('/').to_string()
-            }
-            Err(_) => url.to_string(),
-        }
-    }
-}
-
 pub type LLMResult<T> = Result<T, LLMError>;
 
 /// An empty message of a model, as an `LLMClient` builds its answer from.
