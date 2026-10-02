@@ -707,3 +707,12 @@ Each step compiles, is tested, and leaves `main` working.
   cancelling past cancelling; an unreachable agent and a card of A2A 0.3
   refused when asked; a refused request saying why. Not yet tried against
   Hermes Agent.
+- **2026-10-02** — Step 7 done: ARCHITECTURE.md (a section on agents that
+  run elsewhere, the fourth actor) and README; CHANNELS.md, COMPONENTS.md,
+  STORAGE.md and CONFIDENTIALITY.md were brought along with each step.
+  `examples/seed.yaml` has an external personality, `hermes-remote` - an
+  `a2a_agent` with a placeholder URL and the secret `HERMES_A2A_TOKEN`,
+  limited to the role `staff` - and a template `external-session` that
+  seats it beside Jonathan; `examples/config.yaml` says how personalities
+  narrow their agents' clearance. The issue stays in progress: of *Done
+  when*, the test against Hermes Agent is what remains.

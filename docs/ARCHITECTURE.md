@@ -38,8 +38,9 @@ classification and its own **moderator**, which decides who is asked to
 respond to a message.
 
 Everything that takes part in a channel is an **actor**: a user (`UserActor`),
-an agent (`AgentActor`), or the channel's approver (`ApproverActor`), which
-collects the users' decisions on tool calls that need approval. Actors
+an agent (`AgentActor`), an agent that runs elsewhere (`ExternalAgentActor`),
+or the channel's approver (`ApproverActor`), which collects the users'
+decisions on tool calls that need approval. Actors
 communicate only through **envelopes** - an event with who sent it, on whose
 authority (`SecurityContext`) and in reply to what (`EventContext`).
 
@@ -124,6 +125,22 @@ a personality or the configuration can replace.
 Components are wired by type, much like Spring beans: a component asks for
 the facets it needs, and the container builds whatever provides them. User
 commands such as `/help` are components as well, built once per session.
+
+## Agents that run elsewhere
+
+An agent need not run here. A personality of kind `external` makes an
+**external agent** (issue 179): another system with its own model, tools
+and memory, reached through the one component of the personality that
+provides `ExternalAgent` - `a2a_agent` speaks the Agent2Agent protocol.
+Its `ExternalAgentActor` has no turn: it hears what is said in the channel,
+gives the remote agent what it has not heard yet when it is asked, and
+says what comes back, also on its own when a task of the remote agent
+ends later. What leaves the system is decided at the door: the roles its
+personality names limit what it is cleared for, and an external agent that
+names none sees only what is public.
+
+Details: [CHANNELS.md](CHANNELS.md#actors-and-envelopes),
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#personalities-limit-their-agents).
 
 Details: [COMPONENTS.md](COMPONENTS.md),
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md).

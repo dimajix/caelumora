@@ -7,6 +7,7 @@ Caelumora is a flexible and extensible multi-agent system framework designed for
 - **Multi-Agent Orchestration**: Coordinate multiple agents within shared communication channels.
 - **Actor-Based Architecture**: Robust event-driven communication using a session/channel/actor model.
 - **Pluggable Components**: Easily extend agent capabilities (perception, planning, execution) through a trait-based component system.
+- **External Agents**: Seat agents that run elsewhere in a channel beside your own, reached over the Agent2Agent protocol (A2A 1.0), and limit what they are shown by roles.
 - **Flexible Interfaces**: Support for REST API, TUI, and local client integrations.
 - **Tiered Storage**: Clear separation between static templates and dynamic session state.
 

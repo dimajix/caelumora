@@ -105,8 +105,10 @@ compartments:
 
 # The roles and the clearances each grants (issues 133, 142): a level, and at
 # most one compartment - none for what is general. A user's clearance is every
-# clearance of their roles, an agent's its owner's; who is not cleared for a
-# channel's classification cannot join or read it. A user without a
+# clearance of their roles, an agent's its owner's - narrowed by the roles
+# its personality names, if it names any (an external agent naming none sees
+# only what is public); who is not cleared for a channel's classification
+# cannot join or read it. A user without a
 # clearance sees only what is public. Without this section clearances are
 # not checked.
 roles:

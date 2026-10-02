@@ -98,6 +98,28 @@ personalities:
     - id: stop-tool
       kind: stop_tool
       fail_policy: FailClosed
+# An agent that runs elsewhere, reached over A2A (issue 179) - for instance
+# a Hermes Agent with its A2A plugin. Set `url` to where it publishes its
+# agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
+# only what its roles let it: an external agent that names none sees only
+# what is public.
+- id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
+  name: hermes-remote
+  kind: external
+  description: An agent that runs elsewhere, reached over A2A
+  introduction: An agent of its own that runs outside Caelumora; what it is told here leaves the system.
+  roles:
+  - staff
+  components:
+    component_nodes:
+    - id: remote
+      kind: a2a_agent
+      params:
+        url: http://localhost:9999
+        auth:
+          type: bearer
+          secret: HERMES_A2A_TOKEN
+      fail_policy: FailClosed
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
   name: simple-session
@@ -194,3 +216,26 @@ session_templates:
     - approval
     - Jonathan
     - Sassy
+- id: 28e4c2ed-13c2-4161-addf-7a6521d2d986
+  name: external-session
+  description: An assistant of ours and an agent that runs elsewhere
+  participants:
+  - User:
+      name: user
+  - Approver:
+      name: approval
+  - Agent:
+      name: Jonathan
+      scope: UserScope
+      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  - Agent:
+      name: Hermes
+      scope: SessionScope
+      personality_id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
+  channels:
+  - name: main
+    participants:
+    - user
+    - approval
+    - Jonathan
+    - Hermes
