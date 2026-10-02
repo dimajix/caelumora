@@ -663,3 +663,8 @@ Each step compiles, is tested, and leaves `main` working.
   personalities limit their agents, what an external agent is given, and
   the two limits that stay open (what an external agent keeps; what leaves
   through tools, issue 180).
+- **2026-10-02** — The `ChannelLoop` keeps each participant's actor and
+  member together, as a pair in its one map (`Actors`), rather than in a
+  second map kept in step with the first. An `as_member` on the `Actor`
+  trait was weighed and not taken: it would have made `Member` public and
+  the actors depend on the channel that builds them.

@@ -230,6 +230,10 @@ fn missing_after(known: &[Message], visible: Vec<Message>) -> Vec<Message> {
     visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
 }
 
+/// The actors of a channel's participants, each with what it was built
+/// from.
+type Actors = HashMap<ActorId, (Arc<dyn Actor>, Member)>;
+
 /// What was loaded, or `None` if it no longer exists.
 fn gone_is_none<T>(found: Result<T, StoreError>) -> Result<Option<T>> {
     match found {
@@ -258,13 +262,11 @@ pub struct ChannelLoop {
     session_id: SessionId,
     channel: Arc<ChannelController>,
     runtime: ChannelRuntime,
-    /// The actors of the participants; replaced as a whole when someone
-    /// joins or leaves (issue 46), so that every reader sees one set.
-    actors: ArcSwap<HashMap<ActorId, Arc<dyn Actor>>>,
-    /// What the participants' actors were built from, by the same key and
-    /// replaced with them: what a reclassification asks their clearances
-    /// of.
-    members: ArcSwap<HashMap<ActorId, Member>>,
+    /// The actors of the participants, each with what it was built from -
+    /// what a reclassification asks its clearances of; replaced as a whole
+    /// when someone joins or leaves (issue 46), so that every reader sees
+    /// one set.
+    actors: ArcSwap<Actors>,
     moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
@@ -328,7 +330,6 @@ impl ChannelLoop {
             channel: channel_controller,
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
-            members: ArcSwap::from_pointee(HashMap::new()),
             moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
@@ -379,13 +380,8 @@ impl ChannelLoop {
         let id = actor.id();
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
-            actors.insert(id, actor.clone());
+            actors.insert(id, (actor.clone(), member.clone()));
             actors
-        });
-        self.members.rcu(|members| {
-            let mut members = HashMap::clone(members);
-            members.insert(id, member.clone());
-            members
         });
         self.rebuild_mentions();
     }
@@ -461,7 +457,7 @@ impl ChannelLoop {
         self.require(context, action, "reclassifying").await?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
-        for member in self.members.load().values() {
+        for (_, member) in self.actors.load().values() {
             member.require_cleared(self.runtime.runtime_manager(), context, &classification, self.id).await?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
@@ -606,11 +602,6 @@ impl ChannelLoop {
             actors.remove(&participant);
             actors
         });
-        self.members.rcu(|members| {
-            let mut members = HashMap::clone(members);
-            members.remove(&participant);
-            members
-        });
         self.moderator.remove_actor(participant);
         self.rebuild_mentions();
         actor.stop();
@@ -678,7 +669,7 @@ impl ChannelLoop {
     /// of lowering the channel.
     fn cancel_actors(&self) {
         self.quiet.store(true, Ordering::SeqCst);
-        for actor in self.actors.load().values() {
+        for (actor, _) in self.actors.load().values() {
             actor.cancel();
         }
     }
@@ -694,6 +685,7 @@ impl ChannelLoop {
         let channel = self.channel.load();
         self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let asleep = self.actors.load().values()
+            .map(|(a, _)| a)
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name())
             .collect();
@@ -710,7 +702,7 @@ impl ChannelLoop {
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         let channel = self.channel.load();
         self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
-        let actor = self.actors.load().get(&actor).cloned()
+        let actor = self.actor_by_id(actor)
             .ok_or_else(|| anyhow!("actor {} is not in channel {}", actor, self.id))?;
         let was_asleep = actor.state() == ActorState::Sleeping;
         self.quiet.store(false, Ordering::SeqCst);
@@ -723,7 +715,7 @@ impl ChannelLoop {
     /// follows it through their actor is told it ended, whether or not the
     /// actors' tasks ever ran (issue 104).
     pub(crate) fn stop_actors(&self) {
-        for actor in self.actors.load().values() {
+        for (actor, _) in self.actors.load().values() {
             actor.stop();
         }
     }
@@ -735,7 +727,7 @@ impl ChannelLoop {
     /// write but not to wake could not write.
     fn wake_for_delivery(&self) {
         self.quiet.store(false, Ordering::SeqCst);
-        for actor in self.actors.load().values() {
+        for (actor, _) in self.actors.load().values() {
             actor.wakeup();
         }
     }
@@ -748,13 +740,13 @@ impl ChannelLoop {
     }
 
     pub fn actor_ids(&self) -> Vec<ActorId> {
-        self.actors.load().values().map(|a| a.id()).collect()
+        self.actors.load().keys().copied().collect()
     }
 
     /// All participants of the channel, in no particular order.
     pub fn members(&self) -> Vec<ChannelMember> {
         self.actors.load().values()
-            .map(|a| {
+            .map(|(a, _)| {
                 let name = a.name();
                 let handle = Some(handle_of(&name))
                     .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
@@ -777,8 +769,9 @@ impl ChannelLoop {
         matches!(id, ActorId::User(_) | ActorId::Agent(_))
     }
 
-    fn mention_directory(actors: &HashMap<ActorId, Arc<dyn Actor>>) -> MentionDirectory {
+    fn mention_directory(actors: &Actors) -> MentionDirectory {
         let names: Vec<(ActorId, String)> = actors.values()
+            .map(|(a, _)| a)
             .filter(|a| Self::is_mentionable(a.id()))
             .map(|a| (a.id(), a.name()))
             .collect();
@@ -786,7 +779,7 @@ impl ChannelLoop {
     }
 
     pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
-        self.actors.load().get(&actor_id).cloned()
+        self.actors.load().get(&actor_id).map(|(actor, _)| actor.clone())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -928,7 +921,7 @@ impl ChannelLoop {
     /// Starts the tasks of the channel's actors as `run` begins.
     fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> HashMap<ActorId,ActorHandle> {
         self.actors.load().iter()
-            .map(|(id, actor)| (*id, self.spawn_actor(actor.clone(), actor_output.clone(), join_set)))
+            .map(|(id, (actor, _))| (*id, self.spawn_actor(actor.clone(), actor_output.clone(), join_set)))
             .collect()
     }
 
@@ -1013,7 +1006,7 @@ impl ChannelLoop {
         }
         if let ActorEvent::FullResponseGenerated(messages) = &event.event {
             for id in messages.iter().flat_map(|m| m.mentions.iter()) {
-                if let Some(actor) = self.actors.load().get(id).cloned() {
+                if let Some(actor) = self.actor_by_id(*id) {
                     if matches!(id, ActorId::Agent(_)) && actor.state() == ActorState::Sleeping {
                         actor.wakeup();
                     }
