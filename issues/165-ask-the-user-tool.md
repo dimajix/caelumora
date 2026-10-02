@@ -50,6 +50,33 @@ for.
   simpler for the model. Its result is the answer, typed: `{"answer": true}`, `{"chosen": ["…"]}`,
   `{"text": "…"}`, or that the user declined to answer. A built-in component (`ask_user_tool`), like
   `sleep_tool`.
+- **Prior art: Hermes' `clarify` and Claude Code's `AskUserQuestion`.** Both are one tool whose
+  shape answers several of the questions above, and are a model for `ask_user`:
+  - *Several questions in one call*: `questions` holds 1-5 entries; independent questions belong in
+    one call, a question whose answer changes another is asked in a call of its own. The call still
+    waits once, and its result is a list, `{"responses": [...]}` in the order of the questions.
+  - *The kind follows from the shape, there is no `kind`*: without `choices` a question is free
+    text, with `choices` a single choice, with `multi_select: true` a multiple choice. The schema is
+    simpler for the model and cannot contradict itself. Decided: **yes/no is a choice with two
+    options**, not a kind of its own - the UI may still show such a choice as two buttons, but the
+    answer is the chosen option, not a boolean.
+  - *An "Other" free-text row* is appended to every choice by the UI, so a user is not forced to
+    decline an answer that was not foreseen. A choice's answer is therefore
+    `{"chosen": [...], "other": "…"}`.
+  - *A recommended option*: Hermes marks the first option as recommended. Better an explicit
+    `recommended: true` on the option than a convention on the order that the presentation depends
+    on.
+  - *Limits* (at most 5 questions, 4 options each) are checked by the tool and reported as a tool
+    error, not left to the UI.
+  - *A short `header` per question* (Claude Code: at most 12 characters) labels the question where
+    it is shown collapsed, e.g. an answered question in the history.
+  - *Guidance in the tool description*: options go only into `choices`, never enumerated in the
+    question text (they would be prose the user cannot click); independent questions go into one
+    call. This belongs into `ask_user`'s description.
+  - *Not taken over*: Hermes' `timedout`. Our question waits for good and survives a restart; a
+    cancel or a stop ends the turn as for an approval. What is needed instead is an explicit
+    "declined", per question or for the whole call, which reaches the model as the result so that
+    it can go on. A timeout can be added later.
 - **How the UI knows how to show a call.** By tool name is brittle - tools come from components and
   MCP servers, and names are configured. Better a presentation the tool declares, carried with the
   tool definition (`Tool` beside `visibility` and `classification`) and with the call's request to
@@ -80,3 +107,7 @@ for.
 ## History
 
 - **2026-10-01** — Opened at the maintainer's request.
+- **2026-10-02** — Compared with Hermes' `clarify` and Claude Code's `AskUserQuestion`: several
+  questions per call, the kind derived from the shape, an "Other" row, an explicit recommended
+  option, a `header`, and an explicit "declined" instead of a timeout. Decided by the maintainer:
+  yes/no is a choice with two options, not a kind of its own.
