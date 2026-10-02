@@ -227,11 +227,9 @@ mod tests {
 
         history.reclassify(id(2), public.clone());
         history.fit_into(&public);
-        let changes = history.changes();
-        assert_eq!(changes.len(), 2, "one entry each: {changes:?}");
-        for change in changes {
-            stored.apply(change).unwrap();
-        }
+        let changes = history.changes().expect("changed");
+        assert_eq!(changes.entries.len(), 2, "one entry each: {changes:?}");
+        stored.apply(changes).unwrap();
         assert_eq!(stored.digest(), history.digest());
         assert!(stored.messages().iter().all(|m| m.classification == public));
     }

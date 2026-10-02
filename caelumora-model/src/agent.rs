@@ -4,7 +4,7 @@ use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::confidentiality::Classification;
 use crate::context::{ContextRef, KnowledgeRef};
-use crate::chain::{ChainChange, Node};
+use crate::chain::{Node, Stored};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::message::{Message, MessageId};
@@ -365,13 +365,15 @@ impl AgentChannelState {
 /// what it heard, said, noted - as against an update of the agent itself.
 /// The growing parts record what was added, the small ones are recorded
 /// whole.
+// A record is made once per store; its size in memory does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentChannelStateChange {
-    History(ChainChange<HistoryEntry>),
-    Transcript(ChainChange<TranscriptEntry>),
-    Notes(ChainChange<LedgerEntry<Notes>>),
-    PrivateNotes(ChainChange<LedgerEntry<Notes>>),
+    History(Stored<HistoryEntry>),
+    Transcript(Stored<TranscriptEntry>),
+    Notes(Stored<LedgerEntry<Notes>>),
+    PrivateNotes(Stored<LedgerEntry<Notes>>),
     Prompt { digest: Digest, text: String },
     ToolSet { digest: Digest, tools: Vec<ToolDefinition> },
     ProcessingState(ActorState),
@@ -385,10 +387,10 @@ impl Journaled for AgentChannelState {
 
     fn changes(&self) -> Vec<Self::Change> {
         let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.history.changes().into_iter().map(AgentChannelStateChange::History));
-        changes.extend(self.transcript.changes().into_iter().map(AgentChannelStateChange::Transcript));
-        changes.extend(self.notes.changes().into_iter().map(AgentChannelStateChange::Notes));
-        changes.extend(self.private_notes.changes().into_iter().map(AgentChannelStateChange::PrivateNotes));
+        changes.extend(self.history.changes().map(AgentChannelStateChange::History));
+        changes.extend(self.transcript.changes().map(AgentChannelStateChange::Transcript));
+        changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
+        changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
         changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
         changes.extend(self.tool_sets.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::ToolSet { digest, tools }));
         changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
@@ -435,14 +437,14 @@ pub struct AgentState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStateChange {
-    Memory(ChainChange<LedgerEntry<Memories>>),
+    Memory(Stored<LedgerEntry<Memories>>),
 }
 
 impl Journaled for AgentState {
     type Change = AgentStateChange;
 
     fn changes(&self) -> Vec<Self::Change> {
-        self.memory.changes().into_iter().map(AgentStateChange::Memory).collect()
+        self.memory.changes().map(AgentStateChange::Memory).into_iter().collect()
     }
 
     fn mark_stored(&mut self) {

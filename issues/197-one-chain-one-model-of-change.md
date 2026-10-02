@@ -210,3 +210,9 @@ meaning. Step 4 is the removal the whole thing is for.
   digest (`digest::transcript_chain`, without the time), and `messages()` is what the model is
   given. With no caller left, `amend` and `ChainChange::Amended` are gone: a chain appends and
   moves its head, nothing else.
+- **2026-10-02** — Step 5 done: `Stored<E>` is public, what a chain tells a store since it was
+  last stored, and what `apply` merges, checked whole before anything changes; `from_stored` is
+  `apply` on an empty chain; `ChainChange` is gone. `active_child` is recorded only where the
+  branch last taken is not the newest - so an entry appended changes nothing before it, and the
+  journal of a message is that message alone - and `leaf_from` follows the newest child where
+  nothing is remembered. The four state enums carry `Stored<E>`, at most one per chain and put.

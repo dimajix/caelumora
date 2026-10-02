@@ -274,11 +274,9 @@ mod tests {
         push(&mut chain, add(2, "b"), MessageId::new());
         push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());
 
-        let changes = chain.changes();
-        assert_eq!(changes.len(), 2);
-        for change in changes {
-            stored.apply(change).unwrap();
-        }
+        let changes = chain.changes().expect("changed");
+        assert_eq!(changes.entries.len(), 2);
+        stored.apply(changes).unwrap();
         assert_eq!(stored.digest(), chain.digest());
         assert_eq!(stored.current(), chain.current());
         assert_eq!(stored.next_id(), NoteId(3));

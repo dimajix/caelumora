@@ -4,7 +4,7 @@
 //! so what we keep is what passed between it and us, and the handles of the
 //! protocol that tie the next exchange to the last one.
 
-use crate::chain::ChainChange;
+use crate::chain::Stored;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::store::Journaled;
@@ -91,8 +91,8 @@ pub struct ExternalAgentChannelState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalAgentChannelStateChange {
-    History(ChainChange<HistoryEntry>),
-    Transcript(ChainChange<TranscriptEntry>),
+    History(Stored<HistoryEntry>),
+    Transcript(Stored<TranscriptEntry>),
     OfferedUpTo(Option<MessageId>),
     Conversation(Option<ConversationId>),
     OpenTasks(Vec<OpenTask>),
@@ -103,8 +103,8 @@ impl Journaled for ExternalAgentChannelState {
 
     fn changes(&self) -> Vec<Self::Change> {
         let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.history.changes().into_iter().map(ExternalAgentChannelStateChange::History));
-        changes.extend(self.transcript.changes().into_iter().map(ExternalAgentChannelStateChange::Transcript));
+        changes.extend(self.history.changes().map(ExternalAgentChannelStateChange::History));
+        changes.extend(self.transcript.changes().map(ExternalAgentChannelStateChange::Transcript));
         changes.push(ExternalAgentChannelStateChange::OfferedUpTo(self.offered_up_to));
         changes.push(ExternalAgentChannelStateChange::Conversation(self.conversation.clone()));
         changes.push(ExternalAgentChannelStateChange::OpenTasks(self.open_tasks.clone()));
@@ -145,7 +145,7 @@ mod tests {
         state.offered_up_to = Some(id(2));
         state.conversation = Some(ConversationId("c-1".to_string()));
         state.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()) });
-        assert_eq!(state.changes().len(), 3 + 3, "one history entry, two of the transcript, the three small parts");
+        assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the three small parts");
         replayed(&state, &mut copy);
 
         state.mark_stored();

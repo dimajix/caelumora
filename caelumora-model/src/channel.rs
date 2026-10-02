@@ -1,7 +1,7 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
-use crate::chain::ChainChange;
+use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::message::MessageId;
@@ -138,14 +138,14 @@ impl ChannelState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelStateChange {
-    History(ChainChange<HistoryEntry>),
+    History(Stored<HistoryEntry>),
 }
 
 impl Journaled for ChannelState {
     type Change = ChannelStateChange;
 
     fn changes(&self) -> Vec<Self::Change> {
-        self.history.changes().into_iter().map(ChannelStateChange::History).collect()
+        self.history.changes().map(ChannelStateChange::History).into_iter().collect()
     }
 
     fn mark_stored(&mut self) {
@@ -213,7 +213,7 @@ mod tests {
 
         state.history.extend(vec![make_message(id(2))]);
         state.history.reclassify(id(1), Classification::general(Confidentiality::Public));
-        assert_eq!(state.changes().len(), 2, "appended and amended");
+        assert_eq!(state.changes().len(), 1, "what the history records, as one");
         replayed(&state, &mut copy);
         assert_eq!(copy.channel_id, state.channel_id);
     }

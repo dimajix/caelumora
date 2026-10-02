@@ -258,9 +258,7 @@ mod tests {
         transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 2 });
         transcript.push(make_message(id(4)));
 
-        for change in transcript.changes() {
-            stored.apply(change).unwrap();
-        }
+        stored.apply(transcript.changes().expect("changed")).unwrap();
         assert_eq!(stored.digest(), transcript.digest());
         assert_eq!(stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
         assert_eq!(stored.given_up_turns().len(), 1, "the record came along");
