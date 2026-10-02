@@ -40,6 +40,19 @@ where
     Ok(input)
 }
 
+/// The messages of `visible` after the last of them that `known` has, and
+/// not in `known`: what an actor that joins missed (`Actor::catch_up`) -
+/// for one that joins again, what was said while it was away. What it keeps
+/// is only ever appended to, so older messages that a wider history grants
+/// on rejoining would land after its own later answers; they are left to
+/// `read_history` instead, and what it keeps stays in the order things were
+/// said.
+fn missing_after(known: &[Message], visible: Vec<Message>) -> Vec<Message> {
+    let known: std::collections::HashSet<_> = known.iter().map(|m| m.id).collect();
+    let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
+    visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
+}
+
 /// The event that publishes `message`: internal messages (plan steps)
 /// are intermediate, the others what the channel shows as the answer;
 /// `partial` for a streamed chunk.
@@ -81,6 +94,17 @@ mod tests {
 
     fn texts(messages: &[Message]) -> Vec<&str> {
         messages.iter().filter_map(|m| m.content.as_deref()).collect()
+    }
+
+    #[test]
+    fn what_was_missed_is_what_came_after_the_last_message_kept_and_nothing_older() {
+        let said = |text: &str| Message { id: caelumora_model::message::MessageId::new(), ..said(text) };
+        let (one, two, three, four) = (said("one"), said("two"), said("three"), said("four"));
+        assert_eq!(texts(&missing_after(&[], vec![three.clone()])), ["three"], "joined seeing the last message only");
+        // Rejoined with all of it: "four" was missed, "one" and "two" are
+        // older than what it has and would come after it.
+        assert_eq!(texts(&missing_after(std::slice::from_ref(&three), vec![one, two, three.clone(), four])), ["four"], "in the order things were said");
+        assert!(missing_after(std::slice::from_ref(&three), vec![three.clone()]).is_empty(), "nothing new");
     }
 
     #[tokio::test]

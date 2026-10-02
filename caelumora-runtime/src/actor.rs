@@ -5,6 +5,7 @@ use std::fmt::Debug;
 
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorId, ActorState, Envelope};
+use caelumora_model::message::Message;
 
 #[async_trait]
 pub trait Actor: Any + Debug + Send + Sync {
@@ -22,6 +23,19 @@ pub trait Actor: Any + Debug + Send + Sync {
         rx: Box<dyn EventReceiver>,
         tx: Box<dyn EventSender>,
     ) -> Result<()>;
+
+    /// Takes in what it missed of the channel when it joins (issue 190):
+    /// `visible` is the part of the channel's history it may see. An actor
+    /// that keeps what it hears keeps of it what it does not have yet, as if
+    /// it had heard it - for one that joins again, what was said after the
+    /// last message it has. Called once, before it runs; one that keeps
+    /// nothing has nothing to do.
+    ///
+    /// # Errors
+    /// If what it keeps cannot be read or stored.
+    async fn catch_up(&self, _visible: Vec<Message>) -> Result<()> {
+        Ok(())
+    }
 
     /// Returns the current processing state of the actor.
     fn state(&self) -> ActorState;

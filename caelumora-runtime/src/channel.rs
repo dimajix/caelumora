@@ -206,15 +206,6 @@ pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &Security
     Ok(())
 }
 
-/// The messages of `visible` after the last of them that `known` has, and
-/// not in `known`: what a participant that joins again missed while it was
-/// away - only appended, so that what it has stays in the order it was said.
-fn missing_after(known: &[Message], visible: Vec<Message>) -> Vec<Message> {
-    let known: std::collections::HashSet<_> = known.iter().map(|m| m.id).collect();
-    let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
-    visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
-}
-
 /// The actors of a channel's participants, each with what it was built
 /// from.
 type Actors = HashMap<ActorId, (Arc<dyn Actor>, Member)>;
@@ -513,10 +504,9 @@ impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
     /// behalf of `context` (issue 46), seeing as much of the history as
     /// `history` grants. Stored first (`UpdateChannel`, also asked as
-    /// `JoinChannel`), then its actor started, the moderator and the mention
-    /// directory told, and the join announced. An agent gets the visible
-    /// history into its transcript; an agent that joins again gets only what
-    /// was said after the last message it has (see `seed_transcript`).
+    /// `JoinChannel`), then its actor built and given the part of the
+    /// history it may see (`Actor::catch_up`, issue 190), then started, the
+    /// moderator and the mention directory told, and the join announced.
     ///
     /// # Errors
     /// `ChannelError::NotInSession`, `AlreadyParticipant` or `Forbidden`; a
@@ -537,13 +527,9 @@ impl ChannelLoop {
         self.channel.add_participant(context, found.clone(), start).await?;
 
         let started = async {
-            let visible = visible_part(self.history_start_of(participant), messages);
-            match &member {
-                Member::Agent(agent, _) => self.seed_transcript(agent.id(), visible).await?,
-                Member::ExternalAgent(agent, _) => self.seed_heard(agent.id(), visible).await?,
-                Member::User(_) | Member::Approver(_) => {}
-            }
-            Self::create_actor(self.channel.clone(), &member, &self.runtime).await
+            let actor = Self::create_actor(self.channel.clone(), &member, &self.runtime).await?;
+            actor.catch_up(visible_part(self.history_start_of(participant), messages)).await?;
+            Ok::<_, anyhow::Error>(actor)
         }.await;
         let actor: Arc<dyn Actor> = match started {
             Ok(actor) => Arc::from(actor),
@@ -592,36 +578,6 @@ impl ChannelLoop {
         actor.stop();
         let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
         info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
-        Ok(())
-    }
-
-    /// Appends to `agent`'s transcript in this channel the messages of
-    /// `visible` after the last one it has - what it missed while it was
-    /// away. The transcript is only ever appended to, so older messages that
-    /// a wider history grants on rejoining would land after the agent's own
-    /// later answers; they are left to `read_history` instead, and the
-    /// transcript stays in the order things were said.
-    async fn seed_transcript(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
-        let mut state = self.state_store.get_agent_channel_state(agent, self.id).await?;
-        let missing = missing_after(&state.transcript.messages(), visible);
-        if !missing.is_empty() {
-            state.transcript.extend(missing);
-            self.state_store.put_agent_channel_state(agent, self.id, &state).await?;
-        }
-        Ok(())
-    }
-
-    /// Appends to the history of the external agent `agent` in this channel
-    /// the messages of `visible` after the last one it has - as
-    /// `seed_transcript` does for an agent run here (issue 179). What others
-    /// said of it is given to the remote agent when it is next asked.
-    async fn seed_heard(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
-        let mut state = self.state_store.get_external_agent_channel_state(agent, self.id).await?;
-        let missing = missing_after(&state.history.messages(), visible);
-        if !missing.is_empty() {
-            state.history.extend(missing);
-            self.state_store.put_external_agent_channel_state(agent, self.id, &state).await?;
-        }
         Ok(())
     }
 
@@ -1336,53 +1292,6 @@ mod tests {
         assert_eq!(ids(&visible_from(start, later.clone())), ids(&later[2..]), "messages sent after joining stay visible");
         assert!(visible_from(HistoryStart::From(caelumora_model::message::MessageId::new()), later).is_empty(),
                 "an unknown start shows nothing rather than everything");
-    }
-
-    #[tokio::test]
-    async fn a_rejoining_agent_gets_what_it_missed_but_nothing_older() {
-        use caelumora_model::message::MessageId;
-        let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
-        let agent = caelumora_model::agent::AgentId::new();
-        let message = |text: &str| Message { id: MessageId::new(), content: Some(text.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
-        let (one, two, three, four) = (message("one"), message("two"), message("three"), message("four"));
-        let transcript = |channel: Arc<ChannelLoop>| async move {
-            channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()
-                .transcript.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
-        };
-
-        // Joined seeing the last message only.
-        channel.seed_transcript(agent, vec![three.clone()]).await.unwrap();
-        assert_eq!(transcript(channel.clone()).await, ["three"]);
-
-        // Rejoined with all of it: "four" was missed, "one" and "two" are
-        // older than what it has and would come after it.
-        channel.seed_transcript(agent, vec![one, two, three, four]).await.unwrap();
-        assert_eq!(transcript(channel.clone()).await, ["three", "four"], "in the order things were said");
-    }
-
-    #[tokio::test]
-    async fn an_external_agent_that_joins_hears_what_it_may_see_and_what_it_missed() {
-        use caelumora_model::message::{MessageId, MessageRole};
-        let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
-        let agent = caelumora_model::agent::AgentId::new();
-        let message = |sender: ActorId, text: &str| Message {
-            id: MessageId::new(), role: MessageRole::User, sender_id: sender, content: Some(text.to_string()),
-            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
-        };
-        let said = |text: &str| message(ActorId::User(alice.id), text);
-        let (one, two, three) = (said("one"), said("two"), said("three"));
-        let own = message(ActorId::Agent(agent), "mine");
-        let heard = |channel: Arc<ChannelLoop>| async move {
-            channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap()
-                .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
-        };
-
-        channel.seed_heard(agent, vec![two.clone()]).await.unwrap();
-        assert_eq!(heard(channel.clone()).await, ["two"], "what it may see");
-        channel.seed_heard(agent, vec![one, two, own, three]).await.unwrap();
-        assert_eq!(heard(channel.clone()).await, ["two", "mine", "three"], "what it missed, and nothing older");
     }
 
     fn command_error(error: &anyhow::Error) -> &crate::command::CommandError {
@@ -2578,6 +2487,30 @@ mod tests {
         assert!(!contents(state.transcript.messages()).contains(&"the secret is 42".to_string()), "its transcript only what passed");
         assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
         running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again_what_it_missed() {
+        use caelumora_model::message::{MessageId, MessageRole};
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+        let (channel, context, agent, _) = external_channel(remote, external_components(), None).await.unwrap();
+        let message = |sender: ActorId, text: &str| Message {
+            id: MessageId::new(), role: MessageRole::User, sender_id: sender, content: Some(text.to_string()),
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let said = |text: &str| message(context.initiator_id, text);
+        let (one, two, three) = (said("one"), said("two"), said("three"));
+        let own = message(ActorId::Agent(agent), "mine");
+        let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+        let kept = || async {
+            channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap()
+                .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
+        };
+
+        actor.catch_up(vec![two.clone()]).await.unwrap();
+        assert_eq!(kept().await, ["two"], "what it may see");
+        actor.catch_up(vec![one, two, own, three]).await.unwrap();
+        assert_eq!(kept().await, ["two", "mine", "three"], "what it missed, and nothing older");
     }
 
     #[tokio::test]

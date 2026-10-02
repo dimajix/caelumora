@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, event_for};
+use super::{apply_stage_processors, event_for, missing_after};
 use crate::actor::Actor;
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, EndedTurn, Turn, MAX_MODEL_CALLS};
@@ -715,6 +715,17 @@ impl Actor for AgentActor {
                     | ActorEvent::ResponseRequested
             )
         }
+    }
+
+    /// Keeps in its transcript what it missed (issue 190).
+    async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
+        let mut state = self.state.lock().await;
+        let missed = missing_after(&state.transcript.messages(), visible);
+        if !missed.is_empty() {
+            state.transcript.extend(missed);
+            self.actor_runtime.store_channel_state(&state).await?;
+        }
+        Ok(())
     }
 
     async fn run(
