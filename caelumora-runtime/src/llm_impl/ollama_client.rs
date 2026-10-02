@@ -4,7 +4,10 @@
 //! `AppConfig::component_defaults` names, or this kind with its defaults -
 //! a local Ollama and the model `DEFAULT_MODEL`.
 //!
-//! Parameters: `base_url` (the Ollama server), `model`, `think` - whether
+//! Parameters: `endpoint` (the Ollama server: its `url`, and its
+//! `timeout_secs`, how long a request may take to be answered - a streamed
+//! one until its stream begins; without it, as long as it takes), `model`,
+//! `think` - whether
 //! the model is asked to reason; left out, Ollama's default for the model
 //! applies - `reasoning_history`, which reasoning of earlier messages the
 //! model is given back (`never`, `current_turn` - the default - or
@@ -24,7 +27,7 @@
 use super::control_tokens::ControlTokens;
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
-use crate::remote::{describe_chain, redact_endpoint};
+use crate::remote::{describe_chain, RemoteEndpoint};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -37,6 +40,7 @@ use tracing::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::OnceCell;
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 use tokio_util::io::StreamReader;
@@ -322,24 +326,22 @@ impl std::fmt::Debug for ControlTokenCache {
 }
 
 impl ControlTokenCache {
-    /// The control tokens of `model` on the server at `base_url`, read from
+    /// The control tokens of `model` on the server at `endpoint`, read from
     /// it the first time they are asked for.
-    async fn get(&self, http: &reqwest::Client, base_url: &str, model: &str) -> LLMResult<Arc<ControlTokens>> {
+    async fn get(&self, http: &reqwest::Client, endpoint: &RemoteEndpoint, model: &str) -> LLMResult<Arc<ControlTokens>> {
         let cell = self.models
-            .entry((base_url.to_string(), model.to_string()))
+            .entry((endpoint.url.clone(), model.to_string()))
             .or_default()
             .clone();
-        cell.get_or_try_init(|| read_control_tokens(http, base_url, model)).await.cloned()
+        cell.get_or_try_init(|| read_control_tokens(http, endpoint, model)).await.cloned()
     }
 }
 
 /// Reads the control tokens of `model` from `/api/show`.
-async fn read_control_tokens(http: &reqwest::Client, base_url: &str, model: &str) -> LLMResult<Arc<ControlTokens>> {
-    let url = format!("{}/api/show", base_url.trim_end_matches('/'));
-    let endpoint = redact_endpoint(base_url);
+async fn read_control_tokens(http: &reqwest::Client, remote: &RemoteEndpoint, model: &str) -> LLMResult<Arc<ControlTokens>> {
+    let endpoint = remote.shown();
     let request = serde_json::json!({ "model": model, "verbose": true });
-    let response = http.post(url).json(&request).send().await
-        .map_err(|e| LLMError::Connection { endpoint: endpoint.clone(), reason: describe_chain(&e) })?;
+    let response = send(http.post(api_url(remote, "show")).json(&request), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -385,7 +387,7 @@ fn backend_error_message(body: &str) -> String {
 
 pub const OLLAMA_CLIENT_KIND: &str = "ollama_client";
 
-/// The Ollama server asked unless `base_url` names another.
+/// The Ollama server asked unless `endpoint` names another.
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
 /// The model asked unless `model` names another.
 pub const DEFAULT_MODEL: &str = "gemma4:26b";
@@ -394,8 +396,8 @@ pub const DEFAULT_MODEL: &str = "gemma4:26b";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OllamaClientConfig {
-    #[serde(default = "default_base_url")]
-    base_url: String,
+    #[serde(default = "default_endpoint")]
+    endpoint: RemoteEndpoint,
     #[serde(default = "default_model")]
     model: String,
     #[serde(default)]
@@ -406,8 +408,38 @@ struct OllamaClientConfig {
     system_messages: SystemMessages,
 }
 
-fn default_base_url() -> String {
-    DEFAULT_BASE_URL.to_string()
+impl OllamaClientConfig {
+    /// The parameters `params`, refused if one is unknown or not supported.
+    fn of(params: serde_json::Value) -> Result<Self, ComponentError> {
+        let config: Self = serde_json::from_value(params).map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+        // A secret is resolved for whoever acts, and a model is asked
+        // without knowing who that is.
+        if config.endpoint.auth.is_some() {
+            return Err(ComponentError::InvalidConfig("'endpoint.auth' is not supported: Ollama is reached without authentication".to_string()));
+        }
+        Ok(config)
+    }
+}
+
+fn default_endpoint() -> RemoteEndpoint {
+    RemoteEndpoint::new(DEFAULT_BASE_URL)
+}
+
+/// The URL of Ollama's API `path` at `endpoint`.
+fn api_url(endpoint: &RemoteEndpoint, path: &str) -> String {
+    format!("{}/api/{path}", endpoint.url.trim_end_matches('/'))
+}
+
+/// `request` sent to `endpoint`, answered within its timeout if it has one -
+/// a streamed answer with its beginning.
+async fn send(request: reqwest::RequestBuilder, endpoint: &RemoteEndpoint) -> LLMResult<reqwest::Response> {
+    let sent = request.send();
+    let response = match endpoint.timeout_secs {
+        Some(secs) => tokio::time::timeout(Duration::from_secs(secs), sent).await
+            .map_err(|_| LLMError::Connection { endpoint: endpoint.shown(), reason: format!("no answer within {secs} s") })?,
+        None => sent.await,
+    };
+    response.map_err(|e| LLMError::Connection { endpoint: endpoint.shown(), reason: describe_chain(&e) })
 }
 
 fn default_model() -> String {
@@ -417,7 +449,7 @@ fn default_model() -> String {
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     http: reqwest::Client,
-    base_url: String,
+    endpoint: RemoteEndpoint,
     model: String,
     /// Whether to request thinking/reasoning output from the model.
     /// `None` leaves the decision to Ollama's per-model default.
@@ -433,7 +465,7 @@ impl OllamaClient {
     fn new(config: OllamaClientConfig, control_tokens: Arc<ControlTokenCache>) -> Self {
         Self {
             http: reqwest::Client::new(),
-            base_url: config.base_url,
+            endpoint: config.endpoint,
             model: config.model,
             think: config.think,
             profile: ModelProfile { reasoning_history: config.reasoning_history, system_messages: config.system_messages },
@@ -564,7 +596,7 @@ impl LLMClient for OllamaClient {
         context: &[Message],
         tools: &[caelumora_model::tool::ToolDefinition],
     ) -> BoxStream<'static, LLMResult<MessageEvent>> {
-        let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
+        let url = api_url(&self.endpoint, "chat");
         let message_count = context.len();
 
         let ollama_tools: Vec<_> = tools
@@ -589,12 +621,12 @@ impl LLMClient for OllamaClient {
 
         let http = self.http.clone();
         let model = self.model.clone();
-        let endpoint = redact_endpoint(&self.base_url);
-        let base_url = self.base_url.clone();
+        let remote = self.endpoint.clone();
+        let endpoint = remote.shown();
         let control_tokens = self.control_tokens.clone();
 
         let output = stream! {
-            match control_tokens.get(&http, &base_url, &model).await {
+            match control_tokens.get(&http, &remote, &model).await {
                 Ok(tokens) => request.defuse(&tokens),
                 Err(e) => {
                     yield Err(e);
@@ -607,10 +639,10 @@ impl LLMClient for OllamaClient {
                 message_count,
                 endpoint
             );
-            let response = match http.post(url).json(&request).send().await {
+            let response = match send(http.post(url).json(&request), &remote).await {
                 Ok(response) => response,
                 Err(e) => {
-                    yield Err(LLMError::Connection { endpoint, reason: describe_chain(&e) });
+                    yield Err(e);
                     return;
                 }
             };
@@ -642,8 +674,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             // Built as the default, or configured without parameters: all
             // parameters take their defaults.
             let params = if descriptor.params.is_null() { serde_json::json!({}) } else { descriptor.params.clone() };
-            let config: OllamaClientConfig = serde_json::from_value(params)
-                .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
+            let config = OllamaClientConfig::of(params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, control_tokens.clone())));
             Ok(facets)
@@ -751,7 +782,7 @@ mod tests {
     #[test]
     fn parameters_default_to_a_local_ollama() {
         let config: OllamaClientConfig = serde_json::from_value(json!({})).unwrap();
-        assert_eq!(config.base_url, DEFAULT_BASE_URL);
+        assert_eq!(config.endpoint, RemoteEndpoint::new(DEFAULT_BASE_URL));
         assert_eq!(config.model, DEFAULT_MODEL);
         assert_eq!(config.think, None);
         assert_eq!(config.reasoning_history, ReasoningHistory::CurrentTurn);
@@ -765,7 +796,17 @@ mod tests {
 
     #[test]
     fn a_misspelt_parameter_is_refused() {
-        assert!(serde_json::from_value::<OllamaClientConfig>(json!({ "modle": "qwen3:8b" })).is_err());
+        assert!(OllamaClientConfig::of(json!({ "modle": "qwen3:8b" })).is_err());
+        assert!(OllamaClientConfig::of(json!({ "base_url": DEFAULT_BASE_URL })).is_err(), "the server is the endpoint's url");
+        assert!(OllamaClientConfig::of(json!({ "endpoint": { "url": DEFAULT_BASE_URL, "timeout": 5 } })).is_err());
+    }
+
+    #[test]
+    fn the_server_is_reached_as_the_endpoint_says_but_without_authentication() {
+        let config = OllamaClientConfig::of(json!({ "endpoint": { "url": "http://gpu:11434", "timeout_secs": 5 } })).unwrap();
+        assert_eq!((config.endpoint.url.as_str(), config.endpoint.timeout_secs), ("http://gpu:11434", Some(5)));
+        let refused = OllamaClientConfig::of(json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }));
+        assert!(refused.is_err_and(|e| e.to_string().contains("not supported")));
     }
 
     /// A stand-in for Ollama: `/api/show` lists `<|im_start|>` as a control
@@ -806,7 +847,7 @@ mod tests {
     }
 
     fn client(base_url: &str) -> OllamaClient {
-        let config = serde_json::from_value(json!({ "base_url": base_url, "model": "qwen3:8b" })).unwrap();
+        let config = serde_json::from_value(json!({ "endpoint": { "url": base_url }, "model": "qwen3:8b" })).unwrap();
         OllamaClient::new(config, Arc::new(ControlTokenCache::default()))
     }
 

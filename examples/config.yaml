@@ -73,7 +73,8 @@ users:
 #    - id: model
 #      kind: ollama_client
 #      params:
-#        base_url: "http://127.0.0.1:11434"
+#        endpoint:
+#          url: "http://127.0.0.1:11434"
 #        model: "gemma4:26b"
 #        think: true
 #        reasoning_history: current_turn

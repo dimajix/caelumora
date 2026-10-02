@@ -10,7 +10,7 @@
 
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use crate::remote::{describe_chain, redact_endpoint, RemoteAuthConfig};
+use crate::remote::{describe_chain, redact_endpoint, RemoteEndpoint};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -47,23 +47,18 @@ const POLL_LONGEST: Duration = Duration::from_secs(30);
 /// The JSON-RPC error code of a task that cannot be cancelled any more.
 const TASK_NOT_CANCELABLE: i64 = -32002;
 
-fn default_timeout_secs() -> u64 {
-    30
-}
+/// How long one request may take unless the endpoint says otherwise.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The parameters of an `a2a_agent`, written by hand.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct A2aAgentConfig {
-    /// The agent's base URL, below which its card is published - or the
-    /// card's own URL, ending in `.json`.
-    url: String,
-    #[serde(default)]
-    auth: Option<RemoteAuthConfig>,
-    /// How long one request may take to be answered - a streamed one until
-    /// its stream begins; not how long a task may run.
-    #[serde(default = "default_timeout_secs")]
-    timeout_secs: u64,
+    /// The agent: its base URL, below which its card is published - or the
+    /// card's own URL, ending in `.json`. Its timeout is how long one
+    /// request may take to be answered - a streamed one until its stream
+    /// begins; not how long a task may run.
+    endpoint: RemoteEndpoint,
     /// How the agent's answers are classified (issue 133); the channel's
     /// unless named.
     #[serde(default)]
@@ -72,11 +67,16 @@ struct A2aAgentConfig {
 
 impl A2aAgentConfig {
     fn card_url(&self) -> String {
-        if self.url.ends_with(".json") {
-            self.url.clone()
+        let url = &self.endpoint.url;
+        if url.ends_with(".json") {
+            url.clone()
         } else {
-            format!("{}/{CARD_PATH}", self.url.trim_end_matches('/'))
+            format!("{}/{CARD_PATH}", url.trim_end_matches('/'))
         }
+    }
+
+    fn timeout(&self) -> Duration {
+        self.endpoint.timeout_or(DEFAULT_TIMEOUT)
     }
 }
 
@@ -107,9 +107,9 @@ impl A2aAgentComponent {
     /// personality from being built.
     async fn build(id: String, config: A2aAgentConfig, secret_manager: Arc<SecretManager>, security: &SecurityContext) -> Result<Self, ComponentError> {
         let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(config.timeout_secs))
+            .connect_timeout(config.timeout())
             .build()
-            .map_err(|e| ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", config.url)))?;
+            .map_err(|e| ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", config.endpoint.shown())))?;
         let component = Self { id, config, endpoint: Arc::new(ArcSwapOption::empty()), http, secret_manager };
         if let Err(e) = component.endpoint(security).await {
             warn!("A2A agent component '{}' cannot read its agent card yet: {}", component.id, e);
@@ -119,7 +119,7 @@ impl A2aAgentComponent {
 
     /// The URL of the agent, for messages: without credentials.
     fn shown(&self) -> String {
-        redact_endpoint(&self.config.url)
+        self.config.endpoint.shown()
     }
 
     /// Where to reach the agent, read from its card the first time.
@@ -134,7 +134,7 @@ impl A2aAgentComponent {
 
     /// Reads the agent card and chooses its JSON-RPC interface of A2A 1.x.
     async fn discover(&self, security: &SecurityContext) -> ExternalAgentResult<Endpoint> {
-        let mut request = self.http.get(self.config.card_url()).timeout(Duration::from_secs(self.config.timeout_secs));
+        let mut request = self.http.get(self.config.card_url()).timeout(self.config.timeout());
         if let Some(token) = self.token(security).await? {
             request = request.bearer_auth(token);
         }
@@ -151,7 +151,7 @@ impl A2aAgentComponent {
     }
 
     async fn token(&self, security: &SecurityContext) -> ExternalAgentResult<Option<String>> {
-        RemoteAuthConfig::bearer_token(self.config.auth.as_ref(), &self.secret_manager, security).await
+        self.config.endpoint.bearer_token(&self.secret_manager, security).await
             .map_err(|source| ExternalAgentError::Credential { endpoint: self.shown(), source })
     }
 
@@ -186,15 +186,15 @@ impl A2aAgentComponent {
         request = if streamed {
             request.header(reqwest::header::ACCEPT, "text/event-stream")
         } else {
-            request.timeout(Duration::from_secs(self.config.timeout_secs))
+            request.timeout(self.config.timeout())
         };
         if let Some(token) = self.token(security).await? {
             request = request.bearer_auth(token);
         }
-        let timeout = Duration::from_secs(self.config.timeout_secs);
+        let timeout = self.config.timeout();
         match tokio::time::timeout(timeout, request.send()).await {
             Ok(response) => response.map_err(|e| self.connection(&e)),
-            Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", self.config.timeout_secs) }),
+            Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", timeout.as_secs()) }),
         }
     }
 
@@ -752,7 +752,7 @@ mod tests {
     }
 
     async fn component(url: &str) -> A2aAgentComponent {
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2 })).unwrap();
+        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2 } })).unwrap();
         let secrets = Arc::new(SecretManager::new(vec![Arc::new(Token)], Arc::new(DummySecurityManager::new())));
         A2aAgentComponent::build("hermes".to_string(), config, secrets, &SecurityContext::default()).await.unwrap()
     }
@@ -771,12 +771,13 @@ mod tests {
 
     #[test]
     fn the_parameters_name_the_agent_and_how_to_reach_it() {
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "url": "https://hermes.example/" })).unwrap();
+        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/" } })).unwrap();
         assert_eq!(config.card_url(), "https://hermes.example/.well-known/agent-card.json");
-        assert_eq!(config.timeout_secs, 30);
-        let own: A2aAgentConfig = serde_json::from_value(json!({ "url": "https://hermes.example/card.json" })).unwrap();
+        assert_eq!(config.timeout(), Duration::from_secs(30));
+        let own: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/card.json" } })).unwrap();
         assert_eq!(own.card_url(), "https://hermes.example/card.json", "a card's own URL");
-        assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "url": "x", "roles": [] })).is_err(), "nothing unknown");
+        assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x" }, "roles": [] })).is_err(), "nothing unknown");
+        assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x", "timeout": 3 } })).is_err(), "nothing unknown in the endpoint");
     }
 
     #[tokio::test]

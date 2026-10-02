@@ -94,7 +94,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(json!({ "url": url })).await;
+    let container = build_container(json!({ "endpoint": { "url": url } })).await;
     let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
     let provider = providers[0].facet.clone();
@@ -124,7 +124,7 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({
-        "url": url,
+        "endpoint": { "url": url },
         "requires_approval": true,
         "classification": { "level": "confidential" },
     })).await;
@@ -154,7 +154,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
                 security_attributes: Default::default(),
                 id: "shared-echo".to_string(),
                 kind: mcp_tool::MCP_TOOL_KIND.to_string(),
-                params: json!({ "url": url }),
+                params: json!({ "endpoint": { "url": url } }),
                 tags: vec![],
                 fail_policy: ComponentFailPolicy::FailOpen,
             },
@@ -201,7 +201,7 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     // Port 1 is reserved and nothing will ever listen there, guaranteeing a
     // connection failure without depending on OS-specific "closed port"
     // behavior.
-    let container = build_container(json!({ "url": "http://127.0.0.1:1/mcp" })).await;
+    let container = build_container(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
     let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].tools().len(), 0);

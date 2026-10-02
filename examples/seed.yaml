@@ -79,8 +79,8 @@ personalities:
       kind: stop_tool
       fail_policy: FailClosed
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
-# a Hermes Agent with its A2A plugin. Set `url` to where it publishes its
-# agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
+# a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
+# publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
 # only what its roles let it: an external agent that names none sees only
 # what is public.
 - id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
@@ -95,10 +95,11 @@ personalities:
     - id: remote
       kind: a2a_agent
       params:
-        url: http://localhost:9999
-        auth:
-          type: bearer
-          secret: HERMES_A2A_TOKEN
+        endpoint:
+          url: http://localhost:9999
+          auth:
+            type: bearer
+            secret: HERMES_A2A_TOKEN
       fail_policy: FailClosed
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9

@@ -171,6 +171,27 @@ which a tool passes on with `?`.
 
 ## Built-in components
 
+### Remote endpoints
+
+A component that talks to a remote system names it in its `params` as `endpoint`, the same
+`remote::RemoteEndpoint` for every one of them (issue 188):
+
+```yaml
+endpoint:
+  url: https://agent.example
+  auth:
+    type: bearer
+    secret: AGENT_TOKEN
+  timeout_secs: 30
+```
+
+`auth` names a secret, resolved for whoever acts on every use (see [SECURITY.md](SECURITY.md)).
+What `timeout_secs` bounds, and how long a component waits without it, the component says. An
+unknown field is refused. In messages the endpoint is shown without credentials
+(`RemoteEndpoint::shown`).
+
+### The components
+
 | Kind | Facets | Params | What it does |
 |---|---|---|---|
 | `echo_tool` | `ToolProvider` | - | The tool `echo`, for testing. |
@@ -178,7 +199,7 @@ which a tool passes on with `?`.
 | `calculator_tool` | `ToolProvider` | - | The tool `calculate`. |
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
-| `mcp_tool` | `ToolProvider` | `url`, `auth`, `timeout_secs` (10), `requires_approval` (`false`), `classification` (the channel's) | The tools of a remote MCP server; `classification` is how their results are classified (issue 133). |
+| `mcp_tool` | `ToolProvider` | `endpoint` (its timeout 10 s, for a call or the discovery of the tools), `requires_approval` (`false`), `classification` (the channel's) | The tools of a remote MCP server; `classification` is how their results are classified (issue 133). |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `note`, `revoke_note`, `read_notes` and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `note_private`, `revoke_private_note` and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `forget` and a prompt part ([MEMORY.md](MEMORY.md)). |
@@ -186,8 +207,8 @@ which a tool passes on with `?`.
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `position` (`start` or `before_turn_input`, default `start`), `classification` (default public, issue 168) | A fixed prompt part. |
 | `channel_members_prompt_provider` | `PromptProvider` | `position` (`start` or `before_turn_input`, default `start`) | Tells the agent its own name and handle and who else is in its channel, with their introductions ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
 | `state_context_provider` | `ContextProvider` | - | The default context provider: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
-| `a2a_agent` | `ExternalAgent` | `url` (the agent's base URL, or its card's own), `auth`, `timeout_secs` (30, per request; a streamed one until its stream begins), `classification` (the channel's) | An external agent reached over A2A 1.x by JSON-RPC (issue 179): reads its agent card, streams over server-sent events where the card offers it; where not, is answered at once with the task and asks for it until it ends or asks back (issue 186). A card it cannot read, or one that offers no JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. |
-| `ollama_client` | `LLMClient` | `base_url` (`http://127.0.0.1:11434`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends (issue 149). |
+| `a2a_agent` | `ExternalAgent` | `endpoint` (its `url` the agent's base URL, or its card's own; its timeout 30 s, per request, a streamed one until its stream begins), `classification` (the channel's) | An external agent reached over A2A 1.x by JSON-RPC (issue 179): reads its agent card, streams over server-sent events where the card offers it; where not, is answered at once with the task and asks for it until it ends or asks back (issue 186). A card it cannot read, or one that offers no JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. |
+| `ollama_client` | `LLMClient` | `endpoint` (`url: http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends (issue 149). |
 | `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |
 | `policy_moderator` | `Moderator` | - | The default moderator of a channel: routes as every channel does and asks its `ResponderPolicy` whom to ask ([CHANNELS.md](CHANNELS.md#moderators)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |

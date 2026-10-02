@@ -1,7 +1,7 @@
 use crate::agent_turn::Turn;
 use caelumora_model::confidentiality::Classification;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::remote::RemoteAuthConfig;
+use crate::remote::RemoteEndpoint;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::secret::{SecretError, SecretManager};
@@ -35,17 +35,16 @@ enum McpError {
 
 type McpResult<T> = Result<T, McpError>;
 
-fn default_timeout_secs() -> u64 {
-    10
-}
+/// How long a call or the discovery of the tools may take unless the
+/// endpoint says otherwise.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpToolConfig {
-    pub url: String,
-    #[serde(default)]
-    pub auth: Option<RemoteAuthConfig>,
-    #[serde(default = "default_timeout_secs")]
-    pub timeout_secs: u64,
+    /// The MCP server. Its timeout is how long a call of one of its tools,
+    /// or the discovery of them, may take.
+    pub endpoint: RemoteEndpoint,
     /// Whether calls to this MCP server's tools require human approval.
     #[serde(default)]
     pub requires_approval: bool,
@@ -54,6 +53,12 @@ struct McpToolConfig {
     /// from the agent. Left out, as the channel.
     #[serde(default)]
     pub classification: Option<Classification>,
+}
+
+impl McpToolConfig {
+    fn timeout(&self) -> Duration {
+        self.endpoint.timeout_or(DEFAULT_TIMEOUT)
+    }
 }
 
 /// Exposes the tools of a single remote MCP server (reached over the
@@ -102,7 +107,7 @@ async fn connect(url: &str, auth_header: Option<String>) -> McpResult<RunningSer
 /// The tools of the MCP server `config` names, namespaced by `descriptor_id`
 /// and requiring approval as `config` says (issue 78).
 async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header: Option<String>) -> McpResult<Vec<Tool>> {
-    let url = config.url.as_str();
+    let url = config.endpoint.url.as_str();
     let service = connect(url, auth_header).await?;
     let remote_tools = service
         .list_all_tools()
@@ -217,16 +222,16 @@ impl ToolProvider for McpToolProvider {
         let security_context = turn.security_context().clone();
 
         let call_result: McpResult<Value> = async {
-            let auth_header = RemoteAuthConfig::bearer_token(self.config.auth.as_ref(), &self.secret_manager, &security_context).await?;
+            let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, &security_context).await?;
 
-            let service = connect(&self.config.url, auth_header).await?;
+            let service = connect(&self.config.endpoint.url, auth_header).await?;
             let mut request = CallToolRequestParams::new(remote_name.clone());
             if let Some(arguments) = params.as_object().cloned() {
                 request = request.with_arguments(arguments);
             }
             let call = service.call_tool(request);
 
-            let result = tokio::time::timeout(Duration::from_secs(self.config.timeout_secs), call).await;
+            let result = tokio::time::timeout(self.config.timeout(), call).await;
             let _ = service.cancel().await;
 
             let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
@@ -248,12 +253,12 @@ pub fn register(registry: &mut ComponentRegistry) {
 
             let secret_manager = context.secret_manager.clone();
             let discover = async {
-                let auth_header = RemoteAuthConfig::bearer_token(config.auth.as_ref(), &secret_manager, &context.security_context).await?;
+                let auth_header = config.endpoint.bearer_token(&secret_manager, &context.security_context).await?;
                 discover_tools(&descriptor.id, &config, auth_header).await
             };
-            let discovery_result: McpResult<Vec<Tool>> = match tokio::time::timeout(Duration::from_secs(config.timeout_secs), discover).await {
+            let discovery_result: McpResult<Vec<Tool>> = match tokio::time::timeout(config.timeout(), discover).await {
                 Ok(result) => result,
-                Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.url))),
+                Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.endpoint.url))),
             };
 
             let cached_tools = match discovery_result {
@@ -287,27 +292,28 @@ mod tests {
 
     #[test]
     fn parses_bearer_auth_config() {
-        let value = json!({
+        let value = json!({ "endpoint": {
             "url": "http://127.0.0.1:1234/mcp",
             "auth": { "type": "bearer", "secret": "MY_TOKEN" },
             "timeout_secs": 5
-        });
+        } });
         let config: McpToolConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(config.url, "http://127.0.0.1:1234/mcp");
-        assert_eq!(config.timeout_secs, 5);
-        match config.auth {
-            Some(RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
+        assert_eq!(config.endpoint.url, "http://127.0.0.1:1234/mcp");
+        assert_eq!(config.timeout(), Duration::from_secs(5));
+        match config.endpoint.auth {
+            Some(crate::remote::RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
             _ => panic!("Expected Bearer auth"),
         }
     }
 
     #[test]
     fn parses_config_without_auth_using_defaults() {
-        let value = json!({ "url": "http://127.0.0.1:1234/mcp" });
+        let value = json!({ "endpoint": { "url": "http://127.0.0.1:1234/mcp" } });
         let config: McpToolConfig = serde_json::from_value(value).unwrap();
-        assert!(config.auth.is_none());
-        assert_eq!(config.timeout_secs, 10);
+        assert!(config.endpoint.auth.is_none());
+        assert_eq!(config.timeout(), Duration::from_secs(10));
         assert!(!config.requires_approval);
+        assert!(serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_aproval": true })).is_err(), "nothing unknown");
     }
 
     #[test]
@@ -315,9 +321,7 @@ mod tests {
         let provider = McpToolProvider {
             descriptor_id: "github-mcp".to_string(),
             config: McpToolConfig {
-                url: "http://example.invalid/mcp".to_string(),
-                auth: None,
-                timeout_secs: 10,
+                endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
                 requires_approval: false,
                 classification: None,
             },

@@ -37,7 +37,8 @@ component_defaults:
     - id: model
       kind: ollama_client
       params:
-        base_url: "http://127.0.0.1:11434"
+        endpoint:
+          url: "http://127.0.0.1:11434"
         model: "gemma4:26b"
         think: true
         reasoning_history: current_turn
@@ -46,7 +47,7 @@ component_defaults:
 
 | Parameter of `ollama_client` | Meaning | Default |
 |---|---|---|
-| `base_url` | The Ollama server | `http://127.0.0.1:11434` |
+| `endpoint` | The Ollama server: its `url`, and its `timeout_secs` - how long a request may take to be answered, a streamed one until its stream begins. Ollama is reached without authentication: an `auth` is refused (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, no timeout |
 | `model` | The model | `gemma4:26b` |
 | `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (issue 63, see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
