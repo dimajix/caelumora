@@ -48,8 +48,9 @@ A component offers one or more *facets*: traits it implements to take part in th
 
 `PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are kept as
 extension points (issues 99, 196). A processor is given the messages and the actor's
-`SecurityContext` and returns what is left of them; it records nothing - what passes, the actor
-keeps in its history itself. Each facet trait lives next to the code that uses it, not among the
+`SecurityContext` and returns what is to be processed - it may drop, change or add messages - and
+records nothing: the actor keeps all it was offered in its history, and what passes in its
+transcript. Each facet trait lives next to the code that uses it, not among the
 implementations (issue 53).
 
 ## Wiring

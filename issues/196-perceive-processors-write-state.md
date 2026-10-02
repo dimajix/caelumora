@@ -60,3 +60,14 @@ write into the agent's state through the `&mut Turn` every `MessageProcessor` is
   `seed_heard`) does not pass the processors - the channel writes it into the actor's state
   directly, which is issue [190](190-channel-seeds-actor-state.md); once the actor seeds itself, it
   can pass it through its stage as well.
+- **2026-10-02** — Decision changed by the maintainer: **the history is extended before the
+  processors, the transcript after** - the history holds all that was offered to the actor, the
+  transcript what it really processed. A processor may drop, change and add messages. For an agent
+  run here, `perceive` appends what it hears to the history, then what passes the processors to the
+  transcript. For an external agent "processed" means "given to the remote agent": `hear` keeps all
+  of it in the history, and `exchange` offers what came after `offered_up_to` - a new field, the
+  last message of the history offered on - to the processors, gives the remote agent what passes
+  and appends exactly that to the transcript. The position is kept apart from the transcript, since
+  a processor that adds or replaces messages leaves no message of the history at its end; what was
+  dropped is not offered again. A state stored before `offered_up_to` offers its whole history once
+  more; old data may be deleted.

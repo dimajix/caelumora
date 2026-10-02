@@ -13,10 +13,11 @@ to a turn.
 
 **Between turns** (`Idle`, `Sleeping`) the agent waits for the next event:
 
-*   **Perceive.** A `FullResponseGenerated` of another participant is passed through the agent's
-    `PerceiveInProcessor`s, which may filter or change it; what passes has reached the agent and is
-    appended to its history and its transcript - whatever the personality configures (issue 196).
-    No turn begins, and nothing is asked of the policy (issues 85, 90).
+*   **Perceive.** A `FullResponseGenerated` of another participant is appended to the agent's
+    history - all that was offered to it - and passed through its `PerceiveInProcessor`s, which may
+    drop, change or add messages; what passes is what the agent processes, and is appended to its
+    transcript - whatever the personality configures (issue 196). No turn begins, and nothing is
+    asked of the policy (issues 85, 90).
 *   **Begin.** A `ResponseRequested` from the moderator begins a turn (`Turn::next_turn`, see
     below), announces `ResponseStarted` and has the agent's `ContextProvider` assemble the context.
     The agent goes on in `Planning`. A sleeping agent ignores it; only `wakeup` ends the sleep.

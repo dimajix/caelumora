@@ -249,16 +249,16 @@ An **actor** is anything that sends and receives events in a channel.
     it, and hands it to the actor to be built from; the agent is `ActorId::Agent` either way, and
     nothing else - the participants, the REST API, the moderator - tells the two apart.
 *   **An external agent** has no turn and no tools. Its actor hears what others say, as every
-    participant does - through the `PerceiveInProcessor`s of its personality, as an agent does
-    (issue 196) - and keeps what passes in its history, with its own answers - seeded, when it
+    participant does, and keeps all of it in its history, with its own answers - seeded, when it
     joins, with what it may see of the channel's, as an agent's transcript is; it reads nothing of
-    the channel itself. When it is asked to respond, it gives the remote agent what it heard after
-    the last message it gave it - recorded in its transcript, as an agent's transcript records what
-    its model is given - and publishes what comes back: pieces as `PartialMessageGenerated`, the
-    answer as `FullResponseGenerated`, a task the remote agent failed as `TurnFailed`. A question
-    back from the remote agent is its answer; the next request continues that task. A cancel cancels
-    the remote task and publishes what came so far; a stop cancels it - and every other open task of
-    the agent - and publishes nothing.
+    the channel itself. When it is asked to respond, it offers what it heard since it last offered
+    anything (`offered_up_to`) to the `PerceiveInProcessor`s of its personality, as an agent does
+    (issue 196), gives the remote agent what passes - recorded in its transcript, as an agent's
+    transcript records what its model is given - and publishes what comes back: pieces as
+    `PartialMessageGenerated`, the answer as `FullResponseGenerated`, a task the remote agent failed
+    as `TurnFailed`. A question back from the remote agent is its answer; the next request continues
+    that task. A cancel cancels the remote task and publishes what came so far; a stop cancels it -
+    and every other open task of the agent - and publishes nothing.
 *   **An external agent speaks on its own** when a task outlives the request it was given for: the
     answer broke off before the task ended, or the channel was restarted meanwhile. Its actor
     follows every task left working (`ExternalAgent::resume`) beside the channel's events, once per

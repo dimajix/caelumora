@@ -125,23 +125,20 @@ impl AgentActor {
         })
     }
 
-    /// Takes in what others said: what passes its perceive processors
-    /// reaches it, and is kept in its history and its transcript (issue
-    /// 196). No turn: nothing here is a turn's work, and nothing is asked of
-    /// the policy (issues 85, 90).
+    /// Takes in what others said (issue 196): all that was offered to it
+    /// goes into its history; what passes its perceive processors is what
+    /// it processes, and goes into its transcript. No turn: nothing here is
+    /// a turn's work, and nothing is asked of the policy (issues 85, 90).
     async fn perceive(&self, turn: &mut Turn<'_>, messages: Vec<Message>) {
-        let messages = match apply_stage_processors(&self.perceive_in_processors, messages, &self.security_context).await {
-            Ok(messages) => messages,
-            Err(e) => {
-                warn!("PerceiveIn stage failed: {}", e);
-                return;
-            }
-        };
         if messages.is_empty() {
             return;
         }
         turn.extend_history(messages.clone());
-        turn.extend_transcript(messages);
+        match apply_stage_processors(&self.perceive_in_processors, messages, &self.security_context).await {
+            Ok(messages) if !messages.is_empty() => turn.extend_transcript(messages),
+            Ok(_) => {}
+            Err(e) => warn!("PerceiveIn stage failed: {}", e),
+        }
     }
 
     /// A complete message as it leaves the agent - through the emit

@@ -4,6 +4,7 @@
 //! so what we keep is what passed between it and us, and the handles of the
 //! protocol that tie the next exchange to the last one.
 
+use crate::message::MessageId;
 use crate::message_history::MessageHistory;
 use crate::transcript::Transcript;
 use chrono::{DateTime, Utc};
@@ -59,13 +60,18 @@ pub struct OpenTask {
 /// its transcript are only ever appended to, for the record.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExternalAgentChannelState {
-    /// The conversation of the channel as the agent took part in it: all it
-    /// heard, and all it answered (issue 06).
+    /// The conversation of the channel as the agent took part in it: all
+    /// that was offered to it, and all it answered (issues 06, 196).
     pub history: MessageHistory,
-    /// What the remote agent was given of it, in the order it was given -
-    /// all we know of what it knows. What the agent heard after the last of
-    /// these is what it is given next.
+    /// What the remote agent was given, in the order it was given - what
+    /// passed the agent's perceive processors (issue 196), all we know of
+    /// what it knows.
     pub transcript: Transcript,
+    /// The last message of the history that was offered to the perceive
+    /// processors on the way to the remote agent; what came after it is
+    /// offered next. Kept apart from the transcript, since the processors
+    /// may drop, change or add messages (issue 196).
+    pub offered_up_to: Option<MessageId>,
     /// The remote agent's conversation with this channel, once it opened
     /// one.
     pub conversation: Option<ConversationId>,

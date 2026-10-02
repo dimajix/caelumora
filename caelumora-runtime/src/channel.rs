@@ -1669,6 +1669,7 @@ mod tests {
                 Ok(facets)
             },
         );
+        register_no_secrets(&mut registry);
         let defaults = caelumora_model::component::ComponentConfig {
             component_nodes: vec![caelumora_model::component::ComponentDescriptor {
                 id: "model".to_string(),
@@ -2512,14 +2513,7 @@ mod tests {
                 Ok(facets)
             },
         );
-        registry.register(
-            crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
-            |_descriptor, _context| {
-                let mut facets = crate::component::ComponentFacets::empty();
-                facets.insert::<dyn crate::message::PerceiveInProcessor>(Arc::new(NoSecrets));
-                Ok(facets)
-            },
-        );
+        register_no_secrets(&mut registry);
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
@@ -2553,12 +2547,46 @@ mod tests {
 
     impl crate::message::PerceiveInProcessor for NoSecrets {}
 
+    /// Registers `NoSecrets` as the kind `test_no_secrets`.
+    fn register_no_secrets(registry: &mut crate::component::ComponentRegistry) {
+        registry.register(
+            crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
+            |_descriptor, _context| {
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::message::PerceiveInProcessor>(Arc::new(NoSecrets));
+                Ok(facets)
+            },
+        );
+    }
+
     #[tokio::test]
-    async fn what_an_external_agents_perceive_processors_drop_never_reaches_it() {
+    async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_processors_in_its_transcript() {
+        let hi = Message { role: caelumora_model::message::MessageRole::Assistant, content: Some("Hi.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
+        let components = caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets")] };
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+        answered(&mut events, agent).await;
+        settled(&helper, ActorState::Idle).await;
+
+        // Heard between turns; the turn it starts waits for a model that
+        // does not answer any more.
+        channel.user_actor(alice_of(&context)).unwrap().send_message("the secret is 42".to_string(), None).await.unwrap();
+        settled(&helper, ActorState::Planning).await;
+
+        let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(contents(state.history.messages()).contains(&"the secret is 42".to_string()), "its history keeps all it was offered");
+        assert!(!contents(state.transcript.messages()).contains(&"the secret is 42".to_string()), "its transcript only what passed");
+        assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_given() {
         use crate::external::ExternalEvent;
 
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
+            vec![Ok(ExternalEvent::Completed)],
         ]));
         let mut components = external_components();
         components.component_nodes.push(caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets"));
@@ -2571,9 +2599,16 @@ mod tests {
         assert!(answered(&mut events, agent).await.is_empty(), "nothing new reached it, so it is not asked");
 
         let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        let heard: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
-        assert_eq!(heard, vec!["hello".to_string(), "Hello, alice.".to_string()], "the secret is not in its history");
-        assert_eq!(remote.sent.lock().unwrap().len(), 1, "nor was it given to the remote agent");
+        let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
+        assert_eq!(contents(state.history.messages()), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
+        assert_eq!(contents(state.transcript.messages()), vec!["hello"], "its transcript what it was given");
+        assert_eq!(remote.sent.lock().unwrap().len(), 1, "the secret was not given to the remote agent");
+
+        alice.send_message("and now?".to_string(), None).await.unwrap();
+        answered(&mut events, agent).await;
+        let sent = remote.sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[1].1.said.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["and now?"], "what was dropped is not offered again");
         running.abort();
     }
 
