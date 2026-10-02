@@ -207,6 +207,11 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     last on the active path, so that `leaf_from` finds where a switch to a branch goes on.
 *   An entry pushed with the digest of one already there - the same predecessor, the same content -
     is that entry: the head moves to it.
+*   `amend` and `amend_each` change an entry in what its digest does not cover - a message's
+    classification, the mark of a turn given up - and nothing else; there is no other way to change
+    an entry. These three - append, move the head, amend - are the only changes, and the chain keeps
+    a journal of them since it was last stored (`changes`, `mark_stored`, `apply`;
+    [193](../issues/193-external-state-rewritten-whole.md), see [STORAGE.md](STORAGE.md)).
 
 Giving up a turn ([145](../issues/145-ended-turns-leave-a-record.md), see [Beginning and ending a
 turn](#beginning-and-ending-a-turn)) moves the heads of the transcript and the history back;

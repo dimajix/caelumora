@@ -1,7 +1,7 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
 //! built from, and the turns it gave up (issue 145).
 
-use crate::chain::{Chain, ChainEntry};
+use crate::chain::{Chain, ChainChange, ChainEntry};
 use crate::digest::Digest;
 use crate::message::{messages_of, push_message, Message, MessageEntry};
 use chrono::{DateTime, Utc};
@@ -113,13 +113,21 @@ impl Transcript {
     /// Marks the entry with `digest` as the end of a turn given up (issue
     /// 145). `false` if there is none.
     pub fn mark_given_up(&mut self, digest: &Digest, given_up: GivenUp) -> bool {
-        match self.messages.entries_mut().find(|e| &e.digest == digest) {
-            Some(entry) => {
-                entry.given_up = Some(given_up);
-                true
-            }
-            None => false,
-        }
+        self.messages.amend(digest, |entry| entry.given_up = Some(given_up))
+    }
+
+    /// The changes since the transcript was last stored (issue 193).
+    pub fn changes(&self) -> Vec<ChainChange<TranscriptEntry>> {
+        self.messages.changes()
+    }
+
+    pub fn mark_stored(&mut self) {
+        self.messages.mark_stored()
+    }
+
+    /// Replays `change` onto the transcript as stored (`Chain::apply`).
+    pub fn apply(&mut self, change: ChainChange<TranscriptEntry>) -> Result<(), String> {
+        self.messages.apply(change)
     }
 
     /// The turns given up, in the order they ended in the transcript, each
@@ -243,5 +251,29 @@ mod tests {
         assert_eq!(turns[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)], "the turn's, not what came before");
         assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
         assert!(!transcript.mark_given_up(&crate::digest::prompt("elsewhere"), given_up), "no such entry");
+    }
+
+    #[test]
+    fn a_turn_given_up_reaches_the_stored_transcript_as_changes() {
+        let mut transcript = Transcript::default();
+        transcript.push(make_message(id(1)));
+        let mut stored: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
+        transcript.mark_stored();
+
+        let before = transcript.digest();
+        transcript.extend(vec![make_message(id(2)), make_message(id(3))]);
+        let last = transcript.digest().unwrap();
+        let given_up = GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 2 };
+        transcript.mark_given_up(&last, given_up);
+        transcript.move_head(before.as_ref());
+        transcript.push(make_message(id(4)));
+
+        for change in transcript.changes() {
+            stored.apply(change).unwrap();
+        }
+        assert_eq!(stored.digest(), transcript.digest());
+        assert_eq!(stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
+        assert_eq!(stored.given_up_turns().len(), 1, "the mark came along");
+        assert_eq!(stored.given_up_turns()[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)]);
     }
 }

@@ -14,6 +14,13 @@
 //! the entry is made (see `crate::digest`). The chain stores the digest and
 //! never recomputes it: were a scheme to change, recomputing would silently
 //! change every digest that refers to an entry.
+//!
+//! A chain changes in three ways only - an entry is appended, the head
+//! moves, an entry is amended in what its digest does not cover - and keeps
+//! a journal of them since it was last stored (issue 193): `changes` tells
+//! them as [`ChainChange`]s, `mark_stored` forgets them, and `apply` replays
+//! one onto a chain stored before. A store thus writes what was added, not
+//! the chain.
 
 use crate::digest::Digest;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -23,6 +30,37 @@ use std::collections::HashMap;
 /// including it.
 pub trait ChainEntry {
     fn digest(&self) -> &Digest;
+}
+
+/// A change to a [`Chain`] since it was last stored (issue 193): what a
+/// store appends, and replays through [`Chain::apply`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChainChange<E> {
+    /// An entry appended after the one `parent` names - `None`: a root -
+    /// which became the head.
+    Added {
+        parent: Option<Digest>,
+        #[serde(flatten)]
+        entry: E,
+    },
+    /// The head moved to the entry `to` names - `None`: the root, before
+    /// every entry.
+    Head { to: Option<Digest> },
+    /// An entry changed in what its digest does not cover, as it is now; its
+    /// digest says which one.
+    Amended {
+        #[serde(flatten)]
+        entry: E,
+    },
+}
+
+/// A change not yet stored, by the position of its entry in `nodes`.
+#[derive(Debug, Clone)]
+enum Pending {
+    Added(usize),
+    Head(Option<Digest>),
+    Amended(usize),
 }
 
 /// An entry in its place in the tree.
@@ -53,11 +91,13 @@ pub struct Chain<E> {
     index: HashMap<Digest, usize>,
     /// The active path: positions in `nodes`, from the root up to the head.
     path: Vec<usize>,
+    /// What changed since the chain was last stored, in order.
+    pending: Vec<Pending>,
 }
 
 impl<E> Default for Chain<E> {
     fn default() -> Self {
-        Self { nodes: Vec::new(), head: None, index: HashMap::new(), path: Vec::new() }
+        Self { nodes: Vec::new(), head: None, index: HashMap::new(), path: Vec::new(), pending: Vec::new() }
     }
 }
 
@@ -95,11 +135,29 @@ impl<E: ChainEntry> Chain<E> {
         self.path.is_empty()
     }
 
-    /// Every entry of every branch, to change what their digests do not
-    /// cover - and nothing else: what a digest covers is the record and is
-    /// never rewritten.
-    pub(crate) fn entries_mut(&mut self) -> impl Iterator<Item = &mut E> {
-        self.nodes.iter_mut().map(|n| &mut n.entry)
+    /// Changes the entry with `digest` - on whichever branch - in what its
+    /// digest does not cover, and nothing else: what a digest covers is the
+    /// record and is never rewritten. `false`, and nothing changes, if there
+    /// is no such entry.
+    pub fn amend(&mut self, digest: &Digest, change: impl FnOnce(&mut E)) -> bool {
+        let Some(&at) = self.index.get(digest) else { return false };
+        change(&mut self.nodes[at].entry);
+        self.pending.push(Pending::Amended(at));
+        true
+    }
+
+    /// Changes every entry of every branch `change` changes - it says
+    /// whether it did - in what their digests do not cover, as `amend`.
+    /// Returns how many changed.
+    pub fn amend_each(&mut self, mut change: impl FnMut(&mut E) -> bool) -> usize {
+        let mut changed = 0;
+        for (at, node) in self.nodes.iter_mut().enumerate() {
+            if change(&mut node.entry) {
+                self.pending.push(Pending::Amended(at));
+                changed += 1;
+            }
+        }
+        changed
     }
 
     /// Appends the entry `make` builds from the digest of the head, makes it
@@ -110,12 +168,72 @@ impl<E: ChainEntry> Chain<E> {
         let previous = self.head;
         let entry = make(previous.as_ref());
         let digest = *entry.digest();
-        if !self.index.contains_key(&digest) {
-            self.index.insert(digest, self.nodes.len());
-            self.nodes.push(Node { parent: previous, active_child: None, entry });
+        if self.index.contains_key(&digest) {
+            self.move_head(Some(&digest));
+        } else {
+            self.add(Node { parent: previous, active_child: None, entry });
+            self.pending.push(Pending::Added(self.nodes.len() - 1));
         }
-        self.move_head(Some(&digest));
         previous
+    }
+
+    /// Adds `node`, whose digest is not there yet, and makes it the head.
+    fn add(&mut self, node: Node<E>) {
+        let digest = *node.entry.digest();
+        self.index.insert(digest, self.nodes.len());
+        self.nodes.push(node);
+        self.set_head(Some(&digest));
+    }
+
+    /// The changes since the chain was last stored (`mark_stored`), in the
+    /// order they were made.
+    pub fn changes(&self) -> Vec<ChainChange<E>>
+    where
+        E: Clone,
+    {
+        self.pending.iter().map(|pending| match pending {
+            Pending::Added(at) => ChainChange::Added { parent: self.nodes[*at].parent, entry: self.nodes[*at].entry.clone() },
+            Pending::Head(to) => ChainChange::Head { to: *to },
+            Pending::Amended(at) => ChainChange::Amended { entry: self.nodes[*at].entry.clone() },
+        }).collect()
+    }
+
+    /// Forgets the changes: they are stored.
+    pub fn mark_stored(&mut self) {
+        self.pending.clear();
+    }
+
+    /// Replays `change`, as a store does when loading what it appended onto
+    /// the chain it stored before. Nothing it does is a change to store
+    /// again. Idempotent: an entry added that is there already only becomes
+    /// the head, a head move and an amendment restate what is now.
+    ///
+    /// # Errors
+    /// If the change does not fit the chain: an entry following one that is
+    /// not there, a head or an amended entry that is not there.
+    pub fn apply(&mut self, change: ChainChange<E>) -> Result<(), String> {
+        match change {
+            ChainChange::Added { parent, entry } => {
+                let digest = *entry.digest();
+                if self.index.contains_key(&digest) {
+                    self.set_head(Some(&digest));
+                } else if parent.is_some_and(|parent| !self.index.contains_key(&parent)) {
+                    return Err(format!("entry {digest} follows an entry that is not there"));
+                } else {
+                    self.add(Node { parent, active_child: None, entry });
+                }
+            }
+            ChainChange::Head { to } => {
+                if !self.set_head(to.as_ref()) {
+                    return Err("the head moved to an entry that is not there".to_string());
+                }
+            }
+            ChainChange::Amended { entry } => match self.index.get(entry.digest()) {
+                Some(&at) => self.nodes[at].entry = entry,
+                None => return Err(format!("entry {} was amended but is not there", entry.digest())),
+            },
+        }
+        Ok(())
     }
 
     /// The entries of the path `digest` names: from the root up to and
@@ -132,6 +250,18 @@ impl<E: ChainEntry> Chain<E> {
     /// branch last taken from it. `false`, and nothing changes, if there is
     /// no such entry.
     pub fn move_head(&mut self, to: Option<&Digest>) -> bool {
+        let moved = self.head != to.copied();
+        if !self.set_head(to) {
+            return false;
+        }
+        if moved {
+            self.pending.push(Pending::Head(to.copied()));
+        }
+        true
+    }
+
+    /// `move_head` without the journal: for what is no change to store.
+    fn set_head(&mut self, to: Option<&Digest>) -> bool {
         let path = match to {
             Some(digest) => match self.index.get(digest) {
                 Some(&end) => self.path_to(end),
@@ -201,7 +331,7 @@ impl<E: ChainEntry> Chain<E> {
                 }
             }
         }
-        let mut chain = Self { nodes, head: None, index, path: Vec::new() };
+        let mut chain = Self { nodes, head: None, index, path: Vec::new(), pending: Vec::new() };
         if let Some(head) = &head {
             if !chain.index.contains_key(head) {
                 return Err(format!("the head {head} is not an entry"));
@@ -377,6 +507,82 @@ mod tests {
         assert_eq!(loaded.all_entries().collect::<Vec<_>>(), chain.all_entries().collect::<Vec<_>>());
         assert_eq!(labels(loaded.entries()), ["a", "c"]);
         assert_eq!(loaded.leaf_from(&after_a), chain.digest(), "the branch last taken is kept");
+    }
+
+    /// `chain` as it was stored: with nothing pending.
+    fn stored(chain: &Chain<Label>) -> Chain<Label> {
+        serde_json::from_value(serde_json::to_value(chain).unwrap()).unwrap()
+    }
+
+    fn same(a: &Chain<Label>, b: &Chain<Label>) -> bool {
+        a.digest() == b.digest()
+            && a.all_entries().collect::<Vec<_>>() == b.all_entries().collect::<Vec<_>>()
+            && labels(a.entries()) == labels(b.entries())
+            && a.all_entries().all(|e| a.leaf_from(&e.digest) == b.leaf_from(&e.digest))
+    }
+
+    #[test]
+    fn the_changes_since_the_chain_was_stored_replay_onto_what_was_stored() {
+        let mut chain = Chain::new();
+        push(&mut chain, "a");
+        let after_a = chain.digest().unwrap();
+        let mut copy = stored(&chain);
+        assert!(copy.changes().is_empty(), "a loaded chain has nothing pending");
+        chain.mark_stored();
+
+        push(&mut chain, "b");
+        chain.move_head(Some(&after_a));
+        chain.move_head(Some(&after_a));
+        push(&mut chain, "c");
+        chain.move_head(Some(&after_a));
+        push(&mut chain, "b");
+        assert!(chain.amend(&after_a, |e| e.label = "a!".to_string()));
+        assert_eq!(chain.amend_each(|e| { let is_b = e.label == "b"; if is_b { e.label = "b!".to_string() }; is_b }), 1);
+
+        let changes = chain.changes();
+        let ops: Vec<&str> = changes.iter().map(|c| match c { ChainChange::Added { .. } => "added", ChainChange::Head { .. } => "head", ChainChange::Amended { .. } => "amended" }).collect();
+        assert_eq!(ops, ["added", "head", "added", "head", "head", "amended", "amended"], "once each, in order; a move to where the head is is no change: {changes:?}");
+
+        for change in changes.clone() {
+            copy.apply(change).unwrap();
+        }
+        assert!(same(&copy, &chain), "{copy:?}\n{chain:?}");
+        assert_eq!(labels(copy.all_entries()), ["a!", "b!", "c"]);
+        assert_eq!(copy.digest(), chain.digest(), "the digest is not what an amendment changes");
+
+        for change in changes {
+            copy.apply(change).unwrap();
+        }
+        assert!(same(&copy, &chain), "applied twice, nothing changes");
+        assert!(copy.changes().is_empty(), "nothing replayed is a change to store again");
+
+        chain.mark_stored();
+        assert!(chain.changes().is_empty());
+    }
+
+    #[test]
+    fn a_change_that_does_not_fit_is_not_applied() {
+        let mut chain = Chain::new();
+        push(&mut chain, "a");
+        let elsewhere = crate::digest::prompt("elsewhere");
+        let orphan = Label { label: "x".to_string(), digest: crate::digest::prompt("x") };
+        assert!(chain.apply(ChainChange::Added { parent: Some(elsewhere), entry: orphan.clone() }).is_err(), "follows what is not there");
+        assert!(chain.apply(ChainChange::Head { to: Some(elsewhere) }).is_err());
+        assert!(chain.apply(ChainChange::Amended { entry: orphan }).is_err());
+        assert_eq!(labels(chain.all_entries()), ["a"], "and nothing changed");
+        assert!(!chain.amend(&elsewhere, |_| unreachable!()));
+    }
+
+    #[test]
+    fn a_change_is_stored_as_the_entry_with_what_it_follows() {
+        let mut chain = Chain::new();
+        push(&mut chain, "a");
+        push(&mut chain, "b");
+        let json = serde_json::to_value(chain.changes()).unwrap();
+        assert_eq!(json[1]["added"]["label"], "b", "{json}");
+        assert_eq!(json[1]["added"]["parent"], serde_json::json!(chain.prefix(&chain.digest().unwrap()).unwrap()[0].digest.to_string()));
+        let loaded: Vec<ChainChange<Label>> = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded, chain.changes());
     }
 
     #[test]

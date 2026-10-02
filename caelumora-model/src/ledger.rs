@@ -10,7 +10,7 @@
 //! number of an entry is never given twice, on any branch: a reader may have
 //! read it before it was removed, or on a branch no longer active.
 
-use crate::chain::{Chain, ChainEntry};
+use crate::chain::{Chain, ChainChange, ChainEntry};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::MessageId;
@@ -51,7 +51,7 @@ pub enum Change<Id> {
 
 /// An entry of a [`Ledger`]'s chain: a change, where it was made, and the
 /// digest of the chain up to and including it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct LedgerEntry<K: LedgerKind> {
     pub change: Change<K::Id>,
@@ -61,6 +61,14 @@ pub struct LedgerEntry<K: LedgerKind> {
     pub after: MessageId,
     pub written_at: DateTime<Utc>,
     pub digest: Digest,
+}
+
+// By hand: the kind is a marker, and a derived `Clone` would ask it to be
+// `Clone` too.
+impl<K: LedgerKind> Clone for LedgerEntry<K> {
+    fn clone(&self) -> Self {
+        Self { change: self.change.clone(), origin: self.origin.clone(), after: self.after, written_at: self.written_at, digest: self.digest }
+    }
 }
 
 impl<K: LedgerKind> ChainEntry for LedgerEntry<K> {
@@ -117,6 +125,20 @@ impl<K: LedgerKind> Ledger<K> {
             let digest = crate::digest::ledger_chain::<K>(previous, &change, &origin, after);
             LedgerEntry { change, origin, after, written_at: Utc::now(), digest }
         });
+    }
+
+    /// The changes since the ledger was last stored (issue 193).
+    pub fn changes(&self) -> Vec<ChainChange<LedgerEntry<K>>> {
+        self.changes.changes()
+    }
+
+    pub fn mark_stored(&mut self) {
+        self.changes.mark_stored()
+    }
+
+    /// Replays `change` onto the ledger as stored (`Chain::apply`).
+    pub fn apply(&mut self, change: ChainChange<LedgerEntry<K>>) -> Result<(), String> {
+        self.changes.apply(change)
     }
 
     /// The entries as they stand on the active branch: every entry that was
@@ -283,6 +305,25 @@ mod tests {
         let loaded: NoteChain = serde_json::from_value(serde_json::to_value(&noted).unwrap()).unwrap();
         assert_eq!(loaded.digest(), noted.digest());
         assert_eq!(loaded.current(), noted.current());
+    }
+
+    #[test]
+    fn what_was_appended_since_the_ledger_was_stored_replays_onto_it() {
+        let mut chain = NoteChain::default();
+        push(&mut chain, add(1, "a"), MessageId::new());
+        let mut stored: NoteChain = serde_json::from_value(serde_json::to_value(&chain).unwrap()).unwrap();
+        chain.mark_stored();
+        push(&mut chain, add(2, "b"), MessageId::new());
+        push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());
+
+        let changes = chain.changes();
+        assert_eq!(changes.len(), 2);
+        for change in changes {
+            stored.apply(change).unwrap();
+        }
+        assert_eq!(stored.digest(), chain.digest());
+        assert_eq!(stored.current(), chain.current());
+        assert_eq!(stored.next_id(), NoteId(3));
     }
 
     #[test]

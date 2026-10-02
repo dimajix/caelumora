@@ -410,3 +410,7 @@ is left open until a step needs the answer - then it is done at once or opened a
   `apply` methods that dispatched on them are gone, `Turn::stage_note`/`staged_notes` and
   `stage_memory`/`staged_memory` replace the generic staging, `AgentStateHandle::apply` takes the
   memory changes. STORAGE.md and MEMORY.md follow.
+- **2026-10-02** — Step 2 done: `Chain` keeps a journal of what changed since it was last stored
+  (`ChainChange`: `Added`, `Head`, `Amended`; `changes`, `mark_stored`, `apply`), and `amend` and
+  `amend_each` replace `entries_mut` as the only way to change an entry. `Transcript`,
+  `MessageHistory` and `Ledger` delegate. The stored form of a chain is unchanged.

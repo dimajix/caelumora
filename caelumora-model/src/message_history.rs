@@ -2,7 +2,7 @@
 //! messages said in it, each of the agent's own with what it was produced
 //! from.
 
-use crate::chain::{Chain, ChainEntry};
+use crate::chain::{Chain, ChainChange, ChainEntry};
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
 use crate::digest::Digest;
@@ -93,13 +93,13 @@ impl MessageHistory {
     /// a message's digest does not cover its classification, so the record
     /// stays what it was. `false` if there is no such message.
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        match self.messages.entries_mut().find(|e| e.message.id == id) {
-            Some(entry) => {
-                entry.message.classification = classification;
-                true
+        self.messages.amend_each(|entry| {
+            let it = entry.message.id == id;
+            if it {
+                entry.message.classification = classification.clone();
             }
-            None => false,
-        }
+            it
+        }) > 0
     }
 
     /// Fits every message into a channel now classified `channel`
@@ -107,15 +107,28 @@ impl MessageHistory {
     /// classification does to what is in it, on every branch: all of them
     /// were said in the channel. Returns how many changed.
     pub fn fit_into(&mut self, channel: &Classification) -> usize {
-        let mut changed = 0;
-        for entry in self.messages.entries_mut() {
+        self.messages.amend_each(|entry| {
             let fitted = entry.message.classification.fitted_into(channel);
-            if fitted != entry.message.classification {
+            let changed = fitted != entry.message.classification;
+            if changed {
                 entry.message.classification = fitted;
-                changed += 1;
             }
-        }
-        changed
+            changed
+        })
+    }
+
+    /// The changes since the history was last stored (issue 193).
+    pub fn changes(&self) -> Vec<ChainChange<HistoryEntry>> {
+        self.messages.changes()
+    }
+
+    pub fn mark_stored(&mut self) {
+        self.messages.mark_stored()
+    }
+
+    /// Replays `change` onto the history as stored (`Chain::apply`).
+    pub fn apply(&mut self, change: ChainChange<HistoryEntry>) -> Result<(), String> {
+        self.messages.apply(change)
     }
 }
 
@@ -150,5 +163,27 @@ mod tests {
         assert_eq!(entries[0].context, None, "said by someone else");
         assert_eq!(entries[1].context, Some(reference));
         assert_eq!(loaded.digest(), history.digest());
+    }
+
+    #[test]
+    fn reclassifying_reaches_the_stored_history_as_changes_and_leaves_the_digests() {
+        use crate::confidentiality::{Classification, Confidentiality};
+        let mut history = MessageHistory::default();
+        history.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let mut stored: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        history.mark_stored();
+
+        let public = Classification::general(Confidentiality::Public);
+        assert!(history.reclassify(id(2), public.clone()));
+        assert!(!history.reclassify(id(9), public.clone()), "no such message");
+        assert_eq!(history.fit_into(&public), 1, "the first still had to be fitted; the second fits");
+        let changes = history.changes();
+        assert_eq!(changes.len(), 2, "one amendment per message changed: {changes:?}");
+
+        for change in changes {
+            stored.apply(change).unwrap();
+        }
+        assert_eq!(stored.digest(), history.digest(), "a classification is not what a digest covers");
+        assert!(stored.messages().iter().all(|m| m.classification == public));
     }
 }
