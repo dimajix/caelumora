@@ -153,3 +153,5 @@ enough across hops has to be checked.
   starts a new one; the limit is a parameter; what an open task says unasked stays in its request's
   span. CHANNELS.md (*Chains between agents*), COMPONENTS.md, WEB-UI.md and the web UI's policy
   descriptions are updated. Open: a hint to the users when a chain is cut off.
+- **2026-10-03** — The hint to the users when a chain is cut off is issue
+  [200](200-chain-limit-hint.md).
