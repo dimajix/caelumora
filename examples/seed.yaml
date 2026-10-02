@@ -116,6 +116,12 @@ session_templates:
       personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
   channels:
   - name: main
+    components:
+      component_nodes:
+      - id: moderator
+        kind: policy_moderator
+        params:
+          max_agent_hops: 20
     participants:
     - user
     - approval
@@ -138,6 +144,12 @@ session_templates:
       personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   channels:
   - name: main
+    components:
+      component_nodes:
+      - id: moderator
+        kind: policy_moderator
+        params:
+          max_agent_hops: 20
     participants:
     - user
     - approval
@@ -163,6 +175,10 @@ session_templates:
   - name: main
     components:
       component_nodes:
+      - id: moderator
+        kind: policy_moderator
+        params:
+          max_agent_hops: 20
       - id: responders
         kind: mentions_only_policy
     participants:
@@ -190,6 +206,10 @@ session_templates:
   - name: main
     components:
       component_nodes:
+      - id: moderator
+        kind: policy_moderator
+        params:
+          max_agent_hops: 20
       - id: responders
         kind: user_driven_policy
     participants:
@@ -216,10 +236,15 @@ session_templates:
   channels:
   # Only when @-mentioned: what the remote agent is given leaves the system,
   # and it is given only when asked to respond - and the two agents do not
-  # answer each other without end, as they would by default (round robin).
+  # answer each other up to max_agent_hops, as they would by default
+  # (round robin).
   - name: main
     components:
       component_nodes:
+      - id: moderator
+        kind: policy_moderator
+        params:
+          max_agent_hops: 20
       - id: responders
         kind: mentions_only_policy
     participants:
