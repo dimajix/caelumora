@@ -183,6 +183,7 @@ argues against it, and what came out of the last attempt.
 | [170](170-context-panel-shows-the-label.md) | done | The context panel does not show how each part of a message's context was classified, so nobody can tell why the message was classified as it was. |
 | [200](200-chain-limit-hint.md) | open | When a chain between agents reaches its limit and the moderator asks nobody to respond, the users are not told, so the mentioned agent looks as if it ignored the question. |
 | [202](202-send-while-generating.md) | done | While an agent generates an answer, the web UI does not let the user send a message, though nothing in the runtime needs that. |
+| [203](203-concurrent-answers-in-view.md) | open | The chat view keeps one answer under way per channel, so the streamed answers of agents answering at once run into each other or vanish. |
 
 ## Context and knowledge
 
