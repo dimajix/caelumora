@@ -2512,6 +2512,14 @@ mod tests {
                 Ok(facets)
             },
         );
+        registry.register(
+            crate::component::ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
+            |_descriptor, _context| {
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::message::PerceiveInProcessor>(Arc::new(NoSecrets));
+                Ok(facets)
+            },
+        );
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
@@ -2530,6 +2538,43 @@ mod tests {
         let executor = CommandExecutor::empty(runtime.security_manager());
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;
         Ok((channel, context, agent_id, alice.id))
+    }
+
+    /// Lets nothing through that mentions a secret.
+    #[derive(Debug)]
+    struct NoSecrets;
+
+    #[async_trait::async_trait]
+    impl crate::message::MessageProcessor for NoSecrets {
+        async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>> {
+            Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains("secret")).collect())
+        }
+    }
+
+    impl crate::message::PerceiveInProcessor for NoSecrets {}
+
+    #[tokio::test]
+    async fn what_an_external_agents_perceive_processors_drop_never_reaches_it() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let mut components = external_components();
+        components.component_nodes.push(caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets"));
+        let built = external_channel(remote.clone(), components, None).await.expect("the external agent can be run");
+        let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
+        answered(&mut events, agent).await;
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("the secret is 42".to_string(), None).await.unwrap();
+        assert!(answered(&mut events, agent).await.is_empty(), "nothing new reached it, so it is not asked");
+
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        let heard: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(heard, vec!["hello".to_string(), "Hello, alice.".to_string()], "the secret is not in its history");
+        assert_eq!(remote.sent.lock().unwrap().len(), 1, "nor was it given to the remote agent");
+        running.abort();
     }
 
     /// Runs `built` and has alice say "hello".

@@ -4,17 +4,20 @@
 //! What it does here is what every participant does: it is asked, it
 //! answers, and it can be cancelled and stopped.
 //!
-//! It hears what the others say, as every participant does, and keeps it in
-//! its history, with its own answers. When it is asked, it gives the remote
+//! It hears what the others say, as every participant does, and keeps what
+//! passes its perceive processors (issue 196) in its history, with its own
+//! answers. When it is asked, it gives the remote
 //! agent what it heard since it was last asked - kept as its transcript -
 //! and publishes what comes back. That is all that is known of it, and all
 //! that is kept (`ExternalAgentChannelState`); it reads nothing of the
 //! channel itself.
 
+use super::apply_stage_processors;
 use crate::actor::Actor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::controller::AgentController;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
+use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -46,6 +49,8 @@ pub struct ExternalAgentActor {
     security_context: SecurityContext,
     /// The remote agent: exactly one (issue 179).
     remote: ComponentImpl<dyn ExternalAgent>,
+    /// What filters what reaches it, as an agent's do (issue 196).
+    perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
     state: Mutex<ExternalAgentChannelState>,
@@ -119,6 +124,7 @@ impl ExternalAgentActor {
             &ComponentContext::new(security_context.clone(), actor_runtime.security_manager(), actor_runtime.secret_manager()),
         ).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
+        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
 
         // Answers that may never enter the channel would each be dropped
         // there in silence: refused here instead, once.
@@ -137,6 +143,7 @@ impl ExternalAgentActor {
             actor_runtime,
             security_context,
             remote,
+            perceive_in_processors,
             state: Mutex::new(state),
             processing: std::sync::Mutex::new(ActorState::Idle),
             current: std::sync::Mutex::new(CancellationToken::new()),
@@ -156,10 +163,18 @@ impl ExternalAgentActor {
         token
     }
 
-    /// Keeps what others said in its history, all of it, for the record
-    /// and for the remote agent to be given when it is next asked - stored
-    /// at once, so that a restart loses none of it.
+    /// Keeps what others said in its history - all that passes its perceive
+    /// processors, which is what reaches it (issue 196) - for the record and
+    /// for the remote agent to be given when it is next asked; stored at
+    /// once, so that a restart loses none of it.
     async fn hear(&self, state: &mut ExternalAgentChannelState, messages: Vec<Message>) {
+        let messages = match apply_stage_processors(&self.perceive_in_processors, messages, &self.security_context).await {
+            Ok(messages) => messages,
+            Err(e) => {
+                warn!("External agent {}: its PerceiveIn stage failed: {}", self.id(), e);
+                return;
+            }
+        };
         if messages.is_empty() {
             return;
         }

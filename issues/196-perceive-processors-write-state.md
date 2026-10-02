@@ -1,6 +1,6 @@
 # 196 — What an actor perceives is recorded by configurable components
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -53,3 +53,10 @@ write into the agent's state through the `&mut Turn` every `MessageProcessor` is
   and the documents. `apply_stage_processors` gives the next processor what a failing fail-open one
   was given. A test agent without the appenders now keeps what it hears; one test that read an
   empty transcript as "nothing of the turn was recorded" checks for the agent's messages instead.
+- **2026-10-02** — Step 2, done: the external agent builds its `PerceiveInProcessor`s from its
+  personality and keeps in its history what passes them; what they drop is neither in its history
+  nor given to the remote agent (test `what_an_external_agents_perceive_processors_drop_never_
+  reaches_it`). Left open: what a joining participant is seeded with (`seed_transcript`,
+  `seed_heard`) does not pass the processors - the channel writes it into the actor's state
+  directly, which is issue [190](190-channel-seeds-actor-state.md); once the actor seeds itself, it
+  can pass it through its stage as well.
