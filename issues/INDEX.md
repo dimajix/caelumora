@@ -129,6 +129,7 @@ argues against it, and what came out of the last attempt.
 | [167](167-origin-and-releases.md) | rejected | A classification says who may read something but not where it was written: a release overwrites the origin, releases cannot be told apart, and there is no rule for writing. |
 | [168](168-turn-label-as-high-water-mark.md) | done | A turn writes under its channel's classification even when everything it saw was classified lower, so what it remembers is lost to lower channels. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
+| [198](198-security-scenarios.md) | in progress | Nothing says, end to end, which permissions an action needs; a member whose personality was withdrawn locks everyone out of its session, and some actions look at others before the actor's own permission. |
 
 ## Tools and approvals
 
