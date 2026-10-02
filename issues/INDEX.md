@@ -65,6 +65,7 @@ argues against it, and what came out of the last attempt.
 | [164](164-soft-deletion-and-former-members.md) | open | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
 | [178](178-scoped-lookup-by-name.md) | open | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
+| [193](193-external-state-rewritten-whole.md) | open | An external agent's state is rewritten whole for every message it hears, and holds a second copy of what it gave. |
 
 ## Sessions and channels
 
@@ -96,6 +97,7 @@ argues against it, and what came out of the last attempt.
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [174](174-moderator-as-component.md) | done | The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended. |
 | [175](175-user-driven-moderator.md) | done | There is no moderator under which every agent answers a person's message but no agent's message makes another agent answer. |
+| [187](187-deleted-channel-keeps-remote-tasks.md) | open | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
 
 ## Identity and access management
 
@@ -236,6 +238,7 @@ argues against it, and what came out of the last attempt.
 | [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 | [129](129-documentation-structure.md) | done | AGENTS.md and ARCHITECTURE.md hold everything in two long files, so the architecture draws no overall picture and the details of one subject are hard to find. |
 | [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
+| [192](192-issue-179-small-duplicates.md) | open | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 
 ## Code structure
 
@@ -261,12 +264,20 @@ argues against it, and what came out of the last attempt.
 | [157](157-actor-holds-what-is-not-its-own.md) | done | The actor keeps the turn's count of model calls, which a resumed turn loses, wraps a constant in its mutex, and reads its state for others twice alike. |
 | [159](159-split-agent-actor-file.md) | done | `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines. |
 | [177](177-metadata-on-some-entities.md) | done | Name, scope and description sit in `Metadata` on some entities only, which brings fields to entities that mean nothing there. |
+| [189](189-agent-kind-decided-twice.md) | open | An agent's kind is decided from its personality in two places, by different rules for a missing personality. |
+| [190](190-channel-seeds-actor-state.md) | open | The channel writes each actor kind's private state itself when a participant joins. |
+| [191](191-channel-runtime-hands-out-runtime-manager.md) | open | `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it. |
 
 ## Integrations
 
 | No. | Status | Issue |
 |---|---|---|
 | [179](179-external-agents-via-a2a.md) | in progress | An agent that runs elsewhere cannot be given a task or take part in a channel; only models and MCP tools can be reached from outside. |
+| [183](183-external-events-folded-twice.md) | in progress | An external agent takes in the remote agent's events in two places that do the same with differences of no stated reason. |
+| [184](184-followed-task-ends-said-wrongly.md) | open | When a task an external agent follows fails or its stream breaks, the agent records a message nobody saw or publishes a half answer. |
+| [185](185-sse-decoded-per-chunk.md) | open | The A2A event stream is decoded chunk by chunk, so a character or a line end split by the network breaks the answer. |
+| [186](186-a2a-requests-and-long-tasks.md) | open | An external agent without streaming may not deliver tasks longer than its request timeout, and a streamed request can wait forever. |
+| [188](188-remote-helpers-on-llm-error.md) | open | What remote integrations share - redacting the endpoint, describing errors, the endpoint's configuration - is not in `remote`, and MCP errors show the URL unredacted. |
 
 ## Open architecture questions
 
