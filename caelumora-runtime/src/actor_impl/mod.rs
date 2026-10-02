@@ -3,44 +3,37 @@ pub mod user;
 pub mod approval;
 pub mod external_agent;
 
-use crate::agent_turn::Turn;
 use crate::component::ComponentImpl;
 use crate::message::MessageProcessor;
 use anyhow::Result;
 use caelumora_model::actor::ActorEvent;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
-use std::mem;
+use caelumora_model::security::SecurityContext;
 use tracing::warn;
 
 /// Passes `input` through `processors` in turn, each given what the one
-/// before returned. A failing processor is skipped if it fails open, and
-/// fails the whole stage if it fails closed.
+/// before returned, for the actor whose context is `security`. A failing
+/// processor is skipped if it fails open - the next one is given what it
+/// was given - and fails the whole stage if it fails closed.
 async fn apply_stage_processors<T>(
     processors: &[ComponentImpl<T>],
     mut input: Vec<Message>,
-    turn: &mut Turn<'_>,
+    security: &SecurityContext,
 ) -> Result<Vec<Message>>
 where
     T: MessageProcessor + ?Sized + Send + Sync,
 {
     for stage_processor in processors {
-        let current = mem::take(&mut input);
-        match stage_processor
-            .process_messages(current, turn)
-            .await
-        {
-            Ok(output) => {
-                input = output;
-            }
-            Err(e) => match stage_processor.fail_policy {
-                ComponentFailPolicy::FailOpen => {
-                    warn!(
-                        "Component '{}' failed with fail-open policy: {}",
-                        stage_processor.id, e
-                    );
+        let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen).then(|| input.clone());
+        match stage_processor.process_messages(input, security).await {
+            Ok(output) => input = output,
+            Err(e) => match kept {
+                Some(kept) => {
+                    warn!("Component '{}' failed with fail-open policy: {}", stage_processor.id, e);
+                    input = kept;
                 }
-                ComponentFailPolicy::FailClosed => return Err(e),
+                None => return Err(e),
             },
         }
     }
@@ -56,5 +49,53 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
         (false, true) => ActorEvent::PartialMessageGenerated(message),
         (true, false) => ActorEvent::IntermediateMessageGenerated(message),
         (false, false) => ActorEvent::CompleteMessageGenerated(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use caelumora_model::confidentiality::Classification;
+    use std::sync::Arc;
+
+    /// Keeps what does not contain `word`, or fails.
+    #[derive(Debug)]
+    struct Without(Option<&'static str>);
+
+    #[async_trait]
+    impl MessageProcessor for Without {
+        async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>> {
+            let Some(word) = self.0 else { return Err(anyhow::anyhow!("broken")) };
+            Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains(word)).collect())
+        }
+    }
+
+    fn stage(id: &str, processor: Without, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn MessageProcessor> {
+        ComponentImpl { id: id.to_string(), fail_policy, facet: Arc::new(processor) }
+    }
+
+    fn said(text: &str) -> Message {
+        Message { content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+    }
+
+    fn texts(messages: &[Message]) -> Vec<&str> {
+        messages.iter().filter_map(|m| m.content.as_deref()).collect()
+    }
+
+    #[tokio::test]
+    async fn each_processor_filters_what_the_one_before_left_and_a_broken_one_that_fails_open_is_skipped() {
+        let security = SecurityContext::default();
+        let input = vec![said("hello"), said("secret plan"), said("spam offer")];
+        let stages = [
+            stage("no-secrets", Without(Some("secret")), ComponentFailPolicy::FailClosed),
+            stage("broken", Without(None), ComponentFailPolicy::FailOpen),
+            stage("no-spam", Without(Some("spam")), ComponentFailPolicy::FailClosed),
+        ];
+        let output = apply_stage_processors(&stages, input.clone(), &security).await.expect("the broken one fails open");
+        assert_eq!(texts(&output), vec!["hello"], "the next is given what the broken one was given");
+
+        let stages = [stage("broken", Without(None), ComponentFailPolicy::FailClosed)];
+        assert!(apply_stage_processors(&stages, input, &security).await.is_err(), "failing closed fails the stage");
     }
 }

@@ -34,6 +34,9 @@ pub struct AgentActor {
     agent_id: AgentId,
     agent_controller: Arc<AgentController>,
     actor_runtime: ActorRuntime,
+    /// Where it is, and in whose name it acts (issue 87): what its
+    /// processors are given (issue 196).
+    security_context: SecurityContext,
 
     // Components
     /// Assembles the model's context: exactly one (issue 98).
@@ -102,12 +105,13 @@ impl AgentActor {
         }
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let control = RunControl::new(agent_channel_state.processing_state);
-        let views = actor_runtime.views(security_context);
+        let views = actor_runtime.views(security_context.clone());
 
         Ok(AgentActor {
             agent_id,
             agent_controller,
             actor_runtime,
+            security_context,
             context_provider,
             llm_client,
             perceive_in_processors,
@@ -121,15 +125,23 @@ impl AgentActor {
         })
     }
 
-    /// Takes in what others said: the perceive processors append it to the
-    /// transcript and the history. No turn: nothing here is a turn's work,
-    /// and nothing is asked of the policy (issues 85, 90).
+    /// Takes in what others said: what passes its perceive processors
+    /// reaches it, and is kept in its history and its transcript (issue
+    /// 196). No turn: nothing here is a turn's work, and nothing is asked of
+    /// the policy (issues 85, 90).
     async fn perceive(&self, turn: &mut Turn<'_>, messages: Vec<Message>) {
-        // The processors act on the agent's state (transcript, history);
-        // what they return is not used.
-        if let Err(e) = apply_stage_processors(&self.perceive_in_processors, messages, turn).await {
-            warn!("PerceiveIn stage failed: {}", e);
+        let messages = match apply_stage_processors(&self.perceive_in_processors, messages, &self.security_context).await {
+            Ok(messages) => messages,
+            Err(e) => {
+                warn!("PerceiveIn stage failed: {}", e);
+                return;
+            }
+        };
+        if messages.is_empty() {
+            return;
         }
+        turn.extend_history(messages.clone());
+        turn.extend_transcript(messages);
     }
 
     /// A complete message as it leaves the agent - through the emit
@@ -154,7 +166,7 @@ impl AgentActor {
         turn: &mut Turn<'_>,
     ) -> Option<Message> {
         let mut output =
-            apply_stage_processors(&self.emit_out_processors, vec![message], turn)
+            apply_stage_processors(&self.emit_out_processors, vec![message], turn.security_context())
                 .await
                 .ok()?;
         if output.is_empty() {

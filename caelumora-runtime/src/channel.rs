@@ -2416,7 +2416,7 @@ mod tests {
             }
         }).await.expect("the idle state is stored");
         assert!(stored.turn.is_none(), "the turn was abandoned, not stored");
-        assert!(stored.transcript.messages().is_empty(), "nothing of it was recorded");
+        assert!(stored.transcript.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of it was recorded");
         while let Ok(envelope) = events.try_recv() {
             assert!(!matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) || envelope.context.sender_id != ActorId::Agent(agent), "a stopped agent announces no answer");
         }

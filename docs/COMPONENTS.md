@@ -41,13 +41,16 @@ A component offers one or more *facets*: traits it implements to take part in th
 | `ContextProvider` | what the model is given | `crate::context` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
 | `ExternalAgent` | the remote agent an external personality's agents are (issue 179) | `crate::external` |
-| `PerceiveInProcessor` | handling of incoming messages | `crate::message` |
-| `EmitOutProcessor` | handling of outgoing messages | `crate::message` |
+| `PerceiveInProcessor` | filtering of incoming messages, of agents and external agents alike | `crate::message` |
+| `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
 | `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
 | `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator_impl` |
 
-`EmitOutProcessor` has no implementation yet; it is kept as an extension point (issue 99). Each
-facet trait lives next to the code that uses it, not among the implementations (issue 53).
+`PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are kept as
+extension points (issues 99, 196). A processor is given the messages and the actor's
+`SecurityContext` and returns what is left of them; it records nothing - what passes, the actor
+keeps in its history itself. Each facet trait lives next to the code that uses it, not among the
+implementations (issue 53).
 
 ## Wiring
 
@@ -185,8 +188,6 @@ which a tool passes on with `?`.
 | `a2a_agent` | `ExternalAgent` | `url` (the agent's base URL, or its card's own), `auth`, `timeout_secs` (30, per request), `classification` (the channel's) | An external agent reached over A2A 1.x by JSON-RPC (issue 179): reads its agent card, streams over server-sent events where the card offers it, waits for the task to end or ask back where not. A card it cannot read, or one that offers no JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. |
 | `ollama_client` | `LLMClient` | `base_url` (`http://127.0.0.1:11434`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends (issue 149). |
 | `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |
-| `transcript_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's transcript. |
-| `state_history_appender` | `PerceiveInProcessor` | - | Appends incoming messages to the agent's history. |
 | `policy_moderator` | `Moderator` | - | The default moderator of a channel: routes as every channel does and asks its `ResponderPolicy` whom to ask ([CHANNELS.md](CHANNELS.md#moderators)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |

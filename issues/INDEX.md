@@ -268,6 +268,7 @@ argues against it, and what came out of the last attempt.
 | [189](189-agent-kind-decided-twice.md) | open | An agent's kind is decided from its personality in two places, by different rules for a missing personality. |
 | [190](190-channel-seeds-actor-state.md) | open | The channel writes each actor kind's private state itself when a participant joins. |
 | [191](191-channel-runtime-hands-out-runtime-manager.md) | open | `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it. |
+| [196](196-perceive-processors-write-state.md) | in progress | Whether an agent's history is complete depends on two configurable components, and an external agent has no stage to filter what it perceives. |
 
 ## Integrations
 

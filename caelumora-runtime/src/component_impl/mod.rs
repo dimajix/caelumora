@@ -14,9 +14,7 @@ pub mod channel_members_prompt_provider;
 pub mod create_plan_tool;
 pub mod notes;
 pub mod private_notes;
-pub mod transcript_appender;
 pub mod state_context_provider;
-pub mod state_history_appender;
 pub mod static_system_prompt_provider;
 
 /// Registers the component kinds of this directory with `registry`, and the
@@ -31,8 +29,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     create_plan_tool::register(registry);
     notes::register(registry);
     private_notes::register(registry);
-    transcript_appender::register(registry);
     state_context_provider::register(registry);
-    state_history_appender::register(registry);
     static_system_prompt_provider::register(registry);
 }

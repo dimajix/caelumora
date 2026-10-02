@@ -157,7 +157,7 @@ that answered it.
 *   **Placement:** in a `mod tests` block at the bottom of the file, guarded by `#[cfg(test)]`.
 *   **Async tests:** use `#[tokio::test]` for tests involving async code.
 *   **Naming:** use descriptive names, e.g.
-    `state_history_appender_is_passthrough_and_persists_history`.
+    `an_answer_is_its_whole_messages_and_what_was_being_written`.
 *   **Assertions:** use `assert!`, `assert_eq!` and `expect()` with descriptive messages.
 
 ### Integration tests

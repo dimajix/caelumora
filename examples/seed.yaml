@@ -19,16 +19,6 @@ personalities:
     fond of a good quiz.
   components:
     component_nodes:
-    - id: history-appender
-      kind: state_history_appender
-      tags:
-      - perceive
-      fail_policy: FailClosed
-    - id: transcript-appender
-      kind: transcript_appender
-      tags:
-      - perceive
-      fail_policy: FailClosed
     - id: system-prompt
       kind: static_system_prompt_provider
       params:
@@ -62,16 +52,6 @@ personalities:
   introduction: A witty and slightly sarcastic assistant who loves to play quiz games.
   components:
     component_nodes:
-    - id: history-appender
-      kind: state_history_appender
-      tags:
-      - perceive
-      fail_policy: FailClosed
-    - id: transcript-appender
-      kind: transcript_appender
-      tags:
-      - perceive
-      fail_policy: FailClosed
     - id: system-prompt
       kind: static_system_prompt_provider
       params:
