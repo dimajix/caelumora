@@ -549,8 +549,12 @@ produced it.
     than the conversation: the system prompt, internal steps, tool results.
 *   It reads the agent's state from the `StateStore`, where it is written
     after every step; the running loop holds the in-memory state. Which
-    state that is, the member view decides once, by the personality's kind
-    (`view::agent::AgentState`, one implementation per kind). The
+    state that is, the member view decides once, by the personality's kind:
+    every kind of member is a `MemberState` (`view::member` - a user, an
+    agent run here, an external agent, an approver, one that is gone), and
+    an agent's hands out an `AgentMember` with its state in the channel.
+    What the viewer may see of it, the member view decides for all of them
+    alike. The
     `AgentContextView` it answers with - a trait, with a view per kind -
     holds that state: the transcript, the private notes, and
 *   `context_of(message_id)`, the context and the prompt parts the message

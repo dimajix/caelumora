@@ -1,17 +1,15 @@
 //! A channel as its viewer reached it, and its members.
 
-use super::agent::{agent_state, AgentState};
+use super::member::{member_state, AgentMember, MemberState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, Personality, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::digest::Digest;
-use caelumora_model::mention::handle_of;
 use caelumora_model::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
@@ -261,49 +259,22 @@ impl ChannelView {
 }
 
 /// A participant of a channel - a user, an agent, an approver - as the
-/// viewer reached it.
+/// viewer reached it. What differs between the kinds is its `MemberState`;
+/// what the viewer may see of it is decided here, for every kind alike.
 #[derive(Debug, Clone)]
 pub struct MemberView {
     channel: ChannelView,
     participant: Participant,
-    /// The name of a member that is no agent; `None` for a user that no
-    /// longer exists. An agent's is in its document.
-    name: Option<String>,
-    /// For an agent: its document - its name, its attributes, which its
-    /// context is read by; `None` for one that no longer exists.
-    agent: Option<Agent>,
-    /// For an agent: its personality, read once - what kind of agent it is
-    /// (issue 179) and how it is introduced (issue 176); `None` for one
-    /// whose personality no longer exists or cannot be read.
-    personality: Option<Personality>,
     /// Took part once and left.
     former: bool,
-    /// For an agent that exists: its state in the channel, as its kind
-    /// keeps it (issue 179).
-    agent_state: Option<Arc<dyn AgentState>>,
+    /// What the member is, as its kind makes it - decided once.
+    state: Arc<dyn MemberState>,
 }
 
 impl MemberView {
     async fn of(channel: ChannelView, participant: Participant, former: bool) -> Self {
-        let (name, agent) = match participant {
-            Participant::Agent(id) => (None, channel.views().agent_of(id).await),
-            _ => (channel.views().name_of(&participant).await, None),
-        };
-        let personality = match &agent {
-            Some(agent) => channel.views().personality_of(agent).await.unwrap_or_else(|e| {
-                warn!("Cannot read the personality of agent {}: {:#}", agent.id, e);
-                None
-            }),
-            None => None,
-        };
-        let agent_state = agent.as_ref().map(|agent| {
-            // Without a personality, read as before there were kinds: the
-            // state of an agent run here, which an external one does not
-            // write.
-            let kind = personality.as_ref().map_or(PersonalityKind::Internal, |p| p.kind);
-            agent_state(kind, agent.id, channel.id(), channel.views().runtime().state_store())
-        });
-        Self { channel, participant, name, agent, personality, former, agent_state }
+        let state = member_state(channel.views(), &participant, channel.id()).await;
+        Self { channel, participant, former, state }
     }
 
     /// Whether the member took part once and left: not among the channel's
@@ -323,20 +294,14 @@ impl MemberView {
 
     /// `None` for a user or agent that no longer exists.
     pub fn name(&self) -> Option<&str> {
-        match &self.agent {
-            Some(agent) => Some(agent.name.as_str()),
-            None => self.name.as_deref(),
-        }
+        self.state.name()
     }
 
     /// The handle the member is `@`-mentioned by (see `crate::mention`), or
     /// `None` if it cannot be mentioned - approvers, participants that no
     /// longer exist, names that yield no handle.
     pub fn handle(&self) -> Option<String> {
-        match &self.participant {
-            Participant::Approver(_) => None,
-            _ => self.name().map(handle_of).filter(|handle| !handle.is_empty()),
-        }
+        self.state.handle()
     }
 
     /// How the member is introduced (issue 176): an agent as its
@@ -348,18 +313,14 @@ impl MemberView {
     /// # Errors
     /// `Failed` if it cannot be read.
     pub async fn introduction(&self) -> ViewResult<Option<String>> {
-        match &self.participant {
-            Participant::User(id) => self.channel.views().introduction_of(*id).await,
-            Participant::Agent(_) => Ok(self.personality.as_ref().and_then(|p| p.introduction.clone())),
-            Participant::Approver(_) => Ok(None),
-        }
+        self.state.introduction().await
     }
 
     /// Whether the viewer may see what this member saw when it produced a
     /// message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub async fn may_read_context(&self) -> bool {
-        match &self.agent {
-            Some(agent) => self.channel.views().runtime().security_manager().may_read_agent_context(self.channel.views().viewer().context(), &agent.security_attributes).await,
+        match self.state.agent() {
+            Some(agent) => self.channel.views().runtime().security_manager().may_read_agent_context(self.channel.views().viewer().context(), agent.attributes()).await,
             None => false,
         }
     }
@@ -372,8 +333,8 @@ impl MemberView {
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
-        let Some(state) = &self.agent_state else { return Ok(None) };
-        let (notes, digest) = state.notes().await?;
+        let Some(agent) = self.state.agent() else { return Ok(None) };
+        let (notes, digest) = agent.notes().await?;
         let notes = self.channel.released(notes).await;
         Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest }))
     }
@@ -384,8 +345,8 @@ impl MemberView {
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
-        match &self.agent_state {
-            Some(state) if !self.former => state.pending_approvals().await,
+        match self.state.agent() {
+            Some(agent) if !self.former => agent.pending_approvals().await,
             _ => Ok(Vec::new()),
         }
     }
@@ -399,8 +360,8 @@ impl MemberView {
     /// `NoContext` if the member is no agent, `Forbidden` if the viewer may
     /// not read what it saw, `Failed` if its state cannot be read.
     pub async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
-        let state = self.readable_agent().await?;
-        let (notes, digest) = state.private_notes().await?;
+        let agent = self.readable_agent().await?;
+        let (notes, digest) = agent.private_notes().await?;
         Ok((self.channel.released(notes).await, digest))
     }
 
@@ -415,24 +376,24 @@ impl MemberView {
     /// not read what it saw or reads the channel entry by entry only,
     /// `Failed` if its state cannot be read.
     pub async fn context(&self) -> ViewResult<Box<dyn AgentContextView>> {
-        let state = self.readable_agent().await?;
+        let agent = self.readable_agent().await?;
         if self.channel.readable == Readable::Released {
             return Err(ViewError::Forbidden { actor: self.id() });
         }
-        state.context().await
+        agent.context().await
     }
 
-    /// The member's state as an agent whose context the viewer may read.
-    async fn readable_agent(&self) -> ViewResult<&Arc<dyn AgentState>> {
-        let (Some(state), Some(Agent { security_attributes: attributes, .. })) = (&self.agent_state, &self.agent) else {
+    /// The member as an agent whose context the viewer may read.
+    async fn readable_agent(&self) -> ViewResult<&dyn AgentMember> {
+        let Some(agent) = self.state.agent() else {
             return Err(ViewError::NoContext { actor: self.id() });
         };
         let views = self.channel.views();
         let forbidden = || ViewError::Forbidden { actor: self.id() };
         views.runtime().security_manager()
-            .require(views.viewer().context(), ActionType::ReadAgentContext(attributes), forbidden).await
+            .require(views.viewer().context(), ActionType::ReadAgentContext(agent.attributes()), forbidden).await
             .map_err(|_| forbidden())?;
-        Ok(state)
+        Ok(agent)
     }
 
     /// The member as the viewer sees it at this moment (issue 80).

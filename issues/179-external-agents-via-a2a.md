@@ -628,3 +628,13 @@ Each step compiles, is tested, and leaves `main` working.
   `ActorRuntime::personality` is gone. `MemberView::of` reads it once and
   keeps it for the kind and the introduction (`Views::kind_of` is gone,
   `introduction_of` reads users' only).
+- **2026-10-02** — The member views by kind, at the maintainer's request:
+  `AgentState` became `MemberState` (`view/member.rs`), one implementation
+  per kind of member - user, agent run here, external agent, approver, and
+  one that no longer exists - holding what that kind has: the name, the
+  introduction, and for an agent its document, its personality and an
+  `AgentMember` with its state in the channel. `MemberView` keeps the
+  channel, the participant, `former` and the access questions, which stay
+  in one place for every kind. A `MemberView` trait was weighed and not
+  taken: the access questions would be spread over its implementations,
+  and the public API would hand out trait objects for nothing.

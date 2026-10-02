@@ -71,3 +71,7 @@ Personalities have no controller at all.
 - **2026-10-02** — Opened at the maintainer's request, after the
   personality was read up to three times for one member. Merged as step 1
   in the same change (see *Considerations*); caching is what remains.
+- **2026-10-02** — A user's introduction is read when it is first asked
+  for and then kept with the member (`view/member.rs`, `UserMember`):
+  listing members for a snapshot, for notes or for approvals no longer
+  reads profiles.

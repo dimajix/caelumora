@@ -25,9 +25,9 @@
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
 
-mod agent;
 mod channel;
 mod context;
+mod member;
 mod session;
 
 pub use channel::{ChannelView, MemberView, PublishedNotes};
@@ -41,7 +41,6 @@ use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::user::UserId;
 use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::privacy::SessionPrivacy;
@@ -288,20 +287,6 @@ impl Views {
             Ok(personality) => Ok(Some(personality)),
             Err(StoreError::NotFound { .. }) => Ok(None),
             Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", agent.id)))),
-        }
-    }
-
-    /// How the user `id` introduces themselves in their profile (issue 176),
-    /// `None` if they do not. Read in the runtime's name, like the name:
-    /// introductions are public.
-    ///
-    /// # Errors
-    /// `Failed` if it cannot be read.
-    async fn introduction_of(&self, id: UserId) -> ViewResult<Option<String>> {
-        match self.runtime.entity_store().get_user_profile(&SecurityContext::system(), id).await {
-            Ok(profile) => Ok(profile.introduction),
-            Err(StoreError::NotFound { .. }) => Ok(None),
-            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", ActorId::User(id))))),
         }
     }
 
