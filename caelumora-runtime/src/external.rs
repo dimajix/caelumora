@@ -123,13 +123,15 @@ pub trait ExternalAgent: Send + Sync + Debug {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
+    use futures::StreamExt;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
     /// A remote agent that answers each request with the next of its
-    /// scripted event lists, and records what it was given. A request with
-    /// no script left is answered by a stream that never ends: what a
-    /// cancel has to interrupt.
+    /// scripted event lists, and records what it was given. A script that
+    /// ends without an event that ends the stream leaves the task working:
+    /// nothing more comes - what a cancel has to interrupt. So does a
+    /// request with no script left.
     #[derive(Debug, Default)]
     pub(crate) struct ScriptedExternalAgent {
         answers: Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>,
@@ -153,10 +155,7 @@ pub(crate) mod testing {
 
         fn next(script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>) -> ExternalStream {
             let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
-            match next {
-                Some(events) => Box::pin(futures::stream::iter(events)),
-                None => Box::pin(futures::stream::pending()),
-            }
+            Box::pin(futures::stream::iter(next.unwrap_or_default()).chain(futures::stream::pending()))
         }
     }
 
@@ -221,12 +220,12 @@ mod tests {
         ]]).resuming(vec![vec![Ok(ExternalEvent::Completed)]]);
         let security = SecurityContext::default();
 
-        let events: Vec<_> = agent.send(&security, None, hello()).await.unwrap().collect().await;
+        let events: Vec<_> = agent.send(&security, None, hello()).await.unwrap().take(4).collect().await;
         assert_eq!(events.len(), 4);
         assert!(matches!(events.last(), Some(Ok(ExternalEvent::Completed))));
         assert_eq!(agent.sent.lock().unwrap().as_slice(), &[(None, hello())]);
 
-        let resumed: Vec<_> = agent.resume(&security, &task).await.unwrap().collect().await;
+        let resumed: Vec<_> = agent.resume(&security, &task).await.unwrap().take(1).collect().await;
         assert!(matches!(resumed.as_slice(), [Ok(ExternalEvent::Completed)]), "resuming has a script of its own");
 
         agent.cancel(&security, &task).await.unwrap();

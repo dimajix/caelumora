@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod user;
 pub mod approval;
+pub mod external_agent;
 
 use crate::agent_turn::Turn;
 use crate::component::ComponentImpl;

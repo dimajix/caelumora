@@ -2,6 +2,7 @@ use caelumora_model::name::Name;
 use crate::actor::Actor;
 use crate::actor_impl::agent::AgentActor;
 use crate::actor_impl::approval::ApproverActor;
+use crate::actor_impl::external_agent::ExternalAgentActor;
 use crate::actor_impl::user::UserActor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::moderator::Moderator;
@@ -15,6 +16,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, UserController};
+use caelumora_model::agent::PersonalityKind;
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
@@ -99,10 +101,13 @@ pub enum ChannelError {
 }
 
 /// A participant with what its actor is built from: the instance's
-/// controller of its user or agent (issue 121), or the approver itself.
+/// controller of its user or agent (issue 121), or the approver itself. An
+/// agent is run here or elsewhere, as its personality's kind says (issue
+/// 179).
 enum Member {
     User(Arc<UserController>),
     Agent(Arc<AgentController>),
+    ExternalAgent(Arc<AgentController>),
     Approver(Approver),
 }
 
@@ -111,27 +116,49 @@ impl Member {
     /// longer exists.
     ///
     /// # Errors
-    /// Whatever else the store reports when loading it.
+    /// Whatever else the store reports when loading it - also that an
+    /// agent's personality is gone: the agent exists, but cannot be run.
     async fn of(participant: &Participant, runtime: &ChannelRuntime) -> Result<Option<Self>> {
         let controllers = runtime.controller_manager();
-        let found = match participant {
-            Participant::User(id) => controllers.user_controller(*id).await.map(Member::User),
-            Participant::Agent(id) => controllers.agent_controller(*id).await.map(Member::Agent),
+        let agent = match participant {
+            Participant::User(id) => return gone_is_none(controllers.user_controller(*id).await.map(Member::User)),
             Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
+            Participant::Agent(id) => match gone_is_none(controllers.agent_controller(*id).await)? {
+                Some(agent) => agent,
+                None => return Ok(None),
+            },
         };
-        match found {
-            Ok(member) => Ok(Some(member)),
-            Err(StoreError::NotFound { .. }) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        let personality = agent.load().personality_id;
+        Ok(Some(match runtime.personality_kind(personality).await? {
+            PersonalityKind::Internal => Member::Agent(agent),
+            PersonalityKind::External => Member::ExternalAgent(agent),
+        }))
     }
 
     fn actor_id(&self) -> ActorId {
         match self {
             Member::User(user) => ActorId::User(user.id()),
-            Member::Agent(agent) => ActorId::Agent(agent.id()),
+            Member::Agent(agent) | Member::ExternalAgent(agent) => ActorId::Agent(agent.id()),
             Member::Approver(approver) => ActorId::Approver(approver.id),
         }
+    }
+}
+
+/// The messages of `visible` after the last of them that `known` has, and
+/// not in `known`: what a participant that joins again missed while it was
+/// away - only appended, so that what it has stays in the order it was said.
+fn missing_after(known: &[Message], visible: Vec<Message>) -> Vec<Message> {
+    let known: std::collections::HashSet<_> = known.iter().map(|m| m.id).collect();
+    let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
+    visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
+}
+
+/// What was loaded, or `None` if it no longer exists.
+fn gone_is_none<T>(found: Result<T, StoreError>) -> Result<Option<T>> {
+    match found {
+        Ok(found) => Ok(Some(found)),
+        Err(StoreError::NotFound { .. }) => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -444,8 +471,11 @@ impl ChannelLoop {
         self.channel.add_participant(context, found.clone(), start).await?;
 
         let started = async {
-            if let ActorId::Agent(agent) = participant {
-                self.seed_transcript(agent, visible_part(self.history_start_of(participant), messages)).await?;
+            let visible = visible_part(self.history_start_of(participant), messages);
+            match &member {
+                Member::Agent(agent) => self.seed_transcript(agent.id(), visible).await?,
+                Member::ExternalAgent(agent) => self.seed_heard(agent.id(), visible).await?,
+                Member::User(_) | Member::Approver(_) => {}
             }
             Self::create_actor(self.channel.clone(), member, &self.runtime).await
         }.await;
@@ -507,12 +537,24 @@ impl ChannelLoop {
     /// transcript stays in the order things were said.
     async fn seed_transcript(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state_store.get_agent_channel_state(agent, self.id).await?;
-        let known: std::collections::HashSet<_> = state.transcript.messages().iter().map(|m| m.id).collect();
-        let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
-        let missing: Vec<Message> = visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect();
+        let missing = missing_after(&state.transcript.messages(), visible);
         if !missing.is_empty() {
             state.transcript.extend(missing);
             self.state_store.put_agent_channel_state(agent, self.id, &state).await?;
+        }
+        Ok(())
+    }
+
+    /// Appends to the history of the external agent `agent` in this channel
+    /// what others said in `visible` after the last message it has heard -
+    /// as `seed_transcript` does for an agent run here (issue 179). It is
+    /// given to the remote agent when it is next asked.
+    async fn seed_heard(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
+        let mut state = self.state_store.get_external_agent_channel_state(agent, self.id).await?;
+        let missing = crate::actor_impl::external_agent::worth_hearing(missing_after(&state.history.messages(), visible), ActorId::Agent(agent));
+        if !missing.is_empty() {
+            state.history.extend(missing);
+            self.state_store.put_external_agent_channel_state(agent, self.id, &state).await?;
         }
         Ok(())
     }
@@ -676,6 +718,7 @@ impl ChannelLoop {
         Ok(match member {
             Member::User(user) => Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?),
             Member::Agent(agent) => Box::new(AgentActor::new(&channel.load(), agent, actor_runtime).await?),
+            Member::ExternalAgent(agent) => Box::new(ExternalAgentActor::new(&channel.load(), agent, actor_runtime).await?),
             Member::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }
@@ -1253,6 +1296,30 @@ mod tests {
         // older than what it has and would come after it.
         channel.seed_transcript(agent, vec![one, two, three, four]).await.unwrap();
         assert_eq!(transcript(channel.clone()).await, ["three", "four"], "in the order things were said");
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_that_joins_hears_what_it_may_see_and_what_it_missed() {
+        use caelumora_model::message::{MessageId, MessageRole};
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let agent = caelumora_model::agent::AgentId::new();
+        let message = |sender: ActorId, text: &str| Message {
+            id: MessageId::new(), role: MessageRole::User, sender_id: sender, content: Some(text.to_string()),
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let said = |text: &str| message(ActorId::User(alice.id), text);
+        let (one, two, three) = (said("one"), said("two"), said("three"));
+        let own = message(ActorId::Agent(agent), "mine");
+        let heard = |channel: Arc<ChannelLoop>| async move {
+            channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap()
+                .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
+        };
+
+        channel.seed_heard(agent, vec![two.clone()]).await.unwrap();
+        assert_eq!(heard(channel.clone()).await, ["two"], "what it may see");
+        channel.seed_heard(agent, vec![one, two, own, three]).await.unwrap();
+        assert_eq!(heard(channel.clone()).await, ["two", "three"], "what it missed, and nothing older or its own");
     }
 
     fn command_error(error: &anyhow::Error) -> &crate::command::CommandError {
@@ -2326,5 +2393,249 @@ mod tests {
         channel.handle_actor_event(Some(late), &HashMap::new()).await;
 
         assert!(events.try_recv().is_err(), "what a removed participant sends is dropped");
+    }
+
+
+    /// A running channel with alice and an external agent (issue 179) that
+    /// `remote` stands in for, after alice said "hello". The remote agent is
+    /// its personality's component, of a kind registered for the test.
+    async fn with_an_external_agent(remote: Arc<crate::external::testing::ScriptedExternalAgent>) -> Stuck {
+        let component = caelumora_model::component::ComponentDescriptor::new("remote", "test_remote");
+        let components = caelumora_model::component::ComponentConfig { component_nodes: vec![component] };
+        let channel = external_channel(remote, components).await.expect("the external agent can be run");
+        start(channel).await
+    }
+
+    /// A channel of alice and an external agent with `components`, built but
+    /// not running.
+    async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternalAgent>, components: caelumora_model::component::ComponentConfig) -> Result<(Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)> {
+        use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+        use caelumora_model::scope::Scope;
+
+        let store = Arc::new(MemoryStore::new());
+        let personality = Personality {
+            description: String::new(),
+            introduction: None,
+            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+            id: PersonalityId::new(),
+            name: ScopedName::new("remote", Default::default()).unwrap(),
+            kind: PersonalityKind::External,
+            roles: None,
+            components,
+            security_attributes: Default::default(),
+        };
+        store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let agent = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
+        let agent_id = agent.id;
+        store.create_user(&SecurityContext::system(), &alice).await.unwrap();
+        store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
+
+        let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
+        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
+        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        registry.register(
+            crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
+            move |_descriptor, _context| {
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::external::ExternalAgent>(remote.clone());
+                Ok(facets)
+            },
+        );
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let channel = Channel {
+            id: ChannelId::new(),
+            session_id: SessionId::new(),
+            name: Name::new("main").unwrap(),
+            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+            participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
+            security_attributes: SecurityAttributes::default(),
+            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            history_limits: Vec::new(),
+        };
+        runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        let executor = CommandExecutor::empty(runtime.security_manager());
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;
+        Ok((channel, context, agent_id, alice.id))
+    }
+
+    /// Runs `built` and has alice say "hello".
+    async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)) -> Stuck {
+        let events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
+        let helper = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+        Stuck { channel, context, agent, helper, events, running }
+    }
+
+    /// What `agent` answered next.
+    async fn answered(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> Vec<Message> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) {
+                    if let ActorEvent::FullResponseGenerated(messages) = envelope.event { break messages }
+                }
+            }
+        }).await.expect("the agent answers")
+    }
+
+    /// The user `context` acts for.
+    fn alice_of(context: &SecurityContext) -> UserId {
+        match context.initiator_id {
+            ActorId::User(user) => user,
+            other => panic!("{other} is no user"),
+        }
+    }
+
+    fn task(id: &str) -> caelumora_model::external_agent::TaskId {
+        caelumora_model::external_agent::TaskId(id.to_string())
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_answers_in_the_channel() {
+        use crate::external::{ExternalEvent, Said};
+        use caelumora_model::external_agent::ConversationId;
+
+        let conversation = ConversationId("c-1".to_string());
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![
+                Ok(ExternalEvent::Conversation(conversation.clone())),
+                Ok(ExternalEvent::Started(task("t-1"))),
+                Ok(ExternalEvent::Partial("Hel".to_string())),
+                Ok(ExternalEvent::Message("Hello, alice.".to_string())),
+                Ok(ExternalEvent::Completed),
+            ],
+            vec![Ok(ExternalEvent::Started(task("t-2"))), Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+
+        let first = answered(&mut events, agent).await;
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].content.as_deref(), Some("Hello, alice."), "the whole message replaces its pieces");
+        assert_eq!(first[0].sender_id, ActorId::Agent(agent));
+        assert_eq!(channel.history().await.last().map(|m| m.id), Some(first[0].id), "in the channel's history");
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("How are you?".to_string(), None).await.unwrap();
+        let second = answered(&mut events, agent).await;
+        assert_eq!(second[0].content.as_deref(), Some("Fine."));
+
+        let sent = remote.sent.lock().unwrap().clone();
+        let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
+        assert_eq!(sent[0].0, None, "the remote agent opens the conversation");
+        assert_eq!(sent[0].1.said, vec![said("hello")]);
+        assert_eq!(sent[1].0, Some(conversation.clone()), "and keeps it");
+        assert_eq!(sent[1].1.said, vec![said("How are you?")], "only what it has not heard, not its own answer");
+
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.conversation, Some(conversation));
+        assert!(state.open_tasks.is_empty(), "both tasks ended");
+        let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what was sent and what came back");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_that_fails_or_cannot_be_reached_fails_its_answer_and_goes_on() {
+        use crate::external::{ExternalAgentError, ExternalEvent};
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Failed("out of coffee".to_string()))],
+            vec![Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "refused".to_string() })],
+        ]));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote).await;
+
+        let failed = turn_failed(&mut events, agent).await;
+        assert!(failed.contains("hermes could not answer: out of coffee"), "{failed}");
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("Still there?".to_string(), None).await.unwrap();
+        let unreachable = turn_failed(&mut events, agent).await;
+        assert!(unreachable.contains("cannot reach the external agent at https://agent.example"), "{unreachable}");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.open_tasks.is_empty(), "the failed task ended");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
+        use crate::external::ExternalEvent;
+
+        // The remote agent takes the task on and then works on it for ever.
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Partial("Let me think".to_string()))],
+        ]));
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(remote.clone()).await;
+        settled(&helper, ActorState::Planning).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        channel.cancel(&context).await.expect("permitted");
+        let ended = answered(&mut events, agent).await;
+        assert_eq!(ended.first().and_then(|m| m.content.as_deref()), Some("Let me think"), "what came so far");
+        settled(&helper, ActorState::Idle).await;
+        assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the remote task is cancelled too");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.open_tasks.is_empty());
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_says_nothing() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1")))],
+        ]));
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(remote.clone()).await;
+        settled(&helper, ActorState::Planning).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while remote.cancelled.lock().unwrap().is_empty() { tokio::time::sleep(Duration::from_millis(10)).await }
+        }).await.expect("the remote task is cancelled");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        while let Ok(envelope) = events.try_recv() {
+            assert!(
+                !(envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_) | ActorEvent::TurnFailed { .. })),
+                "a stopped agent says nothing: {}", envelope.describe()
+            );
+        }
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_that_asked_back_is_answered_within_the_same_task() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::external_agent::OpenTaskState;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
+            vec![Ok(ExternalEvent::Message("Sunny in Bonn.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+
+        let question = answered(&mut events, agent).await;
+        assert_eq!(question[0].content.as_deref(), Some("Which city?"), "the question is the answer");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::InputRequired)]);
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("Bonn".to_string(), None).await.unwrap();
+        assert_eq!(answered(&mut events, agent).await[0].content.as_deref(), Some("Sunny in Bonn."));
+        assert_eq!(remote.sent.lock().unwrap()[1].1.answers, Some(task("t-1")), "the reply continues the task that asked");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.open_tasks.is_empty(), "and it ended");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_external_personality_that_names_no_remote_agent_cannot_be_run() {
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+        let refused = external_channel(remote, Default::default()).await.expect_err("nothing to reach");
+        let message = format!("{refused:#}");
+        assert!(message.contains("no component provides ExternalAgent, and it has no default"), "{message}");
     }
 }

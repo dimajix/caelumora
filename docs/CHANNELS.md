@@ -284,7 +284,28 @@ An **actor** is anything that sends and receives events in a channel.
     once. What an agent's model saw is not asked of its actor but read
     through the views (see [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)).
     The implementations are `AgentActor`,
-    `UserActor` and `ApproverActor` (`caelumora_runtime::actor_impl`).
+    `UserActor`, `ApproverActor` and `ExternalAgentActor`
+    (`caelumora_runtime::actor_impl`).
+*   **Which actor runs an agent** is its personality's `kind` (issue 179):
+    `internal` - the default - an `AgentActor`; `external` an
+    `ExternalAgentActor`, for an agent that runs elsewhere and is reached
+    through the personality's one `ExternalAgent` component. The channel
+    decides it when it builds the actor (`Member::of`); the agent is
+    `ActorId::Agent` either way, and nothing else - the participants, the
+    REST API, the moderator - tells the two apart.
+*   **An external agent** has no turn, no tools and no transcript. Its
+    actor hears what others say, as every participant does, and keeps it
+    in its own history - seeded, when it joins, with what it may see of
+    the channel's, as an agent's transcript is; it reads nothing of the
+    channel itself. When it is asked to respond, it gives the remote agent
+    what it heard since it was last asked and publishes what comes back:
+    pieces as `PartialMessageGenerated`, the answer as
+    `FullResponseGenerated`, a task the remote agent failed as
+    `TurnFailed`. A question back from the remote agent is its answer; the
+    next request continues that task. A cancel cancels the remote task and
+    publishes what came so far; a stop cancels it and publishes nothing.
+    What was sent and what came back is all that is known of it, kept as
+    its `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`,
     or `System` - the runtime itself, set only deliberately through
     `SecurityContext::system()`.

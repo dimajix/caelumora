@@ -561,3 +561,34 @@ Each step compiles, is tested, and leaves `main` working.
     time the default is needed. Rejected: `a2a_agent` as the default (A2A
     as the silent protocol), a kind that only fails, and no single at all
     (the actor counting its providers).
+- **2026-10-02** — Step 3 done: `Member::ExternalAgent`, derived in
+  `Member::of` from the personality's kind (read as the system,
+  `ChannelRuntime::personality_kind`; a personality that is gone is an
+  error, not a participant that is gone); `create_actor` builds an
+  `ExternalAgentActor` for it, and `seed_transcript` runs for agents run
+  here only. The actor (`actor_impl/external_agent.rs`) answers a
+  `ResponseRequested` with what the remote agent sends back, fails it with
+  `TurnFailed`, cancels the remote task on `cancel` and `stop`, and stores
+  its state after every answer. Tested in `channel.rs` with
+  `ScriptedExternalAgent`: what is given and kept, failing and unreachable
+  remote agents, cancel, stop, a question back, a personality without a
+  remote agent. Deviations from the plan:
+  - Continuing a task that asked back is in this step already
+    (`OutboundMessage::answers`); step 5 keeps unprompted events and
+    resuming after a restart.
+  - The actor reads nothing of the channel (the maintainer's direction):
+    it hears what others say through its `run` loop
+    (`FullResponseGenerated`, as the moderator forwards it, before the
+    `ResponseRequested` it may cause) and keeps it in its own history,
+    stored at once. When it is asked, it gives the remote agent what it
+    heard after `caught_up_to`. Joining a channel seeds that history with
+    what it may see, as an agent's transcript is seeded (`seed_heard`
+    beside `seed_transcript`, sharing `missing_after`).
+  - Sender names are not rendered by the actor: `Said` carries them, and
+    the protocol component puts them where its protocol wants them. There
+    is no shared rendering of sender names to reuse.
+  - No `AgentChannelStateChanged` is announced: it makes user interfaces
+    reload an agent's notes and context, of which an external agent has
+    none.
+  - Answers classified above the channel are refused once, when the actor
+    is built, rather than each dropped in silence by `ChannelLoop::admits`.

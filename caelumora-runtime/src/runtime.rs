@@ -6,7 +6,7 @@ use crate::event::EventBus;
 use crate::recorder::Recorder;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId};
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
@@ -90,6 +90,12 @@ impl ChannelRuntime {
 
     pub fn controller_manager(&self) -> Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
+    /// What kind of agent the personality `id` makes (issue 179) - which
+    /// actor runs an agent of it. Read as the system: the channel decides
+    /// how to run a participant, not what anyone may read.
+    pub(crate) async fn personality_kind(&self, id: PersonalityId) -> StoreResult<PersonalityKind> {
+        Ok(self.runtime_manager.entity_store().get_personality(&SecurityContext::system(), id).await?.kind)
+    }
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
