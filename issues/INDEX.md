@@ -288,6 +288,7 @@ argues against it, and what came out of the last attempt.
 | [186](186-a2a-requests-and-long-tasks.md) | done | An external agent without streaming may not deliver tasks longer than its request timeout, and a streamed request can wait forever. |
 | [188](188-remote-helpers-on-llm-error.md) | done | What remote integrations share - redacting the endpoint, describing errors, the endpoint's configuration - is not in `remote`, and MCP errors show the URL unredacted. |
 | [195](195-broken-answer-said-twice.md) | done | An external agent's answer that broke off before its task ended is published cut off, and said again in full when the followed task ends. |
+| [204](204-external-agent-roster.md) | open | An external agent is not told who is in its channel nor how to address them, so it cannot mention another agent. |
 
 ## Open architecture questions
 
