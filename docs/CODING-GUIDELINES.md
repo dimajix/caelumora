@@ -34,8 +34,8 @@ stored entity it holds (`Session`, `Channel`) share their work by three
 rules (issue 144):
 
 *   **The model derives.** A value derived from an entity is computed in
-    `caelumora-model` - a method of the entity (`Channel::channel_ref`) or a
-    constructor of the derived type (`SessionPrivacy::of(&Session)`) - never
+    `caelumora-model` - a method of the entity (`Agent::security_context`)
+    or a constructor of the derived type (`SessionPrivacy::of(&Session)`) - never
     in the runtime, so that the stored document and the running object
     cannot disagree about it.
 *   **A runtime answers about its own entity, not about the one above.** A

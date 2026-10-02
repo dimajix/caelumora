@@ -172,7 +172,7 @@ private notes there (`MemberView::private_notes`). A turn outside of a
 channel - in tests - has no session and reads nothing.
 
 *   **From the own channel.** The agent reads as a viewer *from a place*
-    (`Viewer::from_place`, `ReaderPlace`): its channel, the classification
+    (`Viewer::from_place`, a `Place`): its channel, the classification
     its turn began with (issue 67) and its session's privacy. The views
     are built once per turn from the actor's runtime, which reaches the
     session through its channel (`ChannelLoop::session_loop()`, a weak
@@ -199,9 +199,9 @@ channel - in tests - has no session and reads nothing.
 
 ## Recording what was read
 
-Every read is recorded as a `KnowledgeRef`: the channel with its session
-(`ChannelRef`, so that knowledge from another session can be told, issue
-134), and what was read there (`KnowledgeSource`):
+Every read is recorded as a `KnowledgeRef`: the channel and its session (so
+that knowledge from another session can be told, issue 134), and what was
+read there (`KnowledgeSource`):
 
 *   `Notes { agent, digest }` - the notes an agent published in the
     channel;

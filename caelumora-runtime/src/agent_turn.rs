@@ -31,7 +31,8 @@ use tracing::warn;
 
 use crate::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::session::{ChannelId, SessionId};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnEntry;
 use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
@@ -179,7 +180,7 @@ impl<'a> Turn<'a> {
     /// classification the turn began with (issue 67). `None` for a turn
     /// outside of a channel, which reads nothing elsewhere.
     pub fn session(&self) -> Option<SessionView> {
-        self.views.as_ref()?.session(self.channel(), self.classification())
+        self.views.as_ref()?.session(self.channel_id(), self.classification())
     }
 
     /// The agent whose turn this is.
@@ -232,9 +233,13 @@ impl<'a> Turn<'a> {
 
     /// The agent's channel: where the envelope the turn answers was routed
     /// - the `ChannelLoop` stamps it on every envelope it routes.
-    pub fn channel(&self) -> ChannelRef {
-        let event = &self.current().event_context;
-        ChannelRef { session_id: event.session_id, channel_id: event.channel_id }
+    pub fn channel_id(&self) -> ChannelId {
+        self.current().event_context.channel_id
+    }
+
+    /// The session of the agent's channel, as `channel_id`.
+    pub fn session_id(&self) -> SessionId {
+        self.current().event_context.session_id
     }
 
     /// Stages `change` to the agent's own state, applied when the turn
@@ -1146,6 +1151,7 @@ mod tests {
         let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
         let read = KnowledgeRef {
             channel: Default::default(),
+            session: Default::default(),
             source: caelumora_model::context::KnowledgeSource::History { digest: None, start: None },
             classification: None,
         };

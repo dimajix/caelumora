@@ -42,35 +42,22 @@ use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::channel::Participant;
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::StoreError;
 use std::sync::Arc;
 
-/// Where an agent reads from: its channel, the classification it reads at
-/// (its turn's, issue 67) and its session's privacy (issue 134). The
-/// `reader` of every `may_channel_read` it asks.
-#[derive(Debug, Clone)]
-pub struct ReaderPlace {
-    pub channel: ChannelRef,
-    pub classification: Classification,
-    pub session: SessionPrivacy,
-}
-
-impl ReaderPlace {
-    fn place(&self) -> Place<'_> {
-        Place { channel: &self.channel, classification: &self.classification, session: &self.session }
-    }
-}
-
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.
 #[derive(Debug, Clone)]
 pub struct Viewer {
     context: SecurityContext,
-    from: Option<ReaderPlace>,
+    /// Where an agent reads from: its channel, the classification it reads
+    /// at (its turn's, issue 67) and its session's privacy (issue 134) -
+    /// the `reader` of every `may_channel_read` it asks.
+    from: Option<Place>,
 }
 
 impl Viewer {
@@ -80,7 +67,7 @@ impl Viewer {
     }
 
     /// A viewer who reads from a place: an agent in its channel.
-    pub fn from_place(context: SecurityContext, from: ReaderPlace) -> Self {
+    pub fn from_place(context: SecurityContext, from: Place) -> Self {
         Self { context, from: Some(from) }
     }
 
@@ -89,7 +76,7 @@ impl Viewer {
     }
 
     /// Where the viewer reads from, if it reads as an agent does.
-    pub fn place(&self) -> Option<&ReaderPlace> {
+    pub fn place(&self) -> Option<&Place> {
         self.from.as_ref()
     }
 }
@@ -224,8 +211,9 @@ impl Views {
         Ok(SessionView::of(self.clone(), found))
     }
 
-    /// The channel `channel` names, wherever it is - what a memory entry's
-    /// origin or a `KnowledgeRef` points to - if the viewer may read it:
+    /// The channel `channel` of session `session`, wherever it is - what a
+    /// memory entry's origin or a `KnowledgeRef` points to - if the viewer
+    /// may read it:
     /// `None` if its session or the channel is gone, or not the viewer's to
     /// read (asked as `session(id)` and `SessionView::channel` ask). Until
     /// the store keeps what was deleted (issue 164), gone and never there
@@ -233,27 +221,25 @@ impl Views {
     ///
     /// # Errors
     /// `Failed` if reaching it failed.
-    pub async fn channel_of(&self, channel: ChannelRef) -> ViewResult<Option<ChannelView>> {
-        let session = match self.session(channel.session_id).await {
+    pub async fn channel_of(&self, session: SessionId, channel: ChannelId) -> ViewResult<Option<ChannelView>> {
+        let session = match self.session(session).await {
             Ok(session) => session,
             Err(ViewError::SessionNotFound(_)) => return Ok(None),
             Err(e) => return Err(e),
         };
-        match session.channel(channel.channel_id).await {
+        match session.channel(channel).await {
             Ok(channel) => Ok(Some(channel)),
             Err(ViewError::ChannelNotFound { .. }) => Ok(None),
             Err(e) => Err(e),
         }
     }
 
-    /// Whether the viewer, reading from its place, may read what is
-    /// classified `classification` in `channel` of a session with privacy
-    /// `session` (`AccessQuestions::may_channel_read`, issue 133). A viewer
+    /// Whether the viewer, reading from its place, may read what `source`
+    /// holds (`AccessQuestions::may_channel_read`, issue 133). A viewer
     /// without a place reads by other questions and is not asked this one.
-    pub(crate) async fn may_read_from(&self, channel: &ChannelRef, classification: &Classification, session: &SessionPrivacy) -> bool {
+    pub(crate) async fn may_read_from(&self, source: &Place) -> bool {
         let Some(from) = &self.viewer.from else { return true };
-        let source = Place { channel, classification, session };
-        self.runtime.security_manager().may_channel_read(self.viewer.context(), from.place(), source).await
+        self.runtime.security_manager().may_channel_read(self.viewer.context(), from, source).await
     }
 
     /// The name of `participant`; `None` for a user or agent that no
@@ -357,13 +343,13 @@ impl ViewsFactory {
     /// The agent's own session, as it reads from `channel` at
     /// `classification`; `None` while the channel is not attached to its
     /// session yet, or once it is gone.
-    pub(crate) fn session(&self, channel: ChannelRef, classification: Classification) -> Option<SessionView> {
+    pub(crate) fn session(&self, channel: ChannelId, classification: Classification) -> Option<SessionView> {
         let (session_loop, runtime) = match &self.root {
             FactoryRoot::Actor(actor) => (actor.channel_loop()?.session_loop()?, actor.runtime_manager().clone()),
             #[cfg(test)]
             FactoryRoot::Session { session, runtime } => (session.clone(), runtime.clone()),
         };
-        let from = ReaderPlace { channel, classification, session: session_loop.privacy() };
+        let from = Place { channel, classification, session: session_loop.privacy() };
         let views = Views::new(runtime, Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
         Some(SessionView::of(views, Found::Running(session_loop)))
     }
@@ -742,7 +728,7 @@ mod tests {
         // The agent, reading from one of its channels, as its components do.
         let reading_from = |channel: &Channel| {
             let context = SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id));
-            let from = ReaderPlace { channel: ChannelRef { session_id: session.id, channel_id: channel.id }, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
+            let from = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
             Viewer::from_place(context, from)
         };
         let names = |channels: Vec<ChannelView>| channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>();
@@ -791,7 +777,7 @@ mod tests {
         store.put_channel_state(channel.id, &state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
-        let reached = views.channel_of(ChannelRef { session_id: session.id, channel_id: channel.id }).await.unwrap().expect("there");
+        let reached = views.channel_of(session.id, channel.id).await.unwrap().expect("there");
         let former = reached.member(ActorId::Agent(helper.id)).await.expect("known by what it said");
         assert!(former.former() && former.name() == Some("Helper"));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
@@ -800,8 +786,8 @@ mod tests {
 
         // Gone: the channel, then the session.
         channel.id = ChannelId::new();
-        assert!(views.channel_of(ChannelRef { session_id: session.id, channel_id: channel.id }).await.unwrap().is_none());
-        assert!(views.channel_of(ChannelRef { session_id: SessionId::new(), channel_id: channel.id }).await.unwrap().is_none());
-        assert!(manager.views(as_user(UserId::new())).channel_of(ChannelRef { session_id: session.id, channel_id: reached.id() }).await.unwrap().is_none(), "nor is it there for a stranger");
+        assert!(views.channel_of(session.id, channel.id).await.unwrap().is_none());
+        assert!(views.channel_of(SessionId::new(), channel.id).await.unwrap().is_none());
+        assert!(manager.views(as_user(UserId::new())).channel_of(session.id, reached.id()).await.unwrap().is_none(), "nor is it there for a stranger");
     }
 }

@@ -13,7 +13,7 @@
 //! so that it is recalled in another session only where that session's
 //! people agreed to it (issue 134).
 
-use crate::confidentiality::ChannelRef;
+use crate::channel::ChannelId;
 use crate::ledger::{Change, Item, Ledger, LedgerKind};
 use crate::privacy::SessionPrivacy;
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,8 @@ impl From<MemoryId> for u32 {
 /// the digest: a reader learns where what it recalls comes from.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MemoryOrigin {
-    pub channel: ChannelRef,
+    pub channel: ChannelId,
+    /// The channel's session, which it names (`SessionPrivacy::id`).
     pub session: SessionPrivacy,
 }
 
@@ -81,7 +82,7 @@ mod tests {
     #[test]
     fn every_entry_knows_where_it_was_written() {
         let mut chain = MemoryChain::default();
-        let origin = MemoryOrigin { channel: ChannelRef::default(), session: SessionPrivacy::default() };
+        let origin = MemoryOrigin { channel: ChannelId::default(), session: SessionPrivacy::default() };
         let remember = |id, text: &str| Change::Add { id: MemoryId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT };
         chain.push(remember(1, "Kaya likes tea."), origin.clone(), MessageId::new());
         chain.push(remember(2, "Kaya lives in Berlin."), origin.clone(), MessageId::new());
@@ -103,7 +104,7 @@ mod tests {
             chain.digest()
         };
         let here = MemoryOrigin::default();
-        let elsewhere = MemoryOrigin { channel: ChannelRef { channel_id: crate::channel::ChannelId::new(), ..ChannelRef::default() }, ..MemoryOrigin::default() };
+        let elsewhere = MemoryOrigin { channel: ChannelId::new(), ..MemoryOrigin::default() };
         assert_ne!(digest_in(here.clone()), digest_in(elsewhere));
         assert_eq!(digest_in(here.clone()), digest_in(here));
     }

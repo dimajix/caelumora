@@ -108,7 +108,7 @@ pub struct ActorRuntime {
 
 impl ActorRuntime {
     /// The actor this runtime is for.
-    pub fn actor(&self) -> ActorId {
+    pub fn actor_id(&self) -> ActorId {
         self.actor
     }
 

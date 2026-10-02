@@ -19,7 +19,8 @@ use crate::tool::{arguments, classification_argument, id_argument, reclassify_pa
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::{SecurityContext, SecurityManager};
@@ -162,7 +163,7 @@ impl NotesComponent {
         for channel in channels {
             let mut notes = Vec::new();
             for agent_notes in channel.notes().await? {
-                if let Some(reference) = notes_ref(channel.channel_ref(), &agent_notes) {
+                if let Some(reference) = notes_ref(channel.id(), channel.session().id(), &agent_notes) {
                     turn.record_knowledge(reference);
                 }
                 for note in agent_notes.notes {
@@ -177,11 +178,11 @@ impl NotesComponent {
     }
 }
 
-/// What reading `published` in `channel` records.
-fn notes_ref(channel: ChannelRef, published: &PublishedNotes) -> Option<KnowledgeRef> {
+/// What reading `published` in `channel` of `session` records.
+fn notes_ref(channel: ChannelId, session: SessionId, published: &PublishedNotes) -> Option<KnowledgeRef> {
     let ActorId::Agent(agent) = published.agent else { return None };
     let classification = Classification::join_all(published.notes.iter().map(|n| &n.classification));
-    Some(KnowledgeRef { channel, source: KnowledgeSource::Notes { agent, digest: published.digest }, classification })
+    Some(KnowledgeRef { channel, session, source: KnowledgeSource::Notes { agent, digest: published.digest }, classification })
 }
 
 #[async_trait]
@@ -194,14 +195,14 @@ impl PromptProvider for NotesComponent {
         let own = ActorId::Agent(turn.agent_id());
         let mut others = Vec::new();
         if let Some(session) = turn.session() {
-            let published = match session.channel(turn.channel().channel_id).await {
+            let published = match session.channel(turn.channel_id()).await {
                 Ok(channel) => channel.notes().await,
                 Err(e) => Err(e),
             };
             match published {
                 Ok(published) => others = published,
                 // The agent can still answer without the others' notes.
-                Err(e) => warn!("Reading the notes of channel {} failed: {}", turn.channel().channel_id, e),
+                Err(e) => warn!("Reading the notes of channel {} failed: {}", turn.channel_id(), e),
             }
         }
         others.retain(|p| p.agent != own && !p.notes.is_empty());
@@ -210,11 +211,11 @@ impl PromptProvider for NotesComponent {
         let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
 
         // What the part shows, as knowledge read (issue 17).
-        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel(), p)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel_id(), turn.session_id(), p)).collect();
         if !own_notes.is_empty() {
             let own_digest = AgentNotes::digest(turn, NoteKind::Public);
             let classification = Classification::join_all(own_notes.iter().map(|n| &n.classification));
-            knowledge.push(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest }, classification });
+            knowledge.push(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest }, classification });
         }
         Ok(Prompt::of_knowledge(text, knowledge))
     }

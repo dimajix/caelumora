@@ -8,11 +8,11 @@ use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::name::Name;
 use caelumora_model::note::Note;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, MemberSnapshot};
 use caelumora_model::store::StoreError;
@@ -91,8 +91,10 @@ impl ChannelView {
         &self.channel.classification
     }
 
-    pub fn channel_ref(&self) -> ChannelRef {
-        ChannelRef { session_id: self.channel.session_id, channel_id: self.channel.id }
+    /// What the channel holds classified `classification`: one side of the
+    /// question whether it may be read from elsewhere.
+    pub fn place(&self, classification: &Classification) -> Place {
+        Place { channel: self.channel.id, classification: classification.clone(), session: self.session.privacy() }
     }
 
     /// Whether the channel runs: its loop is where an operation goes.
@@ -106,7 +108,7 @@ impl ChannelView {
     pub(super) async fn may_read_entry(&self, classification: &Classification) -> bool {
         match self.readable {
             Readable::Whole => true,
-            Readable::Released => self.views().may_read_from(&self.channel_ref(), classification, &self.session.privacy()).await,
+            Readable::Released => self.views().may_read_from(&self.place(classification)).await,
         }
     }
 

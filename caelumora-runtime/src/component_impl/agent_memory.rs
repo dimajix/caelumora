@@ -157,7 +157,7 @@ impl PromptProvider for AgentMemoryComponent {
         for memory in &recalled {
             if !knowledge.iter().any(|k| k.channel == memory.origin.channel) {
                 let from_there = recalled.iter().filter(|m| m.origin.channel == memory.origin.channel).map(|m| &m.classification);
-                knowledge.push(KnowledgeRef { channel: memory.origin.channel, source, classification: Classification::join_all(from_there) });
+                knowledge.push(KnowledgeRef { channel: memory.origin.channel, session: memory.origin.session.id, source, classification: Classification::join_all(from_there) });
             }
         }
         Ok(Prompt::of_knowledge(render(&recalled), knowledge))
@@ -202,7 +202,7 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::Participant;
     use caelumora_model::command::default_commands;
-    use caelumora_model::confidentiality::{ChannelRef, Classification, Confidentiality};
+    use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes};
@@ -212,16 +212,17 @@ mod tests {
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
 
-    /// A channel of the tests: where it is, and how it is classified.
-    type At = (ChannelRef, Classification);
+    /// A channel of the tests: where it is - its session and itself - and
+    /// how it is classified.
+    type At = ((SessionId, ChannelId), Classification);
 
     /// The context of an envelope routed in the channel `at`.
     fn in_channel(at: &At) -> caelumora_model::actor::EventContext {
-        caelumora_model::actor::EventContext::new(at.0.session_id, at.0.channel_id, ActorId::None, String::new())
+        caelumora_model::actor::EventContext::new(at.0.0, at.0.1, ActorId::None, String::new())
     }
 
     fn channel(session: SessionId, level: Confidentiality) -> At {
-        (ChannelRef { session_id: session, channel_id: ChannelId::new() }, Classification::general(level))
+        ((session, ChannelId::new()), Classification::general(level))
     }
 
     /// The component of an agent owned by `owner`, asking `policy`.
@@ -284,7 +285,7 @@ mod tests {
 
         /// What a turn of `memory`'s agent in channel `at` navigates.
         fn views_in(&self, at: &At, memory: &AgentMemoryComponent) -> ViewsFactory {
-            let session = self.loops.get(&at.0.session_id).expect("a session of the test").clone();
+            let session = self.loops.get(&at.0.0).expect("a session of the test").clone();
             ViewsFactory::in_session(session, self.runtime.clone(), memory.security_context.clone())
         }
     }
@@ -306,7 +307,7 @@ mod tests {
     }
 
     fn session_of(policy: PrivacyConfig, owner: UserId) -> SessionPrivacy {
-        SessionPrivacy { policy, owner: ActorId::User(owner), people: [owner].into_iter().collect() }
+        SessionPrivacy { id: SessionId::new(), policy, owner: ActorId::User(owner), people: [owner].into_iter().collect() }
     }
 
     /// Remembers `text` in a turn in channel `at`, and completes the turn.
@@ -407,7 +408,7 @@ mod tests {
         turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), &mut turn).await.unwrap();
         turn.commit_turn(false).await;
-        assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy::default(), "private: nobody agreed to anything");
+        assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
         turn.next_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new());
         assert!(memory.get_prompt(&turn).await.unwrap().text.is_empty(), "no session to recall in");
     }
@@ -495,7 +496,7 @@ mod tests {
         let mut sessions = Sessions::under(policy).await;
         sessions.add(session, SessionPrivacy::default()).await;
         let in_compartments = |names: &[&str]| -> At {
-            (ChannelRef { session_id: session, channel_id: ChannelId::new() }, Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap())
+            ((session, ChannelId::new()), Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap())
         };
         let (hr, finance) = (in_compartments(&["hr"]), in_compartments(&["finance"]));
         remember(&memory, &sessions, &handle, agent, hr.clone(), "The budget is tight.").await;
@@ -541,7 +542,7 @@ mod tests {
         let recalled = recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await;
         assert!(recalled.text.contains("Kaya likes tea."), "{}", recalled.text);
         assert_eq!(recalled.knowledge.len(), 1);
-        assert_eq!(recalled.knowledge[0].channel, origin.0, "recorded with the channel it came from, of its session");
+        assert_eq!((recalled.knowledge[0].session, recalled.knowledge[0].channel), origin.0, "recorded with the channel it came from, of its session");
 
         sessions.set(hers, Some(session_of(PrivacyConfig::Private, alice))).await;
         assert!(recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await.text.is_empty(), "no longer, once the session is private");

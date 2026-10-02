@@ -72,9 +72,9 @@ owner when creating it, in the session template or the request; the default
 is `internal` without compartments (`Classification::CHANNEL_DEFAULT`).
 Giving a channel a classification is asked as `ActionType::Classify`, before
 anything is stored; the ownership policy refuses a compartment that is not
-configured, so that a typo does not go unnoticed. Where a channel is - its
-session and its id - is a `ChannelRef`; it decides whether one channel
-reaches another at all, not how anything is classified.
+configured, so that a typo does not go unnoticed. Which session a channel
+is in decides whether one channel reaches another at all, not how anything
+is classified (see [Reading another channel](#reading-another-channel)).
 
 ### Messages
 
@@ -249,9 +249,10 @@ controllers. It is asked
 
 Reading from another channel is decided per entry: per message of its
 history, per note, per memory entry. It is `ActionType::ReadChannel {
-reader, source }`, each side a `Place`: where the channel is (`ChannelRef`),
-how the entry - or the reading channel - is classified, and the channel's
-session as privacy sees it (`SessionPrivacy`, issue 134), asked with
+reader, source }`, each side a `Place`: the channel's id, how the entry - or
+the reading channel - is classified, and the channel's session as privacy
+sees it (`SessionPrivacy` - its id, policy, owner and people, issue 134),
+asked with
 `AccessQuestions::may_channel_read`. It is asked in the name of the agent
 that reads - the security context it acts in, its owner's - because the agent
 passes on what it reads (issue 131). A channel may always read itself.

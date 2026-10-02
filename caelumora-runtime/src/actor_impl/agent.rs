@@ -922,7 +922,7 @@ mod tests {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
             turn.next_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, tools);
             if private_knowledge {
-                turn.record_knowledge(KnowledgeRef { channel: turn.channel(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
+                turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }
             let mut message = answer(calls);
             label(&mut message, &turn, personality, complete);

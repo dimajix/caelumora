@@ -6,9 +6,9 @@ use super::{ChannelView, ViewError, ViewResult, Views};
 use crate::channel::ChannelLoop;
 use crate::session::{Found, SessionLoop};
 use caelumora_model::channel::{Channel, Participant};
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{ParticipantSnapshot, SessionSnapshot};
 use std::sync::Arc;
@@ -133,8 +133,8 @@ impl SessionView {
         let security = self.views.runtime().security_manager();
         let context = self.views.viewer().context();
         if self.views.viewer().place().is_some() {
-            let source = ChannelRef { session_id: channel.session_id, channel_id: channel.id };
-            let whole = self.views.may_read_from(&source, &channel.classification, &self.privacy()).await;
+            let source = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
+            let whole = self.views.may_read_from(&source).await;
             return Some(if whole { Readable::Whole } else { Readable::Released });
         }
         let readable = security.may_read_channel(context, &channel.security_attributes).await

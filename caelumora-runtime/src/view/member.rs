@@ -99,7 +99,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
             // state of an agent run here, which an external one does not
             // write.
             let kind = personality.as_ref().map_or(PersonalityKind::Internal, |p| p.kind);
-            let documents = AgentDocuments { place: Place { agent: agent.id, channel, store: runtime.state_store() }, agent, personality };
+            let documents = AgentDocuments { place: StateRef { agent: agent.id, channel, store: runtime.state_store() }, agent, personality };
             match kind {
                 PersonalityKind::Internal => Arc::new(InternalAgentMember(documents)),
                 PersonalityKind::External => Arc::new(ExternalAgentMember(documents)),
@@ -163,15 +163,16 @@ impl MemberState for GoneMember {
     }
 }
 
-/// Where an agent's state is kept.
+/// Where an agent's state in a channel is kept: which agent, which
+/// channel, which store.
 #[derive(Debug, Clone)]
-struct Place {
+struct StateRef {
     agent: AgentId,
     channel: ChannelId,
     store: Arc<dyn StateStore>,
 }
 
-impl Place {
+impl StateRef {
     /// The error for a state that cannot be read, logged.
     fn failed(&self, e: StoreError) -> ViewError {
         warn!("Cannot read the state of agent {} in channel {}: {}", self.agent, self.channel, e);
@@ -185,7 +186,7 @@ impl Place {
 struct AgentDocuments {
     agent: Agent,
     personality: Option<Personality>,
-    place: Place,
+    place: StateRef,
 }
 
 impl AgentDocuments {

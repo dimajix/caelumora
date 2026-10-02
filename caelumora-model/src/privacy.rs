@@ -15,7 +15,7 @@
 //! owner would not be - that session's owner could pass it on to anyone.
 
 use crate::actor::ActorId;
-use crate::session::{Participant, Session};
+use crate::session::{Participant, Session, SessionId};
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -53,9 +53,13 @@ pub trait PrivacyPolicy: Debug + Send + Sync {
     fn permits(&self, source: &SessionPrivacy, reader: &SessionPrivacy) -> bool;
 }
 
-/// A session as privacy sees it: its policy, its owner, and its people.
+/// A session as privacy sees it: which one it is, its policy, its owner,
+/// and its people.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPrivacy {
+    /// Within one session its participants share with each other, and only
+    /// the classifications decide; beyond it, the policy has to permit it.
+    pub id: SessionId,
     pub policy: PrivacyConfig,
     pub owner: ActorId,
     /// The users who take part in the session, its owner included. Agents
@@ -75,7 +79,7 @@ impl SessionPrivacy {
             })
             .chain(owner.as_user_id())
             .collect();
-        Self { policy: session.privacy, owner, people }
+        Self { id: session.id, policy: session.privacy, owner, people }
     }
 
     /// Whether the session `reader` may read what was said in this one, as
@@ -123,7 +127,7 @@ mod tests {
 
     fn session(policy: PrivacyConfig, owner: UserId, others: &[UserId]) -> SessionPrivacy {
         let people = others.iter().copied().chain([owner]).collect();
-        SessionPrivacy { policy, owner: ActorId::User(owner), people }
+        SessionPrivacy { id: SessionId::new(), policy, owner: ActorId::User(owner), people }
     }
 
     #[test]

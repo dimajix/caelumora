@@ -2,7 +2,7 @@ use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalStrategy, Approver, ApproverId};
 use crate::component::{ComponentConfig, ComponentDescriptor};
-use crate::confidentiality::{ChannelRef, Classification};
+use crate::confidentiality::Classification;
 use crate::message::MessageId;
 use crate::message_history::MessageHistory;
 use crate::name::Name;
@@ -91,11 +91,6 @@ impl Secured for Channel {
 }
 
 impl Channel {
-    /// Where the channel is.
-    pub fn channel_ref(&self) -> ChannelRef {
-        ChannelRef { session_id: self.session_id, channel_id: self.id }
-    }
-
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
     /// added if there is none, and with every user and agent in it as a

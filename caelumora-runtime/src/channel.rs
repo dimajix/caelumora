@@ -19,7 +19,7 @@ use crate::controller::{AgentController, ChannelController, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::confidentiality::{user_roles, ChannelRef, Classification};
+use caelumora_model::confidentiality::{user_roles, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
@@ -743,11 +743,6 @@ impl ChannelLoop {
     /// The classification of the channel's contents (issue 133).
     pub fn classification(&self) -> Classification {
         self.channel.load().classification.clone()
-    }
-
-    /// Where the channel is.
-    pub fn channel_ref(&self) -> ChannelRef {
-        self.channel.load().channel_ref()
     }
 
     fn is_mentionable(id: ActorId) -> bool {

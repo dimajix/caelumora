@@ -43,7 +43,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
     async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
         // A turn outside of a channel, in tests, has nobody to name.
         let Some(session) = turn.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let channel = session.channel(turn.channel().channel_id).await?;
+        let channel = session.channel(turn.channel_id()).await?;
         let own = ActorId::Agent(turn.agent_id());
         let mut me = None;
         let mut others = Vec::new();

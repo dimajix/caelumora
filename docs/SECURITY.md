@@ -194,8 +194,8 @@ its own access question, in the viewer's name:
     (`MemberView::former`), so that what it saw stays readable;
     `may_change()` asks `UpdateChannel`;
 *   `MemberView::may_read_context()` asks `ReadAgentContext`;
-*   `Views::channel_of(ChannelRef)` reaches what a memory entry's origin or
-    a `KnowledgeRef` names, wherever it is, and answers `None` for what is
+*   `Views::channel_of(session, channel)` reaches what a memory entry's
+    origin or a `KnowledgeRef` names, wherever it is, and answers `None` for what is
     gone or not the viewer's to read.
 
 What does not exist and what the viewer may not read are one answer

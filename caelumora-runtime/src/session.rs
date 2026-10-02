@@ -1249,13 +1249,8 @@ mod tests {
             async move {
                 use caelumora_model::security::AccessQuestions;
                 use caelumora_model::security::Place;
-                let (reader_channel, reader_classification, reader_session) = (reader.channel_ref(), reader.classification(), reader.session_loop().map(|s| s.privacy()).unwrap_or_default());
-                let (source_channel, source_classification, source_session) = (source.channel_ref(), source.classification(), source.session_loop().map(|s| s.privacy()).unwrap_or_default());
-                security.may_channel_read(
-                    &context,
-                    Place { channel: &reader_channel, classification: &reader_classification, session: &reader_session },
-                    Place { channel: &source_channel, classification: &source_classification, session: &source_session },
-                ).await
+                let place = |channel: &ChannelLoop| Place { channel: channel.id(), classification: channel.classification(), session: channel.session_loop().map(|s| s.privacy()).unwrap_or_default() };
+                security.may_channel_read(&context, &place(&reader), &place(&source)).await
             }
         };
         assert!(may_read(&secret, &secret).await, "a channel reads itself");
@@ -1301,7 +1296,7 @@ mod tests {
         let channel_runtime = ChannelRuntime::new(runtime.clone(), hers.commands.clone());
         channel_runtime.attach(&channel);
         let views = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).views(alice_ctx.clone());
-        let session = views.session(channel.channel_ref(), channel.classification()).expect("attached to its session");
+        let session = views.session(channel.id(), channel.classification()).expect("attached to its session");
 
         let own = session.privacy();
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
@@ -1354,7 +1349,7 @@ mod tests {
             let channel_runtime = ChannelRuntime::new(runtime.clone(), session.commands.clone());
             channel_runtime.attach(channel);
             let views = channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).views(alice_ctx.clone());
-            views.session(channel.channel_ref(), channel.classification()).expect("attached to its session")
+            views.session(channel.id(), channel.classification()).expect("attached to its session")
         };
         let read = reading_from(&finance).channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
         let texts: Vec<_> = read.messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect();

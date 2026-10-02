@@ -14,10 +14,8 @@
 //! axis, `Visibility`: ownership, not sensitivity.
 
 use crate::actor::ActorId;
-use crate::channel::ChannelId;
 use crate::security::{Place, SecurityContext};
 use crate::store::{EntityStore, StoreError, StoreResult};
-use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -494,12 +492,12 @@ impl ConfidentialityRules {
     /// within a session as the classifications decide; beyond it only
     /// where the source's session permits it as well (issue 134) - whatever
     /// the classification, `public` included.
-    pub fn may_read_from(&self, reader: Place<'_>, source: Place<'_>) -> bool {
-        if source.channel.channel_id == reader.channel.channel_id {
+    pub fn may_read_from(&self, reader: &Place, source: &Place) -> bool {
+        if source.channel == reader.channel {
             return true;
         }
-        let consented = source.channel.session_id == reader.channel.session_id || source.session.permits(reader.session);
-        consented && source.classification.flows_to(reader.classification, &self.compartments)
+        let consented = source.session.id == reader.session.id || source.session.permits(&reader.session);
+        consented && source.classification.flows_to(&reader.classification, &self.compartments)
     }
 
     /// Whether `classification` may be given at all: if its compartments
@@ -542,16 +540,6 @@ impl Visibility {
     pub fn is_channel(&self) -> bool {
         *self == Visibility::Channel
     }
-}
-
-/// Where a channel is: its session and itself. Not how its contents are
-/// classified - that is the channel's `Classification` - but what decides
-/// whether one channel reaches another at all: today the session they are
-/// in, with consent later (issue 134).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub struct ChannelRef {
-    pub session_id: SessionId,
-    pub channel_id: ChannelId,
 }
 
 #[cfg(test)]

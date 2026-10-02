@@ -26,7 +26,8 @@ use crate::tool::{classification_argument, id_argument, reclassify_parameters, t
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::session::ChannelId;
 use caelumora_model::digest::Digest;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
@@ -149,13 +150,13 @@ impl PromptProvider for PrivateNotesComponent {
         let mut elsewhere = Vec::new();
         if let Some(session) = turn.session() {
             for channel in session.all_channels().await {
-                if channel.id() == turn.channel().channel_id {
+                if channel.id() == turn.channel_id() {
                     continue;
                 }
                 // Not a member there: nothing noted there.
                 let Ok(me) = channel.member(ActorId::Agent(turn.agent_id())).await else { continue };
                 match me.private_notes().await {
-                    Ok((notes, digest)) if !notes.is_empty() => elsewhere.push(Elsewhere { channel: channel.channel_ref(), name: channel.name().to_string(), notes, digest }),
+                    Ok((notes, digest)) if !notes.is_empty() => elsewhere.push(Elsewhere { channel: channel.id(), name: channel.name().to_string(), notes, digest }),
                     Ok(_) => {}
                     // The agent can still answer without them.
                     Err(e) => warn!("Reading the private notes of agent {} in channel {} failed: {}", turn.agent_id(), channel.id(), e),
@@ -166,12 +167,14 @@ impl PromptProvider for PrivateNotesComponent {
 
         let private = |channel, digest, notes: &[Note]| KnowledgeRef {
             channel,
+            // Its own session's channels only.
+            session: turn.session_id(),
             source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest },
             classification: Classification::join_all(notes.iter().map(|n| &n.classification)),
         };
         let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel, c.digest, &c.notes)).collect();
         if !own.is_empty() {
-            knowledge.push(private(turn.channel(), AgentNotes::digest(turn, NoteKind::Private), &own));
+            knowledge.push(private(turn.channel_id(), AgentNotes::digest(turn, NoteKind::Private), &own));
         }
         Ok(Prompt::of_knowledge(render(&own, &elsewhere), knowledge))
     }
@@ -180,7 +183,7 @@ impl PromptProvider for PrivateNotesComponent {
 /// The agent's private notes in another channel of the session, as far as
 /// they may be read here.
 struct Elsewhere {
-    channel: ChannelRef,
+    channel: ChannelId,
     name: String,
     notes: Vec<Note>,
     digest: Option<Digest>,
@@ -237,7 +240,7 @@ mod tests {
 
     #[test]
     fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
-        let elsewhere = [Elsewhere { channel: ChannelRef::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
+        let elsewhere = [Elsewhere { channel: ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
         let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
         assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research:").unwrap(), "{text}");
         assert!(text.contains("- Kaya prefers short answers."));

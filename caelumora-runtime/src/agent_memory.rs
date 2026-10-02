@@ -17,7 +17,7 @@ use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::ledger::Staged;
 use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::privacy::SessionPrivacy;
@@ -44,21 +44,20 @@ impl AgentMemory {
     /// recalls nothing. A turn in no session recalls nothing.
     pub async fn recalled(turn: &Turn<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
         let Some(own) = turn.session() else { return Vec::new() };
-        let (here, classification, session) = (turn.channel(), turn.classification(), own.privacy());
-        let place = Place { channel: &here, classification: &classification, session: &session };
+        let here = Place { channel: turn.channel_id(), classification: turn.classification(), session: own.privacy() };
         let memory = turn.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
-        let mut decided: Vec<(ChannelRef, Classification, SessionPrivacy, bool)> = Vec::new();
+        let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
         for entry in memory {
             let known = decided.iter()
-                .find(|(origin, c, s, _)| *origin == entry.origin.channel && *c == entry.classification && *s == entry.origin.session)
+                .find(|(origin, c, _)| *origin == entry.origin && *c == entry.classification)
                 .map(|(.., readable)| *readable);
             let readable = match known {
                 Some(readable) => readable,
                 None => {
-                    let readable = Self::may_recall(&entry, place, own.views(), &mut sessions, security, context).await;
-                    decided.push((entry.origin.channel, entry.classification.clone(), entry.origin.session.clone(), readable));
+                    let readable = Self::may_recall(&entry, &here, own.views(), &mut sessions, security, context).await;
+                    decided.push((entry.origin.clone(), entry.classification.clone(), readable));
                     readable
                 }
             };
@@ -74,36 +73,37 @@ impl AgentMemory {
     /// other sessions looked up so far - `None` for one that is gone.
     async fn may_recall(
         entry: &Memory,
-        here: Place<'_>,
+        here: &Place,
         views: &Views,
         sessions: &mut Vec<(SessionId, Option<SessionPrivacy>)>,
         security: &dyn SecurityManager,
         context: &SecurityContext,
     ) -> bool {
-        let (origin, classification) = (&entry.origin.channel, &entry.classification);
-        if origin.session_id == here.channel.session_id {
-            let source = Place { channel: origin, classification, session: here.session };
-            return security.may_channel_read(context, here, source).await;
+        let origin = &entry.origin;
+        // Where it was written, with its session as privacy sees it then or now.
+        let source = |session: SessionPrivacy| Place { channel: origin.channel, classification: entry.classification.clone(), session };
+        if origin.session.id == here.session.id {
+            return security.may_channel_read(context, here, &source(here.session.clone())).await;
         }
-        let then = Place { channel: origin, classification, session: &entry.origin.session };
-        if !security.may_channel_read(context, here, then).await {
+        if !security.may_channel_read(context, here, &source(origin.session.clone())).await {
             return false;
         }
-        let current = match sessions.iter().find(|(id, _)| *id == origin.session_id) {
+        let id = origin.session.id;
+        let current = match sessions.iter().find(|(known, _)| *known == id) {
             Some((_, current)) => current.clone(),
-            None => match views.privacy_of(origin.session_id).await {
+            None => match views.privacy_of(id).await {
                 Ok(current) => {
-                    sessions.push((origin.session_id, current.clone()));
+                    sessions.push((id, current.clone()));
                     current
                 }
                 Err(e) => {
-                    warn!("Looking up session {} to recall from failed: {}", origin.session_id, e);
+                    warn!("Looking up session {} to recall from failed: {}", id, e);
                     return false;
                 }
             },
         };
         match current {
-            Some(current) => security.may_channel_read(context, here, Place { channel: origin, classification, session: &current }).await,
+            Some(current) => security.may_channel_read(context, here, &source(current)).await,
             None => true,
         }
     }
@@ -149,9 +149,8 @@ impl AgentMemory {
             return Some(entry);
         };
         let own = turn.session()?;
-        let (here, classification, session) = (turn.channel(), turn.classification(), own.privacy());
-        let place = Place { channel: &here, classification: &classification, session: &session };
-        Self::may_recall(&stored, place, own.views(), &mut Vec::new(), security, context).await.then_some(entry)
+        let here = Place { channel: turn.channel_id(), classification: turn.classification(), session: own.privacy() };
+        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), security, context).await.then_some(entry)
     }
 
     /// Forgets entry `id` - one the turn may change (see
@@ -195,6 +194,8 @@ impl AgentMemory {
     /// Where a change made in `turn` is made: its channel, and the privacy
     /// its session has now (issue 134) - private, for a turn in no session.
     fn origin(turn: &Turn) -> MemoryOrigin {
-        MemoryOrigin { channel: turn.channel(), session: turn.session().map(|s| s.privacy()).unwrap_or_default() }
+        let session = turn.session().map(|s| s.privacy())
+            .unwrap_or_else(|| SessionPrivacy { id: turn.session_id(), ..SessionPrivacy::default() });
+        MemoryOrigin { channel: turn.channel_id(), session }
     }
 }

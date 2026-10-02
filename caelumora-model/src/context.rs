@@ -81,7 +81,9 @@ impl ContextItem {
 /// common.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeRef {
-    pub channel: crate::confidentiality::ChannelRef,
+    pub channel: crate::channel::ChannelId,
+    /// The session of `channel`: whether it was read beyond the agent's own.
+    pub session: crate::session::SessionId,
     pub source: KnowledgeSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Classification>,

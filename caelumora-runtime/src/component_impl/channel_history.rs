@@ -83,7 +83,7 @@ impl ToolProvider for ChannelHistoryComponent {
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
         let source = KnowledgeSource::History { digest: history.digest, start: history.start };
-        turn.record_knowledge(KnowledgeRef { channel: channel.channel_ref(), source, classification: classification.clone() });
+        turn.record_knowledge(KnowledgeRef { channel: channel.id(), session: channel.session().id(), source, classification: classification.clone() });
 
         let value = serde_json::json!({
             "channel": channel.name(),
