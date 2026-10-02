@@ -1,6 +1,6 @@
 # 179 — External agents cannot take part, only tools and models
 
-**Status:** in progress
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -579,3 +579,15 @@ Each step compiles, is tested, and leaves `main` working.
   `staff` - and a template `external-session` that seats it beside Jonathan; `examples/config.yaml`
   says how personalities narrow their agents' clearance. The issue stays in progress: of *Done
   when*, the test against Hermes Agent is what remains.
+- **2026-10-02** — Tested against Hermes Agent (127.0.0.1:9900), and done. The card offers
+  JSON-RPC with A2A 1.0 and streaming; without the token it answers 401. Through the REST server,
+  a session of `external-session` seats it in `main`, `@hermes` asks it, and it answers in the
+  channel within about ten seconds; what it heard and said is journaled a line per message (issue
+  193). Two gaps came up and were fixed: a task was stored only when the exchange ended, so a crash
+  while the remote agent worked lost it - now it is stored as soon as the remote agent took it on,
+  tested with a stand-in that never ends; and the template, which named no responder policy, let
+  Jonathan and Hermes answer each other without end under round robin - it now asks only who is
+  @-mentioned, which also gives the remote agent only what it is asked about. A crash while Hermes
+  worked, tested by killing the server: the task was stored, followed after the restart, and told
+  as failed - Hermes ends a task whose streaming client goes away ("[client disconnected]"), which
+  is Hermes's choice, not one of ours. `examples/seed.yaml` points at port 9900.

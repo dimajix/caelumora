@@ -286,9 +286,15 @@ impl ExternalAgentActor {
             match answer.take(state, task.as_ref(), event) {
                 Step::Continue => {}
                 // The task it began - or the one it answers, taken up again.
+                // Stored at once, with what was given for it: a crash while
+                // the task works leaves it to be followed after the restart,
+                // not forgotten while the remote agent goes on with it.
                 Step::Started(started) => {
                     set_open(state, &started, OpenTaskState::Working);
                     task = Some(started);
+                    if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
+                        warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
+                    }
                 }
                 // Shown as it is written, to whoever waits for the answer.
                 Step::Partial(piece) => {

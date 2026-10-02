@@ -96,7 +96,7 @@ personalities:
       kind: a2a_agent
       params:
         endpoint:
-          url: http://localhost:9999
+          url: http://localhost:9900
           auth:
             type: bearer
             secret: HERMES_A2A_TOKEN
@@ -199,7 +199,7 @@ session_templates:
     - Sassy
 - id: 28e4c2ed-13c2-4161-addf-7a6521d2d986
   name: external-session
-  description: An assistant of ours and an agent that runs elsewhere
+  description: An assistant of ours and an agent that runs elsewhere, each answering when @-mentioned
   participants:
   - User:
       name: user
@@ -214,7 +214,14 @@ session_templates:
       scope: SessionScope
       personality_id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
   channels:
+  # Only when @-mentioned: what the remote agent is given leaves the system,
+  # and it is given only when asked to respond - and the two agents do not
+  # answer each other without end, as they would by default (round robin).
   - name: main
+    components:
+      component_nodes:
+      - id: responders
+        kind: mentions_only_policy
     participants:
     - user
     - approval

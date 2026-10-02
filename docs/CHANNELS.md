@@ -264,7 +264,10 @@ An **actor** is anything that sends and receives events in a channel.
     remote task and publishes what came so far; a stop cancels it - and every other open task of the
     agent - and publishes nothing.
 *   **An external agent speaks on its own** when a task outlives the request it was given for: the
-    answer broke off before the task ended, or the channel was restarted meanwhile. A request whose
+    answer broke off before the task ended, or the channel was restarted meanwhile - also by a
+    crash: a task is stored as soon as the remote agent took it on, with what it was given for it.
+    A remote agent that ends a task when its client goes away - Hermes Agent does, as failed with
+    "[client disconnected]" - has it told as failed after the restart. A request whose
     answer broke off - its stream ended or failed - before its task ended is answered with nothing
     rather than cut off: what came so far is kept with the open task (`OpenTask::unsaid`) and said
     once, with the rest, when the task ends - not twice if the remote agent gives its whole result

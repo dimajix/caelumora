@@ -2808,6 +2808,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_task_is_stored_as_soon_as_it_is_begun() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::external_agent::OpenTaskState;
+
+        // The remote agent takes the request on, and is still at work.
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![Ok(ExternalEvent::Started(task("t-1")))]]));
+        let Stuck { channel, agent, running, .. } = with_an_external_agent(remote).await;
+
+        let state = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+                if !state.open_tasks.is_empty() { break state }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.expect("stored before the task ends, as a crash would find it");
+        assert_eq!(state.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
+        assert_eq!(state.transcript.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["hello"], "with what it was given for it");
+        assert!(state.offered_up_to.is_some(), "and how far it was offered: a restart gives nothing twice");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_waits() {
         use crate::external::ExternalEvent;
         use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState};
