@@ -13,8 +13,10 @@
 //! Whether anyone but an actor's owner sees something at all is a separate
 //! axis, `Visibility`: ownership, not sensitivity.
 
+use crate::actor::ActorId;
 use crate::channel::ChannelId;
-use crate::security::Place;
+use crate::security::{Place, SecurityContext};
+use crate::store::{EntityStore, StoreError, StoreResult};
 use crate::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -441,6 +443,23 @@ impl Roles {
     /// configured grants nothing.
     pub fn clearances_of(&self, roles: &[String]) -> Clearances {
         Clearances(roles.iter().filter_map(|r| self.grants.get(r)).flatten().cloned().collect())
+    }
+}
+
+/// The roles of `actor` if it is a user (issues 133, 142), read in the
+/// runtime's name: what someone is cleared for decides, it is not shown.
+/// None for anyone else - an agent's are its owner's, which its caller
+/// asks for - and none for a user that no longer exists. Read from the
+/// store each time: roles change at a login, past any copy of the user.
+///
+/// # Errors
+/// Whatever else reading the user reports.
+pub async fn user_roles(store: &dyn EntityStore, actor: ActorId) -> StoreResult<Vec<String>> {
+    let ActorId::User(id) = actor else { return Ok(Vec::new()) };
+    match store.get_user(&SecurityContext::system(), id).await {
+        Ok(user) => Ok(user.roles),
+        Err(StoreError::NotFound { .. }) => Ok(Vec::new()),
+        Err(e) => Err(e),
     }
 }
 

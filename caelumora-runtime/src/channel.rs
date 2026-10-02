@@ -19,7 +19,7 @@ use crate::controller::{AgentController, ChannelController, UserController};
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::confidentiality::{ChannelRef, Classification};
+use caelumora_model::confidentiality::{user_roles, ChannelRef, Classification};
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext};
@@ -204,21 +204,6 @@ pub(crate) async fn require_cleared(runtime: &RuntimeManager, context: &Security
         }
     }
     Ok(())
-}
-
-/// The roles of `actor` if it is a user (issues 133, 142), read in the
-/// runtime's name: what someone is cleared for decides, it is not shown.
-/// None for anyone else, and none for a user that no longer exists.
-///
-/// # Errors
-/// Whatever else reading the user reports.
-pub(crate) async fn user_roles(store: &dyn EntityStore, actor: ActorId) -> Result<Vec<String>> {
-    let ActorId::User(id) = actor else { return Ok(Vec::new()) };
-    match store.get_user(&SecurityContext::system(), id).await {
-        Ok(user) => Ok(user.roles),
-        Err(StoreError::NotFound { .. }) => Ok(Vec::new()),
-        Err(e) => Err(e.into()),
-    }
 }
 
 /// The messages of `visible` after the last of them that `known` has, and

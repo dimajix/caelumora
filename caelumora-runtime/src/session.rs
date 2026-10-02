@@ -57,7 +57,7 @@ async fn require_classification(runtime_manager: &RuntimeManager, context: &Secu
 /// 133); `refusal` otherwise - reading a channel one is not cleared for is
 /// the same as reading one that does not exist.
 async fn require_seen<E: Into<anyhow::Error> + Send>(runtime_manager: &RuntimeManager, context: &SecurityContext, channel: &Classification, refusal: impl FnOnce() -> E + Send) -> Result<()> {
-    let roles = crate::channel::user_roles(runtime_manager.entity_store().as_ref(), context.initiator_id).await?;
+    let roles = caelumora_model::confidentiality::user_roles(runtime_manager.entity_store().as_ref(), context.initiator_id).await?;
     if runtime_manager.security_manager().may_see_channel(context, &roles, channel).await {
         Ok(())
     } else {

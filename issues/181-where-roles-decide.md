@@ -85,3 +85,6 @@ To be reviewed, action by action (`ActionType` in `caelumora-model/src/security.
   Found on the way: the `UserController` does not follow role changes -
   they are stored at a login with no event - so roles are read from the
   store wherever they decide.
+- **2026-10-02** — `user_roles` moved to `caelumora_model::confidentiality`,
+  public, at the maintainer's request: the roles of a user beside the
+  roles and clearances they are judged by.
