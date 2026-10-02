@@ -5,108 +5,90 @@
 
 ## The problem
 
-With the classification model of [133](133-classification-model.md), the
-session is no longer a confidentiality boundary: whether a channel may read
-another is decided by dominance of their classifications alone, so two
-`internal` channels of different sessions may read each other's notes and
-history. Today the `session` level keeps that from happening, but for the
-wrong reason: what stops one session from reading another is not that its
-contents are more sensitive, but that the participants of the one never
-agreed to be read by the other.
+With the classification model of [133](133-classification-model.md), the session is no longer a
+confidentiality boundary: whether a channel may read another is decided by dominance of their
+classifications alone, so two `internal` channels of different sessions may read each other's notes
+and history. Today the `session` level keeps that from happening, but for the wrong reason: what
+stops one session from reading another is not that its contents are more sensitive, but that the
+participants of the one never agreed to be read by the other.
 
 ## Why it matters
 
-- A session is a conversation among its participants. That an agent in
-  another session, with other users, can read along is a matter of the
-  participants' privacy, whatever the classification says.
-- Knowledge beyond the session ([18](18-knowledge-sharing.md)) needs
-  exactly this distinction: the rules of confidentiality decide what *may*
-  be shared by its sensitivity, the rules of privacy decide who *agreed*.
+- A session is a conversation among its participants. That an agent in another session, with other
+  users, can read along is a matter of the participants' privacy, whatever the classification says.
+- Knowledge beyond the session ([18](18-knowledge-sharing.md)) needs exactly this distinction: the
+  rules of confidentiality decide what *may* be shared by its sensitivity, the rules of privacy
+  decide who *agreed*.
 
 ## Considerations
 
-- **A session may be read by another only with consent** - of its owner, or
-  of its participants. How consent is expressed is open: a session-level
-  setting ("readable by my other sessions" / "by nobody"), an explicit
-  grant to a named session or agent, or membership of the same user or
-  group in both.
-- **Where it is checked:** the same `ActionType::ReadChannel` question,
-  answered by the policy from both channels' sessions in addition to their
-  classifications - not a second question, so that every read across
-  channels stays one place (issue 71).
+- **A session may be read by another only with consent** - of its owner, or of its participants. How
+  consent is expressed is open: a session-level setting ("readable by my other sessions" / "by
+  nobody"), an explicit grant to a named session or agent, or membership of the same user or group
+  in both.
+- **Where it is checked:** the same `ActionType::ReadChannel` question, answered by the policy from
+  both channels' sessions in addition to their classifications - not a second question, so that
+  every read across channels stays one place (issue 71).
 - **The default** decides how much of today's behaviour survives step 1 of
-  [133](133-classification-model.md): "within the same session only" keeps
-  it exactly; anything wider is a change.
-- The same question arises for a user reading a channel they are not a
-  participant of ([125](125-invisible-admin.md)) and for the agent's own
-  memory across sessions ([19](19-memory-tiers.md)).
+  [133](133-classification-model.md): "within the same session only" keeps it exactly; anything
+  wider is a change.
+- The same question arises for a user reading a channel they are not a participant of
+  ([125](125-invisible-admin.md)) and for the agent's own memory across sessions
+  ([19](19-memory-tiers.md)).
 
 ## Done when
 
-- It is decided how the participants of a session consent to being read
-  from elsewhere, and reading across sessions is refused without it.
+- It is decided how the participants of a session consent to being read from elsewhere, and reading
+  across sessions is refused without it.
 
 ## History
 
-- **2026-09-30** — Split off from the discussion of
-  [133](133-classification-model.md) at the maintainer's request: sessions
-  stop being a confidentiality boundary, and what keeps them apart is to be
-  modelled as privacy instead.
+- **2026-09-30** — Split off from the discussion of [133](133-classification-model.md) at the
+  maintainer's request: sessions stop being a confidentiality boundary, and what keeps them apart is
+  to be modelled as privacy instead.
 - **2026-09-30** — Decided with the maintainer:
-  - Every session has exactly one privacy policy, chosen by a serializable
-    `PrivacyConfig` stored with it, as the `security` section chooses a
-    `SecurityManager`: `Private` (the default - reading only within the
-    session), `SameOwner` (sessions of the same owner) and `SharedAudience`
-    (every human participant of the reader also takes part in the source).
-    Each is an implementation of a `PrivacyPolicy` trait, so that further
-    ones can be added; a closed enum, no registry.
-  - A policy must be transitive - what it lets pass on may be passed on by
-    the next session's policy without breaking its promise. `SameOwner` and
-    `SharedAudience` are, also mixed; a grant to a named session would not
-    be.
-  - It is asked as part of `ActionType::ReadChannel`, only across
-    sessions, and it is the source session's policy that decides. The
-    exception that lets `public` entries cross sessions goes: privacy holds
-    whatever the classification.
-  - A memory entry keeps the policy and audience of its source session from
-    when it was remembered; recalling it needs both that and the session's
-    current policy to agree.
-  - The policy is set when the session is created (also from its template)
-    and changed only by its owner; it is shown to all participants.
-  - A participant added later sees what was read: [143](143-joining-a-channel-with-foreign-knowledge.md).
-  - Reading across sessions is traceable from the start: a `KnowledgeRef`
-    names the channel with its session (a `ChannelRef` instead of a
-    `ChannelId`), and what an agent recalls from its memory is recorded
-    once per origin of the recalled entries, not as one reference to the
-    whole memory chain in the channel it was read in. [143](143-joining-a-channel-with-foreign-knowledge.md)
-    builds on it.
-- **2026-09-30** — Step 1: `caelumora_model::privacy` with `PrivacyConfig`
-  (stored with `Session` and `SessionTemplate`, private by default), the
-  `PrivacyPolicy` trait and its three implementations, and
-  `SessionPrivacy` - a session's policy, owner and people.
-  `ActionType::ReadChannel` and `may_channel_read` take a `Place` for each
-  side; the ownership policy lets a channel read beyond its session only
-  where the source's session permits it, and the exception for `public`
-  is gone. Until the policy of an entry's session is kept with it (step 2),
-  the agent's memory judges an entry of another session as written in a
-  private one. The ids are ordered, so that a set of them is.
-- **2026-09-30** — Step 2: `MemoryChange::Remember` keeps the privacy of
-  its session (`SessionPrivacy`, also in `Memory`); an entry of another
-  session is recalled only where both that and the session's current
-  privacy permit it. The current one is looked up with
-  `SessionReader::privacy_of`, from the store in the runtime's name; of a
-  session that is gone, the one kept decides, and one that cannot be
-  looked up recalls nothing. `KnowledgeRef::channel` is a `ChannelRef`, and
-  what is recalled from memory is recorded once per channel it was written
-  in. The REST response does not name a channel of another session yet
-  (step 3).
+  - Every session has exactly one privacy policy, chosen by a serializable `PrivacyConfig` stored
+    with it, as the `security` section chooses a `SecurityManager`: `Private` (the default - reading
+    only within the session), `SameOwner` (sessions of the same owner) and `SharedAudience` (every
+    human participant of the reader also takes part in the source). Each is an implementation of a
+    `PrivacyPolicy` trait, so that further ones can be added; a closed enum, no registry.
+  - A policy must be transitive - what it lets pass on may be passed on by the next session's policy
+    without breaking its promise. `SameOwner` and `SharedAudience` are, also mixed; a grant to a
+    named session would not be.
+  - It is asked as part of `ActionType::ReadChannel`, only across sessions, and it is the source
+    session's policy that decides. The exception that lets `public` entries cross sessions goes:
+    privacy holds whatever the classification.
+  - A memory entry keeps the policy and audience of its source session from when it was remembered;
+    recalling it needs both that and the session's current policy to agree.
+  - The policy is set when the session is created (also from its template) and changed only by its
+    owner; it is shown to all participants.
+  - A participant added later sees what was read:
+    [143](143-joining-a-channel-with-foreign-knowledge.md).
+  - Reading across sessions is traceable from the start: a `KnowledgeRef` names the channel with its
+    session (a `ChannelRef` instead of a `ChannelId`), and what an agent recalls from its memory is
+    recorded once per origin of the recalled entries, not as one reference to the whole memory chain
+    in the channel it was read in. [143](143-joining-a-channel-with-foreign-knowledge.md) builds on
+    it.
+- **2026-09-30** — Step 1: `caelumora_model::privacy` with `PrivacyConfig` (stored with `Session`
+  and `SessionTemplate`, private by default), the `PrivacyPolicy` trait and its three
+  implementations, and `SessionPrivacy` - a session's policy, owner and people.
+  `ActionType::ReadChannel` and `may_channel_read` take a `Place` for each side; the ownership
+  policy lets a channel read beyond its session only where the source's session permits it, and the
+  exception for `public` is gone. Until the policy of an entry's session is kept with it (step 2),
+  the agent's memory judges an entry of another session as written in a private one. The ids are
+  ordered, so that a set of them is.
+- **2026-09-30** — Step 2: `MemoryChange::Remember` keeps the privacy of its session
+  (`SessionPrivacy`, also in `Memory`); an entry of another session is recalled only where both that
+  and the session's current privacy permit it. The current one is looked up with
+  `SessionReader::privacy_of`, from the store in the runtime's name; of a session that is gone, the
+  one kept decides, and one that cannot be looked up recalls nothing. `KnowledgeRef::channel` is a
+  `ChannelRef`, and what is recalled from memory is recorded once per channel it was written in. The
+  REST response does not name a channel of another session yet (step 3).
 - **2026-09-30** — Step 3, done: the owner changes a session's privacy
-  (`SessionLoop::update_privacy`, stored first, announced as
-  `SessionUpdated(PrivacyChanged)`; `PUT /sessions/{id}/privacy`). Every
-  participant sees it: `SessionView` and the REST session responses carry
-  `privacy`, the snapshot also `can_change`
-  (`AccessQuestions::may_change_session`). The web UI marks sessions others
-  may read and shows the policy in `PrivacyDialog`, changeable by the owner;
-  the context panel does not name a channel of another session
-  (`KnowledgeRefResponse::session_id`). What a participant added later sees
-  is [143](143-joining-a-channel-with-foreign-knowledge.md).
+  (`SessionLoop::update_privacy`, stored first, announced as `SessionUpdated(PrivacyChanged)`; `PUT
+  /sessions/{id}/privacy`). Every participant sees it: `SessionView` and the REST session responses
+  carry `privacy`, the snapshot also `can_change` (`AccessQuestions::may_change_session`). The web
+  UI marks sessions others may read and shows the policy in `PrivacyDialog`, changeable by the
+  owner; the context panel does not name a channel of another session
+  (`KnowledgeRefResponse::session_id`). What a participant added later sees is
+  [143](143-joining-a-channel-with-foreign-knowledge.md).

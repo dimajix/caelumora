@@ -1,50 +1,43 @@
 # Open Issues — Index
 
-One line of status and one sentence per issue. The reasoning, the discussion
-and the decision live in the file next to it — there it may be as long as it
-needs to be, here it may not.
+One line of status and one sentence per issue. The reasoning, the discussion and the decision live
+in the file next to it — there it may be as long as it needs to be, here it may not.
 
-Why the split: this index is read every time anyone looks; an issue file only
-when someone works on that issue. Keeping both in one file meant either the
-overview drowned in the detail, or the detail was never written down. But the
-detail is the valuable part: why something is open, what already argues
-against it, and what came out of the last attempt.
+Why the split: this index is read every time anyone looks; an issue file only when someone works on
+that issue. Keeping both in one file meant either the overview drowned in the detail, or the detail
+was never written down. But the detail is the valuable part: why something is open, what already
+argues against it, and what came out of the last attempt.
 
 ## How this is maintained
 
-- **One issue is two places:** a line here, and a file
-  `issues/<number>-<slug>.md`. They are created together and neither one ever
-  disappears.
-- **Numbers are never reused** and never reassigned. A new issue gets the next
-  free number, even if issues before it are closed. Numbers are referred to —
-  from commits, from code comments, from the other documents; a number that
-  moves eventually points at something else. Numbers are written with **two
-  digits** (`01`, not `1`) so the file listing sorts correctly; from `100`
-  onwards, three.
-- **When an issue is resolved, the status changes** — here *and* at the top of
-  the file. Nothing else: no deleting, no rewriting of the description. What
-  was once open and how it turned out is exactly the information a deleted
-  line no longer gives.
-- **What happened goes under "History"** at the end of the issue file, with a
-  date, as a new paragraph. The existing text stays, even once it is
-  outdated — it is the record of the problem, not of the solution.
-- **Status:** `open` · `in progress` · `done` · `rejected`. `rejected` means:
-  looked at and deliberately not done, with the reason attached — because that
-  reason is otherwise worked out again from scratch six months later.
-- **The index line is one sentence.** It says what is wrong, not how it will
-  be fixed. Everything longer belongs in the issue file.
+- **One issue is two places:** a line here, and a file `issues/<number>-<slug>.md`. They are created
+  together and neither one ever disappears.
+- **Numbers are never reused** and never reassigned. A new issue gets the next free number, even if
+  issues before it are closed. Numbers are referred to — from commits, from code comments, from the
+  other documents; a number that moves eventually points at something else. Numbers are written with
+  **two digits** (`01`, not `1`) so the file listing sorts correctly; from `100` onwards, three.
+- **When an issue is resolved, the status changes** — here *and* at the top of the file. Nothing
+  else: no deleting, no rewriting of the description. What was once open and how it turned out is
+  exactly the information a deleted line no longer gives.
+- **What happened goes under "History"** at the end of the issue file, with a date, as a new
+  paragraph. The existing text stays, even once it is outdated — it is the record of the problem,
+  not of the solution.
+- **Status:** `open` · `in progress` · `done` · `rejected`. `rejected` means: looked at and
+  deliberately not done, with the reason attached — because that reason is otherwise worked out
+  again from scratch six months later.
+- **The index line is one sentence.** It says what is wrong, not how it will be fixed. Everything
+  longer belongs in the issue file.
 
 ### Creating a new issue
 
-1. Check this index first — an issue for it may already exist, in which case
-   add to that file's `## History` rather than opening a second one.
-2. Take the next free number and create `issues/<number>-<slug>.md` with the
-   status header, the problem, why it matters, the considerations (options
-   and their trade-offs), a "done when", and a first `## History` entry.
+1. Check this index first — an issue for it may already exist, in which case add to that file's `##
+   History` rather than opening a second one.
+2. Take the next free number and create `issues/<number>-<slug>.md` with the status header, the
+   problem, why it matters, the considerations (options and their trade-offs), a "done when", and a
+   first `## History` entry.
 3. Add one line to the matching section below. If no section fits, add one.
-4. Cross-reference related issues by number, e.g.
-   `[19](19-memory-tiers.md)`, where one genuinely blocks or overlaps
-   another.
+4. Cross-reference related issues by number, e.g. `[19](19-memory-tiers.md)`, where one genuinely
+   blocks or overlaps another.
 
 ---
 

@@ -1,13 +1,13 @@
 # Configuration
 
-Both binaries - the REST server and the TUI - read one YAML file, given with
-`--config` (`AppConfig`, `caelumora_model::config`). Without it, every section
-takes its default. `examples/config.yaml` is the configuration for local
-development, with every section and its default in comments.
+Both binaries - the REST server and the TUI - read one YAML file, given with `--config`
+(`AppConfig`, `caelumora_model::config`). Without it, every section takes its default.
+`examples/config.yaml` is the configuration for local development, with every section and its
+default in comments.
 
-Every section may be left out and then takes its default. A key the
-configuration does not know is an error rather than ignored, so that a
-misspelt section doesn't silently fall back to its default (issue 96).
+Every section may be left out and then takes its default. A key the configuration does not know is
+an error rather than ignored, so that a misspelt section doesn't silently fall back to its default
+(issue 96).
 
 | Section | What it configures | Default |
 |---|---|---|
@@ -26,11 +26,10 @@ misspelt section doesn't silently fall back to its default (issue 96).
 
 ## The model
 
-The language model an agent talks to is a component (issue 130): the
-`LLMClient` facet, of which an agent has exactly one. A personality may
-configure its own; every other agent gets the one `component_defaults`
-names, or else `ollama_client` with its defaults. There is no separate
-section for it, and no environment variable.
+The language model an agent talks to is a component (issue 130): the `LLMClient` facet, of which an
+agent has exactly one. A personality may configure its own; every other agent gets the one
+`component_defaults` names, or else `ollama_client` with its defaults. There is no separate section
+for it, and no environment variable.
 
 ```yaml
 component_defaults:
@@ -55,8 +54,7 @@ component_defaults:
 
 An unknown parameter is refused, and the agent does not start.
 
-Before the first call to a model, the client reads the model's control
-tokens from the server's `/api/show` and keeps them from being produced by
-any text it sends (issue 149, see
-[AGENT-TURN.md](AGENT-TURN.md#control-tokens-in-the-content)). If they
-cannot be read, the call fails.
+Before the first call to a model, the client reads the model's control tokens from the server's
+`/api/show` and keeps them from being produced by any text it sends (issue 149, see
+[AGENT-TURN.md](AGENT-TURN.md#control-tokens-in-the-content)). If they cannot be read, the call
+fails.

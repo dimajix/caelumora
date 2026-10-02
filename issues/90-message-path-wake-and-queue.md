@@ -7,40 +7,34 @@
 
 The path "a user writes, an agent answers" has three detours:
 
-1. **Frontends wake the channel.** REST (`routes/channels.rs:329`) and the
-   TUI (`tui/main.rs:304`) call `channel.wake_for_delivery()` before
-   `send_message`; `send_approval` does not - an asymmetry without a reason.
-   The channel sees the user's envelope itself; the commented-out block at
+1. **Frontends wake the channel.** REST (`routes/channels.rs:329`) and the TUI (`tui/main.rs:304`)
+   call `channel.wake_for_delivery()` before `send_message`; `send_approval` does not - an asymmetry
+   without a reason. The channel sees the user's envelope itself; the commented-out block at
    `channel.rs:650-654` wanted to wake there.
 2. **The `UserActor` queue is a hop without a purpose.** `user_tx`/`user_rx`
-   (`actor_impl/user.rs:37-38`) exist only because the channel's inbox sender
-   is created in `run` (`channel.rs:496`). `UserActor::run` does nothing but
-   pass the queue on.
-3. **`perceive` begins a turn.** Since `ed9abe8`, `perceive` calls
-   `begin_turn` (`agent.rs:149`), which asks the `SecurityManager` twice per
-   perceived message and agent, and resets the turn - although
-   `request_response` does both again a moment later. The `PerceiveIn`
-   processors probably need only the `EventContext` for provenance.
+   (`actor_impl/user.rs:37-38`) exist only because the channel's inbox sender is created in `run`
+   (`channel.rs:496`). `UserActor::run` does nothing but pass the queue on.
+3. **`perceive` begins a turn.** Since `ed9abe8`, `perceive` calls `begin_turn` (`agent.rs:149`),
+   which asks the `SecurityManager` twice per perceived message and agent, and resets the turn -
+   although `request_response` does both again a moment later. The `PerceiveIn` processors probably
+   need only the `EventContext` for provenance.
 
 ## Why it matters
 
-Two frontends must know a precondition of the runtime (1); every user
-message crosses one queue more than it has to (2); and a policy check per
-perceived message scales with the number of agents in the channel (3).
+Two frontends must know a precondition of the runtime (1); every user message crosses one queue more
+than it has to (2); and a policy check per perceived message scales with the number of agents in the
+channel (3).
 
 ## Considerations
 
-- (1) The channel wakes on a user's `FullResponseGenerated`; since REST
-  wakes on every message today, that is behaviour-preserving. The
-  `channel_wakeup_failed` error path in REST goes.
-- (2) `ChannelLoop::new` creates `event_tx` and offers
-  `pub(crate) fn submit(&self, Envelope)`; `UserActor::send_message` calls it
-  directly. `channel.rs` 2 places, `user.rs` 4 methods + 2 tests.
-- (3) Check what the processors use; give `perceive` the event context
-  without `next_turn`. `begin_turn` stays the one place a turn starts.
-- With `Actor::wakeup`/`cancel` never failing and never awaiting, both can
-  become plain `fn`, removing three `?` in `channel.rs` (see
-  [107](107-public-interface.md)).
+- (1) The channel wakes on a user's `FullResponseGenerated`; since REST wakes on every message
+  today, that is behaviour-preserving. The `channel_wakeup_failed` error path in REST goes.
+- (2) `ChannelLoop::new` creates `event_tx` and offers `pub(crate) fn submit(&self, Envelope)`;
+  `UserActor::send_message` calls it directly. `channel.rs` 2 places, `user.rs` 4 methods + 2 tests.
+- (3) Check what the processors use; give `perceive` the event context without `next_turn`.
+  `begin_turn` stays the one place a turn starts.
+- With `Actor::wakeup`/`cancel` never failing and never awaiting, both can become plain `fn`,
+  removing three `?` in `channel.rs` (see [107](107-public-interface.md)).
 
 ## Done when
 
@@ -50,40 +44,30 @@ perceived message scales with the number of agents in the channel (3).
 
 ## History
 
-- **2026-09-28** — From the structure review
-  (`work/2026-09-28-code-review.md`, path 3.4 A). Point 3 is a cost of
-  commit `ed9abe8`, noticed by the review.
-- **2026-09-29** — From [79](79-user-actor-exits-on-send-error.md): once
-  the `UserActor` queue is gone, its run loop is only its inbox and the
-  global events - then check whether it and the `ApproverActor` (inbox,
-  global events, a timeout timer) should share one run loop.
-- **2026-09-29** — Point 3 is done with [85](85-turn-state-in-agent-channel-state.md):
-  `perceive` begins no turn and asks the policy nothing.
-- **2026-09-29** — Point 1 done, point 2 rejected, and the fourth
-  consideration had been done before (`Actor::wakeup`/`cancel` are plain
-  `fn` since issue 76). Status `done`: nothing of the issue is left open.
-  (1) Neither REST nor the TUI wakes the channel any more, and
-  `wake_for_delivery` is private (REST had no `channel_wakeup_failed` path
-  left to remove). Not as the considerations proposed - the channel waking
-  on a user's `FullResponseGenerated`, which a first version did - but, on
-  the maintainer's decision, by the user's actor: `send_message` sends a
-  `WakeupRequested` ahead of the message, in its span, and the channel
-  wakes when it routes that, as it already did for `WakeupRequested`. The
-  channel does not decide by itself when it is woken. A cancelled channel
-  stays quiet until the next such request - as before, when the frontends
-  woke on every message. The event has no recipient and is broadcast; the
-  web UI ignores it. Approvals still wake nothing, as before: an agent
-  that waits for one is not asleep.
-  (2) Rejected by the maintainer after a first implementation, in which
-  the `UserActor` put its envelopes into the channel's inbox directly
-  (`ChannelLoop::submit`). The user is a participant so that a frontend
-  talks to it and not to the channel, and an actor sends only through the
-  transport `run` gives it - no actor takes a shortcut. The queue is not a
-  hop without a purpose: it is how calls from outside reach the actor's
-  task, the only place that has the transport. What stayed of it: the
-  queue closes when the actor's task ends - through a guard, so also when
-  it is aborted with its channel - and sending to a stopped channel is an
-  error instead of filling a queue nobody reads; a test checks it, and
-  fails without the close. The note from issue 79 - a shared run loop
-  with the `ApproverActor` - is not pursued: the `UserActor`'s loop is its
-  inbox and its queue, the approver's has global events and timeouts.
+- **2026-09-28** — From the structure review (`work/2026-09-28-code-review.md`, path 3.4 A). Point 3
+  is a cost of commit `ed9abe8`, noticed by the review.
+- **2026-09-29** — From [79](79-user-actor-exits-on-send-error.md): once the `UserActor` queue is
+  gone, its run loop is only its inbox and the global events - then check whether it and the
+  `ApproverActor` (inbox, global events, a timeout timer) should share one run loop.
+- **2026-09-29** — Point 3 is done with [85](85-turn-state-in-agent-channel-state.md): `perceive`
+  begins no turn and asks the policy nothing.
+- **2026-09-29** — Point 1 done, point 2 rejected, and the fourth consideration had been done before
+  (`Actor::wakeup`/`cancel` are plain `fn` since issue 76). Status `done`: nothing of the issue is
+  left open. (1) Neither REST nor the TUI wakes the channel any more, and `wake_for_delivery` is
+  private (REST had no `channel_wakeup_failed` path left to remove). Not as the considerations
+  proposed - the channel waking on a user's `FullResponseGenerated`, which a first version did -
+  but, on the maintainer's decision, by the user's actor: `send_message` sends a `WakeupRequested`
+  ahead of the message, in its span, and the channel wakes when it routes that, as it already did
+  for `WakeupRequested`. The channel does not decide by itself when it is woken. A cancelled channel
+  stays quiet until the next such request - as before, when the frontends woke on every message. The
+  event has no recipient and is broadcast; the web UI ignores it. Approvals still wake nothing, as
+  before: an agent that waits for one is not asleep. (2) Rejected by the maintainer after a first
+  implementation, in which the `UserActor` put its envelopes into the channel's inbox directly
+  (`ChannelLoop::submit`). The user is a participant so that a frontend talks to it and not to the
+  channel, and an actor sends only through the transport `run` gives it - no actor takes a shortcut.
+  The queue is not a hop without a purpose: it is how calls from outside reach the actor's task, the
+  only place that has the transport. What stayed of it: the queue closes when the actor's task
+  ends - through a guard, so also when it is aborted with its channel - and sending to a stopped
+  channel is an error instead of filling a queue nobody reads; a test checks it, and fails without
+  the close. The note from issue 79 - a shared run loop with the `ApproverActor` - is not pursued:
+  the `UserActor`'s loop is its inbox and its queue, the approver's has global events and timeouts.
