@@ -16,7 +16,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, UserController};
-use caelumora_model::agent::PersonalityKind;
+use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
@@ -106,19 +106,21 @@ pub enum ChannelError {
 /// 179).
 enum Member {
     User(Arc<UserController>),
-    Agent(Arc<AgentController>),
-    ExternalAgent(Arc<AgentController>),
+    Agent(Arc<AgentController>, Personality),
+    ExternalAgent(Arc<AgentController>, Personality),
     Approver(Approver),
 }
 
 impl Member {
-    /// `participant` with its controller, or `None` if its user or agent no
-    /// longer exists.
+    /// `participant` of `channel` with its controller - an agent also with
+    /// its personality, read once, as the agent may read it, for its actor
+    /// to be built from - or `None` if its user or agent no longer exists.
     ///
     /// # Errors
     /// Whatever else the store reports when loading it - also that an
-    /// agent's personality is gone: the agent exists, but cannot be run.
-    async fn of(participant: &Participant, runtime: &ChannelRuntime) -> Result<Option<Self>> {
+    /// agent's personality is gone or not its to read: the agent exists, but
+    /// cannot be run.
+    async fn of(participant: &Participant, channel: &Channel, runtime: &ChannelRuntime) -> Result<Option<Self>> {
         let controllers = runtime.controller_manager();
         let agent = match participant {
             Participant::User(id) => return gone_is_none(controllers.user_controller(*id).await.map(Member::User)),
@@ -128,17 +130,18 @@ impl Member {
                 None => return Ok(None),
             },
         };
-        let personality = agent.load().personality_id;
-        Ok(Some(match runtime.personality_kind(personality).await? {
-            PersonalityKind::Internal => Member::Agent(agent),
-            PersonalityKind::External => Member::ExternalAgent(agent),
+        let (security, id) = { let loaded = agent.load(); (loaded.security_context(channel.session_id, channel.id), loaded.personality_id) };
+        let personality = runtime.personality(&security, id).await?;
+        Ok(Some(match personality.kind {
+            PersonalityKind::Internal => Member::Agent(agent, personality),
+            PersonalityKind::External => Member::ExternalAgent(agent, personality),
         }))
     }
 
     fn actor_id(&self) -> ActorId {
         match self {
             Member::User(user) => ActorId::User(user.id()),
-            Member::Agent(agent) | Member::ExternalAgent(agent) => ActorId::Agent(agent.id()),
+            Member::Agent(agent, _) | Member::ExternalAgent(agent, _) => ActorId::Agent(agent.id()),
             Member::Approver(approver) => ActorId::Approver(approver.id),
         }
     }
@@ -266,7 +269,7 @@ impl ChannelLoop {
         for participant in &participants {
             // A user or agent deleted since it joined: the channel runs
             // without it rather than not at all (issue 120).
-            let Some(member) = Member::of(participant, &channel_loop.runtime).await? else {
+            let Some(member) = Member::of(participant, &channel_loop.channel.load(), &channel_loop.runtime).await? else {
                 warn!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
                 continue;
             };
@@ -462,7 +465,7 @@ impl ChannelLoop {
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let member = Member::of(&found, &self.runtime).await?
+        let member = Member::of(&found, &self.channel.load(), &self.runtime).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         self.runtime.require_cleared(context, participant, &self.classification(), self.id).await?;
 
@@ -473,8 +476,8 @@ impl ChannelLoop {
         let started = async {
             let visible = visible_part(self.history_start_of(participant), messages);
             match &member {
-                Member::Agent(agent) => self.seed_transcript(agent.id(), visible).await?,
-                Member::ExternalAgent(agent) => self.seed_heard(agent.id(), visible).await?,
+                Member::Agent(agent, _) => self.seed_transcript(agent.id(), visible).await?,
+                Member::ExternalAgent(agent, _) => self.seed_heard(agent.id(), visible).await?,
                 Member::User(_) | Member::Approver(_) => {}
             }
             Self::create_actor(self.channel.clone(), member, &self.runtime).await
@@ -717,8 +720,8 @@ impl ChannelLoop {
         let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
         Ok(match member {
             Member::User(user) => Box::new(UserActor::new(&channel.load(), user, actor_runtime).await?),
-            Member::Agent(agent) => Box::new(AgentActor::new(&channel.load(), agent, actor_runtime).await?),
-            Member::ExternalAgent(agent) => Box::new(ExternalAgentActor::new(&channel.load(), agent, actor_runtime).await?),
+            Member::Agent(agent, personality) => Box::new(AgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
+            Member::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
             Member::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }

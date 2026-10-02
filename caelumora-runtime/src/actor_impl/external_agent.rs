@@ -20,7 +20,7 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-use caelumora_model::agent::AgentId;
+use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState, TaskId};
@@ -83,19 +83,18 @@ impl Answering {
 impl ExternalAgentActor {
     /// The actor of the external agent `agent_controller` holds - the
     /// session's controller of it, shared with its actors in the session's
-    /// other channels (issue 120).
+    /// other channels (issue 120) - built from its `personality`, as the
+    /// channel read it for the agent.
     ///
     /// # Errors
-    /// If its personality cannot be read, provides no `ExternalAgent` - or
-    /// more than one - or its answers, as the component classifies them,
-    /// may not be published in `channel`; whatever its state store reports.
-    pub async fn new(channel: &Channel, agent_controller: Arc<AgentController>, actor_runtime: ActorRuntime) -> Result<Self> {
+    /// If its personality provides no `ExternalAgent` - or more than one -
+    /// or its answers, as the component classifies them, may not be
+    /// published in `channel`; whatever its state store reports.
+    pub async fn new(channel: &Channel, agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
         let agent = agent_controller.load();
         // It acts on behalf of its owner, in this channel, as an agent run
         // here does (issue 87).
-        let security_context = SecurityContext::new(agent.security_attributes.owner_id, channel.session_id, channel.id)
-            .next(ActorId::Agent(agent.id));
-        let personality = actor_runtime.personality(&security_context, agent.personality_id).await?;
+        let security_context = agent.security_context(channel.session_id, channel.id);
         let agent_id = agent.id;
         drop(agent);
 

@@ -40,7 +40,8 @@ use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, PersonalityKind};
+use caelumora_model::agent::{Agent, AgentId, Personality};
+use caelumora_model::user::UserId;
 use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::{ChannelRef, Classification};
 use caelumora_model::privacy::SessionPrivacy;
@@ -275,45 +276,32 @@ impl Views {
         self.runtime.entity_store().get_agent(&SecurityContext::system(), id).await.ok()
     }
 
-    /// What kind of agent `agent` is (issue 179), as its personality says:
-    /// an agent whose personality is gone counts as one run here. Read in the
-    /// runtime's name: it decides how the agent's state is read, not what
-    /// the viewer may see of it.
+    /// The personality of `agent` - what kind of agent it is (issue 179),
+    /// how it is introduced (issue 176) - or `None` if it no longer exists.
+    /// Read in the runtime's name: introductions are public, and the kind
+    /// decides how the agent's state is read, not what the viewer may see.
     ///
     /// # Errors
-    /// `Failed` if the personality cannot be read.
-    async fn kind_of(&self, agent: &Agent) -> ViewResult<PersonalityKind> {
+    /// `Failed` if it cannot be read.
+    async fn personality_of(&self, agent: &Agent) -> ViewResult<Option<Personality>> {
         match self.runtime.entity_store().get_personality(&SecurityContext::system(), agent.personality_id).await {
-            Ok(personality) => Ok(personality.kind),
-            Err(StoreError::NotFound { .. }) => Ok(PersonalityKind::Internal),
+            Ok(personality) => Ok(Some(personality)),
+            Err(StoreError::NotFound { .. }) => Ok(None),
             Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", agent.id)))),
         }
     }
 
-    /// The introduction of `participant` (issue 176): an agent's - `agent`,
-    /// its document - is its personality's, a user's is in their profile.
-    /// `None` for an approver, for one who has none, and for one that no
-    /// longer exists. Read in the runtime's name, like the name:
+    /// How the user `id` introduces themselves in their profile (issue 176),
+    /// `None` if they do not. Read in the runtime's name, like the name:
     /// introductions are public.
     ///
     /// # Errors
     /// `Failed` if it cannot be read.
-    async fn introduction_of(&self, participant: &Participant, agent: Option<&Agent>) -> ViewResult<Option<String>> {
-        let store = self.runtime.entity_store();
-        let system = SecurityContext::system();
-        let failed = |e: StoreError| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", participant.actor_id())));
-        match (participant, agent) {
-            (Participant::User(id), _) => match store.get_user_profile(&system, *id).await {
-                Ok(profile) => Ok(profile.introduction),
-                Err(StoreError::NotFound { .. }) => Ok(None),
-                Err(e) => Err(failed(e)),
-            },
-            (Participant::Agent(_), Some(agent)) => match store.get_personality(&system, agent.personality_id).await {
-                Ok(personality) => Ok(personality.introduction),
-                Err(StoreError::NotFound { .. }) => Ok(None),
-                Err(e) => Err(failed(e)),
-            },
-            _ => Ok(None),
+    async fn introduction_of(&self, id: UserId) -> ViewResult<Option<String>> {
+        match self.runtime.entity_store().get_user_profile(&SecurityContext::system(), id).await {
+            Ok(profile) => Ok(profile.introduction),
+            Err(StoreError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the introduction of {}", ActorId::User(id))))),
         }
     }
 

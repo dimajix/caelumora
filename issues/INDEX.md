@@ -71,6 +71,7 @@ against it, and what came out of the last attempt.
 | [108](108-serde-defaults-for-legacy.md) | done | Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to. |
 | [164](164-soft-deletion-and-former-members.md) | open | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
 | [178](178-scoped-lookup-by-name.md) | open | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
+| [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 
 ## Sessions and channels
 

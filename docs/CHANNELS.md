@@ -290,7 +290,9 @@ An **actor** is anything that sends and receives events in a channel.
     `internal` - the default - an `AgentActor`; `external` an
     `ExternalAgentActor`, for an agent that runs elsewhere and is reached
     through the personality's one `ExternalAgent` component. The channel
-    decides it when it builds the actor (`Member::of`); the agent is
+    decides it when it builds the actor (`Member::of`), which reads the
+    personality once, as the agent may read it, and hands it to the actor
+    to be built from; the agent is
     `ActorId::Agent` either way, and nothing else - the participants, the
     REST API, the moderator - tells the two apart.
 *   **An external agent** has no turn and no tools. Its actor hears what
@@ -336,9 +338,9 @@ only what concerns that actor (issue 69):
 *   the services every actor needs: `security_manager`, `secret_manager`,
     `component_registry`, `command_executor` - the model is not among them,
     an agent has it as a component (issue 130);
-*   its personality (`personality`);
 *   its own agent state (`agent_state`) and its state in the channel
-    (`load_channel_state` / `store_channel_state`);
+    (`load_channel_state` / `store_channel_state`, of an external agent
+    `load_external_channel_state` / `store_external_channel_state`);
 *   its own event subscription (`subscribe_channel` - its channel, nothing
     else) and announcement (`announce_channel_state_changed`);
 *   the loop of its channel (`channel_loop`, `pub(crate)`), and a stored

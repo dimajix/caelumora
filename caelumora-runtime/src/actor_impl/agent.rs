@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use crate::agent_state::AgentStateHandle;
-use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use crate::controller::AgentController;
 use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::Channel;
@@ -66,17 +66,17 @@ pub struct AgentActor {
 impl AgentActor {
     /// The actor of the agent `agent_controller` holds - the session's
     /// controller of it, shared with its actors in the session's other
-    /// channels (issue 120).
+    /// channels (issue 120) - built from its `personality`, as the channel
+    /// read it for the agent.
     pub async fn new(
         channel: &Channel,
         agent_controller: Arc<AgentController>,
+        personality: Personality,
         actor_runtime: ActorRuntime,
     ) -> Result<Self> {
         let agent = agent_controller.load();
         // The agent acts on behalf of its owner, in this channel (issue 87).
-        let security_context = SecurityContext::new(agent.security_attributes.owner_id, channel.session_id, channel.id)
-            .next(ActorId::Agent(agent.id));
-        let personality = actor_runtime.personality(&security_context, agent.personality_id).await?;
+        let security_context = agent.security_context(channel.session_id, channel.id);
         let agent_id = agent.id;
         let attributes = agent.security_attributes.clone();
         drop(agent);

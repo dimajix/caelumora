@@ -6,7 +6,7 @@ use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, PersonalityKind};
+use caelumora_model::agent::{Agent, Personality, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::{ChannelRef, Classification};
@@ -270,9 +270,12 @@ pub struct MemberView {
     /// longer exists. An agent's is in its document.
     name: Option<String>,
     /// For an agent: its document - its name, its attributes, which its
-    /// context is read by, and its personality, which introduces it (issue
-    /// 176); `None` for one that no longer exists.
+    /// context is read by; `None` for one that no longer exists.
     agent: Option<Agent>,
+    /// For an agent: its personality, read once - what kind of agent it is
+    /// (issue 179) and how it is introduced (issue 176); `None` for one
+    /// whose personality no longer exists or cannot be read.
+    personality: Option<Personality>,
     /// Took part once and left.
     former: bool,
     /// For an agent that exists: its state in the channel, as its kind
@@ -286,19 +289,21 @@ impl MemberView {
             Participant::Agent(id) => (None, channel.views().agent_of(id).await),
             _ => (channel.views().name_of(&participant).await, None),
         };
-        let agent_state = match &agent {
-            Some(agent) => {
-                let kind = channel.views().kind_of(agent).await.unwrap_or_else(|e| {
-                    // Read as before there were kinds: the state of an agent
-                    // run here, which an external one does not write.
-                    warn!("Cannot tell what kind of agent {} is, taking it for one run here: {:#}", agent.id, e);
-                    PersonalityKind::Internal
-                });
-                Some(agent_state(kind, agent.id, channel.id(), channel.views().runtime().state_store()))
-            }
+        let personality = match &agent {
+            Some(agent) => channel.views().personality_of(agent).await.unwrap_or_else(|e| {
+                warn!("Cannot read the personality of agent {}: {:#}", agent.id, e);
+                None
+            }),
             None => None,
         };
-        Self { channel, participant, name, agent, former, agent_state }
+        let agent_state = agent.as_ref().map(|agent| {
+            // Without a personality, read as before there were kinds: the
+            // state of an agent run here, which an external one does not
+            // write.
+            let kind = personality.as_ref().map_or(PersonalityKind::Internal, |p| p.kind);
+            agent_state(kind, agent.id, channel.id(), channel.views().runtime().state_store())
+        });
+        Self { channel, participant, name, agent, personality, former, agent_state }
     }
 
     /// Whether the member took part once and left: not among the channel's
@@ -343,7 +348,11 @@ impl MemberView {
     /// # Errors
     /// `Failed` if it cannot be read.
     pub async fn introduction(&self) -> ViewResult<Option<String>> {
-        self.channel.views().introduction_of(&self.participant, self.agent.as_ref()).await
+        match &self.participant {
+            Participant::User(id) => self.channel.views().introduction_of(*id).await,
+            Participant::Agent(_) => Ok(self.personality.as_ref().and_then(|p| p.introduction.clone())),
+            Participant::Approver(_) => Ok(None),
+        }
     }
 
     /// Whether the viewer may see what this member saw when it produced a

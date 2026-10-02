@@ -621,3 +621,10 @@ Each step compiles, is tested, and leaves `main` working.
   users, agents and approvers share most of what a member view shows. An
   external agent's notes are now an empty list, like an agent that wrote
   none, rather than no notes at all.
+- **2026-10-02** — Fewer reads of the personality (issue
+  [182](182-entity-reads-not-cached.md), step 1): `Member::of` reads it
+  once, in the agent's context (`Agent::security_context`), decides the
+  kind from it and hands it to the actor, which no longer reads it;
+  `ActorRuntime::personality` is gone. `MemberView::of` reads it once and
+  keeps it for the kind and the introduction (`Views::kind_of` is gone,
+  `introduction_of` reads users' only).
