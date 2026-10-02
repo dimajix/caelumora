@@ -205,3 +205,8 @@ meaning. Step 4 is the removal the whole thing is for.
   reclassification and a lowering are recorded as entries, covered by the digest
   (`digest::history_chain`), and `messages()` and `message(id)` fold over every branch in the
   order things happened. `amend_each` had no caller left and is gone.
+- **2026-10-02** — Step 4 done: `TranscriptEntry` is `Message` or `GivenUp`; giving a turn up
+  moves the head back and records it as an entry naming the dead branch's end, covered by the
+  digest (`digest::transcript_chain`, without the time), and `messages()` is what the model is
+  given. With no caller left, `amend` and `ChainChange::Amended` are gone: a chain appends and
+  moves its head, nothing else.

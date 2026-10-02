@@ -1,5 +1,6 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
-//! built from, and the turns it gave up (issue 145).
+//! built from, and the turns it gave up (issue 145), as what happened
+//! (issue 197).
 
 use crate::chain::Chain;
 use crate::digest::Digest;
@@ -7,26 +8,28 @@ use crate::message::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// A message of a `Transcript`; its node carries the digest of the
+/// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
+// Nearly every entry is a message: boxing it would cost an allocation per
+// message and save nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TranscriptEntry {
-    pub message: Message,
-    /// Set on the last message of a turn that was given up (issue 145):
-    /// what the branch ending here is. Not covered by the digest - it says
-    /// something about the branch, not what a model saw.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub given_up: Option<GivenUp>,
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptEntry {
+    /// A message the model was given, or produced.
+    Message(Message),
+    /// A turn was given up (issue 145): its messages stay as a branch no
+    /// longer active, ending in the entry `end` names, and the transcript
+    /// goes on from here without them.
+    GivenUp { end: Digest, given_up: GivenUp },
 }
 
-/// That a turn was given up rather than taken over (issue 145): its
-/// messages stay in the agent's transcript as a branch that is no longer
-/// active, ending in the message this is set on.
+/// That a turn was given up rather than taken over (issue 145).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GivenUp {
     pub reason: GivenUpReason,
     pub at: DateTime<Utc>,
-    /// How many of the messages up to this one are the turn's.
+    /// How many of the messages up to the end of its branch are the turn's.
     pub turn_entries: usize,
 }
 
@@ -46,7 +49,7 @@ pub enum GivenUpReason {
     Stopped,
 }
 
-/// A turn that was given up: the mark, and the turn's messages.
+/// A turn that was given up: the record, and the turn's messages.
 #[derive(Debug, Clone)]
 pub struct GivenUpTurn {
     pub given_up: GivenUp,
@@ -55,20 +58,22 @@ pub struct GivenUpTurn {
 
 /// An agent's transcript (issue 50): the sequence of messages its context is
 /// built from - its own messages in full, with tool calls and internal
-/// steps, and what others said as it received them. The context of a model
-/// call adds the prompt parts and the turn's messages to it; the history is
-/// the channel's public record, which the transcript is not.
+/// steps, and what others said as it received them - and the record of the
+/// turns it gave up. The context of a model call adds the prompt parts and
+/// the turn's messages to it; the history is the channel's public record,
+/// which the transcript is not.
 ///
-/// A chain: every entry's digest covers its message and the digest before
-/// it, so one digest names the whole transcript up to that point by content
-/// (see `crate::chain`). Nothing is ever removed from it - also not from a
-/// branch no longer active (issue 08) - so every digest it had names a
-/// prefix of one of its branches, which can be recovered (`prefix`).
+/// A chain: every entry's digest covers it and the digest before it, so
+/// one digest names the whole transcript up to that point by content (see
+/// `crate::chain`). Nothing is ever removed from it - also not from a branch
+/// no longer active (issue 08) - so every digest it had names a prefix of
+/// one of its branches, which can be recovered (`prefix`).
 pub type Transcript = Chain<TranscriptEntry>;
 
 impl Chain<TranscriptEntry> {
+    /// The messages of the active path: what the model is given.
     pub fn messages(&self) -> Vec<Message> {
-        self.entries().map(|e| e.entry.message.clone()).collect()
+        self.entries().filter_map(|e| e.entry.message()).cloned().collect()
     }
 
     /// Appends `msgs`.
@@ -80,27 +85,42 @@ impl Chain<TranscriptEntry> {
 
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        self.push_with(TranscriptEntry { message: msg, given_up: None }, |previous, entry| crate::digest::message_chain(previous, &entry.message))
+        self.push_with(TranscriptEntry::Message(msg), crate::digest::transcript_chain)
     }
 
-    /// Marks the entry with `digest` as the end of a turn given up (issue
-    /// 145). `false` if there is none.
-    pub fn mark_given_up(&mut self, digest: &Digest, given_up: GivenUp) -> bool {
-        self.amend(digest, |entry| entry.given_up = Some(given_up))
+    /// Records that the turn whose branch ends in the entry `end` names was
+    /// given up (issue 145), here - after the head went back to where the
+    /// turn began. `false`, and nothing is recorded, if there is no such
+    /// entry.
+    pub fn give_up(&mut self, end: Digest, given_up: GivenUp) -> bool {
+        if self.prefix(&end).is_none() {
+            return false;
+        }
+        self.push_with(TranscriptEntry::GivenUp { end, given_up }, crate::digest::transcript_chain);
+        true
     }
 
-    /// The turns given up, in the order they ended in the transcript, each
-    /// with its messages.
+    /// The turns given up, in the order they were, each with its messages.
     pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
         self.all_entries()
             .filter_map(|node| {
-                let given_up = node.entry.given_up.clone()?;
-                let path = self.prefix(&node.digest)?;
+                let TranscriptEntry::GivenUp { end, given_up } = &node.entry else { return None };
+                let path = self.prefix(end)?;
                 let start = path.len().saturating_sub(given_up.turn_entries);
-                let messages = path[start..].iter().map(|e| e.entry.message.clone()).collect();
-                Some(GivenUpTurn { given_up, messages })
+                let messages = path[start..].iter().filter_map(|e| e.entry.message()).cloned().collect();
+                Some(GivenUpTurn { given_up: given_up.clone(), messages })
             })
             .collect()
+    }
+}
+
+impl TranscriptEntry {
+    /// The message, if this is one.
+    pub fn message(&self) -> Option<&Message> {
+        match self {
+            TranscriptEntry::Message(message) => Some(message),
+            TranscriptEntry::GivenUp { .. } => None,
+        }
     }
 }
 
@@ -156,7 +176,7 @@ mod tests {
         context.push(make_message(id(3)));
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
-        assert_eq!(prefix.iter().map(|e| e.entry.message.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
+        assert_eq!(prefix.iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
         assert!(context.prefix(&crate::digest::prompt("elsewhere")).is_none());
     }
 
@@ -178,26 +198,50 @@ mod tests {
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
     }
 
-    #[test]
-    fn a_turn_given_up_is_a_marked_branch_with_its_messages() {
+    /// A transcript of one message, a turn of two given up, and a message
+    /// after: `(transcript, the record)`.
+    fn with_a_turn_given_up() -> (Transcript, GivenUp) {
         let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
         let before = transcript.digest();
         transcript.extend(vec![make_message(id(2)), make_message(id(3))]);
-        let last = transcript.digest().unwrap();
+        let end = transcript.digest().unwrap();
         let given_up = GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: Utc::now(), turn_entries: 2 };
-        assert!(transcript.mark_given_up(&last, given_up.clone()));
-        assert_eq!(transcript.digest(), Some(last), "the mark is no part of the digest");
         transcript.move_head(before.as_ref());
+        assert!(transcript.give_up(end, given_up.clone()));
         transcript.push(make_message(id(4)));
+        (transcript, given_up)
+    }
 
+    #[test]
+    fn a_turn_given_up_is_recorded_after_its_branch_with_its_messages() {
+        let (mut transcript, given_up) = with_a_turn_given_up();
         let loaded: Transcript = serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         let turns = loaded.given_up_turns();
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].given_up, given_up);
         assert_eq!(turns[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)], "the turn's, not what came before");
-        assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
-        assert!(!transcript.mark_given_up(&crate::digest::prompt("elsewhere"), given_up), "no such entry");
+        assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)], "the model is given the messages");
+        assert_eq!(loaded.entries().len(), 3, "the record is on the active path");
+        assert!(!transcript.give_up(crate::digest::prompt("elsewhere"), given_up), "no such branch");
+    }
+
+    #[test]
+    fn the_record_of_a_turn_given_up_is_covered_by_the_digest_but_not_its_time() {
+        let (transcript, given_up) = with_a_turn_given_up();
+        let mut other = Transcript::default();
+        other.push(make_message(id(1)));
+        let before = other.digest();
+        other.extend(vec![make_message(id(2)), make_message(id(3))]);
+        let end = other.digest().unwrap();
+        other.move_head(before.as_ref());
+        other.give_up(end, GivenUp { at: Utc::now() - chrono::Duration::hours(1), ..given_up.clone() });
+        other.push(make_message(id(4)));
+        assert_eq!(other.digest(), transcript.digest(), "the same record at another time");
+
+        other.move_head(before.as_ref());
+        other.give_up(end, GivenUp { reason: GivenUpReason::Stopped, ..given_up });
+        assert_ne!(other.digest(), transcript.digest(), "another reason");
     }
 
     #[test]
@@ -209,10 +253,9 @@ mod tests {
 
         let before = transcript.digest();
         transcript.extend(vec![make_message(id(2)), make_message(id(3))]);
-        let last = transcript.digest().unwrap();
-        let given_up = GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 2 };
-        transcript.mark_given_up(&last, given_up);
+        let end = transcript.digest().unwrap();
         transcript.move_head(before.as_ref());
+        transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 2 });
         transcript.push(make_message(id(4)));
 
         for change in transcript.changes() {
@@ -220,7 +263,7 @@ mod tests {
         }
         assert_eq!(stored.digest(), transcript.digest());
         assert_eq!(stored.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)]);
-        assert_eq!(stored.given_up_turns().len(), 1, "the mark came along");
+        assert_eq!(stored.given_up_turns().len(), 1, "the record came along");
         assert_eq!(stored.given_up_turns()[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)]);
     }
 }

@@ -12,13 +12,15 @@ use std::collections::{HashMap, HashSet};
 
 /// What happened in a `MessageHistory`; its node carries the digest of the
 /// history up to and including it.
+// Nearly every entry is a message said: boxing it would cost an allocation
+// per message and save nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryEntry {
     /// A message said and, for one this agent produced, what it was
-    /// produced from. Boxed: a message is many times the size of the other
-    /// entries.
-    Said { message: Box<Message>, context: Option<ContextRef> },
+    /// produced from.
+    Said { message: Message, context: Option<ContextRef> },
     /// The message `message` - on whichever branch - is classified
     /// `classification` from here on (issue 133).
     Reclassified { message: MessageId, classification: Classification },
@@ -57,7 +59,7 @@ impl Chain<HistoryEntry> {
             match &node.entry {
                 HistoryEntry::Said { message, .. } => {
                     at.insert(message.id, messages.len());
-                    messages.push((**message).clone());
+                    messages.push(message.clone());
                 }
                 HistoryEntry::Reclassified { message, classification } => {
                     if let Some(&i) = at.get(message) {
@@ -103,7 +105,7 @@ impl Chain<HistoryEntry> {
 
     /// Appends `msg` with what it was produced from, if known.
     pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
-        self.record(HistoryEntry::Said { message: Box::new(msg), context });
+        self.record(HistoryEntry::Said { message: msg, context });
     }
 
     /// Records that message `id` - on whichever branch - is classified

@@ -8,6 +8,7 @@
 
 use crate::message::Message;
 use crate::message_history::HistoryEntry;
+use crate::transcript::TranscriptEntry;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -184,6 +185,25 @@ pub fn message_chain(previous: Option<&Digest>, message: &Message) -> Digest {
     e.json(&to_json(&message.tool_results));
     e.bytes(&[message.internal as u8]);
     e.finish()
+}
+
+/// The digest of a transcript (issue 50) ending in `entry`, whose
+/// predecessor chain has the digest `previous`: a message as
+/// `message_chain`, so that every digest recorded before issue 197 names
+/// what it named; a turn given up (issue 145) by what it says - the branch
+/// it ends, the reason and the count, not the time - in a scheme of its own.
+pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
+    match entry {
+        TranscriptEntry::Message(message) => message_chain(previous, message),
+        TranscriptEntry::GivenUp { end, given_up } => {
+            let mut e = Encoder::new("caelumora.transcript-given-up.v1");
+            e.opt_digest(previous);
+            e.opt_digest(Some(end));
+            e.json(&to_json(&given_up.reason));
+            e.bytes(&given_up.turn_entries.to_le_bytes());
+            e.finish()
+        }
+    }
 }
 
 /// The digest of a history (issue 06) ending in `entry`, whose predecessor

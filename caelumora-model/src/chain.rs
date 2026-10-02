@@ -15,9 +15,9 @@
 //! entry's [`Node`] and never recomputes it: were a scheme to change,
 //! recomputing would silently change every digest that refers to an entry.
 //!
-//! A chain changes in three ways only - an entry is appended, the head
-//! moves, an entry is amended in what its digest does not cover - and keeps
-//! a journal of them since it was last stored (issue 193): `changes` tells
+//! A chain changes in two ways only - an entry is appended, the head
+//! moves - and keeps a journal of them since it was last stored (issue
+//! 193): `changes` tells
 //! them as [`ChainChange`]s, `mark_stored` forgets them, and `apply` replays
 //! one onto a chain stored before. A store thus writes what was added, not
 //! the chain.
@@ -58,9 +58,6 @@ pub enum ChainChange<E> {
     /// The head moved to the entry `to` names - `None`: the root, before
     /// every entry.
     Head { to: Option<Digest> },
-    /// The entry with `digest` changed in what the digest does not cover,
-    /// as it is now.
-    Amended { digest: Digest, entry: E },
 }
 
 /// A change not yet stored, by the position of its entry in `nodes`.
@@ -68,7 +65,6 @@ pub enum ChainChange<E> {
 enum Pending {
     Added(usize),
     Head(Option<Digest>),
-    Amended(usize),
 }
 
 /// Entries that are only appended to, each chained to the one before by its
@@ -130,17 +126,6 @@ impl<E> Chain<E> {
         self.path.is_empty()
     }
 
-    /// Changes the entry with `digest` - on whichever branch - in what its
-    /// digest does not cover, and nothing else: what a digest covers is the
-    /// record and is never rewritten. `false`, and nothing changes, if there
-    /// is no such entry.
-    pub(crate) fn amend(&mut self, digest: &Digest, change: impl FnOnce(&mut E)) -> bool {
-        let Some(&at) = self.index.get(digest) else { return false };
-        change(&mut self.nodes[at].entry);
-        self.pending.push(Pending::Amended(at));
-        true
-    }
-
     /// Appends `entry` with the digest `digest` computes for it after the
     /// head, makes it the head, and returns the digest before it. An entry
     /// with the digest of one already there is that entry - the same
@@ -175,7 +160,6 @@ impl<E> Chain<E> {
         self.pending.iter().map(|pending| match pending {
             Pending::Added(at) => ChainChange::Added(Node::new(self.nodes[*at].digest, self.nodes[*at].parent, self.nodes[*at].entry.clone())),
             Pending::Head(to) => ChainChange::Head { to: *to },
-            Pending::Amended(at) => ChainChange::Amended { digest: self.nodes[*at].digest, entry: self.nodes[*at].entry.clone() },
         }).collect()
     }
 
@@ -187,11 +171,11 @@ impl<E> Chain<E> {
     /// Replays `change`, as a store does when loading what it appended onto
     /// the chain it stored before. Nothing it does is a change to store
     /// again. Idempotent: an entry added that is there already only becomes
-    /// the head, a head move and an amendment restate what is now.
+    /// the head, a head move restates where it is.
     ///
     /// # Errors
     /// If the change does not fit the chain: an entry following one that is
-    /// not there, a head or an amended entry that is not there.
+    /// not there, a head that is not there.
     pub fn apply(&mut self, change: ChainChange<E>) -> Result<(), String> {
         match change {
             ChainChange::Added(node) => {
@@ -208,10 +192,6 @@ impl<E> Chain<E> {
                     return Err("the head moved to an entry that is not there".to_string());
                 }
             }
-            ChainChange::Amended { digest, entry } => match self.index.get(&digest) {
-                Some(&at) => self.nodes[at].entry = entry,
-                None => return Err(format!("entry {digest} was amended but is not there")),
-            },
         }
         Ok(())
     }
@@ -502,18 +482,16 @@ mod tests {
         push(&mut chain, "c");
         chain.move_head(Some(&after_a));
         push(&mut chain, "b");
-        assert!(chain.amend(&after_a, |e| *e = "a!".to_string()));
 
         let changes = chain.changes();
-        let ops: Vec<&str> = changes.iter().map(|c| match c { ChainChange::Added(_) => "added", ChainChange::Head { .. } => "head", ChainChange::Amended { .. } => "amended" }).collect();
-        assert_eq!(ops, ["added", "head", "added", "head", "head", "amended"], "once each, in order; a move to where the head is is no change: {changes:?}");
+        let ops: Vec<&str> = changes.iter().map(|c| match c { ChainChange::Added(_) => "added", ChainChange::Head { .. } => "head" }).collect();
+        assert_eq!(ops, ["added", "head", "added", "head", "head"], "once each, in order; a move to where the head is is no change: {changes:?}");
 
         for change in changes.clone() {
             copy.apply(change).unwrap();
         }
         assert!(same(&copy, &chain), "{copy:?}\n{chain:?}");
-        assert_eq!(labels(copy.all_entries()), ["a!", "b", "c"]);
-        assert_eq!(copy.digest(), chain.digest(), "the digest is not what an amendment changes");
+        assert_eq!(labels(copy.all_entries()), ["a", "b", "c"]);
 
         for change in changes {
             copy.apply(change).unwrap();
@@ -533,9 +511,7 @@ mod tests {
         let orphan = Node::new(crate::digest::prompt("x"), Some(elsewhere), "x".to_string());
         assert!(chain.apply(ChainChange::Added(orphan.clone())).is_err(), "follows what is not there");
         assert!(chain.apply(ChainChange::Head { to: Some(elsewhere) }).is_err());
-        assert!(chain.apply(ChainChange::Amended { digest: orphan.digest, entry: orphan.entry }).is_err());
         assert_eq!(labels(chain.all_entries()), ["a"], "and nothing changed");
-        assert!(!chain.amend(&elsewhere, |_| unreachable!()));
     }
 
     #[test]

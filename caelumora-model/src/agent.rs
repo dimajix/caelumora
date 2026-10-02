@@ -288,12 +288,12 @@ impl TurnState {
         let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
         self.context.transcript = Some(digest);
         self.context.turn_entries += 1;
-        self.entries.push(TurnEntry { node: Node::new(digest, context.transcript, TranscriptEntry { message, given_up: None }), context });
+        self.entries.push(TurnEntry { node: Node::new(digest, context.transcript, TranscriptEntry::Message(message)), context });
     }
 
     /// The messages the turn produced so far.
     pub fn messages(&self) -> impl Iterator<Item = &Message> {
-        self.entries.iter().map(|e| &e.node.entry.message)
+        self.entries.iter().filter_map(|e| e.node.entry.message())
     }
 
     /// Records that the turn read `reference` (issue 17): it counts for the

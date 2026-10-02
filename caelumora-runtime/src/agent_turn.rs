@@ -40,7 +40,7 @@ use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::TurnEntry;
 use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptPart, PromptRef};
 use caelumora_model::message::{executed_calls, Message, MessageRole};
-use caelumora_model::transcript::{GivenUp, GivenUpReason};
+use caelumora_model::transcript::{GivenUp, GivenUpReason, TranscriptEntry};
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolDefinition};
@@ -293,8 +293,8 @@ impl<'a> Turn<'a> {
     /// (issue 145): its messages go into the transcript and the history as
     /// they would when taken over, each with what it was produced from, but
     /// as a branch that is no longer active - both heads go back to where
-    /// the turn began, and the transcript's last message of the turn is
-    /// marked as given up. Nothing it staged is applied.
+    /// the turn began, and the transcript records the turn as given up,
+    /// naming the branch. Nothing it staged is applied.
     ///
     /// What its tools did stays done. If any of its calls ran, the agent is
     /// told on the active branch, in a message of the runtime in its
@@ -309,7 +309,7 @@ impl<'a> Turn<'a> {
         let label = turn.label();
         let TurnState { entries, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
-        let messages: Vec<&Message> = entries.iter().map(|e| &e.node.entry.message).collect();
+        let messages: Vec<&Message> = entries.iter().filter_map(|e| e.node.entry.message()).collect();
         let executed = executed_calls(&messages);
         let told = (!executed.is_empty()).then(|| Message {
             id: caelumora_model::message::MessageId::new(),
@@ -321,12 +321,13 @@ impl<'a> Turn<'a> {
         let transcript = self.agent_channel_state.transcript.digest();
         let history = self.agent_channel_state.history.digest();
         self.record_turn(entries, Vec::new(), Vec::new());
-        if let Some(last) = self.agent_channel_state.transcript.digest() {
-            let given_up = GivenUp { reason: reason.clone(), at: chrono::Utc::now(), turn_entries: count.get() };
-            self.agent_channel_state.transcript.mark_given_up(&last, given_up);
-        }
+        let end = self.agent_channel_state.transcript.digest();
         self.agent_channel_state.transcript.move_head(transcript.as_ref());
         self.agent_channel_state.history.move_head(history.as_ref());
+        if let Some(end) = end {
+            let given_up = GivenUp { reason: reason.clone(), at: chrono::Utc::now(), turn_entries: count.get() };
+            self.agent_channel_state.transcript.give_up(end, given_up);
+        }
 
         if let Some(message) = told {
             self.agent_channel_state.transcript.push(message);
@@ -381,7 +382,7 @@ impl<'a> Turn<'a> {
         // The transcript is what the model is given first (issue 168).
         let transcript = &self.agent_channel_state.transcript;
         if let Some(turn) = self.agent_channel_state.turn.as_mut() {
-            transcript.entries().for_each(|e| turn.see_message(&e.entry.message));
+            transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| turn.see_message(m));
         }
     }
 
@@ -652,7 +653,7 @@ impl<'a> Turn<'a> {
     fn record_turn(&mut self, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
         let expected = entries.last().map(|e| e.node.digest);
         for TurnEntry { node, context } in entries {
-            let message = node.entry.message;
+            let TranscriptEntry::Message(message) = node.entry else { continue };
             self.agent_channel_state.transcript.push(message.clone());
             if !message.internal {
                 self.agent_channel_state.history.push(message, Some(context));
@@ -812,7 +813,10 @@ mod tests {
         turn.give_up_turn(GivenUpReason::Stopped, None);
 
         assert!(state.turn.is_none(), "the turn is over");
-        assert_eq!((state.transcript.digest(), state.history.digest()), (transcript, history), "both are where the turn began: nothing ran, so nothing is told");
+        assert_eq!(state.history.digest(), history, "the history is where the turn began");
+        assert_ne!(state.transcript.digest(), transcript, "the transcript records the turn given up");
+        assert_eq!(state.transcript.entries().len(), 2, "after what was there: nothing ran, so nothing is told");
+        assert_eq!(state.transcript.messages().len(), 1, "and the model is given what was there");
         let turns = state.transcript.given_up_turns();
         assert_eq!(turns.len(), 1);
         assert_eq!((turns[0].given_up.reason.clone(), turns[0].messages.len()), (GivenUpReason::Stopped, 2));
@@ -1111,7 +1115,7 @@ mod tests {
         }).collect::<Vec<_>>();
         assert_eq!(reasoning_seen(&state, first.id), [false, false]);
         assert_eq!(reasoning_seen(&state, second.id), [false, false, true], "the first answer's reasoning, from the same turn");
-        assert!(state.transcript.entries().all(|e| e.entry.message.reasoning.is_some()), "stored reasoning is untouched");
+        assert!(state.transcript.messages().iter().all(|m| m.reasoning.is_some()), "stored reasoning is untouched");
 
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.

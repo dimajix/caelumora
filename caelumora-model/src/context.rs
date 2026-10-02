@@ -344,9 +344,13 @@ impl<'a> ContextResolver<'a> {
 
         let mut items = after_entry(None)?;
         let entries = before.iter().map(|e| (e, false)).chain(during.iter().map(|e| (e, true)));
-        for (entry, in_turn) in entries {
-            items.push(ContextItem::Conversation { message: profile.given(entry.entry.message.clone(), agent, in_turn) });
-            items.extend(after_entry(Some(entry.digest))?);
+        for (node, in_turn) in entries {
+            // The record of a turn given up is no message; a part may still
+            // have been placed after it.
+            if let Some(message) = node.entry.message() {
+                items.push(ContextItem::Conversation { message: profile.given(message.clone(), agent, in_turn) });
+            }
+            items.extend(after_entry(Some(node.digest))?);
         }
         profile.place_system_messages(&mut items);
         // Every part was placed, none after what is not there.

@@ -114,9 +114,13 @@ reads nothing.
         branch no longer active (see [The transcript as a chain](#the-transcript-as-a-chain)). So
         the agent's model does not see them, nor does the channel, while what they were produced
         from can still be asked for;
-    *   the transcript's last message of the turn is marked `given_up`, with the reason (failed,
-        with what its users were told; lowered, with the channel's new classification; stopped), the
-        time and how many messages were the turn's;
+    *   the transcript records the turn as given up, as an entry after the head went back
+        (`TranscriptEntry::GivenUp`, issue 197): the branch it ends, the reason (failed, with what
+        its users were told; lowered, with the channel's new classification; stopped), the time
+        and how many messages were the turn's. The model is given messages only; the digest covers
+        the record, so the transcript's digest changes when a turn is given up, though the model
+        saw nothing new - a digest names a prefix of the record, not only what the model was
+        given;
     *   nothing it staged is applied - no note, nothing remembered;
     *   what its tools did stays done. If a call ran (its result has a start), the agent is told on
         the active branch, in an internal system message of the runtime in its transcript - with
@@ -208,10 +212,10 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     last on the active path, so that `leaf_from` finds where a switch to a branch goes on.
 *   An entry pushed with the digest of one already there - the same predecessor, the same content -
     is that entry: the head moves to it.
-*   `amend` changes an entry in what its digest does not cover - the mark of a turn given up, until
-    [197](../issues/197-one-chain-one-model-of-change.md) makes that an entry too - and nothing
-    else. These three - append, move the head, amend - are the only changes, and the chain keeps a
-    journal of them since it was last stored (`changes`, `mark_stored`, `apply`;
+*   Nothing changes an entry after it was added ([197](../issues/197-one-chain-one-model-of-change.md)):
+    a message reclassified, a turn given up are entries of their own, and what stands is read from
+    the entries. Append and move the head are the only changes, and the chain keeps a journal of
+    them since it was last stored (`changes`, `mark_stored`, `apply`;
     [193](../issues/193-external-state-rewritten-whole.md), see [STORAGE.md](STORAGE.md)).
 
 Giving up a turn ([145](../issues/145-ended-turns-leave-a-record.md), see [Beginning and ending a

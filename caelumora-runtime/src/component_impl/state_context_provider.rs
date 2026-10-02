@@ -71,11 +71,11 @@ impl ContextProvider for StateContextProvider {
             // Before the newest message, which is the turn's input - unless
             // the agent wrote it itself, in a turn that has none (e.g. after
             // `/wakeup`): then at the end.
-            let mut entries = transcript.entries().rev();
+            let mut messages = transcript.entries().rev().filter_map(|n| n.entry.message().map(|m| (n.digest, m)));
             let own = ActorId::Agent(state.agent_id());
-            let after = match entries.next() {
-                Some(input) if input.entry.message.sender_id != own => entries.next().map(|e| e.digest),
-                Some(own_message) => Some(own_message.digest),
+            let after = match messages.next() {
+                Some((_, input)) if input.sender_id != own => messages.next().map(|(digest, _)| digest),
+                Some((own_message, _)) => Some(own_message),
                 None => None,
             };
             let (text, classification) = joined(before_input);
