@@ -610,3 +610,14 @@ Each step compiles, is tested, and leaves `main` working.
   agent was given; no private notes, no given-up turns, `context_of`
   `NotRecorded`. Its notes, private notes and pending approvals are none,
   rather than read from an `AgentChannelState` it never writes.
+- **2026-10-02** — The views by kind, as the maintainer proposed:
+  `AgentContextView` is a trait, implemented by `InternalContext` and
+  `ExternalContext`; the agent-specific part of `MemberView` - notes,
+  private notes, pending approvals, context - is the trait `AgentState`
+  (`view/agent.rs`), implemented per kind and chosen once in
+  `MemberView::of`. `MemberView` keeps what every member has and the
+  access questions, and delegates; it reads the personality once per
+  member instead of once per call. No trait for every kind of member:
+  users, agents and approvers share most of what a member view shows. An
+  external agent's notes are now an empty list, like an agent that wrote
+  none, rather than no notes at all.

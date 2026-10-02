@@ -548,9 +548,11 @@ produced it.
     ownership policy only the agent's owner may, since a context holds more
     than the conversation: the system prompt, internal steps, tool results.
 *   It reads the agent's state from the `StateStore`, where it is written
-    after every step; the running loop holds the in-memory state. The
-    `AgentContextView` it answers with holds that state: the transcript,
-    the private notes, and
+    after every step; the running loop holds the in-memory state. Which
+    state that is, the member view decides once, by the personality's kind
+    (`view::agent::AgentState`, one implementation per kind). The
+    `AgentContextView` it answers with - a trait, with a view per kind -
+    holds that state: the transcript, the private notes, and
 *   `context_of(message_id)`, the context and the prompt parts the message
     was produced from (`ContextError::NotRecorded` if the agent did not
     produce it, `Unavailable` if what was recorded cannot be resolved any
@@ -560,10 +562,10 @@ produced it.
     those messages is asked for like that of any other.
 
 Of an external agent (issue 179) the view reads its own state
-(`ExternalAgentChannelState`), as its personality's kind says: its
-transcript is what the remote agent was given, it has no private notes and
-no given-up turns, and `context_of` answers `NotRecorded` for every message
-- what the remote agent made of what it was given is its own.
+(`ExternalAgentChannelState`): its transcript is what the remote agent was
+given, it has no notes, no private notes, no given-up turns and no pending
+approvals, and `context_of` answers `NotRecorded` for every message - what
+the remote agent made of what it was given is its own.
 
 REST exposes it as
 `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It

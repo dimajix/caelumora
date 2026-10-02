@@ -25,12 +25,15 @@
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
 
+mod agent;
 mod channel;
 mod context;
 mod session;
 
 pub use channel::{ChannelView, MemberView, PublishedNotes};
 pub use context::{AgentContextView, ContextError};
+#[cfg(test)]
+pub(crate) use context::InternalContext;
 pub use session::SessionView;
 
 use crate::runtime::{ActorRuntime, RuntimeManager};
@@ -536,8 +539,8 @@ mod tests {
         assert!(matches!(seen.context_of(answer.id), Err(ContextError::NotRecorded { .. })), "what it made of it is the remote agent's");
         assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
-        assert!(member.notes().await.unwrap().is_none(), "no notes");
-        assert!(for_alice.notes().await.unwrap().is_empty());
+        assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "none, though an agent run here kept some");
+        assert!(for_alice.notes().await.unwrap().iter().all(|published| published.notes.is_empty()));
     }
 
     #[tokio::test]
