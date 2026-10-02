@@ -40,7 +40,7 @@ use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, Personality};
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
@@ -259,21 +259,6 @@ impl Views {
     /// runtime's name, like its name.
     async fn agent_of(&self, id: AgentId) -> Option<Agent> {
         self.runtime.entity_store().get_agent(&SecurityContext::system(), id).await.ok()
-    }
-
-    /// The personality of `agent` - what kind of agent it is (issue 179),
-    /// how it is introduced (issue 176) - or `None` if it no longer exists.
-    /// Read in the runtime's name: introductions are public, and the kind
-    /// decides how the agent's state is read, not what the viewer may see.
-    ///
-    /// # Errors
-    /// `Failed` if it cannot be read.
-    async fn personality_of(&self, agent: &Agent) -> ViewResult<Option<Personality>> {
-        match self.runtime.entity_store().get_personality(&SecurityContext::system(), agent.personality_id).await {
-            Ok(personality) => Ok(Some(personality)),
-            Err(StoreError::NotFound { .. }) => Ok(None),
-            Err(e) => Err(ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", agent.id)))),
-        }
     }
 
     /// The session `id` as privacy sees it now, or `None` if there is no
@@ -639,6 +624,39 @@ mod tests {
         let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
         assert!(matches!(none, ViewError::NoContext { .. }), "{none}");
         assert!(matches!(for_alice.member(ActorId::System).await, Err(ViewError::MemberNotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn an_agent_whose_personality_is_gone_keeps_its_name_but_has_no_state_to_read() {
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::MessageId;
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let alice = user("alice");
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let channel = main_channel(&session);
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+        // What it kept while it ran: unknown now whether it is its kind's.
+        let mut kept = caelumora_model::agent::AgentChannelState::default();
+        kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+        store.put_agent_channel_state(helper.id, channel.id, &kept).await.unwrap();
+        assert!(store.delete_personality(&system, helper.personality_id).await.unwrap());
+
+        let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+        let member = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
+        assert_eq!((member.name(), member.handle().as_deref()), (Some("Helper"), Some("helper")));
+        assert!(member.may_read_context().await, "a question of its document, not of its kind");
+        assert_eq!(member.introduction().await.unwrap(), None);
+        assert!(member.notes().await.unwrap().is_none(), "not read as an agent run here");
+        assert!(for_alice.notes().await.unwrap().is_empty(), "nor does it keep the channel's notes from being read");
+        assert!(matches!(member.context().await, Err(ViewError::NoContext { .. })));
     }
 
     #[tokio::test]

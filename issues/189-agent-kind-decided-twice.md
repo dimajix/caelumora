@@ -1,6 +1,6 @@
 # 189 — An agent's kind is decided in two places, by different rules
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -39,3 +39,15 @@ views can disagree about what an agent is.
 ## History
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series.
+- **2026-10-02** — Done, without a common owner of the kind: the channel and the views build
+  different things from it - an actor, a member state - and read the personality in different
+  contexts on purpose (the agent's own, the runtime's for what is public). What was decided twice
+  was the rule for a missing personality, and it is one now: an agent whose personality is gone
+  is not run, and has no state the views would read; before, the views read it as an agent run
+  here. `member_state` reads only the agent's document; `AgentMemberState` reads the personality
+  when the introduction or the state is first asked for, and hands out the `InternalAgentMember`
+  or `ExternalAgentMember`, which keep only what differs between the kinds. `MemberState::agent`
+  is async and may fail; the agent's attributes, which `ReadAgentContext` is asked about, come
+  from its document (`MemberState::attributes`), so that asking whether the viewer may read a
+  context reads no personality. A cached read shared by both stays with issue
+  [182](182-entity-reads-not-cached.md).

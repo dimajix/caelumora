@@ -269,7 +269,7 @@ pub struct MemberView {
     participant: Participant,
     /// Took part once and left.
     former: bool,
-    /// What the member is, as its kind makes it - decided once.
+    /// What the member is, as its kind makes it.
     state: Arc<dyn MemberState>,
 }
 
@@ -321,8 +321,8 @@ impl MemberView {
     /// Whether the viewer may see what this member saw when it produced a
     /// message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub async fn may_read_context(&self) -> bool {
-        match self.state.agent() {
-            Some(agent) => self.channel.views().runtime().security_manager().may_read_agent_context(self.channel.views().viewer().context(), agent.attributes()).await,
+        match self.state.attributes() {
+            Some(attributes) => self.channel.views().runtime().security_manager().may_read_agent_context(self.channel.views().viewer().context(), attributes).await,
             None => false,
         }
     }
@@ -335,7 +335,7 @@ impl MemberView {
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
-        let Some(agent) = self.state.agent() else { return Ok(None) };
+        let Some(agent) = self.state.agent().await? else { return Ok(None) };
         let (notes, digest) = agent.notes().await?;
         let notes = self.channel.released(notes).await;
         Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest }))
@@ -347,9 +347,12 @@ impl MemberView {
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
-        match self.state.agent() {
-            Some(agent) if !self.former => agent.pending_approvals().await,
-            _ => Ok(Vec::new()),
+        if self.former {
+            return Ok(Vec::new());
+        }
+        match self.state.agent().await? {
+            Some(agent) => agent.pending_approvals().await,
+            None => Ok(Vec::new()),
         }
     }
 
@@ -387,15 +390,14 @@ impl MemberView {
 
     /// The member as an agent whose context the viewer may read.
     async fn readable_agent(&self) -> ViewResult<&dyn AgentMember> {
-        let Some(agent) = self.state.agent() else {
-            return Err(ViewError::NoContext { actor: self.id() });
-        };
+        let no_context = || ViewError::NoContext { actor: self.id() };
+        let attributes = self.state.attributes().ok_or_else(no_context)?;
         let views = self.channel.views();
         let forbidden = || ViewError::Forbidden { actor: self.id() };
         views.runtime().security_manager()
-            .require(views.viewer().context(), ActionType::ReadAgentContext(agent.attributes()), forbidden).await
+            .require(views.viewer().context(), ActionType::ReadAgentContext(attributes), forbidden).await
             .map_err(|_| forbidden())?;
-        Ok(agent)
+        self.state.agent().await?.ok_or_else(no_context)
     }
 
     /// The member as the viewer sees it at this moment (issue 80).

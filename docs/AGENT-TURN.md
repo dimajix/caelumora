@@ -456,12 +456,15 @@ only one of them produced it.
     for a member that is no agent). Under the ownership policy only the agent's owner may, since a
     context holds more than the conversation: the system prompt, internal steps, tool results.
 *   It reads the agent's state from the `StateStore`, where it is written after every step; the
-    running loop holds the in-memory state. Which state that is, the member view decides once, by
-    the personality's kind: every kind of member is a `MemberState` (`view::member` - a user, an
-    agent run here, an external agent, an approver, one that is gone), and an agent's hands out an
-    `AgentMember` with its state in the channel. What the viewer may see of it, the member view
-    decides for all of them alike. The `AgentContextView` it answers with - a trait, with a view per
-    kind - holds that state: the transcript, the private notes, and
+    running loop holds the in-memory state. Every kind of member is a `MemberState`
+    (`view::member`: a user, an agent, an approver, one that is gone). An agent's reads its
+    personality when it is first needed, not for every member looked at, and hands out an
+    `AgentMember` with its state in the channel as its kind keeps it - one run here, an external
+    one. An agent whose personality is gone has no state to read, as it is not run in the channel
+    (issue 189). What the viewer may see of it, the member view decides for all of them alike, from
+    the agent's document. The
+    `AgentContextView` it answers with - a trait, with a view per kind - holds that state: the
+    transcript, the private notes, and
 *   `context_of(message_id)`, the context and the prompt parts the message was produced from
     (`ContextError::NotRecorded` if the agent did not produce it, `Unavailable` if what was recorded
     cannot be resolved any more), and
