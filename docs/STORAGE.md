@@ -76,6 +76,31 @@ The `StateStore` trait (in `caelumora-model`) stores the runtime state of channe
     scope - across sessions. So far it holds the agent's memory (`agent_memory`, see
     [MEMORY.md](MEMORY.md)).
 
+### What a state tells a store
+
+Every state the `StateStore` keeps is `Journaled` (issue 193): it tells what changed since it was
+last stored, as a sequence of changes, and replays such changes onto what was stored before. The
+changes of a state are one enum with a variant per part of it - `AgentChannelStateChange`,
+`ExternalAgentChannelStateChange`, `ChannelStateChange`, `AgentStateChange` - with "state" in
+the name on purpose: a change of the state, what was said, noted, remembered, as against an
+update of the entity, its name and composition.
+
+*   A growing part records what was added. A chain - a history, a transcript, a ledger of notes
+    or memory - tells a `Stored<E>`: the nodes added, or changed in their place, since it was last
+    stored, and its head; the same form the whole chain is stored in, and what `Chain::apply`
+    merges into a chain stored before (issue 197, see
+    [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)). The texts of prompt parts and the
+    sets of tools, kept once by digest (`Kept<V>`), tell the digests added.
+*   A small part - the processing state, the turn under way, an external agent's open tasks - is
+    recorded whole, at the end of every sequence: it is changed in place and bounded by one turn
+    or one exchange.
+
+Replaying is idempotent, and nothing replayed is a change to store again. Order holds within a
+part; across parts it is the fixed order of `changes`, which loses nothing, since every reference
+between parts is a digest or an id, resolved when read and never while replaying. The stores
+still write every state whole; writing the changes instead is the rest of issue
+[193](../issues/193-external-state-rewritten-whole.md).
+
 ### The agent state has one owner per process
 
 An agent may run in several channels and sessions at once, each with its own `AgentActor`. The

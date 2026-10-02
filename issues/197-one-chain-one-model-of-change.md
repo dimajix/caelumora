@@ -1,6 +1,6 @@
 # 197 — Two models of change over one chain, and a type for every step between them
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -216,3 +216,8 @@ meaning. Step 4 is the removal the whole thing is for.
   branch last taken is not the newest - so an entry appended changes nothing before it, and the
   journal of a message is that message alone - and `leaf_from` follows the newest child where
   nothing is remembered. The four state enums carry `Stored<E>`, at most one per chain and put.
+- **2026-10-02** — Step 6 done, and the issue with it: STORAGE.md says what a state tells a
+  store, AGENT-TURN.md what the chain is and what each content's entries are, and issue 193's
+  plan carries a note on what 197 revised. What remains of the plan's types: `Chain`, `Node` and
+  `Stored` in `chain`; `TranscriptEntry`, `HistoryEntry` and `LedgerEntry` with `Change`, `Item`
+  and `Staged`; `Kept` and `Journaled` with the four `…StateChange` enums.

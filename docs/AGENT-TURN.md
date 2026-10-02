@@ -189,13 +189,30 @@ on how a value was built nor on `serde_json` features.
 
 The chain is one generic type, `caelumora_model::chain::Chain<E>` (issue 48): entries that are only
 appended to, each in a `Node` with the digest its content's scheme computed over it and the
-digest before it, with lookup of the prefix an earlier digest names. `Transcript` and
-`MessageHistory` are that chain over a message entry each, with the methods of their content as
-inherent methods on it (issue 197), and share the `message_chain` digest. A message does not name
-its predecessor: the same message is in several chains with a different predecessor in each, so the
-predecessor belongs to the chain, stored as `parent`, the predecessor's digest, beside the entry
-([117](../issues/117-message-prev-id.md)). Notes and memory are chains too (see
-[MEMORY.md](MEMORY.md)).
+digest before it, with lookup of the prefix an earlier digest names. It is stored as its nodes
+and its head, `Stored<E>`, which is also what it tells a store of what changed since (see
+[STORAGE.md](STORAGE.md#what-a-state-tells-a-store)). A message does not name its predecessor: the
+same message is in several chains with a different predecessor in each, so the predecessor
+belongs to the chain, stored as `parent`, the predecessor's digest, beside the entry
+([117](../issues/117-message-prev-id.md)).
+
+Every content is one entry type, an enum of what can happen, with its methods as inherent methods
+on its chain ([197](../issues/197-one-chain-one-model-of-change.md)); what stands is read from
+the entries:
+
+*   `Transcript` is `Chain<TranscriptEntry>`: a `Message` the model was given or produced, or the
+    record of a turn `GivenUp`. `messages` is the messages of the active path, what the model is
+    given.
+*   `MessageHistory` is `Chain<HistoryEntry>`: a message `Said`, with what it was produced from
+    for the agent's own, a message `Reclassified`, the channel's classification `Fitted`.
+    `messages` and `message(id)` fold every branch in the order things happened into the messages
+    as they stand, so a reclassification applies to a message on any branch, as it did in the
+    channel.
+*   Notes and memory are `Chain<LedgerEntry<K>>`, a ledger of changes to numbered items (see
+    [MEMORY.md](MEMORY.md)).
+
+Messages share the `message_chain` digest; the other entries have schemes of their own
+(`crate::digest`), so that every digest recorded before names what it named.
 
 A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)):
 
@@ -208,15 +225,15 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     stand with every reclassification recorded since, the next number of a note.
 *   `prefix` finds an entry on any branch, so a `ContextRef` into a branch no longer active still
     resolves.
-*   `children` are the siblings among which a branch is chosen, and every entry remembers the child
-    last on the active path, so that `leaf_from` finds where a switch to a branch goes on.
+*   `children` are the siblings among which a branch is chosen, and `leaf_from` finds where a
+    switch to a branch goes on: at the newest child, unless the entry remembers another as last on
+    the active path - which it does only once the head went back to an older one, so that an entry
+    appended changes nothing before it.
 *   An entry pushed with the digest of one already there - the same predecessor, the same content -
     is that entry: the head moves to it.
-*   Nothing changes an entry after it was added ([197](../issues/197-one-chain-one-model-of-change.md)):
-    a message reclassified, a turn given up are entries of their own, and what stands is read from
-    the entries. Append and move the head are the only changes, and the chain keeps a journal of
-    them since it was last stored (`changes`, `mark_stored`, `apply`;
-    [193](../issues/193-external-state-rewritten-whole.md), see [STORAGE.md](STORAGE.md)).
+*   Nothing changes an entry after it was added. Append and move the head are the only changes,
+    and the chain keeps what changed since it was last stored (`changes`, `mark_stored`, `apply`;
+    [193](../issues/193-external-state-rewritten-whole.md)).
 
 Giving up a turn ([145](../issues/145-ended-turns-leave-a-record.md), see [Beginning and ending a
 turn](#beginning-and-ending-a-turn)) moves the heads of the transcript and the history back;

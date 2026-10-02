@@ -36,6 +36,15 @@ Decided on 2026-10-02 (see History): the model records what changed in a state s
 stored, the `StateStore` stores that, and the JSON store keeps a snapshot and a journal per state.
 What follows is the detailed plan; the steps at the end are separate commits.
 
+*Revised by issue [197](197-one-chain-one-model-of-change.md), after steps 1 to 3 were done:*
+nothing changes an entry of a chain after it was added, so there is no `Amended`, no `amend`, and
+no `ChainChange`. A chain tells a store `Stored<E>` - the nodes new or changed in their place, and
+the head - which is also its stored form and what `Chain::apply` merges; the state enums carry
+`Stored<E>` where sections 1 and 3 say `Vec<ChainChange<E>>`, and the Postgres mapping of section
+4 is an upsert of nodes and an update of the head. The enums are externally tagged, not with a
+`part` tag: a variant such as `Turn(Option<TurnState>)` cannot be tagged internally. Sections 1
+to 4 stay as the record of what was decided then; STORAGE.md says what is.
+
 ### What grows, and how it changes
 
 Every state the `StateStore` keeps is a few small fields and some chains:
