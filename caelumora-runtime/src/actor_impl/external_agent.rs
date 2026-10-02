@@ -260,13 +260,30 @@ impl ExternalAgentActor {
                 }
                 next = stream.next() => next,
             };
-            let Some(event) = next else {
-                // The remote side owes an end; without one the task is left
-                // open, as far as anyone knows.
-                warn!("External agent {}: the answer ended before its task did", self.id());
-                break;
+            let event = match next {
+                Some(Ok(event)) => event,
+                broken => {
+                    match &broken {
+                        Some(Err(e)) => warn!("External agent {}: the answer broke off before its task ended: {:#}", self.id(), e),
+                        _ => warn!("External agent {}: the answer ended before its task did", self.id()),
+                    }
+                    // The remote side owes an end; without one the task is
+                    // left open, as far as anyone knows, and followed again:
+                    // what came so far is kept with it and said with the
+                    // rest when it ends - not now, cut off, and then again
+                    // (issue 195). The request is answered with nothing.
+                    if let Some(open) = &task {
+                        set_unsaid(state, open, answer.finish());
+                        return Ok(Ending::Answered(None));
+                    }
+                    // No task to follow: what came is all there is.
+                    match broken {
+                        Some(Err(e)) => return Err(e.into()),
+                        _ => break,
+                    }
+                }
             };
-            match answer.take(state, task.as_ref(), event?) {
+            match answer.take(state, task.as_ref(), event) {
                 Step::Continue => {}
                 // The task it began - or the one it answers, taken up again.
                 Step::Started(started) => {
@@ -315,7 +332,7 @@ impl ExternalAgentActor {
     /// ends. When the task has ended or asks back, what came of it is said
     /// in the channel (`speak`); `pending` holds what came so far of each.
     async fn on_followed(&self, state: &mut ExternalAgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
-        let answer = pending.entry(task.clone()).or_default();
+        let answer = pending.entry(task.clone()).or_insert_with(|| Answer::after(unsaid_of(state, &task)));
         let outcome = match event {
             // It is known to be open and working, and nobody waits for its
             // pieces: what it says is said once it ends.
@@ -341,6 +358,8 @@ impl ExternalAgentActor {
             }
         };
         let answer = pending.remove(&task).unwrap_or_default();
+        // Said now, if it asks back and stays open.
+        set_unsaid(state, &task, None);
         self.speak(state, outcome.map(|()| answer), output).await;
     }
 
@@ -419,6 +438,9 @@ type Followed = SelectAll<BoxStream<'static, (TaskId, Option<ExternalAgentResult
 /// What came back so far.
 #[derive(Default)]
 struct Answer {
+    /// What came of the task before - while it was asked - and was not said
+    /// yet (issue 195).
+    unsaid: Option<String>,
     /// The whole messages, in order.
     parts: Vec<String>,
     /// The pieces of the message being written.
@@ -440,6 +462,11 @@ enum Step {
 }
 
 impl Answer {
+    /// The answer of a task of which `unsaid` came before.
+    fn after(unsaid: Option<String>) -> Self {
+        Self { unsaid, ..Self::default() }
+    }
+
     /// Takes in `event` of `task` - the one it belongs to, if known - what it
     /// says into the answer, what it tells of the conversation and the task
     /// into `state`.
@@ -476,7 +503,7 @@ impl Answer {
         }
     }
 
-    /// Whether nothing came.
+    /// Whether nothing came - since the task was followed.
     fn is_empty(&self) -> bool {
         self.parts.is_empty() && self.partial.is_empty()
     }
@@ -489,13 +516,19 @@ impl Answer {
         }
     }
 
-    /// The answer as one text - with what was being written when it ended -
-    /// or `None` if nothing came.
+    /// The answer as one text - with what was being written when it ended,
+    /// and what came before and was not said yet - or `None` if nothing
+    /// came. A remote agent that repeats what came before (A2A's `GetTask`
+    /// gives a task's whole result) is not said to repeat it.
     fn finish(mut self) -> Option<String> {
         if !self.partial.is_empty() {
             self.parts.push(self.partial);
         }
-        (!self.parts.is_empty()).then(|| self.parts.join("\n\n"))
+        let text = (!self.parts.is_empty()).then(|| self.parts.join("\n\n"));
+        match (self.unsaid, text) {
+            (Some(unsaid), Some(text)) if !text.starts_with(&unsaid) => Some(format!("{unsaid}\n\n{text}")),
+            (unsaid, text) => text.or(unsaid),
+        }
     }
 }
 
@@ -533,7 +566,19 @@ fn unoffered(state: &ExternalAgentChannelState, own: ActorId) -> (Vec<Message>, 
 fn set_open(channel_state: &mut ExternalAgentChannelState, task: &TaskId, state: OpenTaskState) {
     match channel_state.open_tasks.iter_mut().find(|t| &t.task == task) {
         Some(open) => open.state = state,
-        None => channel_state.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state }),
+        None => channel_state.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None }),
+    }
+}
+
+/// What came of the open `task` before and was not said yet.
+fn unsaid_of(state: &ExternalAgentChannelState, task: &TaskId) -> Option<String> {
+    state.open_tasks.iter().find(|t| &t.task == task).and_then(|t| t.unsaid.clone())
+}
+
+/// Keeps `unsaid` with the open `task`, to be said when it ends.
+fn set_unsaid(state: &mut ExternalAgentChannelState, task: &TaskId, unsaid: Option<String>) {
+    if let Some(open) = state.open_tasks.iter_mut().find(|t| &t.task == task) {
+        open.unsaid = unsaid;
     }
 }
 
@@ -688,5 +733,17 @@ mod tests {
         answer.partial.push_str("How");
         assert_eq!(answer.finish().as_deref(), Some("Hello.\n\nHow"));
         assert_eq!(Answer::default().finish(), None, "nothing came");
+    }
+
+    #[test]
+    fn what_came_before_is_said_with_the_rest_but_not_twice() {
+        let unsaid = || Some("Here it".to_string());
+        let mut repeated = Answer::after(unsaid());
+        repeated.add("Here it is.".to_string());
+        assert_eq!(repeated.finish().as_deref(), Some("Here it is."), "the remote agent repeated it");
+        let mut new = Answer::after(unsaid());
+        new.add("is.".to_string());
+        assert_eq!(new.finish().as_deref(), Some("Here it\n\nis."), "the remote agent only went on");
+        assert_eq!(Answer::after(unsaid()).finish().as_deref(), Some("Here it"), "nothing came after it");
     }
 }

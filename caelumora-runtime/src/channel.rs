@@ -2805,8 +2805,7 @@ mod tests {
         ]).resuming(vec![vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]]));
         let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote).await;
 
-        let broke = turn_failed(&mut events, agent).await;
-        assert!(broke.contains("cannot reach"), "{broke}");
+        assert!(answered(&mut events, agent).await.is_empty(), "the request is answered with nothing: the task has not failed, it goes on (issue 195)");
         let mut woke = false;
         let said = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -2828,14 +2827,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
+        use crate::external::{ExternalAgentError, ExternalEvent};
+
+        let broken = || vec![
+            Ok(ExternalEvent::Started(task("t-1"))),
+            Ok(ExternalEvent::Partial("Here ".to_string())),
+            Ok(ExternalEvent::Partial("it".to_string())),
+            Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() }),
+        ];
+        // Re-attached, one remote agent gives the whole result again (as
+        // A2A's GetTask does), the other only what is new.
+        for (resumed, expected) in [
+            (vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)], "Here it is."),
+            (vec![Ok(ExternalEvent::Message("is.".to_string())), Ok(ExternalEvent::Completed)], "Here it\n\nis."),
+        ] {
+            let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![broken()]).resuming(vec![resumed]));
+            let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote).await;
+
+            assert!(answered(&mut events, agent).await.is_empty(), "nothing is said cut off");
+            let said = answered(&mut events, agent).await;
+            assert_eq!(said.len(), 1);
+            assert_eq!(said[0].content.as_deref(), Some(expected), "said once, in full");
+            let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+            let own: Vec<_> = state.history.messages().into_iter().filter(|m| m.sender_id == ActorId::Agent(agent)).filter_map(|m| m.content).collect();
+            assert_eq!(own, vec![expected.to_string()], "and kept once");
+            running.abort();
+        }
+    }
+
+    #[tokio::test]
     async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_waits() {
         use crate::external::ExternalEvent;
         use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState};
 
         let stored = ExternalAgentChannelState {
             open_tasks: vec![
-                OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working },
-                OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired },
+                OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None },
+                OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None },
             ],
             ..ExternalAgentChannelState::default()
         };
@@ -2858,7 +2887,7 @@ mod tests {
     fn working_on(open: &str) -> caelumora_model::external_agent::ExternalAgentChannelState {
         use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState};
         ExternalAgentChannelState {
-            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working }],
+            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None }],
             ..ExternalAgentChannelState::default()
         }
     }

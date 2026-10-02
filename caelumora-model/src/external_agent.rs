@@ -52,6 +52,10 @@ pub struct OpenTask {
     /// When it was given.
     pub since: DateTime<Utc>,
     pub state: OpenTaskState,
+    /// What came of it while it was asked, if the answer broke off before
+    /// the task ended: not said yet, but said - once - with the rest when
+    /// the task ends (issue 195).
+    pub unsaid: Option<String>,
 }
 
 /// An external agent in one channel, as its `ExternalAgentActor` keeps it.

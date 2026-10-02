@@ -1,6 +1,6 @@
 # 195 — An answer that broke off can be said twice
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -56,3 +56,14 @@ a second message, with nothing that relates the two.
 - **2026-10-02** — Opened while fixing issue 184, which removed the same duplication from the
   followed path; the request path answers what came so far on purpose, and still leaves the task to
   be said again.
+- **2026-10-02** — Done, as the maintainer decided: the second option, together with the first. A
+  request whose stream ends or fails before its task does is answered with nothing (an empty
+  `FullResponseGenerated`, which tells observers the answer ended) instead of with the fragment,
+  and a stream error no longer reports `TurnFailed` - the task has not failed, it goes on. What came
+  so far is kept with the open task (`OpenTask::unsaid`, stored) and the followed task's answer
+  begins with it (`Answer::after`): when the task ends, its result is said alone if it begins with
+  what was kept - the remote agent repeated it - and after it otherwise. Either way it is said once,
+  as one message. A question back clears what was kept, since it was said with the question. A
+  stream without a task still answers with what came, or fails. The test of issue 184 that expected
+  `TurnFailed` for a broken stream expects the empty answer now; a new test covers a remote agent
+  that repeats its result on `resume` and one that only goes on.

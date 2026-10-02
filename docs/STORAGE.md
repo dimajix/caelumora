@@ -69,8 +69,9 @@ The `StateStore` trait (in `caelumora-model`) stores the runtime state of channe
     it was offered and all it answered), its transcript (what the remote agent was given - what
     passed its perceive processors, issue 196), up to which message of the history it offered
     anything on (`offered_up_to`), the remote conversation and the tasks given to it that have not
-    ended. History and transcript are only ever appended to, for the record. Kept under a key of its
-    own, not as an `AgentChannelState`: there is no turn and nothing of what we cannot see.
+    ended, with what came of them and was not said yet (issue 195). History and transcript are only
+    ever appended to, for the record. Kept under a key of its own, not as an `AgentChannelState`:
+    there is no turn and nothing of what we cannot see.
 *   **`AgentState`**: the agent itself, across its channels and - for agents of user or global
     scope - across sessions. So far it holds the agent's memory (`agent_memory`, see
     [MEMORY.md](MEMORY.md)).
