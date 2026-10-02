@@ -69,3 +69,15 @@ per external personality, as the prompt part is per personality.
 - **2026-10-03** — Issue created, after asking whether an external agent gets the roster from
   `channel_members_prompt_provider`. It does not: prompt providers act on a `Turn`, which an
   external agent does not have.
+- **2026-10-03** — Checked what A2A offers
+  ([specification](https://a2a-protocol.org/latest/specification/), v1.0): nothing for participants.
+  A conversation has two sides, client and server; a `Message` has only `role` (`ROLE_USER` or
+  `ROLE_AGENT`), so who in the client's channel spoke cannot be said but in the text, as `Said` does
+  today. `contextId` groups a conversation, it lists no members. What there is: free `metadata` on
+  messages and tasks, data parts next to text parts, and extensions - named by a URI, offered in the
+  agent card, named in `Message.extensions` by a message that uses one, meant to give metadata a
+  fixed type for a purpose. No published extension for rosters or group conversations was found.
+  Consequence for the options above: the leading text part (option 1) is the only form every remote
+  agent reads and stays the base; option 2 would be an extension of our own, with the roster as a
+  data part or in `metadata`, sent only to a remote agent whose card offers it - useful only for
+  agents built for it.
