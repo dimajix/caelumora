@@ -155,12 +155,19 @@ impl A2aAgentComponent {
 
     /// The body of `response` as `T`, if it answered successfully.
     async fn json_of<T: DeserializeOwned>(&self, response: reqwest::Response) -> ExternalAgentResult<T> {
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ExternalAgentError::Rejected { endpoint: self.shown(), message: format!("HTTP {status}") });
-        }
+        self.require_success(&response)?;
         let text = response.text().await.map_err(|e| self.connection(&e))?;
         serde_json::from_str(&text).map_err(|e| ExternalAgentError::InvalidResponse { endpoint: self.shown(), reason: e.to_string() })
+    }
+
+    /// Refuses `response` unless it answered successfully.
+    fn require_success(&self, response: &reqwest::Response) -> ExternalAgentResult<()> {
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(ExternalAgentError::Rejected { endpoint: self.shown(), message: format!("HTTP {status}") })
+        }
     }
 
     /// Posts the JSON-RPC request `method` with `params`, streamed or not.
@@ -189,18 +196,14 @@ impl A2aAgentComponent {
     /// The events of the streamed JSON-RPC request `method`.
     async fn stream(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: Value) -> ExternalAgentResult<ExternalStream> {
         let response = self.post(security, endpoint, method, params, true).await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ExternalAgentError::Rejected { endpoint: self.shown(), message: format!("HTTP {status}") });
-        }
+        self.require_success(&response)?;
         let is_stream = response.headers().get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.starts_with("text/event-stream"));
         if !is_stream {
             // Refused before it began: a JSON-RPC error, not a stream.
             let answer: RpcResponse<StreamResponse> = self.json_of(response).await?;
-            let events = Translation::default().events(answer.into_result(&self.shown())?);
-            return Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))));
+            return Ok(answered(answer.into_result(&self.shown())?));
         }
         Ok(Box::pin(events_of(response, self.shown())))
     }
@@ -209,6 +212,11 @@ impl A2aAgentComponent {
 /// Whether `version` is one of A2A 1.x.
 fn is_version_1(version: &str) -> bool {
     version == "1" || version.starts_with("1.")
+}
+
+/// The events of a single `response`, as a stream.
+fn answered(response: StreamResponse) -> ExternalStream {
+    Box::pin(futures::stream::iter(Translation::default().events(response).into_iter().map(Ok)))
 }
 
 /// The events of a stream of server-sent events, each a JSON-RPC response
@@ -269,8 +277,7 @@ impl ExternalAgent for A2aAgentComponent {
             self.stream(security, &endpoint, "SendStreamingMessage", params).await
         } else {
             let response: StreamResponse = self.call(security, &endpoint, "SendMessage", params).await?;
-            let events = Translation::default().events(response);
-            Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+            Ok(answered(response))
         }
     }
 
@@ -283,8 +290,7 @@ impl ExternalAgent for A2aAgentComponent {
             // Where it stands now; a task still working ends the stream
             // without an end, and is asked again on the next run.
             let found: WireTask = self.call(security, &endpoint, "GetTask", params).await?;
-            let events = Translation::default().events(StreamResponse { task: Some(found), ..StreamResponse::default() });
-            Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+            Ok(answered(StreamResponse { task: Some(found), ..StreamResponse::default() }))
         }
     }
 
@@ -376,20 +382,20 @@ impl Translation {
 fn status_events(status: WireStatus, events: &mut Vec<ExternalEvent>) {
     let text = status.message.as_ref().map(WireMessage::text).unwrap_or_default();
     let or = |fallback: &str| if text.is_empty() { fallback.to_string() } else { text.clone() };
-    match status.state.as_str() {
-        "TASK_STATE_COMPLETED" => {
+    match status.state {
+        WireTaskState::Completed => {
             if !text.is_empty() {
                 events.push(ExternalEvent::Message(text.clone()));
             }
             events.push(ExternalEvent::Completed);
         }
-        "TASK_STATE_CANCELED" => events.push(ExternalEvent::Canceled),
-        "TASK_STATE_FAILED" => events.push(ExternalEvent::Failed(or("the task failed"))),
-        "TASK_STATE_REJECTED" => events.push(ExternalEvent::Failed(or("the task was refused"))),
-        "TASK_STATE_INPUT_REQUIRED" => events.push(ExternalEvent::InputRequired(or("it needs more to go on"))),
-        "TASK_STATE_AUTH_REQUIRED" => events.push(ExternalEvent::Failed("it asks for an authentication it was not given".to_string())),
+        WireTaskState::Canceled => events.push(ExternalEvent::Canceled),
+        WireTaskState::Failed => events.push(ExternalEvent::Failed(or("the task failed"))),
+        WireTaskState::Rejected => events.push(ExternalEvent::Failed(or("the task was refused"))),
+        WireTaskState::InputRequired => events.push(ExternalEvent::InputRequired(or("it needs more to go on"))),
+        WireTaskState::AuthRequired => events.push(ExternalEvent::Failed("it asks for an authentication it was not given".to_string())),
         // Submitted, working: what it says meanwhile is not the answer.
-        _ => {}
+        WireTaskState::Other => {}
     }
 }
 
@@ -505,9 +511,29 @@ struct WireTask {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireStatus {
-    state: String,
+    state: WireTaskState,
     #[serde(default)]
     message: Option<WireMessage>,
+}
+
+/// The states of a task that tell something; any other - submitted,
+/// working, or one this version does not know - is `Other`.
+#[derive(Debug, Deserialize)]
+enum WireTaskState {
+    #[serde(rename = "TASK_STATE_COMPLETED")]
+    Completed,
+    #[serde(rename = "TASK_STATE_CANCELED")]
+    Canceled,
+    #[serde(rename = "TASK_STATE_FAILED")]
+    Failed,
+    #[serde(rename = "TASK_STATE_REJECTED")]
+    Rejected,
+    #[serde(rename = "TASK_STATE_INPUT_REQUIRED")]
+    InputRequired,
+    #[serde(rename = "TASK_STATE_AUTH_REQUIRED")]
+    AuthRequired,
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Deserialize)]

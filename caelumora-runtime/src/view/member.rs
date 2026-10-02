@@ -86,7 +86,11 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
     match participant {
         Participant::User(id) => match runtime.entity_store().get_user(&SecurityContext::system(), *id).await {
             Ok(user) => Arc::new(UserMember { id: *id, name: user.username, store: runtime.entity_store(), introduction: OnceCell::new() }),
-            Err(_) => Arc::new(GoneMember),
+            Err(StoreError::NotFound { .. }) => Arc::new(GoneMember),
+            Err(e) => {
+                warn!("Cannot read user {}: {:#}", id, e);
+                Arc::new(GoneMember)
+            }
         },
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => {

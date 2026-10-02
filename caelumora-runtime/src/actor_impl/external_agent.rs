@@ -29,7 +29,6 @@ use caelumora_model::security::{AccessQuestions, SecurityContext};
 use chrono::Utc;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
-use caelumora_model::session::{ChannelId, SessionId};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -43,9 +42,7 @@ pub struct ExternalAgentActor {
     agent_controller: Arc<AgentController>,
     actor_runtime: ActorRuntime,
     /// Where it is, and in whose name it acts (issue 87): what it says on
-    /// its own is sent in these.
-    session_id: SessionId,
-    channel_id: ChannelId,
+    /// its own is sent in it.
     security_context: SecurityContext,
     /// The remote agent: exactly one (issue 179).
     remote: ComponentImpl<dyn ExternalAgent>,
@@ -128,8 +125,6 @@ impl ExternalAgentActor {
             agent_id,
             agent_controller,
             actor_runtime,
-            session_id: channel.session_id,
-            channel_id: channel.id,
             security_context,
             remote,
             state: Mutex::new(state),
@@ -381,7 +376,7 @@ impl ExternalAgentActor {
             return;
         };
         let speaking = Answering {
-            event_context: EventContext::new(self.session_id, self.channel_id, self.id(), self.name()),
+            event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
             security_context: self.security_context.clone(),
         };
         let message = answer.finish().map(|text| {
@@ -539,10 +534,10 @@ impl Actor for ExternalAgentActor {
             tokio::select! {
                 _ = self.ended.cancelled() => break,
                 request = rx.recv() => {
-                    let Some(request) = request else { break };
+                    let Some(mut request) = request else { break };
                     let span = crate::logging::envelope_span(&request.context, request.event.kind());
-                    match &request.event {
-                        ActorEvent::FullResponseGenerated(messages) => self.hear(&mut state, messages.clone()).instrument(span).await,
+                    match &mut request.event {
+                        ActorEvent::FullResponseGenerated(messages) => self.hear(&mut state, std::mem::take(messages)).instrument(span).await,
                         ActorEvent::ResponseRequested => {
                             self.respond(&mut state, &request, &*output).instrument(span).await;
                             self.follow_open_tasks(&state, &mut followed, &mut attempted).await;
