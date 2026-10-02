@@ -25,7 +25,10 @@
 //! (perceiving a message) touches only the transcript and the history.
 
 use anyhow::{Context, Result};
-use caelumora_model::agent::{AgentChannelChange, AgentChannelState, AgentId, AgentStateChange, TurnState};
+use caelumora_model::agent::{AgentChannelState, AgentId, TurnState};
+use caelumora_model::memory::{MemoryChange, MemoryOrigin};
+use caelumora_model::note::{NoteChange, NoteOrigin};
+use crate::agent_notes::NoteKind;
 use std::sync::{Arc, LazyLock};
 use tracing::warn;
 
@@ -242,15 +245,16 @@ impl<'a> Turn<'a> {
         self.current().event_context.session_id
     }
 
-    /// Stages `change` to the agent's own state, applied when the turn
-    /// completes (`commit_turn`).
-    pub fn stage_agent_change(&mut self, change: AgentStateChange) {
-        self.current_mut().agent_changes.push(change);
+    /// Stages `change` to the agent's memory, made at `origin`, applied when
+    /// the turn completes (`commit_turn`).
+    pub fn stage_memory(&mut self, change: MemoryChange, origin: MemoryOrigin) {
+        self.current_mut().memory.push((change, origin));
     }
 
-    /// The changes to the agent's own state staged in this turn so far.
-    pub fn staged_agent_changes(&self) -> &[AgentStateChange] {
-        &self.current().agent_changes
+    /// The changes to the agent's memory staged in this turn so far, each
+    /// with where it was made.
+    pub fn staged_memory(&self) -> &[(MemoryChange, MemoryOrigin)] {
+        &self.current().memory
     }
 
     /// Takes the completed turn over and ends it (issues 06, 17, 47, 62, 65):
@@ -277,9 +281,9 @@ impl<'a> Turn<'a> {
         let ended = EndedTurn::of(&turn, abandoned_calls);
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
-        let TurnState { entries, agent_changes, channel_changes, .. } = turn;
-        let channel_state_changed = self.record_turn(entries, channel_changes);
-        if let Err(e) = self.agent_state.apply(agent_changes, self.agent_channel_state.history.last_message_id()).await {
+        let TurnState { entries, memory, notes, private_notes, .. } = turn;
+        let channel_state_changed = self.record_turn(entries, notes, private_notes);
+        if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
         CommittedTurn { final_messages, channel_state_changed, ended }
@@ -316,7 +320,7 @@ impl<'a> Turn<'a> {
 
         let transcript = self.agent_channel_state.transcript.digest();
         let history = self.agent_channel_state.history.digest();
-        self.record_turn(entries, Vec::new());
+        self.record_turn(entries, Vec::new(), Vec::new());
         if let Some(last) = self.agent_channel_state.transcript.digest() {
             let given_up = GivenUp { reason: reason.clone(), at: chrono::Utc::now(), turn_entries: count.get() };
             self.agent_channel_state.transcript.mark_given_up(&last, given_up);
@@ -628,24 +632,24 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.processing_state = state;
     }
 
-    /// Stages `change` to the agent's state in this channel, applied when the
-    /// turn completes (`commit_turn`).
-    pub fn stage_channel_change(&mut self, change: AgentChannelChange) {
-        self.current_mut().channel_changes.push(change);
+    /// Stages `change` to the agent's notes of `kind` in this channel,
+    /// applied when the turn completes (`commit_turn`).
+    pub fn stage_note(&mut self, kind: NoteKind, change: NoteChange) {
+        kind.staged_mut(self.current_mut()).push(change);
     }
 
-    /// The changes to the agent's state in this channel staged in this turn
-    /// so far. A change taken back within the turn is taken back by another
+    /// The changes to the agent's notes of `kind` staged in this turn so
+    /// far. A change taken back within the turn is taken back by another
     /// change, not dropped (issue 156).
-    pub fn staged_channel_changes(&self) -> &[AgentChannelChange] {
-        &self.current().channel_changes
+    pub fn staged_notes(&self, kind: NoteKind) -> &[NoteChange] {
+        kind.staged(self.current())
     }
 
     /// The part of `commit_turn` that concerns the agent's state in this
     /// channel: the turn's `entries` - its messages, each with what it was
-    /// produced from - and its `changes` to this state. Returns whether
-    /// there were changes.
-    fn record_turn(&mut self, entries: Vec<TurnEntry>, changes: Vec<AgentChannelChange>) -> bool {
+    /// produced from - and its changes to the agent's `notes` and
+    /// `private_notes` there. Returns whether there were changes.
+    fn record_turn(&mut self, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
         let expected = entries.last().map(|e| e.entry.digest);
         for TurnEntry { entry, context } in entries {
             self.agent_channel_state.transcript.push(entry.message.clone());
@@ -663,10 +667,13 @@ impl<'a> Turn<'a> {
         // A message of the history, not an internal step of the transcript:
         // what branching (issue 08) will find the changes by.
         let after = self.agent_channel_state.history.last_message_id();
-        let transcript = self.agent_channel_state.transcript.digest();
-        let changed = !changes.is_empty();
-        for change in changes {
-            self.agent_channel_state.apply(change, after, transcript);
+        let origin = NoteOrigin { transcript: self.agent_channel_state.transcript.digest() };
+        let changed = !notes.is_empty() || !private_notes.is_empty();
+        for change in notes {
+            self.agent_channel_state.notes.push(change, origin.clone(), after);
+        }
+        for change in private_notes {
+            self.agent_channel_state.private_notes.push(change, origin.clone(), after);
         }
         changed
     }
@@ -784,7 +791,7 @@ mod tests {
         result.started_at = ran.then(chrono::Utc::now);
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) });
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Tool, tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) });
-        turn.stage_channel_change(AgentChannelChange::Note(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }));
+        turn.stage_note(NoteKind::Public, NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT });
         turn
     }
 

@@ -1,12 +1,11 @@
 //! An agent's notes in a channel (issue 17) and its private notes there
 //! (issue 51), read and changed within a turn.
 //!
-//! Both are chains in the agent's `AgentChannelState`; `Turn` offers
-//! only generic access to that state - reading it, staging
-//! `AgentChannelChange`s that `commit_turn` applies when the turn completes -
-//! and knows nothing of notes (issue 65). [`AgentNotes`] is the logic on top:
-//! numbering, noting, revoking, reclassifying - each looking at the notes
-//! as they stand with the turn's own changes in them
+//! Both are chains in the agent's `AgentChannelState`; `Turn` offers only
+//! plain access to them - reading them, staging `NoteChange`s that
+//! `commit_turn` pushes when the turn completes (issue 65). [`AgentNotes`]
+//! is the logic on top: numbering, noting, revoking, reclassifying - each
+//! looking at the notes as they stand with the turn's own changes in them
 //! ([`AgentNotes::effective`], issue 156). The `notes` and `private_notes`
 //! components use it; anything else that works with an agent's notes in a
 //! turn uses it too.
@@ -14,7 +13,7 @@
 use crate::agent_turn::Turn;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelChange, AgentChannelState};
+use caelumora_model::agent::{AgentChannelState, TurnState};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 use caelumora_model::digest::Digest;
@@ -39,19 +38,18 @@ impl NoteKind {
         }
     }
 
-    fn change(self, change: NoteChange) -> AgentChannelChange {
+    /// The changes to this chain staged in `turn`.
+    pub(crate) fn staged(self, turn: &TurnState) -> &[NoteChange] {
         match self {
-            NoteKind::Public => AgentChannelChange::Note(change),
-            NoteKind::Private => AgentChannelChange::PrivateNote(change),
+            NoteKind::Public => &turn.notes,
+            NoteKind::Private => &turn.private_notes,
         }
     }
 
-    /// `change` if it is a change to this chain.
-    fn of(self, change: &AgentChannelChange) -> Option<&NoteChange> {
-        match (self, change) {
-            (NoteKind::Public, AgentChannelChange::Note(change)) => Some(change),
-            (NoteKind::Private, AgentChannelChange::PrivateNote(change)) => Some(change),
-            _ => None,
+    pub(crate) fn staged_mut(self, turn: &mut TurnState) -> &mut Vec<NoteChange> {
+        match self {
+            NoteKind::Public => &mut turn.notes,
+            NoteKind::Private => &mut turn.private_notes,
         }
     }
 }
@@ -76,7 +74,7 @@ impl AgentNotes {
     /// The notes as they stand with the changes of the current turn in
     /// them (issue 156): what the turn's operations on notes look at.
     pub fn effective(turn: &Turn, kind: NoteKind) -> Staged<Notes> {
-        let staged = turn.staged_channel_changes().iter().filter_map(|c| kind.of(c)).map(|c| (c, NoteOrigin::default()));
+        let staged = turn.staged_notes(kind).iter().map(|c| (c, NoteOrigin::default()));
         kind.chain(turn.agent_channel_state()).with_staged(staged)
     }
 
@@ -86,7 +84,7 @@ impl AgentNotes {
     pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
         let id = Self::effective(turn, kind).next_id();
         let classification = turn.label();
-        turn.stage_channel_change(kind.change(NoteChange::Add { id, text, classification }));
+        turn.stage_note(kind, NoteChange::Add { id, text, classification });
         id
     }
 
@@ -97,7 +95,7 @@ impl AgentNotes {
         if Self::effective(turn, kind).get(id).is_none() {
             return false;
         }
-        turn.stage_channel_change(kind.change(NoteChange::Remove { id }));
+        turn.stage_note(kind, NoteChange::Remove { id });
         true
     }
 
@@ -122,7 +120,7 @@ impl AgentNotes {
             channel: &channel,
         };
         security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"))).await?;
-        turn.stage_channel_change(kind.change(NoteChange::Reclassify { id, classification }));
+        turn.stage_note(kind, NoteChange::Reclassify { id, classification });
         Ok(())
     }
 }

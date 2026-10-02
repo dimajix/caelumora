@@ -1,6 +1,6 @@
 # 193 — An external agent's state is rewritten whole for everything it hears
 
-**Status:** open
+**Status:** in progress
 **Area:** Persistence
 
 ## The problem
@@ -405,3 +405,8 @@ is left open until a step needs the answer - then it is done at once or opened a
   record with one `match` and keeps the order; "state" stays in the names, since a change of the
   state is not an update of the entity; the staged `AgentChannelChange` and `AgentStateChange`,
   which only bundled ledgers, are dissolved into fields of `TurnState`, as a first step of its own.
+- **2026-10-02** — Step 1 done: `TurnState` stages notes, private notes and memory in fields of
+  their own (`notes`, `private_notes`, `memory`); `AgentChannelChange`, `AgentStateChange` and the
+  `apply` methods that dispatched on them are gone, `Turn::stage_note`/`staged_notes` and
+  `stage_memory`/`staged_memory` replace the generic staging, `AgentStateHandle::apply` takes the
+  memory changes. STORAGE.md and MEMORY.md follow.

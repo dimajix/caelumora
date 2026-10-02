@@ -5,9 +5,10 @@ use crate::digest::Digest;
 use crate::confidentiality::Classification;
 use crate::context::{ContextRef, KnowledgeRef};
 use crate::message::{Message, MessageId};
+use crate::memory::{MemoryChange, MemoryOrigin};
 use crate::message_history::MessageHistory;
 use crate::transcript::{Transcript, TranscriptEntry};
-use crate::note::{NoteChain, NoteChange, NoteOrigin};
+use crate::note::{NoteChain, NoteChange};
 use crate::name::{Name, ScopedName};
 use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -229,12 +230,15 @@ pub struct TurnState {
     /// The messages the turn produced so far, each with the digest it will
     /// have in the transcript and what it was produced from.
     pub entries: Vec<TurnEntry>,
-    /// Changes to the agent's `AgentState`, applied to the current state
-    /// when the turn completes (issue 62).
-    pub agent_changes: Vec<AgentStateChange>,
-    /// Changes to the agent's state in this channel - to its notes and
-    /// private notes - applied when the turn completes (issue 65).
-    pub channel_changes: Vec<AgentChannelChange>,
+    /// Changes to the agent's memory, each with where it was made, applied
+    /// to the agent's `AgentState` as it is when the turn completes (issue
+    /// 62).
+    pub memory: Vec<(MemoryChange, MemoryOrigin)>,
+    /// Changes to the agent's notes in this channel, applied when the turn
+    /// completes (issue 65).
+    pub notes: Vec<NoteChange>,
+    /// Changes to its private notes in this channel, likewise (issue 51).
+    pub private_notes: Vec<NoteChange>,
     /// The tool calls of the current step, with their approvals and results.
     pub tool_calls: Vec<ToolCallState>,
     /// The plan in progress, if any.
@@ -344,28 +348,7 @@ pub struct TurnEntry {
     pub context: ContextRef,
 }
 
-/// A change to an [`AgentChannelState`], staged by a turn and applied when
-/// the turn completes (issue 65) - like [`AgentStateChange`], but without a
-/// handle: the state of an agent in a channel has one writer, the agent's
-/// actor in that channel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AgentChannelChange {
-    /// A change to the agent's notes in the channel (issue 17).
-    Note(NoteChange),
-    /// A change to its private notes in the channel (issue 51).
-    PrivateNote(NoteChange),
-}
-
 impl AgentChannelState {
-    /// Applies `change`, made in the turn that ended with message `after`
-    /// while the agent's transcript had the digest `transcript`.
-    pub fn apply(&mut self, change: AgentChannelChange, after: MessageId, transcript: Option<Digest>) {
-        match change {
-            AgentChannelChange::Note(change) => self.notes.push(change, NoteOrigin { transcript }, after),
-            AgentChannelChange::PrivateNote(change) => self.private_notes.push(change, NoteOrigin { transcript }, after),
-        }
-    }
-
     /// What the history recorded the message `id` - on whichever branch -
     /// was produced from, or `None` if this agent did not produce it (or it
     /// was before references were recorded).
@@ -376,30 +359,13 @@ impl AgentChannelState {
 
 /// The state of an agent itself, across its channels and - for agents of
 /// user or global scope - across sessions (issue 62). One owner per agent
-/// and process holds it; turns read a snapshot and stage their changes as
-/// [`AgentStateChange`]s, which are applied to the current state when the
+/// and process holds it; turns read a snapshot and stage their changes
+/// (`TurnState::memory`), which are applied to the current state when the
 /// turn completes, so that no turn overwrites another's changes.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     /// What the agent remembers across its channels and sessions.
     pub memory: crate::memory::MemoryChain,
-}
-
-/// A change to an [`AgentState`], staged by a turn and applied to the state
-/// as it is when the turn completes (issue 62).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum AgentStateChange {
-    /// A change to the agent's memory, made at `origin`.
-    Memory { change: crate::memory::MemoryChange, origin: crate::memory::MemoryOrigin },
-}
-
-impl AgentState {
-    /// Applies `change`, made in the turn that ended with message `after`.
-    pub fn apply(&mut self, change: AgentStateChange, after: MessageId) {
-        match change {
-            AgentStateChange::Memory { change, origin } => self.memory.push(change, origin, after),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -477,14 +443,4 @@ mod tests {
         assert_eq!(decoded.turn.map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
     }
 
-    #[test]
-    fn a_channel_change_goes_to_the_chain_it_names() {
-        use crate::note::NoteId;
-        let mut state = AgentChannelState::default();
-        let note = |id, text: &str| NoteChange::Add { id: NoteId(id), text: text.to_string(), classification: crate::confidentiality::Classification::CHANNEL_DEFAULT };
-        state.apply(AgentChannelChange::Note(note(1, "public")), MessageId::new(), None);
-        state.apply(AgentChannelChange::PrivateNote(note(1, "private")), MessageId::new(), None);
-        assert_eq!(state.notes.current()[0].text, "public");
-        assert_eq!(state.private_notes.current()[0].text, "private");
-    }
 }

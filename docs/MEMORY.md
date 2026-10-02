@@ -45,9 +45,9 @@ the channel.
 *   **Numbers.** Notes are numbered per agent, counting up, and a number is never given again, so
     that a model can repeat it to revoke.
 *   **Staging.** `AgentNotes` numbers, notes, revokes and reclassifies (`NoteKind::Public` or
-    `Private`). A change is staged as an `AgentChannelChange` (`Turn::stage_channel_change`) and
-    applied generically through `AgentChannelState::apply` when the turn completes, after the turn's
-    last message in the history.
+    `Private`). A change is staged as a `NoteChange` of its kind (`Turn::stage_note`, kept in
+    `TurnState::notes` or `private_notes`) and pushed into its chain when the turn completes, after
+    the turn's last message in the history.
 *   **What the turn sees.** Each operation looks at the notes as they stand with the turn's own
     changes in them, `AgentNotes::effective` - the ledger's fold run over the staged changes as well
     (`Ledger::with_staged`, issue 156). A note revoked in the turn that noted it is revoked like any
@@ -72,7 +72,7 @@ The `private_notes` component (issue 51) gives an agent a second chain per chann
 *   **Own numbering.** Private notes are numbered separately, so that gaps in the public numbers do
     not reveal them.
 *   **Staging.** Changes are staged and taken over with the turn like public ones
-    (`AgentChannelChange::PrivateNote`).
+    (`NoteKind::Private`).
 *   **Prompt part.** Its `BeforeTurnInput` part shows the agent its private notes of this channel
     and - through the turn's views, `MemberView::private_notes` in each - of every other channel of
     the session that this channel may read (`AccessQuestions::may_channel_read`, the same rule as
@@ -120,8 +120,9 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
          issue 156) and asks the policy about that one entry.
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in the channel, as the
     memory is now.
-*   **Staging.** A change is staged as an `AgentStateChange` (`Turn::stage_agent_change`).
-    `commit_turn` applies it to the agent's state as it is when the turn completes, under the
+*   **Staging.** A change is staged as a `MemoryChange` with where it is made
+    (`Turn::stage_memory`, kept in `TurnState::memory`). `commit_turn` applies it to the agent's
+    state as it is when the turn completes, under the
     handle's lock, stores it and announces `GlobalEvent::AgentStateChanged`. Actors of the same
     agent in other channels and sessions thus neither lose nor overwrite each other's changes (see
     [STORAGE.md](STORAGE.md)).

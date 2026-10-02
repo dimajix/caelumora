@@ -2,8 +2,9 @@
 //! read and changed within a turn.
 //!
 //! The memory is part of the agent's `AgentState`; `Turn` offers only
-//! generic access to that state - a snapshot, staged changes - and knows
-//! nothing of memory. [`AgentMemory`] is the logic on top: which entries may
+//! plain access to it - a snapshot, staging `MemoryChange`s that
+//! `commit_turn` applies when the turn completes. [`AgentMemory`] is the
+//! logic on top: which entries may
 //! be recalled in the turn's channel - as the policy decides, asked in the
 //! agent's name (issue 131) - remembering, forgetting and reclassifying. The
 //! `agent_memory` component uses it for its tools and prompt part; anything
@@ -15,7 +16,6 @@
 use crate::agent_turn::Turn;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentStateChange;
 use caelumora_model::digest::Digest;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::ledger::Staged;
@@ -128,14 +128,15 @@ impl AgentMemory {
     pub fn remember(turn: &mut Turn, text: String) -> MemoryId {
         let classification = turn.label();
         let id = turn.agent_state().reserve_memory_id();
-        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Add { id, text, classification }, origin: Self::origin(turn) });
+        let origin = Self::origin(turn);
+        turn.stage_memory(MemoryChange::Add { id, text, classification }, origin);
         id
     }
 
     /// The memory as it stands with the changes of the current turn in it
     /// (issue 156) - every entry, recallable here or not.
     pub fn effective(turn: &Turn) -> Staged<Memories> {
-        let staged = turn.staged_agent_changes().iter().map(|AgentStateChange::Memory { change, origin }| (change, origin.clone()));
+        let staged = turn.staged_memory().iter().map(|(change, origin)| (change, origin.clone()));
         turn.agent_state().current().memory.with_staged(staged)
     }
 
@@ -160,7 +161,8 @@ impl AgentMemory {
         if Self::find(turn, id, security, context).await.is_none() {
             return false;
         }
-        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Remove { id }, origin: Self::origin(turn) });
+        let origin = Self::origin(turn);
+        turn.stage_memory(MemoryChange::Remove { id }, origin);
         true
     }
 
@@ -187,7 +189,7 @@ impl AgentMemory {
         };
         security.require(context, action, || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"))).await?;
         let origin = Self::origin(turn);
-        turn.stage_agent_change(AgentStateChange::Memory { change: MemoryChange::Reclassify { id, classification }, origin });
+        turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
         Ok(())
     }
 

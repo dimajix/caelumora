@@ -83,10 +83,10 @@ An agent may run in several channels and sessions at once, each with its own `Ag
 is one owner of the agent's state per process.
 
 A turn does not hold the state. `Turn` receives the handle in its constructor and offers only
-generic access: a snapshot (`agent_state().current()`) and staging `AgentStateChange`s
-(`stage_agent_change`). It knows nothing of what the state holds; the logic of a kind of state is a
-wrapper around the turn, such as `agent_memory::AgentMemory` (recall, remember, forget), which the
-component and anything else use.
+plain access: a snapshot (`agent_state().current()`) and staging changes to the memory
+(`stage_memory`, kept in `TurnState::memory`). The logic of the memory is a wrapper around the
+turn, `agent_memory::AgentMemory` (recall, remember, forget), which the component and anything else
+use.
 
 When the turn completes, `Turn::commit_turn` applies the staged changes to the state as it is at
 that moment, under the handle's lock, and stores it. The handle then announces

@@ -65,7 +65,7 @@ argues against it, and what came out of the last attempt.
 | [164](164-soft-deletion-and-former-members.md) | open | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
 | [178](178-scoped-lookup-by-name.md) | open | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
-| [193](193-external-state-rewritten-whole.md) | open | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
+| [193](193-external-state-rewritten-whole.md) | in progress | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
 
 ## Sessions and channels
 

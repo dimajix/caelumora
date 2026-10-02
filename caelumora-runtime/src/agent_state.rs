@@ -14,8 +14,8 @@
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::agent::{AgentId, AgentState, AgentStateChange};
-use caelumora_model::memory::MemoryId;
+use caelumora_model::agent::{AgentId, AgentState};
+use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::MessageId;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::security::SecurityAttributes;
@@ -76,22 +76,23 @@ impl AgentStateHandle {
         MemoryId(self.next_memory_id.fetch_add(1, Ordering::SeqCst))
     }
 
-    /// Applies `changes`, made in a turn that ended with message `after`, to
-    /// the state as it is, stores it, makes it the current state, and
-    /// announces it as `GlobalEvent::AgentStateChanged`. Nothing is changed
-    /// if storing fails.
+    /// Applies `changes` to the memory, each made at its origin in a turn
+    /// that ended with message `after`, to the state as it is, stores it,
+    /// makes it the current state, and announces it as
+    /// `GlobalEvent::AgentStateChanged`. Nothing is changed if storing
+    /// fails.
     ///
     /// # Errors
     /// Whatever the `StateStore` reports.
-    pub async fn apply(&self, changes: Vec<AgentStateChange>, after: MessageId) -> Result<()> {
+    pub async fn apply(&self, changes: Vec<(MemoryChange, MemoryOrigin)>, after: MessageId) -> Result<()> {
         if changes.is_empty() {
             return Ok(());
         }
         let _writing = self.write.lock().await;
         let mut state = (*self.current.load_full()).clone();
         let count = changes.len();
-        for change in changes {
-            state.apply(change, after);
+        for (change, origin) in changes {
+            state.memory.push(change, origin, after);
         }
         if let Some(backing) = &self.backing {
             backing.state_store.put_agent_state(self.agent_id, &state).await
@@ -146,11 +147,10 @@ impl AgentStates {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::memory::MemoryChange;
     use caelumora_model::store_impl::memory::MemoryStore;
 
-    fn remember(id: MemoryId, text: &str) -> AgentStateChange {
-        AgentStateChange::Memory { change: MemoryChange::Add { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, origin: Default::default() }
+    fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
+        (MemoryChange::Add { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, MemoryOrigin::default())
     }
 
     #[tokio::test]
