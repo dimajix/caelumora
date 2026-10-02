@@ -39,6 +39,11 @@ const CARD_PATH: &str = ".well-known/agent-card.json";
 /// The protocol binding used: JSON-RPC over HTTP.
 const JSONRPC_BINDING: &str = "JSONRPC";
 
+/// How long a task that works is left before it is asked again, at first
+/// and at the most: twice as long each time (issue 186).
+const POLL_FIRST: Duration = Duration::from_secs(1);
+const POLL_LONGEST: Duration = Duration::from_secs(30);
+
 /// The JSON-RPC error code of a task that cannot be cancelled any more.
 const TASK_NOT_CANCELABLE: i64 = -32002;
 
@@ -85,13 +90,13 @@ struct Endpoint {
 
 /// An agent reached over A2A, as the `ExternalAgent` of an external
 /// personality.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct A2aAgentComponent {
     id: String,
     config: A2aAgentConfig,
     /// Read from the card when the component is built, or when the agent is
     /// first asked if that failed.
-    endpoint: ArcSwapOption<Endpoint>,
+    endpoint: Arc<ArcSwapOption<Endpoint>>,
     http: reqwest::Client,
     secret_manager: Arc<SecretManager>,
 }
@@ -105,7 +110,7 @@ impl A2aAgentComponent {
             .connect_timeout(Duration::from_secs(config.timeout_secs))
             .build()
             .map_err(|e| ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", config.url)))?;
-        let component = Self { id, config, endpoint: ArcSwapOption::empty(), http, secret_manager };
+        let component = Self { id, config, endpoint: Arc::new(ArcSwapOption::empty()), http, secret_manager };
         if let Err(e) = component.endpoint(security).await {
             warn!("A2A agent component '{}' cannot read its agent card yet: {}", component.id, e);
         }
@@ -214,6 +219,45 @@ impl A2aAgentComponent {
         }
         Ok(Box::pin(events_of(response.bytes_stream(), self.shown())))
     }
+
+    /// The events of `task` on an agent without streaming, asked for with
+    /// `GetTask` - after `first`, where it stands already - until it ends or
+    /// asks back (issue 186): while it works, only that it was started is
+    /// told, and it is asked again a little later each time.
+    fn polled(&self, security: &SecurityContext, endpoint: Endpoint, mut translation: Translation, mut first: Option<WireTask>, task: TaskId) -> ExternalStream {
+        let agent = self.clone();
+        let security = security.clone();
+        Box::pin(async_stream::stream! {
+            let mut wait = POLL_FIRST;
+            let mut told = false;
+            loop {
+                let found = match first.take() {
+                    Some(found) => found,
+                    None => match agent.call::<WireTask>(&security, &endpoint, "GetTask", json!({ "id": task.0 })).await {
+                        Ok(found) => found,
+                        Err(e) => {
+                            yield Err(e);
+                            return;
+                        }
+                    },
+                };
+                if !found.status.state.works() {
+                    for event in translation.events(StreamResponse { task: Some(found), ..StreamResponse::default() }) {
+                        yield Ok(event);
+                    }
+                    return;
+                }
+                if !told {
+                    told = true;
+                    for event in translation.started(&found) {
+                        yield Ok(event);
+                    }
+                }
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(POLL_LONGEST);
+            }
+        })
+    }
 }
 
 /// Whether `version` is one of A2A 1.x.
@@ -300,10 +344,7 @@ impl ExternalAgent for A2aAgentComponent {
         if endpoint.streaming {
             self.stream(security, &endpoint, "SubscribeToTask", params).await
         } else {
-            // Where it stands now; a task still working ends the stream
-            // without an end, and is asked again on the next run.
-            let found: WireTask = self.call(security, &endpoint, "GetTask", params).await?;
-            Ok(answered(StreamResponse { task: Some(found), ..StreamResponse::default() }))
+            Ok(self.polled(security, endpoint, Translation::default(), None, task.clone()))
         }
     }
 
@@ -324,15 +365,24 @@ impl ExternalAgent for A2aAgentComponent {
 }
 
 /// What a stream's responses become, as `ExternalEvent`s: keeps what it
-/// told already - the conversation - and the pieces of artifacts sent in
-/// chunks.
+/// told already - the conversation, the task - and the pieces of artifacts
+/// sent in chunks.
 #[derive(Debug, Default)]
 struct Translation {
     conversation: Option<String>,
+    task: Option<String>,
     artifacts: HashMap<String, String>,
 }
 
 impl Translation {
+    /// That `task`, which still works, was started.
+    fn started(&mut self, task: &WireTask) -> Vec<ExternalEvent> {
+        let mut events = Vec::new();
+        self.conversation(task.context_id.as_deref(), &mut events);
+        self.task(&task.id, &mut events);
+        events
+    }
+
     fn events(&mut self, response: StreamResponse) -> Vec<ExternalEvent> {
         let mut events = Vec::new();
         if let Some(message) = response.message {
@@ -346,7 +396,7 @@ impl Translation {
         }
         if let Some(task) = response.task {
             self.conversation(task.context_id.as_deref(), &mut events);
-            events.push(ExternalEvent::Started(TaskId(task.id)));
+            self.task(&task.id, &mut events);
             for artifact in task.artifacts {
                 let text = text_of(&artifact.parts);
                 if !text.is_empty() {
@@ -377,6 +427,14 @@ impl Translation {
             }
         }
         events
+    }
+
+    /// The task, told once - and again if it changes.
+    fn task(&mut self, task: &str, events: &mut Vec<ExternalEvent>) {
+        if self.task.as_deref() != Some(task) {
+            self.task = Some(task.to_string());
+            events.push(ExternalEvent::Started(TaskId(task.to_string())));
+        }
     }
 
     /// The conversation, told once - and again if it changes.
@@ -549,6 +607,13 @@ enum WireTaskState {
     Other,
 }
 
+impl WireTaskState {
+    /// Whether the task still works: it has neither ended nor asks back.
+    fn works(&self) -> bool {
+        matches!(self, WireTaskState::Other)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireArtifact {
@@ -620,7 +685,8 @@ mod tests {
     #[derive(Default)]
     struct Stub {
         card: Value,
-        /// By method: a JSON answer, or with `sse` the results streamed.
+        /// By method: a JSON answer - an array of them in turn, the last
+        /// kept - or with `sse` the results streamed.
         answers: HashMap<String, (bool, Value)>,
         asked: Vec<(String, Value, Option<String>, Option<String>)>,
     }
@@ -638,7 +704,11 @@ mod tests {
         let answer = {
             let mut stub = stub.lock().unwrap();
             stub.asked.push((method.clone(), body["params"].clone(), header("a2a-version"), header("authorization")));
-            stub.answers.get(&method).cloned()
+            stub.answers.get_mut(&method).map(|(sse, answer)| match answer {
+                Value::Array(turns) if !*sse && turns.len() > 1 => (false, turns.remove(0)),
+                Value::Array(turns) if !*sse => (false, turns[0].clone()),
+                _ => (*sse, answer.clone()),
+            })
         };
         match answer {
             // A server that takes the request and never answers.
@@ -781,6 +851,21 @@ mod tests {
         let security = SecurityContext::default();
         assert_eq!(all(agent.resume(&security, &task("t-1")).await.unwrap()).await, vec![ExternalEvent::Message("Done.".to_string()), ExternalEvent::Completed]);
         agent.cancel(&security, &task("t-1")).await.expect("past cancelling is no error");
+    }
+
+    #[tokio::test]
+    async fn without_streaming_a_task_is_resumed_by_asking_until_it_ends() {
+        let task_in = |state: &str| json!({ "jsonrpc": "2.0", "id": "1", "result": { "id": "t-1", "contextId": "c-1", "status": { "state": state }, "artifacts": [{ "artifactId": "a", "parts": [{ "text": "Done." }] }] } });
+        let (agent, stub) = agent("1.0", false, vec![("GetTask", false, json!([task_in("TASK_STATE_WORKING"), task_in("TASK_STATE_WORKING"), task_in("TASK_STATE_COMPLETED")]))]).await;
+
+        let events = all(agent.resume(&SecurityContext::default(), &task("t-1")).await.unwrap()).await;
+        assert_eq!(events, vec![
+            ExternalEvent::Conversation(ConversationId("c-1".to_string())),
+            ExternalEvent::Started(task("t-1")),
+            ExternalEvent::Message("Done.".to_string()),
+            ExternalEvent::Completed,
+        ], "started once while it works, what came of it once it ends");
+        assert_eq!(stub.lock().unwrap().asked.iter().filter(|(method, ..)| method == "GetTask").count(), 3);
     }
 
     #[tokio::test]
