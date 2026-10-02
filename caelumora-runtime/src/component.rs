@@ -365,14 +365,7 @@ impl ComponentRegistry {
             return Some(descriptor.clone());
         }
         let single = self.singles.get(&facet)?;
-        Some(ComponentDescriptor {
-            id: single.default_kind.clone(),
-            kind: single.default_kind.clone(),
-            params: serde_json::Value::Null,
-            tags: Vec::new(),
-            fail_policy: ComponentFailPolicy::default(),
-            security_attributes: Default::default(),
-        })
+        Some(ComponentDescriptor::new(&single.default_kind, &single.default_kind))
     }
 
     /// `node` itself, or - for `kind: "ref"` - the preconfigured descriptor

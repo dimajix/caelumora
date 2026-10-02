@@ -1,6 +1,6 @@
 # 179 — External agents cannot take part, only tools and models
 
-**Status:** open
+**Status:** in progress
 **Area:** Integrations
 
 ## The problem
@@ -100,7 +100,7 @@ goes out. Three ways were weighed:
   mirror of `withheld`. Finer than needed, and the remote agent has gaps in
   the conversation without knowing.
 - *Clearance at join* - the question that exists, `JoinChannel`, with the
-  remote side's roles. Sufficient because no message is classified above
+  roles the agent is limited to. Sufficient because no message is classified above
   its channel, and raising a channel re-asks `JoinChannel` for everyone in
   it.
 - *The owner decides, no rule* - consistent with MCP today; the gap stays.
@@ -111,22 +111,31 @@ the conversation with us, one A2A `contextId` per channel. Showing it only
 what it is addressed with is a matter of volume and cost, a component
 parameter at most, not a confidentiality rule.
 
-- **The clearance belongs to the component**, since it is a property of
-  the remote side the component describes (URL, authentication): a field
-  `roles` on the `ComponentDescriptor`, beside `fail_policy` and `tags`,
-  "what this component's remote side is cleared for", interpreted by the
-  container like `fail_policy`, meaningful only for components that have a
-  remote side. On the descriptor, not in the component's `params`, because
-  `JoinChannel` is asked before anything is stored or built - for a
-  template's channels before the first store write - and `roles_of` must
-  not build an `a2a_agent` (which reads the card over the network) to
-  answer. The alternative, the kind reading them out of its own `params`
-  (`ComponentKind::…roles_from(…)`), was weighed: better fitted, more
-  machinery, and registered twice once `mcp_tool` needs it too.
-- **Owner and remote side both.** `RuntimeManager::roles_of` gives an
-  internal agent its owner's roles, since it must not see more than the
-  person responsible for it. An external agent is cleared only if its owner
-  *and* its component are: `JoinChannel` asked twice, no new `ActionType`.
+- **The roles belong to the personality** (`Personality.roles`), as a
+  user has roles: an agent has them, not the connection it is reached
+  through. They are read where `JoinChannel` is asked - before anything is
+  built, for a template's channels before the first store write - from the
+  personality, which is loaded there anyway; no component is built and no
+  card fetched to answer. Weighed and rejected: a field `roles` on every
+  `ComponentDescriptor` (meaningful for one kind only), and `roles` in the
+  `params` of `a2a_agent` (the core would have to read one kind's params,
+  or build the component at the door).
+- **They limit, they do not replace.** `RuntimeManager::roles_of` gives an
+  agent its owner's roles, since it must not see more than the person
+  responsible for it. An agent is cleared for a channel only if its owner
+  is *and* its personality's roles are: `JoinChannel` asked twice, no new
+  `ActionType`. A personality can only narrow, so whoever may write one
+  cannot widen anyone's clearance through it.
+- **None named.** An internal personality that names no roles limits
+  nothing - its agents are cleared as their owner, as before. An external
+  one that names none is limited to no roles, which sees only what is
+  `public`: what is given to it leaves the system, so a forgotten field
+  means less, not more (`Personality::limiting_roles`).
+- **Internal agents too.** The limit applies to every agent, so an
+  internal agent whose model or tools are outside the system - a cloud
+  `LLMClient`, an MCP server - can be held back the same way (issue
+  [180](180-outbound-flow-unchecked.md)). Where else roles should count is
+  issue [181](181-where-roles-decide.md).
 - **What comes back** is classified as MCP results are: the component's
   configured `classification` if any, else the channel's. A2A messages
   carry `metadata` through which the remote agent could classify its own
@@ -198,8 +207,10 @@ meanwhile.
   `Personality` literally (`store_impl/suite.rs`, `runtime/template.rs`,
   `channel.rs`, `channel_members_prompt_provider.rs`, `controller/agent.rs`,
   `controller/mod.rs`, `view/mod.rs`) and gain the field.
-- `ComponentDescriptor.roles: Vec<String>` with `#[serde(default)]`: what
-  the component's remote side is cleared for.
+- `Personality.roles: Option<Vec<String>>` and
+  `Personality::limiting_roles() -> Option<&[String]>`: the given roles, or
+  for an external personality that names none, none (public only); `None`
+  for an internal one that names none.
 - `ExternalAgentChannelState`, stored under a key of its own
   (`StateStore::get/put_external_agent_channel_state(agent, channel)`,
   memory and JSON stores, `store_impl/suite.rs`), not under
@@ -387,16 +398,12 @@ having every answer dropped silently by `ChannelLoop::admits`.
 
 ### Clearance at the door
 
-- `ComponentRegistry::descriptor_providing::<dyn ExternalAgent>(&ComponentConfig)
-  -> Option<ComponentDescriptor>`, the sibling of `kind_of`: the descriptor
-  read without building - for a preconfigured component by id, the stored
-  one.
-- `RuntimeManager::remote_roles_of(actor) -> Result<Option<Vec<String>>>`:
-  for an agent whose personality is `External`, the `roles` of that
-  descriptor; `None` otherwise.
+- `RuntimeManager::limiting_roles_of(actor) -> Result<Option<Vec<String>>>`:
+  for an agent, `limiting_roles()` of its personality; `None` for anyone
+  else. Loaded as system, like `roles_of`.
 - `RuntimeManager::require_cleared` and `session.rs::require_cleared` ask
-  `JoinChannel` with the owner's roles as today and, when `remote_roles_of`
-  gives some, a second time with those. Both must allow;
+  `JoinChannel` with the owner's roles as today and, when
+  `limiting_roles_of` gives some, a second time with those. Both must allow;
   `ChannelError::NotCleared`/`SessionError::NotCleared` as today. Raising a
   channel asks for everyone already (channel.rs `reclassify`).
 
@@ -405,7 +412,7 @@ having every answer dropped silently by `ChannelLoop::admits`.
 Each step compiles, is tested, and leaves `main` working.
 
 1. **Model.** `PersonalityKind`, `Personality.kind`,
-   `ComponentDescriptor.roles`, `ExternalAgentChannelState` with its store
+   `Personality.roles`, `ExternalAgentChannelState` with its store
    methods (memory, JSON, suite) and `ActorRuntime` accessors. No
    behaviour changes.
 2. **Facet and a scripted stand-in.** `external.rs` with the trait and
@@ -420,10 +427,11 @@ Each step compiles, is tested, and leaves `main` working.
    remote yields `TurnFailed` and the actor goes on; a personality of kind
    external without the component fails to build with an error naming
    `url`.
-4. **Clearance.** `descriptor_providing`, `remote_roles_of`, the second
-   `JoinChannel` at both sites. Tests: an external agent whose component is
-   cleared for less than the channel is refused on `add_participant` and
-   in a template's channel; an owner cleared for less is refused too.
+4. **Clearance.** `limiting_roles_of`, the second `JoinChannel` at both
+   sites. Tests: an agent whose personality is limited below the channel is
+   refused on `add_participant` and in a template's channel, internal and
+   external alike; an external one naming no roles joins only a public
+   channel; an owner cleared for less is refused too.
    CONFIDENTIALITY.md: clearances, destinations, the privacy limit.
 5. **Open tasks.** `InputRequired`, continuing a task, unprompted events
    with `WakeupRequested`, `resume` after a restart. Tests with the
@@ -436,8 +444,8 @@ Each step compiles, is tested, and leaves `main` working.
    cancel, an unreadable card, a v0.3-only card refused. Then by hand
    against Hermes Agent, with what was found recorded here.
 7. **Documentation and seed.** CHANNELS.md (the fourth actor, `Member`),
-   COMPONENTS.md (facet table, built-in table, `external_impl/`,
-   `roles`), STORAGE.md (the new state), ARCHITECTURE.md and README,
+   COMPONENTS.md (facet table, built-in table, `external_impl/`),
+   STORAGE.md (the new state), ARCHITECTURE.md and README,
    `examples/seed.yaml` with an external personality; INDEX and this
    file's status.
 
@@ -480,9 +488,6 @@ Each step compiles, is tested, and leaves `main` working.
 - **Secrets and logs.** The bearer is resolved per request and never
   stored on the actor; errors name the component, not the URL; what was
   sent or received is logged at `trace!` only.
-- **Preconfigured components.** A descriptor may refer to a preconfigured
-  component by id (registry backed by the `EntityStore`);
-  `descriptor_providing` must resolve it to read its `roles`.
 - **No `unwrap`**, and an error in a response ends the response
   (`TurnFailed`), never `run`.
 
@@ -520,3 +525,20 @@ Each step compiles, is tested, and leaves `main` working.
   sent every message; and the channel state is typed `AgentChannelState`
   throughout, so the external agent gets a state and a store key of its
   own.
+- **2026-10-02** — Step 1 done: `PersonalityKind` and `Personality.kind`
+  (`internal` unless named), `ComponentDescriptor.roles`, the model module
+  `external_agent` with `ExternalAgentChannelState`, `ConversationId`,
+  `TaskId`, `OpenTask`, kept by both stores under a key of their own and
+  deleted with the channel, and `ActorRuntime::load/store_external_channel_state`.
+  One deviation from the plan: `caught_up_to` is the `MessageId` of the
+  last message given, not a digest - the id stays the same when the chain
+  around it changes (a branch, issue 08), a digest does not.
+- **2026-10-02** — Where the roles live, decided again with the maintainer:
+  not on the `ComponentDescriptor`, where step 1 had put them - a field of
+  every component that means something for one kind only - but on the
+  personality, as a user has roles. They limit the owner's clearance and
+  never replace it; an external personality that names none sees only what
+  is `public`, an internal one is not limited. `ComponentDescriptor.roles`
+  is removed again, `Personality.roles` and `limiting_roles` take its
+  place. Opened [181](181-where-roles-decide.md): where roles enter a
+  permission check at all has never been reviewed.

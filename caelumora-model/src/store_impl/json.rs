@@ -1,6 +1,7 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
+use crate::external_agent::ExternalAgentChannelState;
 use crate::security::{Secured, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
@@ -50,6 +51,7 @@ impl JsonFileStore {
             self.user_profiles_dir(),
             self.agent_states_dir(),
             self.agent_channel_states_dir(),
+            self.external_agent_channel_states_dir(),
             self.channel_states_dir(),
             self.components_dir(),
         ];
@@ -96,6 +98,10 @@ impl JsonFileStore {
         self.root.join("runtime").join("agent_channel_state")
     }
 
+    fn external_agent_channel_states_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("external_agent_channel_state")
+    }
+
     fn channel_states_dir(&self) -> PathBuf {
         self.root.join("runtime").join("channel_state")
     }
@@ -139,6 +145,15 @@ impl JsonFileStore {
 
     fn agent_channel_state_dir(&self, channel_id: ChannelId) -> PathBuf {
         self.agent_channel_states_dir().join(channel_id.to_string())
+    }
+
+    fn external_agent_channel_state_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
+        self.external_agent_channel_state_dir(channel_id)
+            .join(format!("{}.json", agent_id))
+    }
+
+    fn external_agent_channel_state_dir(&self, channel_id: ChannelId) -> PathBuf {
+        self.external_agent_channel_states_dir().join(channel_id.to_string())
     }
 
     fn agent_state_path(&self, id: AgentId) -> PathBuf {
@@ -459,6 +474,25 @@ impl StateStore for JsonFileStore {
         ).await
     }
 
+    async fn get_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<ExternalAgentChannelState> {
+        let path = self.external_agent_channel_state_path(agent_id, channel_id);
+        debug!("Reading external agent channel state from {}", path.display());
+        let loaded = read_json_opt::<ExternalAgentChannelState>(&path).await?;
+        Ok(loaded.unwrap_or_default())
+    }
+
+    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &ExternalAgentChannelState) -> StoreResult<()> {
+        let path = self.external_agent_channel_state_path(agent_id, channel_id);
+        debug!("Writing external agent channel state to {}", path.display());
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
+        }
+        write_json_atomic(
+            &path,
+            state,
+        ).await
+    }
+
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         debug!("Reading agent state from {}", path.display());
@@ -498,6 +532,7 @@ impl StateStore for JsonFileStore {
         debug!("Deleting the state of channel {}", channel_id);
         delete_if_exists(&self.channel_state_path(channel_id)).await?;
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
+        delete_dir_if_exists(&self.external_agent_channel_state_dir(channel_id)).await?;
         Ok(())
     }
 

@@ -126,6 +126,7 @@ against it, and what came out of the last attempt.
 | [138](138-confidentiality-policy-in-ownership.md) | done | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
+| [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
 | [149](149-special-tokens-in-content.md) | done | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
 | [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [158](158-publish-question-built-five-times.md) | done | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
@@ -271,7 +272,7 @@ against it, and what came out of the last attempt.
 
 | No. | Status | Issue |
 |---|---|---|
-| [179](179-external-agents-via-a2a.md) | open | An agent that runs elsewhere cannot be given a task or take part in a channel; only models and MCP tools can be reached from outside. |
+| [179](179-external-agents-via-a2a.md) | in progress | An agent that runs elsewhere cannot be given a task or take part in a channel; only models and MCP tools can be reached from outside. |
 
 ## Open architecture questions
 

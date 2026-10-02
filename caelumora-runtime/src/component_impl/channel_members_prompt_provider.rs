@@ -182,6 +182,8 @@ mod tests {
             description: String::new(),
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
             introduction: introduction.map(str::to_string),
             components: Default::default(),
             security_attributes: Default::default(),

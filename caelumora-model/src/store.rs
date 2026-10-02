@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
+use crate::external_agent::ExternalAgentChannelState;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -104,6 +105,11 @@ pub trait StateStore : Debug + Sync + Send {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState>;
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()>;
 
+    /// An external agent in a channel (issue 179), under a key of its own:
+    /// it is no `AgentChannelState`.
+    async fn get_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<ExternalAgentChannelState>;
+    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &ExternalAgentChannelState) -> StoreResult<()>;
+
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
     async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()>;
 
@@ -111,7 +117,7 @@ pub trait StateStore : Debug + Sync + Send {
     async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()>;
 
     /// Deletes the state of a channel that no longer exists: its own and that
-    /// of every agent in it. Nothing to delete is not an error (issue 09).
+    /// of every agent in it, external ones included. Nothing to delete is not an error (issue 09).
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()>;
 }
 

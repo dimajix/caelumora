@@ -1514,6 +1514,8 @@ mod tests {
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
             components,
             security_attributes: Default::default(),
         };

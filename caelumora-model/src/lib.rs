@@ -1,6 +1,7 @@
 #[macro_use]
 pub mod macros;
 pub mod agent;
+pub mod external_agent;
 pub mod approval;
 pub mod channel;
 pub mod command;

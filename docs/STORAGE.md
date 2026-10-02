@@ -78,6 +78,12 @@ channels and agents:
     prompt parts by digest, and the turn under way, if any (processing state,
     pending tool calls, plan, the turn's messages, changes not yet taken
     over). See [AGENT-TURN.md](AGENT-TURN.md).
+*   **`ExternalAgentChannelState`**: an external agent in one channel
+    (issue 179) - what was sent to it and what it answered, the remote
+    conversation, the tasks given to it that have not ended, and the last
+    message of the channel it was given. Kept under a key of its own, not as
+    an `AgentChannelState`: there is no turn and nothing of what we cannot
+    see.
 *   **`AgentState`**: the agent itself, across its channels and - for agents
     of user or global scope - across sessions. So far it holds the agent's
     memory (`agent_memory`, see [MEMORY.md](MEMORY.md)).
@@ -110,6 +116,8 @@ Every kind of state has exactly one writer:
 
 *   `ChannelState`: its `ChannelLoop`;
 *   `AgentChannelState`: the `AgentActor` of that agent and channel;
+*   `ExternalAgentChannelState`: the `ExternalAgentActor` of that agent and
+    channel;
 *   `AgentState`: its handle.
 
 This holds because a session starts only once, however many requests ask for
@@ -124,8 +132,9 @@ every file through a temporary file of its own.
 The entity store and the state store are configured separately and may be
 different stores. Deleting a channel therefore deletes its state explicitly,
 through `StateStore::delete_channel_state`, which removes the channel's state
-and that of every agent in it; deleting a session does the same for each of
-its channels. It is never a side effect of `EntityStore::delete_session`.
+and that of every agent in it, external ones included; deleting a session
+does the same for each of its channels. It is never a side effect of
+`EntityStore::delete_session`.
 
 ## Controllers
 

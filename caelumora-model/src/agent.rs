@@ -24,6 +24,22 @@ pub enum AgentUpdateEvent {
 
 define_id!(PersonalityId);
 
+/// What kind of agent a personality makes (issue 179), and so which actor
+/// runs it in a channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonalityKind {
+    /// An agent of ours: its model, tools and turns are run here, by an
+    /// `AgentActor`.
+    #[default]
+    Internal,
+    /// An agent that runs elsewhere, reached through the one component of
+    /// the personality that provides `ExternalAgent`, by an
+    /// `ExternalAgentActor`. Whatever else the personality wires in is not
+    /// read.
+    External,
+}
+
 /// An agent's traits: its components and how confidential its reasoning is.
 /// Written by hand, too (a seed file, issue 105): the fields with a default
 /// may be left out there (issue 108).
@@ -34,6 +50,14 @@ pub struct Personality {
     /// global scope unless named.
     #[serde(flatten)]
     pub name: ScopedName,
+    /// What kind of agent it makes: `internal` unless named.
+    #[serde(default)]
+    pub kind: PersonalityKind,
+    /// The roles its agents are limited to (issue 179); see
+    /// [`Personality::limiting_roles`]. Not their roles: an agent is
+    /// cleared by its owner's, these can only narrow them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<String>>,
     /// What the personality is, for whoever chooses one: a catalogue line.
     #[serde(default)]
     pub description: String,
@@ -57,6 +81,23 @@ pub struct Personality {
     /// `channel` unless named.
     #[serde(default)]
     pub reasoning_visibility: crate::confidentiality::Visibility,
+}
+
+impl Personality {
+    /// The roles that limit what its agents are cleared for, besides their
+    /// owner's (issue 179): an agent joins a channel only if its owner is
+    /// cleared for it and, where this is `Some`, these roles are too. An
+    /// internal personality that names none limits nothing; an external
+    /// one that names none is limited to no roles - what is `public` - since
+    /// what its agents are given leaves the system. Like every clearance,
+    /// it counts only where roles are configured.
+    pub fn limiting_roles(&self) -> Option<&[String]> {
+        match (&self.roles, self.kind) {
+            (Some(roles), _) => Some(roles),
+            (None, PersonalityKind::External) => Some(&[]),
+            (None, PersonalityKind::Internal) => None,
+        }
+    }
 }
 
 impl Secured for Personality {
@@ -359,6 +400,29 @@ mod tests {
     use super::*;
     use crate::actor::ActorState;
     use crate::confidentiality::{Compartment, Confidentiality};
+
+    #[test]
+    fn a_personality_is_internal_unless_named_external() {
+        let id = PersonalityId::new();
+        let written = |kind: &str| serde_json::json!({ "id": id, "name": "plain", "kind": kind });
+        let plain: Personality = serde_json::from_value(serde_json::json!({ "id": id, "name": "plain" })).unwrap();
+        assert_eq!(plain.kind, PersonalityKind::Internal, "left out");
+        let external: Personality = serde_json::from_value(written("external")).unwrap();
+        assert_eq!(external.kind, PersonalityKind::External);
+        assert!(serde_json::from_value::<Personality>(written("remote")).is_err(), "no other kind");
+    }
+
+    #[test]
+    fn a_personality_limits_its_agents_only_where_it_names_roles_unless_external() {
+        let mut personality: Personality = serde_json::from_value(serde_json::json!({ "id": PersonalityId::new(), "name": "plain" })).unwrap();
+        assert_eq!(personality.limiting_roles(), None, "internal, none named: the owner's alone");
+        personality.kind = PersonalityKind::External;
+        assert_eq!(personality.limiting_roles(), Some(&[][..]), "external, none named: public only");
+        personality.roles = Some(vec!["staff".to_string()]);
+        assert_eq!(personality.limiting_roles(), Some(&["staff".to_string()][..]));
+        personality.kind = PersonalityKind::Internal;
+        assert_eq!(personality.limiting_roles(), Some(&["staff".to_string()][..]), "named, internal too");
+    }
 
     #[test]
     fn a_turn_writes_as_what_it_has_seen_never_above_its_channel() {

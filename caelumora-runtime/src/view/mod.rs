@@ -464,6 +464,8 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(),
+            roles: None,
             components: Default::default(),
             security_attributes: Default::default(),
         };
