@@ -139,6 +139,10 @@ impl ModeratorActors {
             .collect()
     }
 
+    /// The agents a policy may choose from: awake, and not among the
+    /// senders. Leaving the sleeping out matters beyond the policy: the
+    /// channel wakes whomever the moderator asks to respond, so a sleeping
+    /// agent chosen here would be woken without being addressed (issue 45).
     fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorId> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         self.agent_actors.iter()
@@ -154,7 +158,8 @@ impl ModeratorActors {
     /// asked to respond, and nobody else. Only mentions written by a user are
     /// honoured; mentions in agent responses are rendered but not routed, so
     /// two agents cannot address each other indefinitely. Sleeping agents are
-    /// not filtered out here - the channel wakes them before routing.
+    /// not filtered out here - the channel wakes whom the moderator asks to
+    /// respond before it delivers anything of the decision.
     fn mentioned_responders(&self, event: &Envelope, messages: &[Message]) -> Option<Vec<ActorId>> {
         if !matches!(event.context.sender_id, ActorId::User(_)) {
             return None;

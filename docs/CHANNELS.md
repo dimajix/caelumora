@@ -247,9 +247,15 @@ A quiet channel is woken in one of two ways:
 *   **Deliberately**: `ChannelLoop::wakeup` (`ActionType::WakeChannel`), as the command `/wakeup`
     does; `wakeup_actor` wakes a single actor under the same permission.
 *   **Because something is on its way**: a `WakeupRequested` that a user's actor sends ahead of its
-    next message, or a user's mention. This happens as the channel routes it (`wake_for_delivery`)
-    and asks nothing. It follows from an action that was already permitted, and a user allowed to
-    write but not to wake would otherwise be unable to write.
+    next message. This happens as the channel routes it (`wake_for_delivery`) and asks nothing. It
+    follows from an action that was already permitted, and a user allowed to write but not to wake
+    would otherwise be unable to write.
+
+A single agent is also woken when the moderator asks it to respond: a sleeping agent ignores a
+`ResponseRequested`, so `route_event_impl` wakes everyone a decision asks before it delivers
+anything of that decision. The policies never choose a sleeping agent (`actor_candidates`), so this
+wakes only agents a message mentions; an agent that is not addressed keeps sleeping. It does not
+end a quiet channel, and in a quiet channel, which asks nobody, it wakes nobody.
 
 ### Refusals
 
@@ -402,7 +408,7 @@ cannot change whom a past message addressed.
 A mention changes who is asked to respond, not who receives the message: every participant still
 gets it, but every moderator (through the shared `ModeratorActors::mentioned_responders`) sends
 `ResponseRequested` to exactly the mentioned agents instead of applying its own policy. Mentioned
-agents that are asleep are woken first.
+agents that are asleep are woken first (see *Waking*).
 
 Only mentions written by a user are routed. Mentions in agent responses are resolved and rendered
 but do not steer the moderator, so agents cannot address each other in an unbounded loop.

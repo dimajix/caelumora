@@ -715,10 +715,11 @@ impl ChannelLoop {
     }
 
     /// Wakes the channel's actors because something is on its way to them:
-    /// a `WakeupRequested` - which a user's actor sends with every message -
-    /// or a mention. That is the consequence of an action already permitted,
-    /// so it carries no permission of its own - otherwise a user allowed to
-    /// write but not to wake could not write.
+    /// a `WakeupRequested`, which a user's actor sends with every message. A
+    /// mention wakes only whom it addresses (`route_event_impl`). That is the
+    /// consequence of an action already permitted, so it carries no
+    /// permission of its own - otherwise a user allowed to write but not to
+    /// wake could not write.
     fn wake_for_delivery(&self) {
         self.quiet.store(false, Ordering::SeqCst);
         for ChannelActor { actor, .. } in self.actors.load().values() {
@@ -987,32 +988,12 @@ impl ChannelLoop {
         event
     }
 
-    /// Wakes every sleeping agent a user explicitly mentioned, so that the
-    /// moderator's `ResponseRequested` reaches an agent that acts on it.
-    /// Mentions in agent responses wake nobody, matching the moderator, which
-    /// does not route them either.
-    async fn wake_mentioned(&self, event: &Envelope) {
-        if !matches!(event.context.sender_id, ActorId::User(_)) {
-            return;
-        }
-        if let ActorEvent::FullResponseGenerated(messages) = &event.event {
-            for id in messages.iter().flat_map(|m| m.mentions.iter()) {
-                if let Some(actor) = self.actor_by_id(*id) {
-                    if matches!(id, ActorId::Agent(_)) && actor.state() == ActorState::Sleeping {
-                        actor.wakeup();
-                    }
-                }
-            }
-        }
-    }
-
     async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope) {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
             self.wake_for_delivery();
         }
-        self.wake_mentioned(&event).await;
 
         let broadcast = self.route_event_impl(running, &event).await;
 
@@ -1031,6 +1012,24 @@ impl ChannelLoop {
         let span_depth = event.context.span_depth + 1;
         let decision = self.moderator.route(event).await;
         let quiet = self.quiet.load(Ordering::SeqCst);
+
+        // Whom the moderator asks to respond is woken first, before anything
+        // of the decision is delivered: a sleeping agent ignores a
+        // `ResponseRequested`, and one that took in the message still asleep
+        // would ignore the request that follows it. Since the policies never
+        // choose a sleeping agent (`actor_candidates`), only the agents a
+        // message mentions are woken this way (issue 45). A quiet channel
+        // asks nobody, and so wakes nobody.
+        if !quiet {
+            let actors = self.actors.load();
+            let asked = decision.forwards.iter()
+                .filter(|(target_id, route)| *target_id != event.context.sender_id && matches!(route.event, ActorEvent::ResponseRequested));
+            for (target_id, _) in asked {
+                if let Some(ChannelActor { actor, .. }) = actors.get(target_id) {
+                    actor.wakeup();
+                }
+            }
+        }
 
         // First, route all messages to all agents...
         for route in decision.forwards {
@@ -1502,6 +1501,57 @@ mod tests {
         delivered(&mut rx); // this test's moderator forwards the request, too
         channel.route_event(&actors, said()).await;
         assert_eq!(delivered(&mut rx), ["FullResponseGenerated", "ResponseRequested"], "woken, the channel asks again");
+    }
+
+    /// An agent asleep that only tells whether it was woken.
+    #[derive(Debug)]
+    struct Sleeper {
+        id: ActorId,
+        woken: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl Actor for Sleeper {
+        fn id(&self) -> ActorId { self.id }
+        fn kind(&self) -> String { "sleeper".to_string() }
+        fn name(&self) -> String { "sleeper".to_string() }
+        fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
+        async fn run(&self, _rx: Box<dyn crate::transport::EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> { Ok(()) }
+        fn state(&self) -> ActorState {
+            if self.woken.load(Ordering::SeqCst) { ActorState::Idle } else { ActorState::Sleeping }
+        }
+        fn wakeup(&self) { self.woken.store(true, Ordering::SeqCst); }
+        fn stop(&self) {}
+    }
+
+    #[tokio::test]
+    async fn the_channel_wakes_only_whom_the_moderator_asks_to_respond() {
+        use caelumora_model::actor::EventContext;
+        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let sleeper = || Arc::new(Sleeper { id: ActorId::Agent(caelumora_model::agent::AgentId::new()), woken: AtomicBool::new(false) });
+        let (asked, other) = (sleeper(), sleeper());
+        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
+        for actor in [&asked, &other] {
+            // Who it is does not matter to routing: the channel only looks it up.
+            channel.adopt(actor.clone(), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        }
+        let said = || Envelope::new(
+            context.clone(),
+            EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+            ActorEvent::FullResponseGenerated(vec![Message::new(Classification::CHANNEL_DEFAULT)]),
+        );
+
+        channel.route_event(&HashMap::new(), said()).await;
+        assert!(asked.woken.load(Ordering::SeqCst), "asked to respond, it is woken to do so");
+        assert!(!other.woken.load(Ordering::SeqCst), "not addressed, it sleeps on");
+
+        // A quiet channel asks nobody, and wakes nobody.
+        asked.woken.store(false, Ordering::SeqCst);
+        channel.cancel(&context).await.expect("permitted");
+        channel.route_event(&HashMap::new(), said()).await;
+        assert!(!asked.woken.load(Ordering::SeqCst), "nobody is asked in a quiet channel");
     }
 
     #[tokio::test]

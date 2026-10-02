@@ -98,6 +98,7 @@ argues against it, and what came out of the last attempt.
 | [174](174-moderator-as-component.md) | done | The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended. |
 | [175](175-user-driven-moderator.md) | done | There is no moderator under which every agent answers a person's message but no agent's message makes another agent answer. |
 | [187](187-deleted-channel-keeps-remote-tasks.md) | done | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
+| [199](199-external-agent-speak-wakes-all.md) | open | An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither. |
 
 ## Identity and access management
 
@@ -169,7 +170,7 @@ argues against it, and what came out of the last attempt.
 | [43](43-message-time-and-statistics.md) | done | The web UI shows neither when a message was written nor the token counts and durations recorded for it. |
 | [29](29-mentions.md) | done | In a multi-agent channel the user cannot choose who answers; the moderator alone decides, and an `@name` in the text means nothing to it. |
 | [44](44-mentions-only-moderator.md) | done | Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned. |
-| [45](45-agent-mentions.md) | open | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
+| [45](45-agent-mentions.md) | in progress | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
 | [56](56-response-language.md) | open | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
 | [80](80-stored-channel-response.md) | done | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | done | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |

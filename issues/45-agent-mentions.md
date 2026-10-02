@@ -1,6 +1,6 @@
 # 45 — Mentions written by agents are not routed
 
-**Status:** open
+**Status:** in progress
 **Area:** User interaction
 
 ## The problem
@@ -96,3 +96,48 @@ enough across hops has to be checked.
   track the chain through the span (`span_id` plus a hop count) comes from the discussion there.
 - **2026-10-01** — [175](175-user-driven-moderator.md) asks for a moderator under which agents'
   messages make nobody respond; its only exception, an agent's mention, is this issue.
+- **2026-10-02** — Discussed and decided; not yet implemented. What was found first:
+  - The handles no longer need a contribution of their own: `channel_members_prompt_provider`
+    ([176](176-participants-in-system-prompt.md)) already names every member with its handle.
+  - The span survives the turn: an agent's turn builds its context with `context.next` from the
+    `ResponseRequested` (`AgentActor`, and `ExternalAgentActor::respond`).
+  - Mentions are not the only chain between agents. Without a mention, `PolicyModerator` asks its
+    policy for an agent's message as for a user's, so under `round_robin_policy` (the default),
+    `random_policy` and `broadcast_policy` agents already answer agents today, bounded only by
+    `max_route_decisions`.
+
+  Decided:
+  - **What is counted:** every agent-to-agent hop, not only those caused by a mention. A field
+    `agent_hops` in `EventContext`: `EventContext::new` starts at 0, so a user's message starts a
+    new chain without a reset of its own; `next` keeps it; the moderator increments it on a
+    `ResponseRequested` it routes for an agent's message. `route_event_impl` leaves it as it is.
+  - **Where the limit is checked:** in `PolicyModerator::route_full_response`, once for the
+    mentioned agents and the policy's choice alike. `mentioned_responders` drops its check for a
+    user sender.
+  - **Where it is configured:** as a parameter of the moderator component (e.g. `max_agent_hops`,
+    default 3), not globally.
+  - **When it is reached:** the hop is not routed, silently for now. A hint to the users is a
+    later step of its own, since it needs an event the web UI understands.
+  - **`max_route_decisions`** stays as a safety net against faulty routing.
+  - **Waking:** a sleeping agent ignores a `ResponseRequested` (`AgentActor::handle_waiting`), so
+    it has to be woken first. The rule is: a sleeping agent that is not explicitly addressed keeps
+    sleeping; one that is, by a user or by an agent, is woken. `ChannelLoop::wake_mentioned` goes
+    away; instead `route_event_impl` wakes every sleeping agent the moderator's decision sends a
+    `ResponseRequested` to - after `moderator.route`, before the first envelope of the decision is
+    delivered, and not when the channel is quiet and the request is not delivered. Since
+    `actor_candidates` leaves sleeping agents out, only mentioned ones can be woken this way; a
+    comment at both places says so. The rule of whose mentions count then lives in the moderator
+    alone.
+  - **`ExternalAgentActor::speak`** starts a fresh `EventContext`, which would start a chain at 0
+    hops after a long task. The task keeps the context of the request that started it, and `speak`
+    carries its hop count on.
+
+  Order: first a restructuring without behaviour change (the field, waking from the decision),
+  then the limit, routing agents' mentions, `speak`, and the tests (a chain that stops at the
+  limit, a user message that starts a new one, a sleeping agent mentioned by an agent). That
+  `speak` wakes every agent is issue [199](199-external-agent-speak-wakes-all.md).
+- **2026-10-03** — The restructuring, without behaviour change for mentions: `EventContext` has
+  `agent_hops` (kept by `next`, `#[serde(default)]` for stored turns), nothing counts it yet.
+  `ChannelLoop::wake_mentioned` is gone; `route_event_impl` wakes everyone the moderator's decision
+  asks to respond before it delivers anything of it. One difference: a mention in a quiet channel no
+  longer wakes the mentioned agent, since nobody is asked there. CHANNELS.md (*Waking*) says so.

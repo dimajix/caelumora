@@ -197,6 +197,12 @@ pub struct EventContext {
     pub correlation_id: Uuid,
     pub span_id: Uuid,
     pub span_depth: i32,
+    /// How many times since the last message of a user an agent's message
+    /// made another agent respond (issue 45). A user's message starts at 0;
+    /// `next` keeps it, and the moderator counts a hop when it asks an agent
+    /// to respond to an agent. Absent in what was stored before it existed.
+    #[serde(default)]
+    pub agent_hops: u32,
 }
 
 impl EventContext {
@@ -210,6 +216,7 @@ impl EventContext {
             correlation_id: Uuid::default(),
             span_id: Uuid::new_v4(),
             span_depth: 0,
+            agent_hops: 0,
         }
     }
 
@@ -223,6 +230,7 @@ impl EventContext {
             correlation_id: self.event_id,
             span_id: self.span_id,
             span_depth: self.span_depth + 1,
+            agent_hops: self.agent_hops,
         }
     }
 }
