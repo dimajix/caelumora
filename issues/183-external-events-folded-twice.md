@@ -1,6 +1,6 @@
 # 183 — An external agent folds the remote agent's events twice
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -47,3 +47,11 @@ has to be added twice, and the copies drift further.
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series found the two folds
   independently from three angles (reuse, quality, altitude).
+- **2026-10-02** — Done, without behaviour changes. `Answer::take` takes an event into the answer
+  and the state and says what it comes to (`Step`); `exchange` adds the task it starts and the
+  partials it shows, `on_followed` waits for the end. `record` builds the message and keeps it in
+  the history, `answered` gives the events that publish it, `Answering::send_all` sends them, and
+  `classification_in` says how an answer is classified - each used by both paths. Left as they
+  were: the failure reads "could not answer" for a request and "could not finish" for a followed
+  task, and a broken stream of a followed task still ends in `speak` - issue
+  [184](184-followed-task-ends-said-wrongly.md).

@@ -273,7 +273,7 @@ argues against it, and what came out of the last attempt.
 | No. | Status | Issue |
 |---|---|---|
 | [179](179-external-agents-via-a2a.md) | in progress | An agent that runs elsewhere cannot be given a task or take part in a channel; only models and MCP tools can be reached from outside. |
-| [183](183-external-events-folded-twice.md) | in progress | An external agent takes in the remote agent's events in two places that do the same with differences of no stated reason. |
+| [183](183-external-events-folded-twice.md) | done | An external agent takes in the remote agent's events in two places that do the same with differences of no stated reason. |
 | [184](184-followed-task-ends-said-wrongly.md) | open | When a task an external agent follows fails or its stream breaks, the agent records a message nobody saw or publishes a half answer. |
 | [185](185-sse-decoded-per-chunk.md) | open | The A2A event stream is decoded chunk by chunk, so a character or a line end split by the network breaks the answer. |
 | [186](186-a2a-requests-and-long-tasks.md) | open | An external agent without streaming may not deliver tasks longer than its request timeout, and a streamed request can wait forever. |

@@ -83,6 +83,16 @@ impl Answering {
         output.send(Envelope::new(self.security_context.clone(), self.event_context.clone(), event)).await
             .context(format!("external agent {} failed to send an event", self.event_context.sender_id))
     }
+
+    /// Sends `events` in turn: one that cannot be sent is logged, and the
+    /// rest are sent still.
+    async fn send_all(&self, events: Vec<ActorEvent>, output: &dyn EventSender) {
+        for event in events {
+            if let Err(e) = self.send(event, output).await {
+                warn!("{:#}", e);
+            }
+        }
+    }
 }
 
 impl ExternalAgentActor {
@@ -174,31 +184,22 @@ impl ExternalAgentActor {
         if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
-        let published = match ending {
-            Ok(Ending::Answered(message)) => {
-                let message = message.map(|message| *message);
-                if let Some(message) = &message {
-                    if let Err(e) = answering.send(ActorEvent::CompleteMessageGenerated(message.clone()), output).await {
-                        warn!("{:#}", e);
-                    }
-                }
-                answering.send(ActorEvent::FullResponseGenerated(message.into_iter().collect()), output).await
-            }
+        let events = match ending {
+            // A request is always answered, with nothing if need be.
+            Ok(Ending::Answered(message)) => answered(message.map(|message| *message)),
             Ok(Ending::Failed(reason)) => {
                 info!("External agent {} {} failed its task: {}", self.id(), self.name(), reason);
-                answering.send(ActorEvent::TurnFailed { message: format!("{} could not answer: {reason}", self.name()) }, output).await
+                vec![ActorEvent::TurnFailed { message: format!("{} could not answer: {reason}", self.name()) }]
             }
-            Ok(Ending::Stopped) => Ok(()),
+            Ok(Ending::Stopped) => Vec::new(),
             Err(e) => {
                 tracing::error!("External agent {} {} could not answer: {:#}", self.id(), self.name(), e);
                 let message = crate::error::user_message(&e)
                     .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
-                answering.send(ActorEvent::TurnFailed { message }, output).await
+                vec![ActorEvent::TurnFailed { message }]
             }
         };
-        if let Err(e) = published {
-            warn!("{:#}", e);
-        }
+        answering.send_all(events, output).await;
         self.set_processing(ActorState::Idle);
     }
 
@@ -214,7 +215,7 @@ impl ExternalAgentActor {
         answering.send(ActorEvent::ResponseStarted, output).await?;
         let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("external agent {} has no channel to answer in", self.id()))?;
-        let classification = self.remote.classification().unwrap_or_else(|| channel.classification());
+        let classification = self.classification_in(channel.classification());
         let unheard = unheard(state, self.id());
         let answers = state.open_tasks.iter().find(|t| t.state == OpenTaskState::InputRequired).map(|t| t.task.clone());
         if unheard.is_empty() && answers.is_none() {
@@ -252,42 +253,24 @@ impl ExternalAgentActor {
                 warn!("External agent {}: the answer ended before its task did", self.id());
                 break;
             };
-            match event? {
-                ExternalEvent::Conversation(conversation) => state.conversation = Some(conversation),
-                ExternalEvent::Started(started) => {
+            match answer.take(state, task.as_ref(), event?) {
+                Step::Continue => {}
+                // The task it began - or the one it answers, taken up again.
+                Step::Started(started) => {
                     set_open(state, &started, OpenTaskState::Working);
                     task = Some(started);
                 }
-                ExternalEvent::Partial(piece) => {
-                    answer.partial.push_str(&piece);
+                // Shown as it is written, to whoever waits for the answer.
+                Step::Partial(piece) => {
                     let partial = self.message(Some(piece), classification.clone());
                     answering.send(ActorEvent::PartialMessageGenerated(partial), output).await?;
                 }
-                ExternalEvent::Message(text) => answer.add(text),
-                ExternalEvent::InputRequired(question) => {
-                    answer.add(question);
-                    if let Some(task) = &task {
-                        set_open(state, task, OpenTaskState::InputRequired);
-                    }
-                    break;
-                }
-                ExternalEvent::Completed | ExternalEvent::Canceled => {
-                    close(state, task.as_ref());
-                    break;
-                }
-                ExternalEvent::Failed(reason) => {
-                    close(state, task.as_ref());
-                    return Ok(Ending::Failed(reason));
-                }
+                Step::Ended => break,
+                Step::Failed(reason) => return Ok(Ending::Failed(reason)),
             }
         }
 
-        let message = answer.finish().map(|text| Box::new(self.message(Some(text), classification)));
-        if let Some(message) = &message {
-            trace!("External agent {} answers {:?}", self.id(), message.content);
-            state.history.extend(vec![Message::clone(message)]);
-        }
-        Ok(Ending::Answered(message))
+        Ok(Ending::Answered(self.record(state, answer, classification).map(Box::new)))
     }
 
     /// Re-attaches to every task left working that is not followed yet
@@ -321,32 +304,13 @@ impl ExternalAgentActor {
     async fn on_followed(&self, state: &mut ExternalAgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
         let answer = pending.entry(task.clone()).or_default();
         let failed = match event {
-            Some(Ok(ExternalEvent::Conversation(conversation))) => {
-                state.conversation = Some(conversation);
-                return;
-            }
-            Some(Ok(ExternalEvent::Started(_))) => return,
-            Some(Ok(ExternalEvent::Partial(piece))) => {
-                answer.partial.push_str(&piece);
-                return;
-            }
-            Some(Ok(ExternalEvent::Message(text))) => {
-                answer.add(text);
-                return;
-            }
-            Some(Ok(ExternalEvent::InputRequired(question))) => {
-                answer.add(question);
-                set_open(state, &task, OpenTaskState::InputRequired);
-                None
-            }
-            Some(Ok(ExternalEvent::Completed | ExternalEvent::Canceled)) => {
-                close(state, Some(&task));
-                None
-            }
-            Some(Ok(ExternalEvent::Failed(reason))) => {
-                close(state, Some(&task));
-                Some(reason)
-            }
+            // It is known to be open and working, and nobody waits for its
+            // pieces: what it says is said once it ends.
+            Some(Ok(event)) => match answer.take(state, Some(&task), event) {
+                Step::Continue | Step::Started(_) | Step::Partial(_) => return,
+                Step::Ended => None,
+                Step::Failed(reason) => Some(reason),
+            },
             Some(Err(e)) => {
                 // Left open, as far as anyone knows; the next run follows it again.
                 warn!("External agent {}: following its open task failed: {:#}", self.id(), e);
@@ -379,31 +343,18 @@ impl ExternalAgentActor {
             event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
             security_context: self.security_context.clone(),
         };
-        let message = answer.finish().map(|text| {
-            let classification = self.remote.classification().unwrap_or_else(|| channel.classification());
-            self.message(Some(text), classification)
-        });
-        if let Some(message) = &message {
-            trace!("External agent {} says {:?}", self.id(), message.content);
-            state.history.extend(vec![message.clone()]);
-        }
+        let message = self.record(state, answer, self.classification_in(channel.classification()));
         if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
         let events = match (failed, message) {
             (Some(reason), _) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
-            (None, Some(message)) => vec![
-                ActorEvent::WakeupRequested,
-                ActorEvent::CompleteMessageGenerated(message.clone()),
-                ActorEvent::FullResponseGenerated(vec![message]),
-            ],
+            // Nobody asked: it wakes the others to hear it - and says
+            // nothing if it has nothing to say.
+            (None, Some(message)) => std::iter::once(ActorEvent::WakeupRequested).chain(answered(Some(message))).collect(),
             (None, None) => Vec::new(),
         };
-        for event in events {
-            if let Err(e) = speaking.send(event, output).await {
-                warn!("{:#}", e);
-            }
-        }
+        speaking.send_all(events, output).await;
     }
 
     /// Asks the remote agent to cancel `task`, and forgets it: a cancel that
@@ -413,6 +364,21 @@ impl ExternalAgentActor {
             warn!("External agent {} cannot cancel its task: {:#}", self.id(), e);
         }
         close(state, Some(task));
+    }
+
+    /// How its answers are classified in a channel classified `channel`:
+    /// as the remote agent's component says, else as the channel.
+    fn classification_in(&self, channel: Classification) -> Classification {
+        self.remote.classification().unwrap_or(channel)
+    }
+
+    /// The message `answer` comes to - `None` if nothing came - kept in its
+    /// history.
+    fn record(&self, state: &mut ExternalAgentChannelState, answer: Answer, classification: Classification) -> Option<Message> {
+        let message = self.message(Some(answer.finish()?), classification);
+        trace!("External agent {} answers {:?}", self.id(), message.content);
+        state.history.extend(vec![message.clone()]);
+        Some(message)
     }
 
     /// A message of this agent with `content`.
@@ -442,7 +408,57 @@ struct Answer {
     partial: String,
 }
 
+/// What an event of the remote agent comes to, once taken in.
+enum Step {
+    /// Nothing more than taken in.
+    Continue,
+    /// A task began, or the task answered was taken up again.
+    Started(TaskId),
+    /// A piece of the message being written.
+    Partial(String),
+    /// The task ended or asks back: the answer is complete.
+    Ended,
+    /// The task failed or was refused, for the reason given.
+    Failed(String),
+}
+
 impl Answer {
+    /// Takes in `event` of `task` - the one it belongs to, if known - what it
+    /// says into the answer, what it tells of the conversation and the task
+    /// into `state`.
+    fn take(&mut self, state: &mut ExternalAgentChannelState, task: Option<&TaskId>, event: ExternalEvent) -> Step {
+        match event {
+            ExternalEvent::Conversation(conversation) => {
+                state.conversation = Some(conversation);
+                Step::Continue
+            }
+            ExternalEvent::Started(started) => Step::Started(started),
+            ExternalEvent::Partial(piece) => {
+                self.partial.push_str(&piece);
+                Step::Partial(piece)
+            }
+            ExternalEvent::Message(text) => {
+                self.add(text);
+                Step::Continue
+            }
+            ExternalEvent::InputRequired(question) => {
+                self.add(question);
+                if let Some(task) = task {
+                    set_open(state, task, OpenTaskState::InputRequired);
+                }
+                Step::Ended
+            }
+            ExternalEvent::Completed | ExternalEvent::Canceled => {
+                close(state, task);
+                Step::Ended
+            }
+            ExternalEvent::Failed(reason) => {
+                close(state, task);
+                Step::Failed(reason)
+            }
+        }
+    }
+
     /// Whether nothing came.
     fn is_empty(&self) -> bool {
         self.parts.is_empty() && self.partial.is_empty()
@@ -464,6 +480,13 @@ impl Answer {
         }
         (!self.parts.is_empty()).then(|| self.parts.join("\n\n"))
     }
+}
+
+/// The events that publish an answer: the message, if there is one, and
+/// the end of the response.
+fn answered(message: Option<Message>) -> Vec<ActorEvent> {
+    let complete = message.clone().map(ActorEvent::CompleteMessageGenerated);
+    complete.into_iter().chain([ActorEvent::FullResponseGenerated(message.into_iter().collect())]).collect()
 }
 
 /// Whether the remote agent is given `message`: said by another, with text
@@ -616,6 +639,23 @@ mod tests {
         assert_eq!(ids(&state), vec![second.id], "after what it was given");
         state.transcript.extend(vec![second.clone()]);
         assert!(ids(&state).is_empty(), "nothing new");
+    }
+
+    #[test]
+    fn what_the_remote_agent_sends_is_taken_into_the_answer_and_the_state() {
+        let task = TaskId("t-1".to_string());
+        let mut state = ExternalAgentChannelState::default();
+        set_open(&mut state, &task, OpenTaskState::Working);
+        let mut answer = Answer::default();
+
+        assert!(matches!(answer.take(&mut state, Some(&task), ExternalEvent::Partial("Wh".to_string())), Step::Partial(p) if p == "Wh"));
+        assert!(matches!(answer.take(&mut state, Some(&task), ExternalEvent::InputRequired("Which city?".to_string())), Step::Ended));
+        assert_eq!(state.open_tasks[0].state, OpenTaskState::InputRequired, "asking back keeps the task open");
+        assert_eq!(answer.finish().as_deref(), Some("Which city?"), "the question replaces its pieces");
+
+        let mut answer = Answer::default();
+        assert!(matches!(answer.take(&mut state, Some(&task), ExternalEvent::Failed("no".to_string())), Step::Failed(r) if r == "no"));
+        assert!(state.open_tasks.is_empty(), "a failed task is forgotten");
     }
 
     #[test]
