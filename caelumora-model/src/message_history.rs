@@ -2,11 +2,11 @@
 //! messages said in it, each of the agent's own with what it was produced
 //! from.
 
-use crate::chain::{Chain, ChainChange, ChainEntry};
+use crate::chain::{Chain, ChainEntry};
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
 use crate::digest::Digest;
-use crate::message::{last_message_id_of, messages_of, push_message, Message, MessageEntry, MessageId};
+use crate::message::{Message, MessageId};
 use serde::{Deserialize, Serialize};
 
 /// A message of a `MessageHistory`: with the digest of the history up to and
@@ -25,31 +25,12 @@ impl ChainEntry for HistoryEntry {
     }
 }
 
-impl MessageEntry for HistoryEntry {
-    fn message(&self) -> &Message {
-        &self.message
-    }
-}
-
 /// The conversation as it happened - a chain like a `Transcript`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MessageHistory {
-    messages: Chain<HistoryEntry>,
-}
+pub type MessageHistory = Chain<HistoryEntry>;
 
-impl MessageHistory {
-    /// The digest of the whole history, or `None` while it is empty.
-    pub fn digest(&self) -> Option<Digest> {
-        self.messages.digest()
-    }
-
+impl Chain<HistoryEntry> {
     pub fn messages(&self) -> Vec<Message> {
-        messages_of(&self.messages)
-    }
-
-    /// The entries of every branch, in the order they were added.
-    pub fn all_entries(&self) -> impl DoubleEndedIterator<Item = &HistoryEntry> + ExactSizeIterator {
-        self.messages.all_entries()
+        self.entries().map(|e| e.message.clone()).collect()
     }
 
     /// The messages of `visible` after the last of them the history has,
@@ -66,7 +47,7 @@ impl MessageHistory {
     }
 
     pub fn last_message_id(&self) -> MessageId {
-        last_message_id_of(&self.messages)
+        self.last().map(|e| e.message.id).unwrap_or_default()
     }
 
     /// Appends messages that were not produced from a context of this
@@ -79,13 +60,10 @@ impl MessageHistory {
 
     /// Appends `msg` with what it was produced from, if known.
     pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
-        push_message(&mut self.messages, msg, |message, digest| HistoryEntry { message, context, digest });
-    }
-
-    /// Moves the head to the entry with `digest` - `None`: before every
-    /// entry - to go on from there (issue 08). `false` if there is none.
-    pub fn move_head(&mut self, digest: Option<&Digest>) -> bool {
-        self.messages.move_head(digest)
+        self.push_with(|previous| {
+            let digest = crate::digest::message_chain(previous, &msg);
+            HistoryEntry { message: msg, context, digest }
+        });
     }
 
     /// Reclassifies message `id` - on whichever branch - as
@@ -93,7 +71,7 @@ impl MessageHistory {
     /// a message's digest does not cover its classification, so the record
     /// stays what it was. `false` if there is no such message.
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        self.messages.amend_each(|entry| {
+        self.amend_each(|entry| {
             let it = entry.message.id == id;
             if it {
                 entry.message.classification = classification.clone();
@@ -107,7 +85,7 @@ impl MessageHistory {
     /// classification does to what is in it, on every branch: all of them
     /// were said in the channel. Returns how many changed.
     pub fn fit_into(&mut self, channel: &Classification) -> usize {
-        self.messages.amend_each(|entry| {
+        self.amend_each(|entry| {
             let fitted = entry.message.classification.fitted_into(channel);
             let changed = fitted != entry.message.classification;
             if changed {
@@ -115,20 +93,6 @@ impl MessageHistory {
             }
             changed
         })
-    }
-
-    /// The changes since the history was last stored (issue 193).
-    pub fn changes(&self) -> Vec<ChainChange<HistoryEntry>> {
-        self.messages.changes()
-    }
-
-    pub fn mark_stored(&mut self) {
-        self.messages.mark_stored()
-    }
-
-    /// Replays `change` onto the history as stored (`Chain::apply`).
-    pub fn apply(&mut self, change: ChainChange<HistoryEntry>) -> Result<(), String> {
-        self.messages.apply(change)
     }
 }
 

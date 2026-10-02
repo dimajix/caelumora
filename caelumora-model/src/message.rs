@@ -3,8 +3,6 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::tool::{ToolCall, ToolCallResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::chain::{Chain, ChainEntry};
-use crate::digest::Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -157,32 +155,6 @@ pub fn executed_calls<'a>(messages: &[&'a Message]) -> Vec<(Option<&'a ToolCall>
         .filter(|result| result.started_at.is_some())
         .map(|result| (calls.iter().copied().find(|c| c.id.is_some() && c.id == result.id), result))
         .collect()
-}
-
-/// An entry of a chain of messages.
-pub(crate) trait MessageEntry: ChainEntry {
-    fn message(&self) -> &Message;
-}
-
-/// Appends `msg` to `chain` as the entry `make` builds from it and its
-/// digest, and returns the digest before it.
-///
-/// A message's predecessor is not a property of the message: the same
-/// message is in several chains, with a different predecessor in each
-/// (issue 117). The chain holds it, as the digest of the entry before.
-pub(crate) fn push_message<E: MessageEntry>(chain: &mut Chain<E>, msg: Message, make: impl FnOnce(Message, Digest) -> E) -> Option<Digest> {
-    chain.push_with(|previous| {
-        let digest = crate::digest::message_chain(previous, &msg);
-        make(msg, digest)
-    })
-}
-
-pub(crate) fn messages_of<E: MessageEntry>(chain: &Chain<E>) -> Vec<Message> {
-    chain.entries().map(|e| e.message().clone()).collect()
-}
-
-pub(crate) fn last_message_id_of<E: MessageEntry>(chain: &Chain<E>) -> MessageId {
-    chain.last().map(|e| e.message().id).unwrap_or_default()
 }
 
 

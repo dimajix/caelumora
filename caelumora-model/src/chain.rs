@@ -139,7 +139,7 @@ impl<E: ChainEntry> Chain<E> {
     /// digest does not cover, and nothing else: what a digest covers is the
     /// record and is never rewritten. `false`, and nothing changes, if there
     /// is no such entry.
-    pub fn amend(&mut self, digest: &Digest, change: impl FnOnce(&mut E)) -> bool {
+    pub(crate) fn amend(&mut self, digest: &Digest, change: impl FnOnce(&mut E)) -> bool {
         let Some(&at) = self.index.get(digest) else { return false };
         change(&mut self.nodes[at].entry);
         self.pending.push(Pending::Amended(at));
@@ -149,7 +149,7 @@ impl<E: ChainEntry> Chain<E> {
     /// Changes every entry of every branch `change` changes - it says
     /// whether it did - in what their digests do not cover, as `amend`.
     /// Returns how many changed.
-    pub fn amend_each(&mut self, mut change: impl FnMut(&mut E) -> bool) -> usize {
+    pub(crate) fn amend_each(&mut self, mut change: impl FnMut(&mut E) -> bool) -> usize {
         let mut changed = 0;
         for (at, node) in self.nodes.iter_mut().enumerate() {
             if change(&mut node.entry) {
@@ -164,7 +164,7 @@ impl<E: ChainEntry> Chain<E> {
     /// the head, and returns that digest. An entry with the digest of one
     /// already there is that entry - the same predecessor and the same
     /// content - and is not added twice: the head moves to it.
-    pub fn push_with(&mut self, make: impl FnOnce(Option<&Digest>) -> E) -> Option<Digest> {
+    pub(crate) fn push_with(&mut self, make: impl FnOnce(Option<&Digest>) -> E) -> Option<Digest> {
         let previous = self.head;
         let entry = make(previous.as_ref());
         let digest = *entry.digest();

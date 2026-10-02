@@ -36,12 +36,12 @@ the channel.
 *   **Where they live.** Each agent keeps its notes per channel in `AgentChannelState::notes`, a
     `NoteChain`. Every entry records the message it follows and, as its `NoteOrigin`, the digest of
     the agent's transcript.
-*   **A ledger.** `NoteChain` and `MemoryChain` are one type, `caelumora_model::ledger::Ledger<K>`
-    (issue 92): a chain of `Change`s - `Add`, `Remove`, `Reclassify` - read from start to end into
-    the `Item`s that stand now. The `LedgerKind` (`Notes`, `Memories`) says only what differs: the
-    type of the numbers, where a change is recorded to have been made (`Origin`), and the digest's
-    scheme and whether the origin is part of it. Revoking a note and forgetting a memory entry are
-    both a `Remove`.
+*   **A ledger.** `NoteChain` and `MemoryChain` are one chain, `caelumora_model::ledger::Ledger<K>`
+    (issue 92), a `Chain<LedgerEntry<K>>`: `Change`s - `Add`, `Remove`, `Reclassify` - read from
+    start to end into the `Item`s that stand now. The `LedgerKind` (`Notes`, `Memories`) says only
+    what differs: the type of the numbers, where a change is recorded to have been made
+    (`Origin`), and the digest's scheme and whether the origin is part of it. Revoking a note and
+    forgetting a memory entry are both a `Remove`.
 *   **Numbers.** Notes are numbered per agent, counting up, and a number is never given again, so
     that a model can repeat it to revoke.
 *   **Staging.** `AgentNotes` numbers, notes, revokes and reclassifies (`NoteKind::Public` or

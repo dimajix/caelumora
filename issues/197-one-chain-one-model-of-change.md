@@ -1,6 +1,6 @@
 # 197 — Two models of change over one chain, and a type for every step between them
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -192,3 +192,7 @@ meaning. Step 4 is the removal the whole thing is for.
   `Amended` variant only because the message chains change entries in place, which the ledger
   never does. The maintainer asked for one class of change and one container for trees, and for
   the names to stop multiplying. Issue 193 is paused until this is done.
+- **2026-10-02** — Step 1 done: `Transcript`, `MessageHistory` and `Ledger<K>` are aliases of
+  `Chain<…>` with their content's methods as inherent impls; `push_with`, `amend` and
+  `amend_each` are `pub(crate)`; `MessageEntry` and its three helpers are gone. The runtime did
+  not change: what it called on the wrappers it now calls on the chain.

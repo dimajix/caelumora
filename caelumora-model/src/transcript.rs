@@ -1,9 +1,9 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
 //! built from, and the turns it gave up (issue 145).
 
-use crate::chain::{Chain, ChainChange, ChainEntry};
+use crate::chain::{Chain, ChainEntry};
 use crate::digest::Digest;
-use crate::message::{messages_of, push_message, Message, MessageEntry};
+use crate::message::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -60,12 +60,6 @@ impl ChainEntry for TranscriptEntry {
     }
 }
 
-impl MessageEntry for TranscriptEntry {
-    fn message(&self) -> &Message {
-        &self.message
-    }
-}
-
 /// An agent's transcript (issue 50): the sequence of messages its context is
 /// built from - its own messages in full, with tool calls and internal
 /// steps, and what others said as it received them. The context of a model
@@ -77,19 +71,11 @@ impl MessageEntry for TranscriptEntry {
 /// (see `crate::chain`). Nothing is ever removed from it - also not from a
 /// branch no longer active (issue 08) - so every digest it had names a
 /// prefix of one of its branches, which can be recovered (`prefix`).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Transcript {
-    messages: Chain<TranscriptEntry>,
-}
+pub type Transcript = Chain<TranscriptEntry>;
 
-impl Transcript {
-    /// The digest of the whole transcript, or `None` while it is empty.
-    pub fn digest(&self) -> Option<Digest> {
-        self.messages.digest()
-    }
-
+impl Chain<TranscriptEntry> {
     pub fn messages(&self) -> Vec<Message> {
-        messages_of(&self.messages)
+        self.entries().map(|e| e.message.clone()).collect()
     }
 
     /// Appends `msgs`.
@@ -101,59 +87,30 @@ impl Transcript {
 
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        push_message(&mut self.messages, msg, |message, digest| TranscriptEntry { message, digest, given_up: None })
-    }
-
-    /// Moves the head to the entry with `digest` - `None`: before every
-    /// entry - to go on from there (issue 08). `false` if there is none.
-    pub fn move_head(&mut self, digest: Option<&Digest>) -> bool {
-        self.messages.move_head(digest)
+        self.push_with(|previous| {
+            let digest = crate::digest::message_chain(previous, &msg);
+            TranscriptEntry { message: msg, digest, given_up: None }
+        })
     }
 
     /// Marks the entry with `digest` as the end of a turn given up (issue
     /// 145). `false` if there is none.
     pub fn mark_given_up(&mut self, digest: &Digest, given_up: GivenUp) -> bool {
-        self.messages.amend(digest, |entry| entry.given_up = Some(given_up))
-    }
-
-    /// The changes since the transcript was last stored (issue 193).
-    pub fn changes(&self) -> Vec<ChainChange<TranscriptEntry>> {
-        self.messages.changes()
-    }
-
-    pub fn mark_stored(&mut self) {
-        self.messages.mark_stored()
-    }
-
-    /// Replays `change` onto the transcript as stored (`Chain::apply`).
-    pub fn apply(&mut self, change: ChainChange<TranscriptEntry>) -> Result<(), String> {
-        self.messages.apply(change)
+        self.amend(digest, |entry| entry.given_up = Some(given_up))
     }
 
     /// The turns given up, in the order they ended in the transcript, each
     /// with its messages.
     pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
-        self.messages.all_entries()
+        self.all_entries()
             .filter_map(|entry| {
                 let given_up = entry.given_up.clone()?;
-                let path = self.messages.prefix(&entry.digest)?;
+                let path = self.prefix(&entry.digest)?;
                 let start = path.len().saturating_sub(given_up.turn_entries);
                 let messages = path[start..].iter().map(|e| e.message.clone()).collect();
                 Some(GivenUpTurn { given_up, messages })
             })
             .collect()
-    }
-
-    /// The entries of the active branch.
-    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &TranscriptEntry> + ExactSizeIterator {
-        self.messages.entries()
-    }
-
-    /// The entries of the transcript `digest` names: this transcript up to
-    /// and including the entry with that digest, on whichever branch, or
-    /// `None` if it is not a prefix of this transcript.
-    pub fn prefix(&self, digest: &Digest) -> Option<Vec<&TranscriptEntry>> {
-        self.messages.prefix(digest)
     }
 }
 
@@ -223,9 +180,9 @@ mod tests {
         // earlier version of it.
         let recorded = crate::digest::prompt("recorded under another scheme");
         let mut stored = serde_json::to_value(&context).unwrap();
-        stored["messages"]["entries"][1]["digest"] = serde_json::Value::String(recorded.to_string());
-        stored["messages"]["entries"][0]["active_child"] = serde_json::Value::String(recorded.to_string());
-        stored["messages"]["head"] = serde_json::Value::String(recorded.to_string());
+        stored["entries"][1]["digest"] = serde_json::Value::String(recorded.to_string());
+        stored["entries"][0]["active_child"] = serde_json::Value::String(recorded.to_string());
+        stored["head"] = serde_json::Value::String(recorded.to_string());
         let loaded: Transcript = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.digest(), Some(recorded));
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");

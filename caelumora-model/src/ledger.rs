@@ -10,7 +10,7 @@
 //! number of an entry is never given twice, on any branch: a reader may have
 //! read it before it was removed, or on a branch no longer active.
 
-use crate::chain::{Chain, ChainChange, ChainEntry};
+use crate::chain::{Chain, ChainEntry};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::MessageId;
@@ -94,58 +94,23 @@ pub struct Item<K: LedgerKind> {
 }
 
 /// A ledger, as a chain of changes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Ledger<K: LedgerKind> {
-    changes: Chain<LedgerEntry<K>>,
-}
+pub type Ledger<K> = Chain<LedgerEntry<K>>;
 
-impl<K: LedgerKind> Default for Ledger<K> {
-    fn default() -> Self {
-        Self { changes: Chain::default() }
-    }
-}
-
-impl<K: LedgerKind> Ledger<K> {
-    /// The digest of the whole chain - what a reader records as the state
-    /// of knowledge it saw - or `None` while it is empty.
-    pub fn digest(&self) -> Option<Digest> {
-        self.changes.digest()
-    }
-
-    /// The changes of the active branch.
-    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &LedgerEntry<K>> + ExactSizeIterator {
-        self.changes.entries()
-    }
-
+impl<K: LedgerKind> Chain<LedgerEntry<K>> {
     /// Appends `change`, made at `origin` in the turn that ended with
     /// message `after`.
     pub fn push(&mut self, change: Change<K::Id>, origin: K::Origin, after: MessageId) {
-        self.changes.push_with(|previous| {
+        self.push_with(|previous| {
             let digest = crate::digest::ledger_chain::<K>(previous, &change, &origin, after);
             LedgerEntry { change, origin, after, written_at: Utc::now(), digest }
         });
-    }
-
-    /// The changes since the ledger was last stored (issue 193).
-    pub fn changes(&self) -> Vec<ChainChange<LedgerEntry<K>>> {
-        self.changes.changes()
-    }
-
-    pub fn mark_stored(&mut self) {
-        self.changes.mark_stored()
-    }
-
-    /// Replays `change` onto the ledger as stored (`Chain::apply`).
-    pub fn apply(&mut self, change: ChainChange<LedgerEntry<K>>) -> Result<(), String> {
-        self.changes.apply(change)
     }
 
     /// The entries as they stand on the active branch: every entry that was
     /// not removed, oldest first.
     pub fn current(&self) -> Vec<Item<K>> {
         let mut items: Vec<Item<K>> = Vec::new();
-        for entry in self.changes.entries() {
+        for entry in self.entries() {
             fold(&mut items, &entry.change, &entry.origin, entry.after, entry.written_at);
         }
         items
@@ -154,7 +119,7 @@ impl<K: LedgerKind> Ledger<K> {
     /// The number the next entry gets: one more than any entry ever added,
     /// on any branch.
     pub fn next_id(&self) -> K::Id {
-        let highest = self.changes.all_entries().filter_map(|e| added(&e.change)).max().unwrap_or(0);
+        let highest = self.all_entries().filter_map(|e| added(&e.change)).max().unwrap_or(0);
         K::Id::from(highest + 1)
     }
 
@@ -282,7 +247,7 @@ mod tests {
         let fork = chain.digest();
         push(&mut chain, add(2, "b"), MessageId::new());
         push(&mut chain, Change::Remove { id: NoteId(1) }, MessageId::new());
-        chain.changes.move_head(fork.as_ref());
+        chain.move_head(fork.as_ref());
 
         let texts: Vec<String> = chain.current().into_iter().map(|n| n.text).collect();
         assert_eq!(texts, ["a"], "the removal was on the other branch too");
