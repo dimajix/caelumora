@@ -22,7 +22,7 @@ tracing = "0.1.44"
 # their tables agree.
 any_ascii = "=0.3.3"
 # The JSON store reads and writes files asynchronously.
-tokio = { version = "1.53.1", features = ["fs"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util"] }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }

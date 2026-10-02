@@ -97,9 +97,27 @@ update of the entity, its name and composition.
 
 Replaying is idempotent, and nothing replayed is a change to store again. Order holds within a
 part; across parts it is the fixed order of `changes`, which loses nothing, since every reference
-between parts is a digest or an id, resolved when read and never while replaying. The stores
-still write every state whole; writing the changes instead is the rest of issue
-[193](../issues/193-external-state-rewritten-whole.md).
+between parts is a digest or an id, resolved when read and never while replaying.
+
+A `put_…` takes the state mutably: the store stores it, whole or only what changed, and marks it
+stored on `Ok`; on `Err` the changes stay pending and come with the next put. The `MemoryStore`
+keeps the whole state. The `JsonFileStore` keeps two files per state:
+
+*   `<key>.json`, the **snapshot**: the state as it was last written whole.
+*   `<key>.jsonl`, the **journal**: one line per put since, holding that put's changes.
+
+A put appends a line, unless there is no snapshot yet or the journal has grown to the size of the
+snapshot and to `journal_floor` (64 KiB unless configured, see
+[CONFIGURATION.md](CONFIGURATION.md)): then the state is written as a new snapshot, atomically, and
+the journal emptied. So what a put writes is what changed, and over a state's life the bytes
+written are a small multiple of its final size instead of growing with its square. The sizes are
+asked of the file system at every put; the store keeps nothing between puts. Loading reads the
+snapshot and replays the journal. What a crash leaves is read as it is: a last line torn by a
+crash during an append is dropped (an append that fails cuts the journal back to what it was,
+so that no torn line is followed by a good one); a journal that survived its snapshot replays
+onto it without effect, since replaying is idempotent. A line that is corrupt before the last, or
+does not fit the state, is a corrupt state, as a corrupt file is. Every state file written before
+the journal is a valid snapshot without one: nothing has to be migrated.
 
 ### The agent state has one owner per process
 

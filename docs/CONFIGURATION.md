@@ -11,7 +11,7 @@ an error rather than ignored, so that a misspelt section doesn't silently fall b
 
 | Section | What it configures | Default |
 |---|---|---|
-| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data: `type: json` with a `path` (one JSON file per document), or `type: memory`. The two may differ. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends |
+| `persistence` | Where the `EntityStore` (`entity_store`) and the `StateStore` (`state_store`) keep their data: `type: json` with a `path` (one JSON file per document, and per state a snapshot and a journal) and optionally `journal_floor`, the size in bytes a journal reaches before it is folded into its snapshot (issue 193); or `type: memory`. The two may differ. See [STORAGE.md](STORAGE.md). | `memory` for both - gone when the process ends; `journal_floor` 65536 |
 | `seed` | Files of demo data - personalities and session templates - put into the entity store at startup, only what it does not have yet, by id (issue 105). | none |
 | `secrets` | The chain of secret providers, tried in order: `type: file` with a `path` (a flat JSON key/value file), `type: env`. See [SECURITY.md](SECURITY.md). | `local/secrets.json`, then the environment |
 | `users` | The chain of user providers. The only one so far is `accept_any`, a development stand-in that accepts any username and password; it gives the users named under `roles` their roles and everybody else `default_roles`. See [SECURITY.md](SECURITY.md). | none - nobody can log in |

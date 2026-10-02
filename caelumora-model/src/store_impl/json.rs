@@ -17,11 +17,27 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 
+/// A journal is folded into its snapshot once it is at least as large as
+/// the snapshot, and at least this large (issue 193): small states are not
+/// written whole at every other put. `journal_floor` of the configuration.
+pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
+
+/// One JSON file per document (`EntityStore`), and per state a snapshot
+/// and a journal (`StateStore`, issue 193): the state as it was last written
+/// whole in `<key>.json`, and what changed since as one line per put in
+/// `<key>.jsonl`. Loading reads the snapshot and replays the journal; a
+/// put appends a line, or writes a new snapshot and empties the journal
+/// once the journal is at least as large as the snapshot and
+/// `journal_floor`. What a crash leaves is read as it is: a torn last line
+/// is dropped, and a journal that survived its snapshot replays onto it
+/// without effect, since replaying is idempotent.
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
     security_manager: Arc<dyn SecurityManager>,
+    journal_floor: u64,
 }
 
 impl JsonFileStore {
@@ -31,9 +47,17 @@ impl JsonFileStore {
         let store = Self {
             root,
             security_manager,
+            journal_floor: DEFAULT_JOURNAL_FLOOR,
         };
         store.ensure_layout()?;
         Ok(store)
+    }
+
+    /// With a journal folded into its snapshot once it is `bytes` large, if
+    /// that is more than the snapshot.
+    pub fn with_journal_floor(mut self, bytes: u64) -> Self {
+        self.journal_floor = bytes;
+        self
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
@@ -254,6 +278,65 @@ async fn delete_dir_if_exists(path: &Path) -> StoreResult<bool> {
     }
 }
 
+/// The journal of the state whose snapshot is at `path`: `<key>.jsonl`.
+fn journal_path(path: &Path) -> PathBuf {
+    path.with_extension("jsonl")
+}
+
+/// The size of the file at `path`, `None` if there is none.
+async fn size_of(path: &Path) -> StoreResult<Option<u64>> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => Ok(Some(metadata.len())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(to_backend_error(err)),
+    }
+}
+
+/// The state whose snapshot is at `path`, with its journal replayed onto
+/// it; `None` if there is no snapshot. A last line the journal does not end
+/// with a newline and that does not parse is what a crash during an append
+/// left, and is dropped; any other line that does not parse, or does not
+/// fit the state, is a corrupt state.
+async fn load_state<T: Journaled>(path: &Path) -> StoreResult<Option<T>> {
+    let Some(mut state) = read_json_opt::<T>(path).await? else { return Ok(None) };
+    let journal = journal_path(path);
+    let text = match tokio::fs::read_to_string(&journal).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Some(state)),
+        Err(err) => return Err(to_backend_error(err)),
+    };
+    let torn = !text.ends_with('\n');
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let changes: Vec<T::Change> = match serde_json::from_str(line) {
+            Ok(changes) => changes,
+            Err(err) if torn && i + 1 == lines.len() => {
+                warn!("The journal {} ends in a torn line, left by a crash; it is dropped: {}", journal.display(), err);
+                break;
+            }
+            Err(err) => return Err(StoreError::Backend(format!("line {} of the journal of a stored state is corrupt: {err}", i + 1))),
+        };
+        for change in changes {
+            state.apply(change).map_err(|e| StoreError::Backend(format!("line {} of the journal does not fit the stored state: {e}", i + 1)))?;
+        }
+    }
+    Ok(Some(state))
+}
+
+/// Appends `changes` as one line to the journal at `journal`, which is
+/// `len_before` bytes long. Should the write fail, the journal is cut back
+/// to what it was, so that a torn line is never followed by a good one.
+async fn append_changes<C: Serialize>(journal: &Path, len_before: u64, changes: &[C]) -> StoreResult<()> {
+    let mut line = serde_json::to_vec(changes).map_err(to_backend_error)?;
+    line.push(b'\n');
+    let mut file = tokio::fs::OpenOptions::new().append(true).create(true).open(journal).await.map_err(to_backend_error)?;
+    if let Err(err) = file.write_all(&line).await {
+        let _ = file.set_len(len_before).await;
+        return Err(to_backend_error(err));
+    }
+    Ok(())
+}
+
 fn to_backend_error(err: impl Display) -> StoreError {
     StoreError::Backend(err.to_string())
 }
@@ -453,85 +536,89 @@ impl EntityStore for JsonFileStore {
     }
 }
 
+/// The state operations: a snapshot and a journal per state (issue 193).
+impl JsonFileStore {
+    /// Stores `state` at `path`, and marks it stored: as a line of its
+    /// journal, or - if there is no snapshot yet, or the journal is as large
+    /// as the snapshot and `journal_floor` - as a new snapshot, after which
+    /// the journal is emptied. The sizes are asked of the file system every
+    /// time; nothing is kept between puts.
+    async fn store_state<T: Journaled>(&self, path: &Path, state: &mut T) -> StoreResult<()> {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
+        }
+        let journal = journal_path(path);
+        let journal_len = size_of(&journal).await?.unwrap_or(0);
+        match size_of(path).await? {
+            Some(snapshot_len) if journal_len < snapshot_len.max(self.journal_floor) => {
+                debug!("Appending to the journal {}", journal.display());
+                append_changes(&journal, journal_len, &state.changes()).await?;
+            }
+            _ => {
+                debug!("Writing the snapshot {}", path.display());
+                write_json_atomic(path, state).await?;
+                delete_if_exists(&journal).await?;
+            }
+        }
+        state.mark_stored();
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl StateStore for JsonFileStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Reading agent channel state from {}", path.display());
-        let loaded = read_json_opt::<AgentChannelState>(&path).await?;
-        Ok(loaded.unwrap_or_default())
+        Ok(load_state(&path).await?.unwrap_or_default())
     }
 
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
-        let path = self.agent_channel_state_path(agent_id, channel_id);
-        debug!("Writing agent channel state to {}", path.display());
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
-        }
-        write_json_atomic(&path, state).await?;
-        state.mark_stored();
-        Ok(())
+        self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
     }
 
     async fn get_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<ExternalAgentChannelState> {
         let path = self.external_agent_channel_state_path(agent_id, channel_id);
         debug!("Reading external agent channel state from {}", path.display());
-        let loaded = read_json_opt::<ExternalAgentChannelState>(&path).await?;
-        Ok(loaded.unwrap_or_default())
+        Ok(load_state(&path).await?.unwrap_or_default())
     }
 
     async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut ExternalAgentChannelState) -> StoreResult<()> {
-        let path = self.external_agent_channel_state_path(agent_id, channel_id);
-        debug!("Writing external agent channel state to {}", path.display());
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
-        }
-        write_json_atomic(&path, state).await?;
-        state.mark_stored();
-        Ok(())
+        self.store_state(&self.external_agent_channel_state_path(agent_id, channel_id), state).await
     }
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         let path = self.agent_state_path(agent_id);
         debug!("Reading agent state from {}", path.display());
-        let loaded = read_json_opt::<AgentState>(&path).await?;
-        Ok(loaded.unwrap_or_default())
+        Ok(load_state(&path).await?.unwrap_or_default())
     }
 
     async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()> {
-        let path = self.agent_state_path(agent_id);
-        debug!("Writing agent state to {}", path.display());
-        write_json_atomic(&path, state).await?;
-        state.mark_stored();
-        Ok(())
+        self.store_state(&self.agent_state_path(agent_id), state).await
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let path = self.channel_state_path(channel_id);
         debug!("Reading channel state from {}", path.display());
-        let loaded = read_json_opt::<ChannelState>(&path).await?;
-        loaded.ok_or(StoreError::NotFound {
+        load_state(&path).await?.ok_or(StoreError::NotFound {
             entity: "channel_state",
             id: channel_id.to_string(),
         })
     }
 
     async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
-        let path = self.channel_state_path(channel_id);
-        debug!("Writing channel state to {}", path.display());
-        write_json_atomic(&path, state).await?;
-        state.mark_stored();
-        Ok(())
+        self.store_state(&self.channel_state_path(channel_id), state).await
     }
 
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
         debug!("Deleting the state of channel {}", channel_id);
-        delete_if_exists(&self.channel_state_path(channel_id)).await?;
+        let path = self.channel_state_path(channel_id);
+        delete_if_exists(&path).await?;
+        delete_if_exists(&journal_path(&path)).await?;
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
         delete_dir_if_exists(&self.external_agent_channel_state_dir(channel_id)).await?;
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -670,5 +757,147 @@ mod tests {
         let sessions = store.list_sessions(&ctx).await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, s1.id);
+    }
+
+    use crate::message::tests::{id, make_message};
+
+    /// The lines of the journal of the agent channel state of `agent` in
+    /// `channel`, `None` if there is no journal.
+    fn journal_lines(store: &JsonFileStore, agent: AgentId, channel: ChannelId) -> Option<usize> {
+        std::fs::read_to_string(journal_path(&store.agent_channel_state_path(agent, channel))).ok().map(|text| text.lines().count())
+    }
+
+    fn journal_file(store: &JsonFileStore, agent: AgentId, channel: ChannelId) -> PathBuf {
+        journal_path(&store.agent_channel_state_path(agent, channel))
+    }
+
+    /// A state with messages `from..to` in its transcript and history.
+    fn said(state: &mut AgentChannelState, from: u128, to: u128) {
+        for n in from..to {
+            state.transcript.push(make_message(id(n)));
+            state.history.extend(vec![make_message(id(n))]);
+        }
+    }
+
+    fn same(a: &AgentChannelState, b: &AgentChannelState) -> bool {
+        serde_json::to_value(a).unwrap() == serde_json::to_value(b).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_put_appends_what_changed_to_the_journal_and_a_get_replays_it() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let (agent, channel) = (AgentId::new(), ChannelId::new());
+        let mut state = AgentChannelState::default();
+        said(&mut state, 1, 3);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert_eq!(journal_lines(&store, agent, channel), None, "the first put is the snapshot");
+        let snapshot = std::fs::metadata(store.agent_channel_state_path(agent, channel)).unwrap().len();
+
+        said(&mut state, 3, 5);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        state.processing_state = crate::actor::ActorState::WaitingForApproval;
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert_eq!(journal_lines(&store, agent, channel), Some(2), "one line per put");
+        assert_eq!(std::fs::metadata(store.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
+
+        let loaded = store.get_agent_channel_state(agent, channel).await.unwrap();
+        assert!(same(&loaded, &state), "{loaded:?}");
+        assert_eq!(loaded.transcript.messages().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn the_journal_is_folded_into_the_snapshot_once_it_is_as_large() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path()).with_journal_floor(0);
+        let (agent, channel) = (AgentId::new(), ChannelId::new());
+        let mut state = AgentChannelState::default();
+        said(&mut state, 1, 2);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        let path = store.agent_channel_state_path(agent, channel);
+        let snapshot = std::fs::metadata(&path).unwrap().len();
+
+        // Small puts go to the journal until it is as large as the snapshot.
+        let mut puts = 0;
+        while journal_lines(&store, agent, channel).is_some() || puts == 0 {
+            state.processing_state = crate::actor::ActorState::Idle;
+            store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+            puts += 1;
+            assert!(puts < 1000, "the journal is never folded");
+        }
+        assert!(puts > 1, "the journal was used first");
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), snapshot, "the snapshot is the same state again");
+
+        said(&mut state, 2, 40);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert!(journal_lines(&store, agent, channel).is_some(), "a large put still goes to the journal");
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert_eq!(journal_lines(&store, agent, channel), None, "and the next one folds it, the journal being larger than the snapshot");
+        assert!(std::fs::metadata(&path).unwrap().len() > snapshot);
+        assert!(same(&store.get_agent_channel_state(agent, channel).await.unwrap(), &state));
+    }
+
+    #[tokio::test]
+    async fn a_torn_last_line_is_dropped_and_a_corrupt_line_before_is_not() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let (agent, channel) = (AgentId::new(), ChannelId::new());
+        let mut state = AgentChannelState::default();
+        said(&mut state, 1, 2);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        said(&mut state, 2, 3);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        let before = store.get_agent_channel_state(agent, channel).await.unwrap();
+
+        let journal = journal_file(&store, agent, channel);
+        let good = std::fs::read_to_string(&journal).unwrap();
+        std::fs::write(&journal, format!("{good}[{{\"transcript\": {{\"entr")).unwrap();
+        let loaded = store.get_agent_channel_state(agent, channel).await.unwrap();
+        assert!(same(&loaded, &before), "as of the last put that completed");
+
+        std::fs::write(&journal, format!("not json\n{good}")).unwrap();
+        let corrupt = store.get_agent_channel_state(agent, channel).await.unwrap_err();
+        assert!(matches!(corrupt, StoreError::Backend(ref m) if m.contains("line 1") && !m.contains("not json")), "{corrupt}");
+    }
+
+    #[tokio::test]
+    async fn a_journal_that_survived_its_snapshot_replays_without_effect() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let (agent, channel) = (AgentId::new(), ChannelId::new());
+        let mut state = AgentChannelState::default();
+        said(&mut state, 1, 2);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        said(&mut state, 2, 4);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        let journal = journal_file(&store, agent, channel);
+        let lines = std::fs::read_to_string(&journal).unwrap();
+
+        // As if the crash came after the snapshot and before the journal was emptied.
+        let folding = JsonFileStore::new(dir.path(), Arc::new(crate::security::DummySecurityManager::new())).unwrap().with_journal_floor(0);
+        folding.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert!(!journal.exists());
+        std::fs::write(&journal, &lines).unwrap();
+
+        let loaded = store.get_agent_channel_state(agent, channel).await.unwrap();
+        assert!(same(&loaded, &state), "{loaded:?}");
+        said(&mut state, 4, 5);
+        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert!(same(&store.get_agent_channel_state(agent, channel).await.unwrap(), &state), "and what comes after it is applied");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_channels_state_removes_its_journal_too() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let channel = ChannelId::new();
+        let mut state = ChannelState::new(channel);
+        store.put_channel_state(channel, &mut state).await.unwrap();
+        state.history.extend(vec![make_message(id(1))]);
+        store.put_channel_state(channel, &mut state).await.unwrap();
+        let journal = journal_path(&store.channel_state_path(channel));
+        assert!(journal.exists());
+        store.delete_channel_state(channel).await.unwrap();
+        assert!(!journal.exists() && !store.channel_state_path(channel).exists());
     }
 }

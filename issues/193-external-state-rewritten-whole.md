@@ -436,3 +436,10 @@ is left open until a step needs the answer - then it is done at once or opened a
   `JsonFileStore` after writing the whole state, as it still does. The runtime passes its states
   mutably (`Turn::agent_channel_state_mut`). The suite checks that what was put has nothing
   pending beyond what a loaded state has.
+- **2026-10-02** — Step 5 done: the `JsonFileStore` keeps a snapshot and a journal per state,
+  appends a put's changes as one line, and folds the journal into a new snapshot once it is as
+  large as the snapshot and `journal_floor` (64 KiB unless configured as
+  `persistence.*.journal_floor`). A torn last line is dropped, a failed append cuts the journal
+  back, a journal that survived its snapshot replays without effect; a corrupt line before the
+  last is a corrupt state. Tested for each. Hearing a message now costs the message's line,
+  independent of the history's length.

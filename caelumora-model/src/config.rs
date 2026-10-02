@@ -39,8 +39,14 @@ pub enum PersistenceBackend {
     /// In memory, gone when the process ends. The default.
     #[default]
     Memory,
-    /// One JSON file per document below `path` (`JsonFileStore`).
-    Json { path: PathBuf },
+    /// One JSON file per document below `path` (`JsonFileStore`); a state's
+    /// journal is folded into its snapshot once it is `journal_floor` bytes
+    /// large and larger than the snapshot (issue 193), 64 KiB unless named.
+    Json {
+        path: PathBuf,
+        #[serde(default)]
+        journal_floor: Option<u64>,
+    },
 }
 
 impl PersistenceBackend {
@@ -49,7 +55,13 @@ impl PersistenceBackend {
     fn open(&self, security_manager: Arc<dyn SecurityManager>) -> ConfigResult<Arc<dyn Store>> {
         Ok(match self {
             Self::Memory => Arc::new(MemoryStore::with_security_manager(security_manager)),
-            Self::Json { path } => Arc::new(JsonFileStore::new(path, security_manager)?),
+            Self::Json { path, journal_floor } => {
+                let store = JsonFileStore::new(path, security_manager)?;
+                Arc::new(match journal_floor {
+                    Some(bytes) => store.with_journal_floor(*bytes),
+                    None => store,
+                })
+            }
         })
     }
 }
@@ -397,8 +409,11 @@ persistence:
     type: memory
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.persistence.entity_store, PersistenceBackend::Json { path: PathBuf::from("local/entity_store") });
+        assert_eq!(config.persistence.entity_store, PersistenceBackend::Json { path: PathBuf::from("local/entity_store"), journal_floor: None });
         assert_eq!(config.persistence.state_store, PersistenceBackend::Memory);
+
+        let with_floor = AppConfig::from_yaml("persistence:\n  state_store:\n    type: json\n    path: \"s\"\n    journal_floor: 1024\n").unwrap();
+        assert_eq!(with_floor.persistence.state_store, PersistenceBackend::Json { path: PathBuf::from("s"), journal_floor: Some(1024) });
     }
 
     #[test]
