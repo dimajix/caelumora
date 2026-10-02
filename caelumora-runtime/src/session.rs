@@ -1068,7 +1068,7 @@ mod tests {
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let id = channel.id();
         let agent = AgentId::new();
-        runtime.state_store().put_agent_channel_state(agent, id, &AgentChannelState::default()).await.unwrap();
+        runtime.state_store().put_agent_channel_state(agent, id, &mut AgentChannelState::default()).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let mut rx = runtime.event_bus().subscribe_all();
 

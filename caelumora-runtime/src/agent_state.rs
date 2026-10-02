@@ -95,7 +95,7 @@ impl AgentStateHandle {
             state.memory.push(change, origin, after);
         }
         if let Some(backing) = &self.backing {
-            backing.state_store.put_agent_state(self.agent_id, &state).await
+            backing.state_store.put_agent_state(self.agent_id, &mut state).await
                 .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
         }
         self.current.store(Arc::new(state));

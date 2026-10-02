@@ -150,11 +150,12 @@ impl ActorRuntime {
         Ok(self.runtime.runtime_manager.state_store().get_agent_channel_state(agent, self.channel_id).await?)
     }
 
-    /// Stores the state of this agent in its channel.
+    /// Stores the state of this agent in its channel, and marks it stored
+    /// (`StateStore`).
     ///
     /// # Errors
     /// If this actor is no agent, or whatever the `StateStore` reports.
-    pub async fn store_channel_state(&self, state: &AgentChannelState) -> Result<()> {
+    pub async fn store_channel_state(&self, state: &mut AgentChannelState) -> Result<()> {
         let agent = self.agent_id()?;
         Ok(self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?)
     }
@@ -173,7 +174,7 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// If this actor is no agent, or whatever the `StateStore` reports.
-    pub async fn store_external_channel_state(&self, state: &ExternalAgentChannelState) -> Result<()> {
+    pub async fn store_external_channel_state(&self, state: &mut ExternalAgentChannelState) -> Result<()> {
         let agent = self.agent_id()?;
         Ok(self.runtime.runtime_manager.state_store().put_external_agent_channel_state(agent, self.channel_id, state).await?)
     }
@@ -343,9 +344,9 @@ mod tests {
         assert!(hers.load_external_channel_state().await.is_err(), "nor an external agent's");
 
         let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()), SessionId::new(), ChannelId::new());
-        its.store_channel_state(&AgentChannelState::default()).await.expect("its own state in its channel");
+        its.store_channel_state(&mut AgentChannelState::default()).await.expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
-        its.store_external_channel_state(&ExternalAgentChannelState::default()).await.expect("an external agent's state in its channel");
+        its.store_external_channel_state(&mut ExternalAgentChannelState::default()).await.expect("an external agent's state in its channel");
         its.load_external_channel_state().await.expect("and back");
     }
 

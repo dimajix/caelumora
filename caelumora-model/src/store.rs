@@ -126,21 +126,27 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<ComponentDescriptor>>;
 }
 
+/// The runtime state (issue 193): every kind `Journaled`, read whole and
+/// put as it stands. A `put_…` takes the state mutably: the store stores
+/// it - whole, or only what changed since it was last stored, as the store
+/// chooses - and on `Ok` has marked it stored (`Journaled::mark_stored`).
+/// On `Err` nothing is marked: the changes stay pending, and the next put
+/// includes them. So what is pending is never what a store has.
 #[async_trait]
 pub trait StateStore : Debug + Sync + Send {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState>;
-    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()>;
+    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()>;
 
     /// An external agent in a channel (issue 179), under a key of its own:
     /// it is no `AgentChannelState`.
     async fn get_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<ExternalAgentChannelState>;
-    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &ExternalAgentChannelState) -> StoreResult<()>;
+    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut ExternalAgentChannelState) -> StoreResult<()>;
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
-    async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()>;
+    async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()>;
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
-    async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()>;
+    async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()>;
 
     /// Deletes the state of a channel that no longer exists: its own and that
     /// of every agent in it, external ones included. Nothing to delete is not an error (issue 09).

@@ -5,7 +5,7 @@ use crate::external_agent::ExternalAgentChannelState;
 use crate::security::{Secured, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
-use crate::store::{EntityStore, StateStore, StoreError, StoreResult};
+use crate::store::{EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use async_trait::async_trait;
@@ -462,16 +462,15 @@ impl StateStore for JsonFileStore {
         Ok(loaded.unwrap_or_default())
     }
 
-    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &AgentChannelState) -> StoreResult<()> {
+    async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Writing agent channel state to {}", path.display());
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
         }
-        write_json_atomic(
-            &path,
-            state,
-        ).await
+        write_json_atomic(&path, state).await?;
+        state.mark_stored();
+        Ok(())
     }
 
     async fn get_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<ExternalAgentChannelState> {
@@ -481,16 +480,15 @@ impl StateStore for JsonFileStore {
         Ok(loaded.unwrap_or_default())
     }
 
-    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &ExternalAgentChannelState) -> StoreResult<()> {
+    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut ExternalAgentChannelState) -> StoreResult<()> {
         let path = self.external_agent_channel_state_path(agent_id, channel_id);
         debug!("Writing external agent channel state to {}", path.display());
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(to_backend_error)?;
         }
-        write_json_atomic(
-            &path,
-            state,
-        ).await
+        write_json_atomic(&path, state).await?;
+        state.mark_stored();
+        Ok(())
     }
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
@@ -500,13 +498,12 @@ impl StateStore for JsonFileStore {
         Ok(loaded.unwrap_or_default())
     }
 
-    async fn put_agent_state(&self, agent_id: AgentId, state: &AgentState) -> StoreResult<()> {
+    async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()> {
         let path = self.agent_state_path(agent_id);
         debug!("Writing agent state to {}", path.display());
-        write_json_atomic(
-            &path,
-            state,
-        ).await
+        write_json_atomic(&path, state).await?;
+        state.mark_stored();
+        Ok(())
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
@@ -519,13 +516,12 @@ impl StateStore for JsonFileStore {
         })
     }
 
-    async fn put_channel_state(&self, channel_id: ChannelId, state: &ChannelState) -> StoreResult<()> {
+    async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
         let path = self.channel_state_path(channel_id);
         debug!("Writing channel state to {}", path.display());
-        write_json_atomic(
-            &path,
-            state,
-        ).await
+        write_json_atomic(&path, state).await?;
+        state.mark_stored();
+        Ok(())
     }
 
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
@@ -573,7 +569,7 @@ mod tests {
         let mut writes = tokio::task::JoinSet::new();
         for _ in 0..16 {
             let store = store.clone();
-            writes.spawn(async move { store.put_agent_channel_state(agent, channel, &AgentChannelState::default()).await });
+            writes.spawn(async move { store.put_agent_channel_state(agent, channel, &mut AgentChannelState::default()).await });
         }
         while let Some(result) = writes.join_next().await {
             result.unwrap().expect("no writer loses its temporary file to another");
@@ -624,7 +620,7 @@ mod tests {
         // Write out channel state so we can assert it gets removed.
         let agent_id = AgentId(Uuid::new_v4());
         store
-            .put_agent_channel_state(agent_id, channel_id, &AgentChannelState::default())
+            .put_agent_channel_state(agent_id, channel_id, &mut AgentChannelState::default())
             .await
             .unwrap();
 
@@ -634,7 +630,7 @@ mod tests {
         assert!(store.delete_session(&ctx, session_id).await.unwrap());
         assert!(!store.session_path(session_id).exists());
 
-        store.put_channel_state(channel_id, &ChannelState::new(channel_id)).await.unwrap();
+        store.put_channel_state(channel_id, &mut ChannelState::new(channel_id)).await.unwrap();
         store.delete_channel_state(channel_id).await.unwrap();
         assert!(!store.channel_state_path(channel_id).exists());
         assert!(!store.agent_channel_state_dir(channel_id).exists());

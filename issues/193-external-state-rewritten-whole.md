@@ -431,3 +431,8 @@ is left open until a step needs the answer - then it is done at once or opened a
   over one chain and a type for every step between them; that is
   [197](197-one-chain-one-model-of-change.md), to be done first. Steps 4 to 6 go on from there
   with a journal that is the chain's stored form and has no `Amended`.
+- **2026-10-02** — Step 4 done (after issue 197): every `put_…` of the `StateStore` takes the
+  state mutably and marks it stored on `Ok`; the `MemoryStore` marks before it keeps its copy, the
+  `JsonFileStore` after writing the whole state, as it still does. The runtime passes its states
+  mutably (`Turn::agent_channel_state_mut`). The suite checks that what was put has nothing
+  pending beyond what a loaded state has.

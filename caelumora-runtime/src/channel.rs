@@ -286,8 +286,8 @@ impl ChannelLoop {
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,
             Err(StoreError::NotFound { entity: _, id: _ }) => {
-                let state = ChannelState::new(id);
-                state_store.put_channel_state(id, &state).await?;
+                let mut state = ChannelState::new(id);
+                state_store.put_channel_state(id, &mut state).await?;
                 state
             }
             Err(e) => return Err(e.into()),
@@ -444,7 +444,7 @@ impl ChannelLoop {
         let mut state = self.state.lock().await;
         let fitted = state.history.fit_into(&classification);
         if fitted > 0 {
-            self.state_store.put_channel_state(self.id, &state).await?;
+            self.state_store.put_channel_state(self.id, &mut state).await?;
         }
         info!(channel = %self.id, %classification, fitted, lowered, by = %context.caller_id, "Channel reclassified");
         Ok(())
@@ -475,7 +475,7 @@ impl ChannelLoop {
         };
         self.require(context, action, "reclassifying a message of").await?;
         state.history.reclassify(message, classification.clone());
-        self.state_store.put_channel_state(self.id, &state).await?;
+        self.state_store.put_channel_state(self.id, &mut state).await?;
         drop(state);
         self.runtime.event_bus().publish(GlobalEvent::MessageReclassified(self.session_id, self.id, message, classification), attributes);
         Ok(())
@@ -1027,7 +1027,7 @@ impl ChannelLoop {
         }
 
         if changed {
-            if let Err(e) = self.state_store.put_channel_state(self.id, &state).await {
+            if let Err(e) = self.state_store.put_channel_state(self.id, &mut state).await {
                 warn!("Cannot store state of channel {}: {}", self.id, e);
             }
         }
@@ -2434,8 +2434,8 @@ mod tests {
             history_limits: Vec::new(),
         };
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
-        if let Some(stored) = stored {
-            runtime.state_store().put_external_agent_channel_state(agent_id, channel.id, &stored).await.unwrap();
+        if let Some(mut stored) = stored {
+            runtime.state_store().put_external_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
         }
         let executor = CommandExecutor::empty(runtime.security_manager());
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;

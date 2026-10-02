@@ -225,7 +225,7 @@ impl AgentActor {
     /// on with the state in memory.
     async fn store_channel_state(&self, turn: &mut Turn<'_>) {
         turn.set_processing_state(self.control.state());
-        if let Err(e) = self.actor_runtime.store_channel_state(turn.agent_channel_state()).await {
+        if let Err(e) = self.actor_runtime.store_channel_state(turn.agent_channel_state_mut()).await {
             warn!("Cannot store agent channel state of agent {}: {:#}", self.agent_id, e);
         }
     }
@@ -728,7 +728,7 @@ impl Actor for AgentActor {
         }
         let mut turn = Turn::new(self.agent_id, self.agent_controller.name(), &mut state, self.agent_state.clone(), self.llm_client.profile());
         self.perceive(&mut turn, missed).await;
-        self.actor_runtime.store_channel_state(&state).await
+        self.actor_runtime.store_channel_state(&mut state).await
     }
 
     async fn run(

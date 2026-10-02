@@ -614,7 +614,7 @@ impl Actor for ExternalAgentActor {
         let missed = state.history.missing_from(visible);
         if !missed.is_empty() {
             state.history.extend(missed);
-            self.actor_runtime.store_external_channel_state(&state).await?;
+            self.actor_runtime.store_external_channel_state(&mut state).await?;
         }
         Ok(())
     }
@@ -658,7 +658,7 @@ impl Actor for ExternalAgentActor {
             for task in working {
                 self.cancel_remote(&mut state, &self.security_context, &task).await;
             }
-            if let Err(e) = self.actor_runtime.store_external_channel_state(&state).await {
+            if let Err(e) = self.actor_runtime.store_external_channel_state(&mut state).await {
                 warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
             }
         }

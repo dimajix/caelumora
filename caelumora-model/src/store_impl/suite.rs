@@ -12,7 +12,7 @@ use crate::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
-use crate::store::{EntityStore, StateStore, StoreError};
+use crate::store::{EntityStore, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use chrono::Utc;
@@ -184,10 +184,10 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     let missing = store.get_channel_state(channel).await;
     assert!(matches!(missing, Err(StoreError::NotFound { entity: "channel_state", .. })), "a missing channel state is NotFound, got {missing:?}");
 
-    let in_turn = AgentChannelState { turn: Some(TurnState::default()), ..AgentChannelState::default() };
-    store.put_agent_channel_state(agent, channel, &in_turn).await.expect("put agent channel state");
-    store.put_agent_channel_state(other_agent, channel, &in_turn).await.expect("put agent channel state");
-    store.put_agent_channel_state(agent, other_channel, &in_turn).await.expect("put agent channel state");
+    let mut in_turn = AgentChannelState { turn: Some(TurnState::default()), ..AgentChannelState::default() };
+    store.put_agent_channel_state(agent, channel, &mut in_turn).await.expect("put agent channel state");
+    store.put_agent_channel_state(other_agent, channel, &mut in_turn).await.expect("put agent channel state");
+    store.put_agent_channel_state(agent, other_channel, &mut in_turn).await.expect("put agent channel state");
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get agent channel state").turn.is_some(), "the stored state comes back");
 
     assert!(store.get_external_agent_channel_state(agent, channel).await.expect("a missing external agent channel state is no error").conversation.is_none());
@@ -196,18 +196,19 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     let answer = crate::message::Message { content: Some("hi".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
     talking.history.extend(vec![hello.clone(), answer]);
     talking.transcript.extend(vec![hello]);
-    store.put_external_agent_channel_state(agent, channel, &talking).await.expect("put external agent channel state");
-    store.put_external_agent_channel_state(agent, other_channel, &talking).await.expect("put external agent channel state");
+    store.put_external_agent_channel_state(agent, channel, &mut talking).await.expect("put external agent channel state");
+    store.put_external_agent_channel_state(agent, other_channel, &mut talking).await.expect("put external agent channel state");
     let stored = store.get_external_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(stored.conversation, talking.conversation, "the stored state comes back");
+    assert_eq!(serde_json::to_value(talking.changes()).expect("json"), serde_json::to_value(stored.changes()).expect("json"), "what was put is marked stored: nothing pending beyond what a loaded state has");
     assert_eq!((stored.history.digest(), stored.transcript.digest()), (talking.history.digest(), talking.transcript.digest()), "with its history and its transcript");
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_some(), "the two states of one agent are kept apart");
 
-    store.put_agent_state(agent, &AgentState::default()).await.expect("put agent state");
+    store.put_agent_state(agent, &mut AgentState::default()).await.expect("put agent state");
     store.get_agent_state(agent).await.expect("get agent state");
 
-    store.put_channel_state(channel, &ChannelState::new(channel)).await.expect("put channel state");
-    store.put_channel_state(other_channel, &ChannelState::new(other_channel)).await.expect("put channel state");
+    store.put_channel_state(channel, &mut ChannelState::new(channel)).await.expect("put channel state");
+    store.put_channel_state(other_channel, &mut ChannelState::new(other_channel)).await.expect("put channel state");
     assert_eq!(store.get_channel_state(channel).await.expect("get channel state").channel_id, channel);
 
     store.delete_channel_state(channel).await.expect("delete channel state");

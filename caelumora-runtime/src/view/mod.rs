@@ -466,12 +466,12 @@ mod tests {
         let mut state = ExternalAgentChannelState::default();
         state.history.extend(vec![question.clone(), answer.clone()]);
         state.transcript.extend(vec![question.clone()]);
-        store.put_external_agent_channel_state(remote.id, channel.id, &state).await.unwrap();
+        store.put_external_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
         // What an agent run here would have kept: not the external agent's.
         let mut stray = caelumora_model::agent::AgentChannelState::default();
         stray.notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         stray.private_notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(remote.id, channel.id, &stray).await.unwrap();
+        store.put_agent_channel_state(remote.id, channel.id, &mut stray).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let member = for_alice.member(ActorId::Agent(remote.id)).await.unwrap();
@@ -592,13 +592,13 @@ mod tests {
         store.create_channel(&system, &channel).await.unwrap();
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![first.clone(), second.clone()]);
-        store.put_channel_state(channel.id, &state).await.unwrap();
+        store.put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
         let mut agent_state = caelumora_model::agent::AgentChannelState::default();
         agent_state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         agent_state.private_notes.push(Change::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         agent_state.transcript.push(first.clone());
-        store.put_agent_channel_state(helper.id, channel.id, &agent_state).await.unwrap();
+        store.put_agent_channel_state(helper.id, channel.id, &mut agent_state).await.unwrap();
 
         let reach = |viewer: Viewer| {
             let manager = &manager;
@@ -646,7 +646,7 @@ mod tests {
         // What it kept while it ran: unknown now whether it is its kind's.
         let mut kept = caelumora_model::agent::AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(helper.id, channel.id, &kept).await.unwrap();
+        store.put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
         assert!(store.delete_personality(&system, helper.personality_id).await.unwrap());
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
@@ -684,8 +684,8 @@ mod tests {
         turn.event_context.channel_id = channel.id;
         turn.event_context.sender_id = ActorId::Agent(helper.id);
         turn.tool_calls = vec![waiting.clone(), ToolCallState::approved(call("echo"))];
-        let state = AgentChannelState { processing_state: ActorState::WaitingForApproval, turn: Some(turn), ..Default::default() };
-        store.put_agent_channel_state(helper.id, channel.id, &state).await.unwrap();
+        let mut state = AgentChannelState { processing_state: ActorState::WaitingForApproval, turn: Some(turn), ..Default::default() };
+        store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 
         let main = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let pending = main.pending_approvals().await.unwrap();
@@ -733,15 +733,15 @@ mod tests {
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = ChannelState::new(secret.id);
         state.history.extend(vec![said("the plan", &secret.classification), said("the date", &public.classification)]);
-        store.put_channel_state(secret.id, &state).await.unwrap();
+        store.put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = caelumora_model::agent::AgentChannelState::default();
         let note = |id, text: &str, classification: &Classification| Change::Add { id: NoteId(id), text: text.to_string(), classification: classification.clone() };
         agent_state.notes.push(note(1, "noted secretly", &secret.classification), NoteOrigin::default(), MessageId::default());
         agent_state.notes.push(note(2, "noted openly", &public.classification), NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(helper.id, secret.id, &agent_state).await.unwrap();
+        store.put_agent_channel_state(helper.id, secret.id, &mut agent_state).await.unwrap();
         let mut state = ChannelState::new(team.id);
         state.history.extend(vec![said("internal", &team.classification)]);
-        store.put_channel_state(team.id, &state).await.unwrap();
+        store.put_channel_state(team.id, &mut state).await.unwrap();
 
         // The agent, reading from one of its channels, as its components do.
         let reading_from = |channel: &Channel| {
@@ -792,7 +792,7 @@ mod tests {
         store.create_channel(&system, &channel).await.unwrap();
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![Message { id: MessageId::new(), sender_id: ActorId::Agent(helper.id), content: Some("I was here".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
-        store.put_channel_state(channel.id, &state).await.unwrap();
+        store.put_channel_state(channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
         let reached = views.channel_of(session.id, channel.id).await.unwrap().expect("there");

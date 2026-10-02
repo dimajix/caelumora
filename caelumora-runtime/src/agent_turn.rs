@@ -628,6 +628,12 @@ impl<'a> Turn<'a> {
         self.agent_channel_state
     }
 
+    /// The agent's state in this channel, to store it: a store marks it
+    /// stored (issue 193).
+    pub(crate) fn agent_channel_state_mut(&mut self) -> &mut AgentChannelState {
+        self.agent_channel_state
+    }
+
     /// Writes where the actor stands into the state, before it is stored.
     pub(crate) fn set_processing_state(&mut self, state: ActorState) {
         self.agent_channel_state.processing_state = state;
