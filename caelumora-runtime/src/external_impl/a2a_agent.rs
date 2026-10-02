@@ -21,6 +21,7 @@ use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sse_stream::SseStream;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -205,7 +206,7 @@ impl A2aAgentComponent {
             let answer: RpcResponse<StreamResponse> = self.json_of(response).await?;
             return Ok(answered(answer.into_result(&self.shown())?));
         }
-        Ok(Box::pin(events_of(response, self.shown())))
+        Ok(Box::pin(events_of(response.bytes_stream(), self.shown())))
     }
 }
 
@@ -221,38 +222,44 @@ fn answered(response: StreamResponse) -> ExternalStream {
 
 /// The events of a stream of server-sent events, each a JSON-RPC response
 /// carrying a `StreamResponse`. Ends with the stream, or after an error.
-fn events_of(response: reqwest::Response, endpoint: String) -> impl futures::Stream<Item = ExternalAgentResult<ExternalEvent>> + Send + 'static {
+/// The events are framed in bytes, so a character or a line end the
+/// network splits arrives whole (issue 185).
+fn events_of<S, D, E>(bytes: S, endpoint: String) -> impl futures::Stream<Item = ExternalAgentResult<ExternalEvent>> + Send + 'static
+where
+    S: futures::Stream<Item = Result<D, E>> + Send + 'static,
+    D: bytes::Buf + Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
     async_stream::stream! {
-        let mut bytes = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut sse = std::pin::pin!(SseStream::from_bytes_stream(bytes));
         let mut translation = Translation::default();
-        while let Some(chunk) = bytes.next().await {
-            match chunk {
-                Ok(chunk) => buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n")),
-                Err(e) => {
-                    yield Err(ExternalAgentError::Connection { endpoint: endpoint.clone(), reason: LLMError::describe_chain(&e) });
+        while let Some(event) = sse.next().await {
+            let data = match event {
+                Ok(event) => event.data.unwrap_or_default(),
+                Err(sse_stream::Error::Body(e)) => {
+                    yield Err(ExternalAgentError::Connection { endpoint: endpoint.clone(), reason: LLMError::describe_chain(e.as_ref()) });
                     return;
                 }
-            }
-            while let Some(end) = buffer.find("\n\n") {
-                let block: String = buffer.drain(..end + 2).collect();
-                let data = block.lines().filter_map(|line| line.strip_prefix("data:")).map(str::trim_start).collect::<Vec<_>>().join("\n");
-                if data.is_empty() {
-                    continue;
+                Err(e) => {
+                    yield Err(ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() });
+                    return;
                 }
-                let answer = serde_json::from_str::<RpcResponse<StreamResponse>>(&data)
-                    .map_err(|e| ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() })
-                    .and_then(|answer| answer.into_result(&endpoint));
-                match answer {
-                    Ok(response) => {
-                        for event in translation.events(response) {
-                            yield Ok(event);
-                        }
+            };
+            if data.is_empty() {
+                continue;
+            }
+            let answer = serde_json::from_str::<RpcResponse<StreamResponse>>(&data)
+                .map_err(|e| ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() })
+                .and_then(|answer| answer.into_result(&endpoint));
+            match answer {
+                Ok(response) => {
+                    for event in translation.events(response) {
+                        yield Ok(event);
                     }
-                    Err(e) => {
-                        yield Err(e);
-                        return;
-                    }
+                }
+                Err(e) => {
+                    yield Err(e);
+                    return;
                 }
             }
         }
@@ -708,6 +715,27 @@ mod tests {
         assert_eq!(params["message"]["role"], "ROLE_USER");
         assert_eq!(params["message"]["parts"][0]["text"], "alice: hello");
         assert!(params["message"].get("contextId").is_none(), "the remote agent opens the conversation");
+    }
+
+    #[tokio::test]
+    async fn events_split_anywhere_by_the_network_arrive_whole() {
+        let result = |r: Value| format!("data: {}\r\n\r\n", json!({ "jsonrpc": "2.0", "id": "1", "result": r }));
+        let body = [
+            result(json!({ "task": { "id": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_WORKING" } } })),
+            result(json!({ "artifactUpdate": { "taskId": "t-1", "contextId": "c-1", "artifact": { "artifactId": "a", "parts": [{ "text": "Grüße" }] }, "lastChunk": true } })),
+            result(json!({ "statusUpdate": { "taskId": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_COMPLETED" } } })),
+        ].concat();
+        // Each byte a chunk of its own: an "ü" and every "\r\n" split.
+        let bytes = futures::stream::iter(body.into_bytes().into_iter().map(|b| Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b]))));
+
+        let events: Vec<_> = events_of(bytes, "agent".to_string()).collect().await;
+        let events: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+        assert_eq!(events, vec![
+            ExternalEvent::Conversation(ConversationId("c-1".to_string())),
+            ExternalEvent::Started(task("t-1")),
+            ExternalEvent::Message("Grüße".to_string()),
+            ExternalEvent::Completed,
+        ]);
     }
 
     #[tokio::test]
