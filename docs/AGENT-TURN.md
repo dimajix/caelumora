@@ -184,10 +184,10 @@ JSON values such as tool arguments are hashed with sorted keys, so that the dige
 on how a value was built nor on `serde_json` features.
 
 The chain is one generic type, `caelumora_model::chain::Chain<E>` (issue 48): entries that are only
-appended to, each storing the digest its type computed over its content and the digest before it,
-with lookup of the prefix an earlier digest names. `Transcript` and `MessageHistory` are that chain
-over a message entry each, with the methods of their content as inherent methods on it (issue
-197), and share the `message_chain` digest. A message does not name
+appended to, each in a `Node` with the digest its content's scheme computed over it and the
+digest before it, with lookup of the prefix an earlier digest names. `Transcript` and
+`MessageHistory` are that chain over a message entry each, with the methods of their content as
+inherent methods on it (issue 197), and share the `message_chain` digest. A message does not name
 its predecessor: the same message is in several chains with a different predecessor in each, so the
 predecessor belongs to the chain, stored as `parent`, the predecessor's digest, beside the entry
 ([117](../issues/117-message-prev-id.md)). Notes and memory are chains too (see

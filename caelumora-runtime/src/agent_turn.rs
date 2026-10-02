@@ -309,7 +309,7 @@ impl<'a> Turn<'a> {
         let label = turn.label();
         let TurnState { entries, .. } = turn;
         let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
-        let messages: Vec<&Message> = entries.iter().map(|e| &e.entry.message).collect();
+        let messages: Vec<&Message> = entries.iter().map(|e| &e.node.entry.message).collect();
         let executed = executed_calls(&messages);
         let told = (!executed.is_empty()).then(|| Message {
             id: caelumora_model::message::MessageId::new(),
@@ -381,7 +381,7 @@ impl<'a> Turn<'a> {
         // The transcript is what the model is given first (issue 168).
         let transcript = &self.agent_channel_state.transcript;
         if let Some(turn) = self.agent_channel_state.turn.as_mut() {
-            transcript.entries().for_each(|e| turn.see_message(&e.message));
+            transcript.entries().for_each(|e| turn.see_message(&e.entry.message));
         }
     }
 
@@ -650,11 +650,12 @@ impl<'a> Turn<'a> {
     /// produced from - and its changes to the agent's `notes` and
     /// `private_notes` there. Returns whether there were changes.
     fn record_turn(&mut self, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
-        let expected = entries.last().map(|e| e.entry.digest);
-        for TurnEntry { entry, context } in entries {
-            self.agent_channel_state.transcript.push(entry.message.clone());
-            if !entry.message.internal {
-                self.agent_channel_state.history.push(entry.message, Some(context));
+        let expected = entries.last().map(|e| e.node.digest);
+        for TurnEntry { node, context } in entries {
+            let message = node.entry.message;
+            self.agent_channel_state.transcript.push(message.clone());
+            if !message.internal {
+                self.agent_channel_state.history.push(message, Some(context));
             }
         }
         // The turn's messages got their digests continuing the transcript
@@ -1110,7 +1111,7 @@ mod tests {
         }).collect::<Vec<_>>();
         assert_eq!(reasoning_seen(&state, first.id), [false, false]);
         assert_eq!(reasoning_seen(&state, second.id), [false, false, true], "the first answer's reasoning, from the same turn");
-        assert!(state.transcript.entries().all(|e| e.message.reasoning.is_some()), "stored reasoning is untouched");
+        assert!(state.transcript.entries().all(|e| e.entry.message.reasoning.is_some()), "stored reasoning is untouched");
 
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.

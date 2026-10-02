@@ -1,5 +1,5 @@
-//! A chain of entries that is only appended to, each entry carrying a digest
-//! over its own content and the digest before it (issue 48) - a tree, since
+//! A chain of entries that is only appended to, each node carrying a digest
+//! over its entry and the digest before it (issue 48) - a tree, since
 //! branching (issue 08): an entry follows the one that was the chain's head
 //! when it was added, and the head can be moved back to any entry to go on
 //! from there. The entries after it stay, as a branch that is no longer
@@ -10,10 +10,10 @@
 //! `MessageHistory` and `Transcript` are chains of messages (issue 06), an
 //! agent's notes (issue 17) and memory (issue 62) chains of changes.
 //!
-//! What goes into an entry's digest is up to its type, which computes it when
-//! the entry is made (see `crate::digest`). The chain stores the digest and
-//! never recomputes it: were a scheme to change, recomputing would silently
-//! change every digest that refers to an entry.
+//! What goes into a digest is up to the entry's type, which computes it when
+//! the entry is pushed (see `crate::digest`); the chain keeps it in the
+//! entry's [`Node`] and never recomputes it: were a scheme to change,
+//! recomputing would silently change every digest that refers to an entry.
 //!
 //! A chain changes in three ways only - an entry is appended, the head
 //! moves, an entry is amended in what its digest does not cover - and keeps
@@ -26,10 +26,26 @@ use crate::digest::Digest;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 
-/// An entry of a [`Chain`]: something with the digest of the chain up to and
-/// including it.
-pub trait ChainEntry {
-    fn digest(&self) -> &Digest;
+/// An entry at its place in the chain: with the digest of the chain up to
+/// and including it, and the digest of the entry it follows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Node<E> {
+    pub digest: Digest,
+    /// The digest of the entry it follows, `None` for a root.
+    pub parent: Option<Digest>,
+    /// Of the entries following it, the one last on the active path - where
+    /// a switch to this branch goes on (`Chain::leaf_from`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_child: Option<Digest>,
+    pub entry: E,
+}
+
+impl<E> Node<E> {
+    /// `entry` after the entry `parent` names, with `digest` - as a chain
+    /// would place it, before it is in one (a turn's messages, issue 136).
+    pub fn new(digest: Digest, parent: Option<Digest>, entry: E) -> Self {
+        Self { digest, parent, active_child: None, entry }
+    }
 }
 
 /// A change to a [`Chain`] since it was last stored (issue 193): what a
@@ -37,22 +53,14 @@ pub trait ChainEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChainChange<E> {
-    /// An entry appended after the one `parent` names - `None`: a root -
-    /// which became the head.
-    Added {
-        parent: Option<Digest>,
-        #[serde(flatten)]
-        entry: E,
-    },
+    /// An entry appended, which became the head.
+    Added(Node<E>),
     /// The head moved to the entry `to` names - `None`: the root, before
     /// every entry.
     Head { to: Option<Digest> },
-    /// An entry changed in what its digest does not cover, as it is now; its
-    /// digest says which one.
-    Amended {
-        #[serde(flatten)]
-        entry: E,
-    },
+    /// The entry with `digest` changed in what the digest does not cover,
+    /// as it is now.
+    Amended { digest: Digest, entry: E },
 }
 
 /// A change not yet stored, by the position of its entry in `nodes`.
@@ -63,24 +71,11 @@ enum Pending {
     Amended(usize),
 }
 
-/// An entry in its place in the tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Node<E> {
-    /// The digest of the entry it follows, `None` for a root.
-    parent: Option<Digest>,
-    /// Of the entries following it, the one last on the active path - where
-    /// a switch to this branch goes on (`Chain::leaf_from`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    active_child: Option<Digest>,
-    #[serde(flatten)]
-    entry: E,
-}
-
 /// Entries that are only appended to, each chained to the one before by its
 /// digest, as a tree with a head. What the chain says - its digest, its
 /// entries, its last entry - is the active path, from the root up to the
-/// head; `all_entries` are those of every branch. Stored as every entry with
-/// the digest of the one it follows, and the head.
+/// head; `all_entries` are those of every branch. Stored as every node, in
+/// the order added, and the head.
 #[derive(Debug, Clone)]
 pub struct Chain<E> {
     /// Every entry, in the order it was added: an entry after the one it
@@ -101,7 +96,7 @@ impl<E> Default for Chain<E> {
     }
 }
 
-impl<E: ChainEntry> Chain<E> {
+impl<E> Chain<E> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -112,18 +107,18 @@ impl<E: ChainEntry> Chain<E> {
     }
 
     /// The entries of the active path, from the root up to the head.
-    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &E> + ExactSizeIterator {
-        self.path.iter().map(|&i| &self.nodes[i].entry)
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
+        self.path.iter().map(|&i| &self.nodes[i])
     }
 
     /// Every entry of every branch, in the order they were added.
-    pub fn all_entries(&self) -> impl DoubleEndedIterator<Item = &E> + ExactSizeIterator {
-        self.nodes.iter().map(|n| &n.entry)
+    pub fn all_entries(&self) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
+        self.nodes.iter()
     }
 
     /// The entry at the head.
-    pub fn last(&self) -> Option<&E> {
-        self.path.last().map(|&i| &self.nodes[i].entry)
+    pub fn last(&self) -> Option<&Node<E>> {
+        self.path.last().map(|&i| &self.nodes[i])
     }
 
     /// The length of the active path.
@@ -160,18 +155,18 @@ impl<E: ChainEntry> Chain<E> {
         changed
     }
 
-    /// Appends the entry `make` builds from the digest of the head, makes it
-    /// the head, and returns that digest. An entry with the digest of one
-    /// already there is that entry - the same predecessor and the same
-    /// content - and is not added twice: the head moves to it.
-    pub(crate) fn push_with(&mut self, make: impl FnOnce(Option<&Digest>) -> E) -> Option<Digest> {
+    /// Appends `entry` with the digest `digest` computes for it after the
+    /// head, makes it the head, and returns the digest before it. An entry
+    /// with the digest of one already there is that entry - the same
+    /// predecessor and the same content - and is not added twice: the head
+    /// moves to it.
+    pub(crate) fn push_with(&mut self, entry: E, digest: impl FnOnce(Option<&Digest>, &E) -> Digest) -> Option<Digest> {
         let previous = self.head;
-        let entry = make(previous.as_ref());
-        let digest = *entry.digest();
+        let digest = digest(previous.as_ref(), &entry);
         if self.index.contains_key(&digest) {
             self.move_head(Some(&digest));
         } else {
-            self.add(Node { parent: previous, active_child: None, entry });
+            self.add(Node::new(digest, previous, entry));
             self.pending.push(Pending::Added(self.nodes.len() - 1));
         }
         previous
@@ -179,7 +174,7 @@ impl<E: ChainEntry> Chain<E> {
 
     /// Adds `node`, whose digest is not there yet, and makes it the head.
     fn add(&mut self, node: Node<E>) {
-        let digest = *node.entry.digest();
+        let digest = node.digest;
         self.index.insert(digest, self.nodes.len());
         self.nodes.push(node);
         self.set_head(Some(&digest));
@@ -192,9 +187,9 @@ impl<E: ChainEntry> Chain<E> {
         E: Clone,
     {
         self.pending.iter().map(|pending| match pending {
-            Pending::Added(at) => ChainChange::Added { parent: self.nodes[*at].parent, entry: self.nodes[*at].entry.clone() },
+            Pending::Added(at) => ChainChange::Added(Node::new(self.nodes[*at].digest, self.nodes[*at].parent, self.nodes[*at].entry.clone())),
             Pending::Head(to) => ChainChange::Head { to: *to },
-            Pending::Amended(at) => ChainChange::Amended { entry: self.nodes[*at].entry.clone() },
+            Pending::Amended(at) => ChainChange::Amended { digest: self.nodes[*at].digest, entry: self.nodes[*at].entry.clone() },
         }).collect()
     }
 
@@ -213,14 +208,13 @@ impl<E: ChainEntry> Chain<E> {
     /// not there, a head or an amended entry that is not there.
     pub fn apply(&mut self, change: ChainChange<E>) -> Result<(), String> {
         match change {
-            ChainChange::Added { parent, entry } => {
-                let digest = *entry.digest();
-                if self.index.contains_key(&digest) {
-                    self.set_head(Some(&digest));
-                } else if parent.is_some_and(|parent| !self.index.contains_key(&parent)) {
-                    return Err(format!("entry {digest} follows an entry that is not there"));
+            ChainChange::Added(node) => {
+                if self.index.contains_key(&node.digest) {
+                    self.set_head(Some(&node.digest));
+                } else if node.parent.is_some_and(|parent| !self.index.contains_key(&parent)) {
+                    return Err(format!("entry {} follows an entry that is not there", node.digest));
                 } else {
-                    self.add(Node { parent, active_child: None, entry });
+                    self.add(Node::new(node.digest, node.parent, node.entry));
                 }
             }
             ChainChange::Head { to } => {
@@ -228,9 +222,9 @@ impl<E: ChainEntry> Chain<E> {
                     return Err("the head moved to an entry that is not there".to_string());
                 }
             }
-            ChainChange::Amended { entry } => match self.index.get(entry.digest()) {
+            ChainChange::Amended { digest, entry } => match self.index.get(&digest) {
                 Some(&at) => self.nodes[at].entry = entry,
-                None => return Err(format!("entry {} was amended but is not there", entry.digest())),
+                None => return Err(format!("entry {digest} was amended but is not there")),
             },
         }
         Ok(())
@@ -239,9 +233,9 @@ impl<E: ChainEntry> Chain<E> {
     /// The entries of the path `digest` names: from the root up to and
     /// including the entry with that digest, on whichever branch it is, or
     /// `None` if there is no such entry.
-    pub fn prefix(&self, digest: &Digest) -> Option<Vec<&E>> {
+    pub fn prefix(&self, digest: &Digest) -> Option<Vec<&Node<E>>> {
         let end = *self.index.get(digest)?;
-        Some(self.path_to(end).into_iter().map(|i| &self.nodes[i].entry).collect())
+        Some(self.path_to(end).into_iter().map(|i| &self.nodes[i]).collect())
     }
 
     /// Moves the head to the entry `to` - `None`: the root, before every
@@ -270,7 +264,7 @@ impl<E: ChainEntry> Chain<E> {
             None => Vec::new(),
         };
         for pair in path.windows(2) {
-            let child = *self.nodes[pair[1]].entry.digest();
+            let child = self.nodes[pair[1]].digest;
             self.nodes[pair[0]].active_child = Some(child);
         }
         self.head = to.copied();
@@ -280,8 +274,8 @@ impl<E: ChainEntry> Chain<E> {
 
     /// The entries following `parent` - `None`: the roots - in the order they
     /// were added: the siblings among which a branch is chosen.
-    pub fn children(&self, parent: Option<&Digest>) -> Vec<&E> {
-        self.nodes.iter().filter(|n| n.parent.as_ref() == parent).map(|n| &n.entry).collect()
+    pub fn children(&self, parent: Option<&Digest>) -> Vec<&Node<E>> {
+        self.nodes.iter().filter(|n| n.parent.as_ref() == parent).collect()
     }
 
     /// The digest of the end of the branch through `digest`, following from
@@ -292,7 +286,7 @@ impl<E: ChainEntry> Chain<E> {
         while let Some(child) = self.nodes[at].active_child {
             at = self.index[&child];
         }
-        Some(*self.nodes[at].entry.digest())
+        Some(self.nodes[at].digest)
     }
 
     /// The positions from the root up to and including `end`.
@@ -316,18 +310,17 @@ impl<E: ChainEntry> Chain<E> {
         for (i, node) in nodes.iter().enumerate() {
             if let Some(parent) = &node.parent {
                 if !index.contains_key(parent) {
-                    return Err(format!("entry {} follows {parent}, which is not before it", node.entry.digest()));
+                    return Err(format!("entry {} follows {parent}, which is not before it", node.digest));
                 }
             }
-            if index.insert(*node.entry.digest(), i).is_some() {
-                return Err(format!("entry {} is there twice", node.entry.digest()));
+            if index.insert(node.digest, i).is_some() {
+                return Err(format!("entry {} is there twice", node.digest));
             }
         }
         for node in &nodes {
-            let digest = node.entry.digest();
             if let Some(child) = &node.active_child {
-                if index.get(child).map(|&c| nodes[c].parent.as_ref()) != Some(Some(digest)) {
-                    return Err(format!("entry {digest} remembers {child}, which does not follow it"));
+                if index.get(child).map(|&c| nodes[c].parent.as_ref()) != Some(Some(&node.digest)) {
+                    return Err(format!("entry {} remembers {child}, which does not follow it", node.digest));
                 }
             }
         }
@@ -362,7 +355,7 @@ impl<E: Serialize> Serialize for Chain<E> {
     }
 }
 
-impl<'de, E: ChainEntry + Deserialize<'de>> Deserialize<'de> for Chain<E> {
+impl<'de, E: Deserialize<'de>> Deserialize<'de> for Chain<E> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let Stored { entries, head } = Stored::deserialize(deserializer)?;
         Chain::from_stored(entries, head).map_err(|e| serde::de::Error::custom(format!("not a chain: {e}")))
@@ -373,23 +366,10 @@ impl<'de, E: ChainEntry + Deserialize<'de>> Deserialize<'de> for Chain<E> {
 mod tests {
     use super::*;
 
-    /// An entry that is just its digest, chained over a label.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    struct Label {
-        label: String,
-        digest: Digest,
-    }
-
-    impl ChainEntry for Label {
-        fn digest(&self) -> &Digest {
-            &self.digest
-        }
-    }
-
-    fn push(chain: &mut Chain<Label>, label: &str) -> Option<Digest> {
-        chain.push_with(|previous| {
-            let chained = format!("{}/{}", previous.map(|d| d.to_string()).unwrap_or_default(), label);
-            Label { label: label.to_string(), digest: crate::digest::prompt(&chained) }
+    /// A chain of labels, each digested over the one before.
+    fn push(chain: &mut Chain<String>, label: &str) -> Option<Digest> {
+        chain.push_with(label.to_string(), |previous, label| {
+            crate::digest::prompt(&format!("{}/{}", previous.map(|d| d.to_string()).unwrap_or_default(), label))
         })
     }
 
@@ -406,8 +386,8 @@ mod tests {
         assert_ne!(chain.digest(), other.digest(), "the same entry after another one");
     }
 
-    fn labels<'a>(entries: impl IntoIterator<Item = &'a Label>) -> Vec<String> {
-        entries.into_iter().map(|e| e.label.clone()).collect()
+    fn labels<'a>(entries: impl IntoIterator<Item = &'a Node<String>>) -> Vec<String> {
+        entries.into_iter().map(|e| e.entry.clone()).collect()
     }
 
     #[test]
@@ -435,7 +415,7 @@ mod tests {
         assert_eq!(push(&mut chain, "c"), Some(after_a), "continued from a");
 
         assert_eq!(labels(chain.entries()), ["a", "c"], "the active path");
-        assert_eq!((chain.len(), chain.last().map(|e| e.label.as_str())), (2, Some("c")));
+        assert_eq!((chain.len(), chain.last().map(|e| e.entry.as_str())), (2, Some("c")));
         assert_eq!(labels(chain.all_entries()), ["a", "b", "c"], "b stays");
         assert_eq!(labels(chain.prefix(&after_b).unwrap()), ["a", "b"], "and names its own path");
         assert_eq!(labels(chain.children(Some(&after_a))), ["b", "c"], "siblings, as they were added");
@@ -502,19 +482,19 @@ mod tests {
 
         let json = serde_json::to_value(&chain).unwrap();
         assert_eq!(json["entries"][1]["parent"], serde_json::json!(after_a.to_string()), "the entry names what it follows: {json}");
-        assert_eq!(json["entries"][1]["label"], "b", "beside its own fields");
-        let loaded: Chain<Label> = serde_json::from_value(json).unwrap();
+        assert_eq!(json["entries"][1]["entry"], "b", "beside its digest");
+        let loaded: Chain<String> = serde_json::from_value(json).unwrap();
         assert_eq!(loaded.all_entries().collect::<Vec<_>>(), chain.all_entries().collect::<Vec<_>>());
         assert_eq!(labels(loaded.entries()), ["a", "c"]);
         assert_eq!(loaded.leaf_from(&after_a), chain.digest(), "the branch last taken is kept");
     }
 
     /// `chain` as it was stored: with nothing pending.
-    fn stored(chain: &Chain<Label>) -> Chain<Label> {
+    fn stored(chain: &Chain<String>) -> Chain<String> {
         serde_json::from_value(serde_json::to_value(chain).unwrap()).unwrap()
     }
 
-    fn same(a: &Chain<Label>, b: &Chain<Label>) -> bool {
+    fn same(a: &Chain<String>, b: &Chain<String>) -> bool {
         a.digest() == b.digest()
             && a.all_entries().collect::<Vec<_>>() == b.all_entries().collect::<Vec<_>>()
             && labels(a.entries()) == labels(b.entries())
@@ -536,11 +516,11 @@ mod tests {
         push(&mut chain, "c");
         chain.move_head(Some(&after_a));
         push(&mut chain, "b");
-        assert!(chain.amend(&after_a, |e| e.label = "a!".to_string()));
-        assert_eq!(chain.amend_each(|e| { let is_b = e.label == "b"; if is_b { e.label = "b!".to_string() }; is_b }), 1);
+        assert!(chain.amend(&after_a, |e| *e = "a!".to_string()));
+        assert_eq!(chain.amend_each(|e| { let is_b = e == "b"; if is_b { *e = "b!".to_string() }; is_b }), 1);
 
         let changes = chain.changes();
-        let ops: Vec<&str> = changes.iter().map(|c| match c { ChainChange::Added { .. } => "added", ChainChange::Head { .. } => "head", ChainChange::Amended { .. } => "amended" }).collect();
+        let ops: Vec<&str> = changes.iter().map(|c| match c { ChainChange::Added(_) => "added", ChainChange::Head { .. } => "head", ChainChange::Amended { .. } => "amended" }).collect();
         assert_eq!(ops, ["added", "head", "added", "head", "head", "amended", "amended"], "once each, in order; a move to where the head is is no change: {changes:?}");
 
         for change in changes.clone() {
@@ -565,23 +545,23 @@ mod tests {
         let mut chain = Chain::new();
         push(&mut chain, "a");
         let elsewhere = crate::digest::prompt("elsewhere");
-        let orphan = Label { label: "x".to_string(), digest: crate::digest::prompt("x") };
-        assert!(chain.apply(ChainChange::Added { parent: Some(elsewhere), entry: orphan.clone() }).is_err(), "follows what is not there");
+        let orphan = Node::new(crate::digest::prompt("x"), Some(elsewhere), "x".to_string());
+        assert!(chain.apply(ChainChange::Added(orphan.clone())).is_err(), "follows what is not there");
         assert!(chain.apply(ChainChange::Head { to: Some(elsewhere) }).is_err());
-        assert!(chain.apply(ChainChange::Amended { entry: orphan }).is_err());
+        assert!(chain.apply(ChainChange::Amended { digest: orphan.digest, entry: orphan.entry }).is_err());
         assert_eq!(labels(chain.all_entries()), ["a"], "and nothing changed");
         assert!(!chain.amend(&elsewhere, |_| unreachable!()));
     }
 
     #[test]
-    fn a_change_is_stored_as_the_entry_with_what_it_follows() {
+    fn a_change_is_stored_as_the_node_added() {
         let mut chain = Chain::new();
         push(&mut chain, "a");
         push(&mut chain, "b");
         let json = serde_json::to_value(chain.changes()).unwrap();
-        assert_eq!(json[1]["added"]["label"], "b", "{json}");
+        assert_eq!(json[1]["added"]["entry"], "b", "{json}");
         assert_eq!(json[1]["added"]["parent"], serde_json::json!(chain.prefix(&chain.digest().unwrap()).unwrap()[0].digest.to_string()));
-        let loaded: Vec<ChainChange<Label>> = serde_json::from_value(json).unwrap();
+        let loaded: Vec<ChainChange<String>> = serde_json::from_value(json).unwrap();
         assert_eq!(loaded, chain.changes());
     }
 
@@ -594,15 +574,15 @@ mod tests {
 
         let mut unknown_head = json.clone();
         unknown_head["head"] = serde_json::json!(crate::digest::prompt("elsewhere").to_string());
-        assert!(serde_json::from_value::<Chain<Label>>(unknown_head).is_err(), "a head that is not an entry");
+        assert!(serde_json::from_value::<Chain<String>>(unknown_head).is_err(), "a head that is not an entry");
 
         let mut reversed = json.clone();
         reversed["entries"].as_array_mut().unwrap().reverse();
-        assert!(serde_json::from_value::<Chain<Label>>(reversed).is_err(), "an entry before the one it follows");
+        assert!(serde_json::from_value::<Chain<String>>(reversed).is_err(), "an entry before the one it follows");
 
         let mut twice = json;
         let first = twice["entries"][0].clone();
         twice["entries"].as_array_mut().unwrap().push(first);
-        assert!(serde_json::from_value::<Chain<Label>>(twice).is_err(), "an entry twice");
+        assert!(serde_json::from_value::<Chain<String>>(twice).is_err(), "an entry twice");
     }
 }

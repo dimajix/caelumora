@@ -465,8 +465,8 @@ impl ChannelLoop {
         let mut state = self.state.lock().await;
         let not_found = || ChannelError::MessageNotFound { message, channel: self.id };
         let (author, current) = state.history.all_entries()
-            .find(|e| e.message.id == message)
-            .map(|e| (e.message.sender_id, e.message.classification.clone()))
+            .find(|e| e.entry.message.id == message)
+            .map(|e| (e.entry.message.sender_id, e.entry.message.classification.clone()))
             .ok_or_else(not_found)?;
         let action = ActionType::Reclassify {
             target: Reclassified::Message { author, attributes: &attributes },

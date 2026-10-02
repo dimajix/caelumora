@@ -21,6 +21,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::agent::{AgentChannelState, TurnEntry};
+use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{Message, MessageRole};
@@ -272,13 +273,13 @@ impl<'a> TranscriptView<'a> {
 
     /// The entries of the transcript `digest` names - `None`: the empty
     /// one - or `None` if it is not a prefix of this one.
-    pub fn prefix(&self, digest: Option<&Digest>) -> Option<Vec<&'a TranscriptEntry>> {
+    pub fn prefix(&self, digest: Option<&Digest>) -> Option<Vec<&'a Node<TranscriptEntry>>> {
         let Some(digest) = digest else { return Some(Vec::new()) };
         if let Some(entries) = self.stored.prefix(digest) {
             return Some(entries);
         }
-        let end = self.pending.iter().position(|e| &e.entry.digest == digest)?;
-        Some(self.stored.entries().chain(self.pending[..=end].iter().map(|e| &e.entry)).collect())
+        let end = self.pending.iter().position(|e| &e.node.digest == digest)?;
+        Some(self.stored.entries().chain(self.pending[..=end].iter().map(|e| &e.node)).collect())
     }
 }
 
@@ -329,8 +330,8 @@ impl<'a> ContextResolver<'a> {
         prompts: &[PromptRef],
         profile: &ModelProfile,
         agent: ActorId,
-        before: &[&TranscriptEntry],
-        during: &[&TranscriptEntry],
+        before: &[&Node<TranscriptEntry>],
+        during: &[&Node<TranscriptEntry>],
     ) -> Option<Vec<ContextItem>> {
         // The parts after the transcript entry `after` - `None`: before
         // everything.
@@ -344,7 +345,7 @@ impl<'a> ContextResolver<'a> {
         let mut items = after_entry(None)?;
         let entries = before.iter().map(|e| (e, false)).chain(during.iter().map(|e| (e, true)));
         for (entry, in_turn) in entries {
-            items.push(ContextItem::Conversation { message: profile.given(entry.message.clone(), agent, in_turn) });
+            items.push(ContextItem::Conversation { message: profile.given(entry.entry.message.clone(), agent, in_turn) });
             items.extend(after_entry(Some(entry.digest))?);
         }
         profile.place_system_messages(&mut items);

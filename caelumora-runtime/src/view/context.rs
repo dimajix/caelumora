@@ -64,8 +64,8 @@ pub enum ContextError {
 /// The classification of `message` as `history` holds it.
 fn classification_in(history: &MessageHistory, message: MessageId) -> Option<Classification> {
     history.all_entries()
-        .find(|e| e.message.id == message)
-        .map(|e| e.message.classification.clone())
+        .find(|e| e.entry.message.id == message)
+        .map(|e| e.entry.message.classification.clone())
 }
 
 /// What an agent run here saw: what its model was given, turn by turn.

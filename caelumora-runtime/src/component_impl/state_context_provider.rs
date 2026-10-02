@@ -74,7 +74,7 @@ impl ContextProvider for StateContextProvider {
             let mut entries = transcript.entries().rev();
             let own = ActorId::Agent(state.agent_id());
             let after = match entries.next() {
-                Some(input) if input.message.sender_id != own => entries.next().map(|e| e.digest),
+                Some(input) if input.entry.message.sender_id != own => entries.next().map(|e| e.digest),
                 Some(own_message) => Some(own_message.digest),
                 None => None,
             };

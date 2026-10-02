@@ -4,7 +4,7 @@ use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::confidentiality::Classification;
 use crate::context::{ContextRef, KnowledgeRef};
-use crate::chain::ChainChange;
+use crate::chain::{ChainChange, Node};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::message::{Message, MessageId};
@@ -288,12 +288,12 @@ impl TurnState {
         let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
         self.context.transcript = Some(digest);
         self.context.turn_entries += 1;
-        self.entries.push(TurnEntry { entry: TranscriptEntry { message, digest, given_up: None }, context });
+        self.entries.push(TurnEntry { node: Node::new(digest, context.transcript, TranscriptEntry { message, given_up: None }), context });
     }
 
     /// The messages the turn produced so far.
     pub fn messages(&self) -> impl Iterator<Item = &Message> {
-        self.entries.iter().map(|e| &e.entry.message)
+        self.entries.iter().map(|e| &e.node.entry.message)
     }
 
     /// Records that the turn read `reference` (issue 17): it counts for the
@@ -347,7 +347,7 @@ impl TurnState {
 /// it in the history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnEntry {
-    pub entry: TranscriptEntry,
+    pub node: Node<TranscriptEntry>,
     pub context: ContextRef,
 }
 
@@ -356,7 +356,7 @@ impl AgentChannelState {
     /// was produced from, or `None` if this agent did not produce it (or it
     /// was before references were recorded).
     pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
-        self.history.all_entries().find(|e| e.message.id == id)?.context.clone()
+        self.history.all_entries().find(|e| e.entry.message.id == id)?.entry.context.clone()
     }
 }
 

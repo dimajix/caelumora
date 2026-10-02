@@ -2,27 +2,19 @@
 //! messages said in it, each of the agent's own with what it was produced
 //! from.
 
-use crate::chain::{Chain, ChainEntry};
+use crate::chain::Chain;
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
-use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use serde::{Deserialize, Serialize};
 
-/// A message of a `MessageHistory`: with the digest of the history up to and
-/// including it and, for a message this agent produced, what it was produced
-/// from.
+/// A message of a `MessageHistory` - its node carries the digest of the
+/// history up to and including it - and, for a message this agent produced,
+/// what it was produced from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub message: Message,
     pub context: Option<ContextRef>,
-    pub digest: Digest,
-}
-
-impl ChainEntry for HistoryEntry {
-    fn digest(&self) -> &Digest {
-        &self.digest
-    }
 }
 
 /// The conversation as it happened - a chain like a `Transcript`.
@@ -30,7 +22,7 @@ pub type MessageHistory = Chain<HistoryEntry>;
 
 impl Chain<HistoryEntry> {
     pub fn messages(&self) -> Vec<Message> {
-        self.entries().map(|e| e.message.clone()).collect()
+        self.entries().map(|e| e.entry.message.clone()).collect()
     }
 
     /// The messages of `visible` after the last of them the history has,
@@ -41,13 +33,13 @@ impl Chain<HistoryEntry> {
     /// answers; they are left out, and the history stays in the order things
     /// were said.
     pub fn missing_from(&self, visible: Vec<Message>) -> Vec<Message> {
-        let known: std::collections::HashSet<_> = self.all_entries().map(|e| e.message.id).collect();
+        let known: std::collections::HashSet<_> = self.all_entries().map(|e| e.entry.message.id).collect();
         let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
         visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
     }
 
     pub fn last_message_id(&self) -> MessageId {
-        self.last().map(|e| e.message.id).unwrap_or_default()
+        self.last().map(|e| e.entry.message.id).unwrap_or_default()
     }
 
     /// Appends messages that were not produced from a context of this
@@ -60,10 +52,7 @@ impl Chain<HistoryEntry> {
 
     /// Appends `msg` with what it was produced from, if known.
     pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
-        self.push_with(|previous| {
-            let digest = crate::digest::message_chain(previous, &msg);
-            HistoryEntry { message: msg, context, digest }
-        });
+        self.push_with(HistoryEntry { message: msg, context }, |previous, entry| crate::digest::message_chain(previous, &entry.message));
     }
 
     /// Reclassifies message `id` - on whichever branch - as
@@ -124,8 +113,8 @@ mod tests {
 
         let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
-        assert_eq!(entries[0].context, None, "said by someone else");
-        assert_eq!(entries[1].context, Some(reference));
+        assert_eq!(entries[0].entry.context, None, "said by someone else");
+        assert_eq!(entries[1].entry.context, Some(reference));
         assert_eq!(loaded.digest(), history.digest());
     }
 

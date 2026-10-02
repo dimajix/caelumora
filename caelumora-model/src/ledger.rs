@@ -10,9 +10,8 @@
 //! number of an entry is never given twice, on any branch: a reader may have
 //! read it before it was removed, or on a branch no longer active.
 
-use crate::chain::{Chain, ChainEntry};
+use crate::chain::Chain;
 use crate::confidentiality::Classification;
-use crate::digest::Digest;
 use crate::message::MessageId;
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
@@ -49,8 +48,8 @@ pub enum Change<Id> {
     Reclassify { id: Id, classification: Classification },
 }
 
-/// An entry of a [`Ledger`]'s chain: a change, where it was made, and the
-/// digest of the chain up to and including it.
+/// An entry of a [`Ledger`]'s chain: a change and where it was made; its
+/// node carries the digest of the chain up to and including it.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct LedgerEntry<K: LedgerKind> {
@@ -60,20 +59,13 @@ pub struct LedgerEntry<K: LedgerKind> {
     /// it (`MessageId::default()` if there was none).
     pub after: MessageId,
     pub written_at: DateTime<Utc>,
-    pub digest: Digest,
 }
 
 // By hand: the kind is a marker, and a derived `Clone` would ask it to be
 // `Clone` too.
 impl<K: LedgerKind> Clone for LedgerEntry<K> {
     fn clone(&self) -> Self {
-        Self { change: self.change.clone(), origin: self.origin.clone(), after: self.after, written_at: self.written_at, digest: self.digest }
-    }
-}
-
-impl<K: LedgerKind> ChainEntry for LedgerEntry<K> {
-    fn digest(&self) -> &Digest {
-        &self.digest
+        Self { change: self.change.clone(), origin: self.origin.clone(), after: self.after, written_at: self.written_at }
     }
 }
 
@@ -100,17 +92,18 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
     /// Appends `change`, made at `origin` in the turn that ended with
     /// message `after`.
     pub fn push(&mut self, change: Change<K::Id>, origin: K::Origin, after: MessageId) {
-        self.push_with(|previous| {
-            let digest = crate::digest::ledger_chain::<K>(previous, &change, &origin, after);
-            LedgerEntry { change, origin, after, written_at: Utc::now(), digest }
-        });
+        self.push_with(
+            LedgerEntry { change, origin, after, written_at: Utc::now() },
+            |previous, entry| crate::digest::ledger_chain::<K>(previous, &entry.change, &entry.origin, entry.after),
+        );
     }
 
     /// The entries as they stand on the active branch: every entry that was
     /// not removed, oldest first.
     pub fn current(&self) -> Vec<Item<K>> {
         let mut items: Vec<Item<K>> = Vec::new();
-        for entry in self.entries() {
+        for node in self.entries() {
+            let entry = &node.entry;
             fold(&mut items, &entry.change, &entry.origin, entry.after, entry.written_at);
         }
         items
@@ -119,7 +112,7 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
     /// The number the next entry gets: one more than any entry ever added,
     /// on any branch.
     pub fn next_id(&self) -> K::Id {
-        let highest = self.all_entries().filter_map(|e| added(&e.change)).max().unwrap_or(0);
+        let highest = self.all_entries().filter_map(|e| added(&e.entry.change)).max().unwrap_or(0);
         K::Id::from(highest + 1)
     }
 

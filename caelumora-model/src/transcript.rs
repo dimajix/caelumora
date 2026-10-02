@@ -1,18 +1,17 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
 //! built from, and the turns it gave up (issue 145).
 
-use crate::chain::{Chain, ChainEntry};
+use crate::chain::Chain;
 use crate::digest::Digest;
 use crate::message::Message;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// A message of a `Transcript`, with the digest of the transcript up to and
-/// including it (issue 06).
+/// A message of a `Transcript`; its node carries the digest of the
+/// transcript up to and including it (issue 06).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptEntry {
     pub message: Message,
-    pub digest: Digest,
     /// Set on the last message of a turn that was given up (issue 145):
     /// what the branch ending here is. Not covered by the digest - it says
     /// something about the branch, not what a model saw.
@@ -54,12 +53,6 @@ pub struct GivenUpTurn {
     pub messages: Vec<Message>,
 }
 
-impl ChainEntry for TranscriptEntry {
-    fn digest(&self) -> &Digest {
-        &self.digest
-    }
-}
-
 /// An agent's transcript (issue 50): the sequence of messages its context is
 /// built from - its own messages in full, with tool calls and internal
 /// steps, and what others said as it received them. The context of a model
@@ -75,7 +68,7 @@ pub type Transcript = Chain<TranscriptEntry>;
 
 impl Chain<TranscriptEntry> {
     pub fn messages(&self) -> Vec<Message> {
-        self.entries().map(|e| e.message.clone()).collect()
+        self.entries().map(|e| e.entry.message.clone()).collect()
     }
 
     /// Appends `msgs`.
@@ -87,10 +80,7 @@ impl Chain<TranscriptEntry> {
 
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        self.push_with(|previous| {
-            let digest = crate::digest::message_chain(previous, &msg);
-            TranscriptEntry { message: msg, digest, given_up: None }
-        })
+        self.push_with(TranscriptEntry { message: msg, given_up: None }, |previous, entry| crate::digest::message_chain(previous, &entry.message))
     }
 
     /// Marks the entry with `digest` as the end of a turn given up (issue
@@ -103,11 +93,11 @@ impl Chain<TranscriptEntry> {
     /// with its messages.
     pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
         self.all_entries()
-            .filter_map(|entry| {
-                let given_up = entry.given_up.clone()?;
-                let path = self.prefix(&entry.digest)?;
+            .filter_map(|node| {
+                let given_up = node.entry.given_up.clone()?;
+                let path = self.prefix(&node.digest)?;
                 let start = path.len().saturating_sub(given_up.turn_entries);
-                let messages = path[start..].iter().map(|e| e.message.clone()).collect();
+                let messages = path[start..].iter().map(|e| e.entry.message.clone()).collect();
                 Some(GivenUpTurn { given_up, messages })
             })
             .collect()
@@ -166,7 +156,7 @@ mod tests {
         context.push(make_message(id(3)));
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
-        assert_eq!(prefix.iter().map(|e| e.message.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
+        assert_eq!(prefix.iter().map(|e| e.entry.message.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
         assert!(context.prefix(&crate::digest::prompt("elsewhere")).is_none());
     }
 

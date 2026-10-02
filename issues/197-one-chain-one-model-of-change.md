@@ -196,3 +196,8 @@ meaning. Step 4 is the removal the whole thing is for.
   `Chain<…>` with their content's methods as inherent impls; `push_with`, `amend` and
   `amend_each` are `pub(crate)`; `MessageEntry` and its three helpers are gone. The runtime did
   not change: what it called on the wrappers it now calls on the chain.
+- **2026-10-02** — Step 2 done, taken out of the plan's step 4 and done before the content steps,
+  so that the readers of entries change once: the container owns the digest. `Node<E>` is public
+  with `digest`, `parent` and `entry`, `ChainEntry` is gone, `push_with` takes the entry and its
+  digest scheme, `entries`, `prefix`, `last` and `children` answer nodes, and a turn's pending
+  messages are nodes too (`TurnEntry::node`). The content types lost their `digest` field.
