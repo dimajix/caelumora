@@ -79,11 +79,12 @@ channels and agents:
     pending tool calls, plan, the turn's messages, changes not yet taken
     over). See [AGENT-TURN.md](AGENT-TURN.md).
 *   **`ExternalAgentChannelState`**: an external agent in one channel
-    (issue 179) - what was sent to it and what it answered, the remote
-    conversation, the tasks given to it that have not ended, and the last
-    message of the channel it was given. Kept under a key of its own, not as
-    an `AgentChannelState`: there is no turn and nothing of what we cannot
-    see.
+    (issue 179) - its history (all it heard and all it answered), its
+    transcript (what the remote agent was given of it), the remote
+    conversation and the tasks given to it that have not ended. History and
+    transcript are only ever appended to, for the record. Kept under a key
+    of its own, not as an `AgentChannelState`: there is no turn and nothing
+    of what we cannot see.
 *   **`AgentState`**: the agent itself, across its channels and - for agents
     of user or global scope - across sessions. So far it holds the agent's
     memory (`agent_memory`, see [MEMORY.md](MEMORY.md)).

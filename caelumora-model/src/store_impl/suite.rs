@@ -191,10 +191,16 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get agent channel state").turn.is_some(), "the stored state comes back");
 
     assert!(store.get_external_agent_channel_state(agent, channel).await.expect("a missing external agent channel state is no error").conversation.is_none());
-    let talking = ExternalAgentChannelState { conversation: Some(ConversationId("c-1".to_string())), ..ExternalAgentChannelState::default() };
+    let mut talking = ExternalAgentChannelState { conversation: Some(ConversationId("c-1".to_string())), ..ExternalAgentChannelState::default() };
+    let hello = crate::message::Message { content: Some("hello".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
+    let answer = crate::message::Message { content: Some("hi".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
+    talking.history.extend(vec![hello.clone(), answer]);
+    talking.transcript.extend(vec![hello]);
     store.put_external_agent_channel_state(agent, channel, &talking).await.expect("put external agent channel state");
     store.put_external_agent_channel_state(agent, other_channel, &talking).await.expect("put external agent channel state");
-    assert_eq!(store.get_external_agent_channel_state(agent, channel).await.expect("get").conversation, talking.conversation, "the stored state comes back");
+    let stored = store.get_external_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!(stored.conversation, talking.conversation, "the stored state comes back");
+    assert_eq!((stored.history.digest(), stored.transcript.digest()), (talking.history.digest(), talking.transcript.digest()), "with its history and its transcript");
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_some(), "the two states of one agent are kept apart");
 
     store.put_agent_state(agent, &AgentState::default()).await.expect("put agent state");

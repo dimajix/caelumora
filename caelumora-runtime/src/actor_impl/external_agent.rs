@@ -5,10 +5,11 @@
 //! answers, and it can be cancelled and stopped.
 //!
 //! It hears what the others say, as every participant does, and keeps it in
-//! its own history. When it is asked, it gives the remote agent what it
-//! heard since it was last asked, and publishes what comes back. What it
-//! heard and what came back is all that is known of it, and all that is kept
-//! (`ExternalAgentChannelState`); it reads nothing of the channel itself.
+//! its history, with its own answers. When it is asked, it gives the remote
+//! agent what it heard since it was last asked - kept as its transcript -
+//! and publishes what comes back. That is all that is known of it, and all
+//! that is kept (`ExternalAgentChannelState`); it reads nothing of the
+//! channel itself.
 
 use crate::actor::Actor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
@@ -140,16 +141,15 @@ impl ExternalAgentActor {
         token
     }
 
-    /// Keeps what others said in its history, for the remote agent to be
-    /// given when it is next asked - stored at once, so that a restart
-    /// loses none of it.
+    /// Keeps what others said in its history, all of it, for the record
+    /// and for the remote agent to be given when it is next asked - stored
+    /// at once, so that a restart loses none of it.
     async fn hear(&self, state: &mut ExternalAgentChannelState, messages: Vec<Message>) {
-        let heard = worth_hearing(messages, self.id());
-        if heard.is_empty() {
+        if messages.is_empty() {
             return;
         }
-        trace!("External agent {} hears {:?}", self.id(), heard.iter().map(|m| &m.content).collect::<Vec<_>>());
-        state.history.extend(heard);
+        trace!("External agent {} hears {:?}", self.id(), messages.iter().map(|m| &m.content).collect::<Vec<_>>());
+        state.history.extend(messages);
         if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
@@ -223,9 +223,7 @@ impl ExternalAgentActor {
         let mut stream = self.remote.send(&answering.security_context, state.conversation.as_ref(), OutboundMessage { said, answers: answers.clone() }).await?;
         // Sent: from now on the remote agent has heard it, whatever comes
         // back.
-        if let Some(last) = unheard.last() {
-            state.caught_up_to = Some(last.id);
-        }
+        state.transcript.extend(unheard);
 
         let mut task = answers;
         let mut answer = Answer::default();
@@ -338,25 +336,24 @@ impl Answer {
     }
 }
 
-/// Of `messages` that others said, those to give the remote agent: with
-/// text to give, and none of a plan's inner steps.
-pub(crate) fn worth_hearing(messages: Vec<Message>, own: ActorId) -> Vec<Message> {
-    messages.into_iter()
-        .filter(|m| m.sender_id != own && !m.internal)
-        .filter(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant))
-        .filter(|m| m.content.as_deref().is_some_and(|c| !c.is_empty()))
-        .collect()
+/// Whether the remote agent is given `message`: said by another, with text
+/// to give, and none of a plan's inner steps.
+fn worth_giving(message: &Message, own: ActorId) -> bool {
+    message.sender_id != own
+        && !message.internal
+        && matches!(message.role, MessageRole::User | MessageRole::Assistant)
+        && message.content.as_deref().is_some_and(|c| !c.is_empty())
 }
 
-/// What the agent heard that the remote agent was not given yet: what others
-/// said after `caught_up_to` - all they said, if it was never given
-/// anything.
+/// What the agent heard that the remote agent was not given yet: what came
+/// after the last message of its transcript - everything, if it was never
+/// given anything - and is worth giving.
 fn unheard(state: &ExternalAgentChannelState, own: ActorId) -> Vec<Message> {
     let heard = state.history.messages();
-    let after = state.caught_up_to
-        .and_then(|last| heard.iter().position(|m| m.id == last))
+    let after = state.transcript.messages().last()
+        .and_then(|last| heard.iter().position(|m| m.id == last.id))
         .map_or(0, |last| last + 1);
-    heard.into_iter().skip(after).filter(|m| m.sender_id != own).collect()
+    heard.into_iter().skip(after).filter(|m| worth_giving(m, own)).collect()
 }
 
 /// Records `task` as open, standing at `state`.
@@ -457,18 +454,15 @@ mod tests {
         let mine = Message { role: MessageRole::Assistant, ..said(own, "hermes", "hi") };
         let second = said(alice, "alice", "how are you?");
         let empty = Message { content: None, ..said(alice, "alice", "") };
-        let tool = Message { role: MessageRole::Tool, ..said(alice, "alice", "42") };
-
-        let heard = worth_hearing(vec![first.clone(), mine.clone(), empty, tool], own);
-        assert_eq!(heard.iter().map(|m| m.id).collect::<Vec<_>>(), vec![first.id], "what others said, with text");
+        let step = Message { internal: true, ..said(alice, "alice", "thinking") };
 
         let mut state = ExternalAgentChannelState::default();
-        state.history.extend(vec![first.clone(), mine, second.clone()]);
+        state.history.extend(vec![first.clone(), mine, empty, step, second.clone()]);
         let ids = |state: &ExternalAgentChannelState| unheard(state, own).into_iter().map(|m| m.id).collect::<Vec<_>>();
-        assert_eq!(ids(&state), vec![first.id, second.id], "never given anything: all, its own answers left out");
-        state.caught_up_to = Some(first.id);
+        assert_eq!(ids(&state), vec![first.id, second.id], "never given anything: what others said, with text");
+        state.transcript.extend(vec![first.clone()]);
         assert_eq!(ids(&state), vec![second.id], "after what it was given");
-        state.caught_up_to = Some(second.id);
+        state.transcript.extend(vec![second.clone()]);
         assert!(ids(&state).is_empty(), "nothing new");
     }
 

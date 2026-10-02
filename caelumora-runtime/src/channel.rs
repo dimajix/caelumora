@@ -546,12 +546,12 @@ impl ChannelLoop {
     }
 
     /// Appends to the history of the external agent `agent` in this channel
-    /// what others said in `visible` after the last message it has heard -
-    /// as `seed_transcript` does for an agent run here (issue 179). It is
-    /// given to the remote agent when it is next asked.
+    /// the messages of `visible` after the last one it has - as
+    /// `seed_transcript` does for an agent run here (issue 179). What others
+    /// said of it is given to the remote agent when it is next asked.
     async fn seed_heard(&self, agent: caelumora_model::agent::AgentId, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state_store.get_external_agent_channel_state(agent, self.id).await?;
-        let missing = crate::actor_impl::external_agent::worth_hearing(missing_after(&state.history.messages(), visible), ActorId::Agent(agent));
+        let missing = missing_after(&state.history.messages(), visible);
         if !missing.is_empty() {
             state.history.extend(missing);
             self.state_store.put_external_agent_channel_state(agent, self.id, &state).await?;
@@ -1319,7 +1319,7 @@ mod tests {
         channel.seed_heard(agent, vec![two.clone()]).await.unwrap();
         assert_eq!(heard(channel.clone()).await, ["two"], "what it may see");
         channel.seed_heard(agent, vec![one, two, own, three]).await.unwrap();
-        assert_eq!(heard(channel.clone()).await, ["two", "three"], "what it missed, and nothing older or its own");
+        assert_eq!(heard(channel.clone()).await, ["two", "mine", "three"], "what it missed, and nothing older");
     }
 
     fn command_error(error: &anyhow::Error) -> &crate::command::CommandError {
@@ -2533,7 +2533,9 @@ mod tests {
         assert_eq!(state.conversation, Some(conversation));
         assert!(state.open_tasks.is_empty(), "both tasks ended");
         let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
-        assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what was sent and what came back");
+        assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
+        let given: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given");
         running.abort();
     }
 

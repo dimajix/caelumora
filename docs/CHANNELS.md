@@ -293,12 +293,14 @@ An **actor** is anything that sends and receives events in a channel.
     decides it when it builds the actor (`Member::of`); the agent is
     `ActorId::Agent` either way, and nothing else - the participants, the
     REST API, the moderator - tells the two apart.
-*   **An external agent** has no turn, no tools and no transcript. Its
-    actor hears what others say, as every participant does, and keeps it
-    in its own history - seeded, when it joins, with what it may see of
+*   **An external agent** has no turn and no tools. Its actor hears what
+    others say, as every participant does, and keeps it in its history,
+    with its own answers - seeded, when it joins, with what it may see of
     the channel's, as an agent's transcript is; it reads nothing of the
     channel itself. When it is asked to respond, it gives the remote agent
-    what it heard since it was last asked and publishes what comes back:
+    what it heard after the last message it gave it - recorded in its
+    transcript, as an agent's transcript records what its model is given -
+    and publishes what comes back:
     pieces as `PartialMessageGenerated`, the answer as
     `FullResponseGenerated`, a task the remote agent failed as
     `TurnFailed`. A question back from the remote agent is its answer; the

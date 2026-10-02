@@ -592,3 +592,14 @@ Each step compiles, is tested, and leaves `main` working.
     none.
   - Answers classified above the channel are refused once, when the actor
     is built, rather than each dropped in silence by `ChannelLoop::admits`.
+- **2026-10-02** — History and transcript, as the maintainer asked: the
+  external agent keeps them as an agent run here does.
+  `ExternalAgentChannelState::history` is complete - all it heard, as the
+  moderator forwarded it, and all it answered - for the record;
+  `transcript` (a `Transcript`) is what the remote agent was given, in the
+  order it was given. Both are only ever appended to and are stored in
+  the `StateStore` with the rest of the state, after every message heard
+  and every answer. `caught_up_to` is gone: what the agent is given next
+  is what it heard after the last message of its transcript. What is
+  worth giving (by others, with text, no plan steps) is decided when it is
+  given, not when it is heard, so that the history stays complete.

@@ -4,8 +4,8 @@
 //! so what we keep is what passed between it and us, and the handles of the
 //! protocol that tie the next exchange to the last one.
 
-use crate::message::MessageId;
 use crate::message_history::MessageHistory;
+use crate::transcript::Transcript;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -54,20 +54,21 @@ pub struct OpenTask {
 }
 
 /// An external agent in one channel, as its `ExternalAgentActor` keeps it.
-/// Not an `AgentChannelState`: there is no turn, no transcript, no notes -
-/// nothing of what we cannot see (issue 179). Stored under a key of its own.
+/// Not an `AgentChannelState`: there is no turn, no notes - nothing of what
+/// we cannot see (issue 179). Stored under a key of its own. Its history and
+/// its transcript are only ever appended to, for the record.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExternalAgentChannelState {
-    /// What was sent to the remote agent and what it answered - all we know
-    /// of it (issue 06).
+    /// The conversation of the channel as the agent took part in it: all it
+    /// heard, and all it answered (issue 06).
     pub history: MessageHistory,
+    /// What the remote agent was given of it, in the order it was given -
+    /// all we know of what it knows. What the agent heard after the last of
+    /// these is what it is given next.
+    pub transcript: Transcript,
     /// The remote agent's conversation with this channel, once it opened
     /// one.
     pub conversation: Option<ConversationId>,
     /// The tasks given to it that have not ended.
     pub open_tasks: Vec<OpenTask>,
-    /// The last message of the channel's history the remote agent was given:
-    /// the next request catches it up on what was said after it. `None`
-    /// before the first request.
-    pub caught_up_to: Option<MessageId>,
 }
