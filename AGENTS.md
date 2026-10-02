@@ -51,8 +51,11 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
 *   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
     code. Keep the REST API compatible with `caelumora-web-ui`.
 *   A pure access question is a method of `AccessQuestions`, an operation checks its own permission
-    with `Enforcement::require`, and a frontend never asks the `SecurityManager` itself (see
-    [SECURITY.md](docs/SECURITY.md)).
+    with `Enforcement::require` - before it asks anything of others - and a frontend never asks the
+    `SecurityManager` itself (see [SECURITY.md](docs/SECURITY.md)).
+*   A new action that acts in someone's name, or a change to what an action asks, comes with its
+    test in the security suite (`caelumora-runtime/tests/security_suite.rs`, see
+    [SECURITY.md](docs/SECURITY.md#the-security-suite)).
 *   Markdown documents (`docs/`, `issues/`, this file) wrap prose at 100 characters. Headings,
     table rows, code blocks and links that would not fit stay on one line; field lines such as
     `**Status:**` keep a line of their own.

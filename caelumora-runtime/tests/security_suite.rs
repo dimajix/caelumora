@@ -667,6 +667,7 @@ async fn creating_a_channel_needs_owning_its_session() {
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec(vec![ActorId::User(world.bob)]))).await;
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
+        "alice: UpdateSession(alice's) yes",
         "alice: Classify yes",
         "alice: JoinChannel(alice) yes",
         "alice: JoinChannel(bob) yes",
@@ -680,14 +681,13 @@ async fn creating_a_channel_needs_owning_its_session() {
 /// Who may not create a channel is refused before anything is asked of
 /// the others in it (issue 198, F2).
 #[tokio::test]
-#[ignore = "issue 198, F2: today the participants' clearance is asked first"]
 async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let spec = ChannelSpec { name: Name::new("his").unwrap(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None };
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
-    assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -741,6 +741,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     let (added, asked) = world.asked(main.add_participant(&alice, ActorId::Agent(helper), HistoryAccess::All)).await;
     assert!(added.is_ok());
     assert_eq!(asked, checks(&[
+        "alice: UpdateChannel(alice's) yes",
         "alice as helper: GetPersonality(bob's) yes",
         "alice: JoinChannel(helper) yes",
         "alice: GetChannel(alice's) yes",
@@ -751,14 +752,13 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.unwrap();
     let (refused, asked) = world.asked(main.add_participant(&alice, ActorId::Agent(other), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
-    assert_eq!(asked, checks(&["alice as other: GetPersonality(bob's) no"]), "an agent that may not run is not added");
+    assert_eq!(asked, checks(&["alice: UpdateChannel(alice's) yes", "alice as other: GetPersonality(bob's) no"]), "an agent that may not run is not added");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
 /// Who may not change a channel is refused before anything is asked of
 /// the agent they would add (issue 198, F2).
 #[tokio::test]
-#[ignore = "issue 198, F2: today the agent's personality and clearance are asked first"]
 async fn who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at() {
     let world = World::new().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
@@ -767,7 +767,7 @@ async fn who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at()
     let main = session.channels()[0].clone();
     let (refused, asked) = world.asked(main.add_participant(&World::as_user(world.bob), ActorId::Agent(helper), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
-    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: UpdateChannel(alice's) no"]));
+    assert_eq!(asked, checks(&["bob: UpdateChannel(alice's) no"]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

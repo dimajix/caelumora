@@ -134,9 +134,9 @@ participants, stores the channel (`UpdateChannel` - only the owner) and announce
 `AgentChannelJoined`/`Left` or `UserChannelJoined`/`Left`. Events only announce; nothing changes a
 channel because an event arrived.
 
-Adding is additionally asked as `ActionType::JoinChannel` with the channel's classification, where a
-policy can hold the channel's level against the newcomer (see
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at (issue 198),
+and additionally as `ActionType::JoinChannel` with the channel's classification, where a policy can
+hold the channel's level against the newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 ### How much history a newcomer sees
 

@@ -139,6 +139,25 @@ extension trait on every `SecurityManager`. It answers a refusal with the operat
 `ActionType::describe`, which names the action and what identifies its object, never content such as
 a tool call's arguments.
 
+**The actor's own permission first.** An operation asks whether the actor may do it at all before
+it asks anything of others - a participant's clearance, an agent's personality (issue 198). Who may
+not do it is refused before the rest is looked at, and learns nothing of the others on the way:
+`create_channel` asks `UpdateSession` first, as `delete_channel` does; `add_participant` asks
+`UpdateChannel` first, as `remove_participant` does when the change is stored.
+
+## The security suite
+
+`caelumora-runtime/tests/security_suite.rs` (issue [198](../issues/198-security-scenarios.md)) runs
+the whole runtime with the ownership policy, as a frontend does, with users of different
+permissions. Its policy records every question it is asked; each test of an action asserts the
+questions asked in a user's name, in order, for the action's owner, someone taking part and a
+stranger. The suite is the record, in code, of which permissions each action needs, and issue 198
+says what is expected and why.
+
+**Every new action that acts in someone's name is added to the suite**, with what it asks and what
+it answers to each of them; so is every change to what an existing action asks. A test of the suite
+that changes is a change of the permissions an action needs, and is reviewed as one.
+
 ### Filters
 
 `SecurityManager::check` is called directly only by `AccessQuestions`, by `Enforcement` and by

@@ -1,6 +1,6 @@
 # 198 — Nothing says, end to end, what users with different permissions may do
 
-**Status:** in progress
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -63,14 +63,14 @@ being her agent `helper` acting on her behalf.
 | Open (start) a session | alice; bob, in it; carol | `GetSession`(alice's): yes, yes, no | `opening_a_session_needs_reading_it` |
 | Stop a session | carol; bob; alice | carol: `GetSession` no. bob: `GetSession` yes, `StopSession` no. alice: both yes | `stopping_a_session_needs_owning_it` |
 | Delete a session | carol; bob; alice | as stopping, with `DeleteSession` - asked twice for alice, by the session manager before it stops anything and by the store | `deleting_a_session_needs_owning_it` |
-| Create a channel | alice, with bob in it | `Classify`, `JoinChannel`(alice), `JoinChannel`(bob), `CreateChannel`(alice's), `GetSession`(alice's), `UpdateSession`(alice's) - all yes | `creating_a_channel_needs_owning_its_session` |
-| … by who may not | bob | expected: `CreateChannel`(alice's) no, nothing else - **F2** | `who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at` |
+| Create a channel | alice, with bob in it | `UpdateSession`(alice's), `Classify`, `JoinChannel`(alice), `JoinChannel`(bob), `CreateChannel`(alice's), `GetSession`(alice's), `UpdateSession`(alice's) - all yes | `creating_a_channel_needs_owning_its_session` |
+| … by who may not | bob | `UpdateSession`(alice's) no, nothing else - **F2** | `who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at` |
 | Delete a channel | bob; alice | bob: `GetSession` yes, `UpdateSession` no. alice: `GetSession`, `UpdateSession`, `GetChannel`, `DeleteChannel`(alice's) - yes | `deleting_a_channel_needs_owning_its_session` |
 | Make an agent | alice | only by making a session from a template: `ListAgents`, `GetPersonality`, `CreateAgent` above | `making_a_session_…` |
 | Delete an agent | bob, owner of its personality; alice, its owner | bob: `GetAgent`(alice's) no - nothing to delete. alice: `GetAgent`, `DeleteAgent`(alice's) yes | `deleting_an_agent_needs_owning_it` |
-| Add an agent to a channel | alice | `alice as helper: GetPersonality`(bob's), `JoinChannel`(helper), `GetChannel`(alice's), `UpdateChannel`(alice's) - all yes | `adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality` |
-| … whose personality was withdrawn | alice | `alice as other: GetPersonality`(bob's) no | same |
-| … by who may not | bob | expected: `GetChannel` yes, `UpdateChannel`(alice's) no, nothing else - **F2** | `who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at` |
+| Add an agent to a channel | alice | `UpdateChannel`(alice's), `alice as helper: GetPersonality`(bob's), `JoinChannel`(helper), `GetChannel`(alice's), `UpdateChannel`(alice's) - all yes | `adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality` |
+| … whose personality was withdrawn | alice | `UpdateChannel`(alice's) yes, `alice as other: GetPersonality`(bob's) no | same |
+| … by who may not | bob | `UpdateChannel`(alice's) no, nothing else - **F2** | `who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at` |
 | Remove an agent from a channel | bob; alice | `GetChannel` yes, `UpdateChannel`(alice's): no for bob, yes for alice; nothing of the agent | `removing_an_agent_needs_owning_the_channel` |
 
 **F2 - the actor's own permission comes last.** Creating a channel and adding a participant ask
@@ -143,7 +143,7 @@ be given.
 ## Done when
 
 - Every scenario and every action above has a test in the suite, and all of them pass.
-- P3 and F2 are decided and the runtime behaves as decided (P3 done).
+- P3 and F2 are decided and the runtime behaves as decided.
 - New permission rules come with a scenario here.
 
 ## History
@@ -165,3 +165,9 @@ be given.
   `Member::of` failing with not found or permission denied, its agent's personality gone or
   withdrawn - with a warning, as it leaves out one that no longer exists; a failing store still
   fails the channel. Its two tests run. CHANNELS.md says so under *Running channels*.
+- **2026-10-02** — F2 done, and the issue with it: `create_channel` asks `UpdateSession` and
+  `add_participant` asks `UpdateChannel` before anything of the others in the channel; the actor
+  who may not is refused at once. Their two tests run - all 24 of the suite pass. SECURITY.md has
+  the rule - the actor's own permission first - and a section on the suite, and AGENTS.md the rule
+  that every new action, and every change to what one asks, comes with its test in the suite. The
+  scenarios under *Not covered yet* are left for when their actions change.

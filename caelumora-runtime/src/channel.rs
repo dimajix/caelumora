@@ -525,6 +525,11 @@ impl ChannelLoop {
     /// `ChannelError::NotInSession`, `AlreadyParticipant` or `Forbidden`; a
     /// `StoreError` if `context` may not change the channel.
     pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
+        // Whether the actor may change the channel at all, before anything
+        // is asked of the participant (issue 198, F2): who may not learns
+        // nothing of its clearance or its personality.
+        let attributes = self.security_attributes();
+        self.require(context, ActionType::UpdateChannel(&attributes), "adding a participant to").await?;
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }

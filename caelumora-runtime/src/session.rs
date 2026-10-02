@@ -227,7 +227,12 @@ impl SessionLoop {
     /// - `StoreError::PermissionDenied` if `context` may not change the
     ///   session; nothing is changed then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
-        let session = self.session();
+        let session = Arc::clone(&self.session());
+        // Whether the actor may change the session at all, before anything
+        // is asked of the others in the channel (issue 198, F2): who may not
+        // learns nothing of their clearance.
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         let name = spec.name;
         if self.channels.iter().any(|entry| entry.channel.name() == name) {
             return Err(SessionError::DuplicateChannelName { session: self.id, name }.into());
@@ -251,7 +256,6 @@ impl SessionLoop {
         }
 
         let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, participants);
-        drop(session);
         crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
         let store = self.runtime_manager.entity_store();
         store.create_channel(context, &channel).await?;
