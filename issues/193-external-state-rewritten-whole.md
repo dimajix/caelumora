@@ -418,3 +418,7 @@ is left open until a step needs the answer - then it is done at once or opened a
   records what was added; `Journaled` (in `store`) with `AgentChannelStateChange`,
   `ExternalAgentChannelStateChange`, `ChannelStateChange` and `AgentStateChange`, each a variant
   per part of its state. The stores still write whole states; nothing stored changes its form.
+- **2026-10-02** — Paused after step 3. Reviewing steps 2 and 3 showed two models of change
+  over one chain and a type for every step between them; that is
+  [197](197-one-chain-one-model-of-change.md), to be done first. Steps 4 to 6 go on from there
+  with a journal that is the chain's stored form and has no `Amended`.

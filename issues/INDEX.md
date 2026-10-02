@@ -269,6 +269,7 @@ argues against it, and what came out of the last attempt.
 | [190](190-channel-seeds-actor-state.md) | done | The channel writes each actor kind's private state itself when a participant joins. |
 | [191](191-channel-runtime-hands-out-runtime-manager.md) | open | `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it. |
 | [196](196-perceive-processors-write-state.md) | done | Whether an agent's history is complete depends on two configurable components, and an external agent has no stage to filter what it perceives. |
+| [197](197-one-chain-one-model-of-change.md) | open | The ledger appends every change while the message chains amend entries in place, and six types stand between a chain and what it stores. |
 
 ## Integrations
 
