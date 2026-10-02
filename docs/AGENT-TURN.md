@@ -146,8 +146,12 @@ Both end the turn as an `EndedTurn`, which sends the turn's last event - `FullRe
 ### Storing and resuming
 
 The state is stored after every step, together with the state that comes next (issue 85). What a
-crash leaves in the store is the step still to do, not the one that is done. When the agent is
-loaded again, the turn is resumed (issue 75):
+crash leaves in the store is the step still to do, not the one that is done. What a step writes is
+what changed (issue 193, see [STORAGE.md](STORAGE.md#what-a-state-tells-a-store)): the messages
+and notes appended since the last step, the prompt texts and tool sets kept since, and the small
+parts whole - the processing state and the turn under way, which is changed in place and bounded
+by one turn. A step between turns, or one that only moved the actor on, writes the small parts
+alone. When the agent is loaded again, the turn is resumed (issue 75):
 
 *   `Planning` asks the model again with the turn so far.
 *   `Reflecting` takes the finished turn over.

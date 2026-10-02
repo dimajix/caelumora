@@ -37,3 +37,10 @@ history resumes as a different agent. A file store makes that a real risk under 
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-10-02** — Issue [193](193-external-state-rewritten-whole.md) decided the shape this store
+  inherits: every state is `Journaled`, its changes one enum with a variant per part, a chain's
+  as a `Stored<E>` - the nodes new or changed in their place, and the head - the small parts
+  whole. A Postgres `put` is a `match` over that enum: a node is a row upserted by its digest
+  (digest, parent, entry, and the branch remembered where it is not the newest), the head and a
+  small part a column of the state's row; a `get` reads the rows in the order they were added and
+  builds the chain through `Chain::apply`. The suite of `store_impl::suite` checks the contract.

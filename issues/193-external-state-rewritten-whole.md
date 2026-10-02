@@ -1,6 +1,6 @@
 # 193 — An external agent's state is rewritten whole for everything it hears
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -443,3 +443,10 @@ is left open until a step needs the answer - then it is done at once or opened a
   back, a journal that survived its snapshot replays without effect; a corrupt line before the
   last is a corrupt state. Tested for each. Hearing a message now costs the message's line,
   independent of the history's length.
+- **2026-10-02** — Step 6 done, and the issue with it: AGENT-TURN.md says what a step writes,
+  STORAGE.md what a state tells a store and how the JSON store keeps it, issue 04 what its store
+  inherits. Done when, checked: a message heard, a step of a turn, a message appended to a
+  channel's history and a change to an agent's memory each cost one line of the state's journal,
+  independent of the length of what came before; a snapshot is written only once the journal has
+  grown to its size, so the bytes written over a state's life are a small multiple of its final
+  size.
