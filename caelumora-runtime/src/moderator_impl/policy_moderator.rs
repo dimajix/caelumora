@@ -2,11 +2,17 @@
 //! it is configured with another (issue 174). It routes the way every
 //! channel routes - every message to every other participant, approvals,
 //! failed turns and commands to whom they concern, and a response request to
-//! every agent a user `@`-mentioned - and asks the `ResponderPolicy` of its
+//! every agent a message `@`-mentions - and asks the `ResponderPolicy` of its
 //! channel, its slot, whom to ask when nobody was mentioned (issue 44).
+//!
+//! An agent's message that makes other agents respond is a hop of a chain
+//! between agents, whether they were mentioned or chosen by the policy. The
+//! moderator counts the hops since the last user's message
+//! (`EventContext::agent_hops`) and asks nobody once they would exceed
+//! `max_agent_hops` (parameter, default `DEFAULT_MAX_AGENT_HOPS`; issue 45).
 
 use crate::actor::Actor;
-use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
+use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::moderator::{Moderator, RouteDecision};
 use crate::moderator_impl::ResponderPolicy;
 use async_trait::async_trait;
@@ -14,21 +20,27 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::{Message, MessageRole};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use tracing::warn;
+use tracing::{debug, warn};
 
 pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
 
+/// How many hops a chain between agents may have since the last user's
+/// message, unless the moderator is configured otherwise.
+pub const DEFAULT_MAX_AGENT_HOPS: u32 = 3;
+
 /// A moderator that routes like every other and asks whom `policy` chooses
-/// to respond when a message mentions nobody.
+/// to respond when a message mentions nobody - in a chain between agents
+/// only up to `max_agent_hops` hops.
 #[derive(Debug)]
 pub struct PolicyModerator {
     actors: Mutex<ModeratorActors>,
     policy: ComponentImpl<dyn ResponderPolicy>,
+    max_agent_hops: u32,
 }
 
 impl PolicyModerator {
-    pub fn new(policy: ComponentImpl<dyn ResponderPolicy>) -> Self {
-        Self { actors: Mutex::new(ModeratorActors::new()), policy }
+    pub fn new(policy: ComponentImpl<dyn ResponderPolicy>, max_agent_hops: u32) -> Self {
+        Self { actors: Mutex::new(ModeratorActors::new()), policy, max_agent_hops }
     }
 
     /// The actors, locked only while they are read or changed, never while
@@ -40,10 +52,22 @@ impl PolicyModerator {
     async fn route_full_response(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
         let (mut routes, mentioned, candidates) = {
             let actors = self.actors();
-            (actors.forward_routes(event, messages), actors.mentioned_responders(event, messages), actors.actor_candidates(messages))
+            (actors.forward_routes(event, messages), actors.mentioned_responders(messages), actors.actor_candidates(messages))
         };
         if routes.is_empty() {
             // Nothing anyone could answer, e.g. only tool calls.
+            return routes;
+        }
+
+        // A user's message starts a chain; whoever responds to an agent's
+        // is one hop further from it. Beyond the limit nobody is asked, and
+        // the policy is not consulted either, so a rotation is left as it is.
+        let agent_hops = match event.context.sender_id {
+            ActorId::Agent(_) => event.context.agent_hops + 1,
+            _ => 0,
+        };
+        if agent_hops > self.max_agent_hops {
+            debug!(agent_hops, "Asking nobody to respond: the chain between agents has reached its limit");
             return routes;
         }
 
@@ -53,8 +77,10 @@ impl PolicyModerator {
             Some(mentioned) => mentioned,
             None => self.policy.choose(event.context.sender_id, candidates).await,
         };
+        let mut request = event.forward(ActorEvent::ResponseRequested);
+        request.context.agent_hops = agent_hops;
         for id in responders {
-            routes.push((id, event.forward(ActorEvent::ResponseRequested)));
+            routes.push((id, request.clone()));
         }
         routes
     }
@@ -155,16 +181,12 @@ impl ModeratorActors {
     /// Agents explicitly addressed by `@`-mentions in `messages` (issue 29),
     /// or `None` if there are none - in which case the moderator applies its
     /// own policy. A mention overrides that policy: every mentioned agent is
-    /// asked to respond, and nobody else. Only mentions written by a user are
-    /// honoured; mentions in agent responses are rendered but not routed, so
-    /// two agents cannot address each other indefinitely. Sleeping agents are
-    /// not filtered out here - the channel wakes whom the moderator asks to
-    /// respond before it delivers anything of the decision.
-    fn mentioned_responders(&self, event: &Envelope, messages: &[Message]) -> Option<Vec<ActorId>> {
-        if !matches!(event.context.sender_id, ActorId::User(_)) {
-            return None;
-        }
-
+    /// asked to respond, and nobody else - whether a user or an agent wrote
+    /// it; the limit on hops between agents bounds the latter (issue 45).
+    /// Sleeping agents are not filtered out here - the channel wakes whom
+    /// the moderator asks to respond before it delivers anything of the
+    /// decision.
+    fn mentioned_responders(&self, messages: &[Message]) -> Option<Vec<ActorId>> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         let mut responders: Vec<ActorId> = Vec::new();
         for id in messages.iter().flat_map(|m| m.mentions.iter()) {
@@ -239,11 +261,16 @@ fn as_user_messages(messages: &[Message]) -> Vec<Message> {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(POLICY_MODERATOR_KIND).provides::<dyn Moderator>(),
-        |_descriptor, context| async move {
+        |descriptor, context| async move {
+            let max_agent_hops = match descriptor.params.get("max_agent_hops") {
+                None => DEFAULT_MAX_AGENT_HOPS,
+                Some(value) => value.as_u64().and_then(|hops| u32::try_from(hops).ok())
+                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_agent_hops' must be a number of at least 0".to_string()))?,
+            };
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy)));
+            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy, max_agent_hops)));
             Ok(facets)
         },
     );
@@ -340,16 +367,16 @@ mod tests {
     /// mentioned.
     fn answering_moderators() -> Vec<PolicyModerator> {
         vec![
-            PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy)),
-            PolicyModerator::new(policy(random_policy::RandomPolicy::new())),
-            PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default())),
-            PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy)),
+            PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS),
+            PolicyModerator::new(policy(random_policy::RandomPolicy::new()), DEFAULT_MAX_AGENT_HOPS),
+            PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS),
+            PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS),
         ]
     }
 
     fn moderators() -> Vec<PolicyModerator> {
         let mut all = answering_moderators();
-        all.push(PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy)));
+        all.push(PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS));
         all
     }
 
@@ -418,19 +445,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mentions_written_by_agents_are_not_routed() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy));
+    async fn every_moderator_asks_the_agents_an_agent_mentions_one_hop_further() {
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let event = message_from(agents[0], "@b, your turn", vec![agents[1]]);
+
+            let decision = moderator.route(&event).await;
+
+            assert_eq!(responders(&decision), vec![agents[1]], "{:?} must ask the agent an agent mentioned", moderator);
+            let request = decision.forwards.iter().find(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested)).map(|(_, e)| e);
+            assert_eq!(request.map(|e| e.context.agent_hops), Some(1), "{:?} must count the hop", moderator);
+        }
+    }
+
+    /// A message of `sender` in a chain `agent_hops` hops from the last
+    /// user's message.
+    fn hops_from(sender_id: ActorId, agent_hops: u32, mentions: Vec<ActorId>) -> Envelope {
+        let mut event = message_from(sender_id, "and you?", mentions);
+        event.context.agent_hops = agent_hops;
+        event
+    }
+
+    #[tokio::test]
+    async fn a_chain_between_agents_ends_at_the_limit_and_a_user_starts_a_new_one() {
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2);
         let agents = add_agents(&moderator);
-        let event = message_from(agents[0], "@b, your turn", vec![agents[1]]);
+        let hops_asked = |decision: &RouteDecision| decision.forwards.iter()
+            .filter(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested))
+            .map(|(_, e)| e.context.agent_hops)
+            .collect::<Vec<_>>();
 
-        let decision = moderator.route(&event).await;
+        let decision = moderator.route(&hops_from(agents[0], 1, Vec::new())).await;
+        assert_eq!(hops_asked(&decision), vec![2], "the policy's choice is a hop, too");
 
-        assert_eq!(responders(&decision), vec![agents[2]], "an agent's mention must not override the policy");
+        let decision = moderator.route(&hops_from(agents[0], 2, vec![agents[2]])).await;
+        assert!(responders(&decision).is_empty(), "beyond the limit nobody is asked, mentioned or not");
+        assert_eq!(receivers(&decision), HashSet::from([agents[1], agents[2]]), "but the message is still delivered");
+
+        let user = ActorId::User(UserId::new());
+        let decision = moderator.route(&hops_from(user, 2, Vec::new())).await;
+        assert_eq!(hops_asked(&decision), vec![0, 0], "a user's message starts a new chain");
+    }
+
+    #[tokio::test]
+    async fn the_limit_of_hops_is_a_parameter_of_the_moderator() {
+        use crate::component::{ComponentContainer, ComponentContext};
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::security::DummySecurityManager;
+        let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
+        let registry = Arc::new(ComponentRegistry::built_in(store));
+        let security = Arc::new(DummySecurityManager::new());
+        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], security.clone()));
+        let context = ComponentContext::new(SecurityContext::default(), security, secrets);
+        let configured = |max_agent_hops: serde_json::Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
+            ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
+        }] };
+
+        let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), &registry, &context).await.unwrap();
+        let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
+        let agents = add_agents(moderator.as_ref());
+        let decision = moderator.route(&message_from(agents[0], "@c", vec![agents[2]])).await;
+        assert!(responders(&decision).is_empty(), "with no hops allowed, agents answer only users");
+
+        let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), &registry, &context).await;
+        assert!(invalid.is_err(), "a negative limit is refused");
     }
 
     #[tokio::test]
     async fn mentions_only_asks_nobody_without_a_mention() {
-        let moderator = PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy));
+        let moderator = PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
@@ -438,13 +522,13 @@ mod tests {
         assert!(responders(&decision).is_empty(), "nobody was mentioned, so nobody answers");
         assert_eq!(receivers(&decision), agents.iter().copied().collect(), "every agent still receives the message");
 
-        let decision = moderator.route(&message_from(agents[0], "@b, your turn", vec![agents[1]])).await;
-        assert!(responders(&decision).is_empty(), "an agent's mention is not routed");
+        let decision = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await;
+        assert!(responders(&decision).is_empty(), "nor does anybody answer an agent without a mention");
     }
 
     #[tokio::test]
     async fn user_driven_asks_every_agent_for_a_user_and_nobody_for_an_agent() {
-        let moderator = PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy));
+        let moderator = PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
@@ -461,7 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn round_robin_takes_turns_and_a_mention_does_not_advance_it() {
-        let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()));
+        let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         let mut awake = vec![agents[0], agents[2]];

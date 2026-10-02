@@ -291,6 +291,7 @@ impl ExternalAgentActor {
                 // not forgotten while the remote agent goes on with it.
                 Step::Started(started) => {
                     set_open(state, &started, OpenTaskState::Working);
+                    set_requested(state, &started, &answering.event_context);
                     task = Some(started);
                     if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
                         warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
@@ -338,6 +339,8 @@ impl ExternalAgentActor {
     /// ends. When the task has ended or asks back, what came of it is said
     /// in the channel (`speak`); `pending` holds what came so far of each.
     async fn on_followed(&self, state: &mut ExternalAgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
+        // Read before the task may be closed by what comes of it.
+        let requested = requested_in(state, &task);
         let answer = pending.entry(task.clone()).or_insert_with(|| Answer::after(unsaid_of(state, &task)));
         let outcome = match event {
             // It is known to be open and working, and nobody waits for its
@@ -366,7 +369,7 @@ impl ExternalAgentActor {
         let answer = pending.remove(&task).unwrap_or_default();
         // Said now, if it asks back and stays open.
         set_unsaid(state, &task, None);
-        self.speak(state, outcome.map(|()| answer), output).await;
+        self.speak(state, requested, outcome.map(|()| answer), output).await;
     }
 
     /// Says in the channel, on the agent's own account, what came of an
@@ -374,14 +377,21 @@ impl ExternalAgentActor {
     /// failed: preceded by `WakeupRequested`, as a user's message is, so
     /// that the channel's sleeping agents hear it. What it says is kept in
     /// its history and stored first; a failure, as when it answers a
-    /// request, keeps nothing of what came before it.
-    async fn speak(&self, state: &mut ExternalAgentChannelState, outcome: Result<Answer, String>, output: &dyn EventSender) {
+    /// request, keeps nothing of what came before it. It speaks in the
+    /// context `requested` of the answer to the request that began the
+    /// task, continued: in its span, and as many hops between agents away
+    /// from the last user's message as that answer (issue 45). A task
+    /// stored before that context was kept starts afresh.
+    async fn speak(&self, state: &mut ExternalAgentChannelState, requested: Option<EventContext>, outcome: Result<Answer, String>, output: &dyn EventSender) {
         let Some(channel) = self.actor_runtime.channel_loop() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
         let speaking = Answering {
-            event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
+            event_context: match requested {
+                Some(requested) => requested.next(self.id(), self.name()),
+                None => EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
+            },
             security_context: self.security_context.clone(),
         };
         let events = match outcome {
@@ -568,13 +578,27 @@ fn unoffered(state: &ExternalAgentChannelState, own: ActorId) -> (Vec<Message>, 
 fn set_open(channel_state: &mut ExternalAgentChannelState, task: &TaskId, state: OpenTaskState) {
     match channel_state.open_tasks.iter_mut().find(|t| &t.task == task) {
         Some(open) => open.state = state,
-        None => channel_state.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None }),
+        None => channel_state.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, requested: None }),
     }
 }
 
 /// What came of the open `task` before and was not said yet.
 fn unsaid_of(state: &ExternalAgentChannelState, task: &TaskId) -> Option<String> {
     state.open_tasks.iter().find(|t| &t.task == task).and_then(|t| t.unsaid.clone())
+}
+
+/// The context of the answer to the request that began the open `task`,
+/// if it is kept.
+fn requested_in(state: &ExternalAgentChannelState, task: &TaskId) -> Option<EventContext> {
+    state.open_tasks.iter().find(|t| &t.task == task).and_then(|t| t.requested.clone())
+}
+
+/// Keeps `requested`, the context of the answer to the request that began
+/// or took up the open `task`, with it.
+fn set_requested(state: &mut ExternalAgentChannelState, task: &TaskId, requested: &EventContext) {
+    if let Some(open) = state.open_tasks.iter_mut().find(|t| &t.task == task) {
+        open.requested = Some(requested.clone());
+    }
 }
 
 /// Keeps `unsaid` with the open `task`, to be said when it ends.

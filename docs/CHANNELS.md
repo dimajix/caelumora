@@ -370,7 +370,8 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
 
 *   every message goes to every other participant;
 *   approvals, failed turns and announced commands go to whom they concern;
-*   every agent a user `@`-mentioned is asked to respond.
+*   every agent a message `@`-mentions is asked to respond;
+*   a chain between agents ends at a limit (see below).
 
 Whom it asks when a message mentions no agent is its slot, the channel's `ResponderPolicy`, which it
 asks for when it is built (`caelumora-runtime/src/moderator_impl/`). The policy is told who wrote
@@ -381,13 +382,31 @@ the message and which agents could answer. A new way of choosing who answers is 
 | `broadcast_policy` | every agent |
 | `round_robin_policy` (default) | the agents take turns, in the order of their ids; a mention does not take a turn |
 | `random_policy` | one agent, chosen at random |
-| `mentions_only_policy` | nobody: agents respond only when a user mentions them |
+| `mentions_only_policy` | nobody: agents respond only when someone mentions them |
 | `user_driven_policy` | every agent if a user wrote, nobody if an agent did |
 
 Under the first three, an agent's answer makes other agents answer too: the agents can discuss with
 each other. Under `user_driven_policy` (issue 175) the agents answer when a person writes and are
 quiet in between: an agent's message is still delivered to the other agents, into their transcripts,
 but starts no turn. Loops come from asking to respond, not from delivering.
+
+### Chains between agents
+
+An agent's message that makes other agents respond - because it mentions them, or because the policy
+chooses them - is a *hop* of a chain between agents (issue 45). `EventContext::agent_hops` counts
+the hops since the last message of a user: a user's actor starts every envelope at 0, `next` keeps
+the count, so an agent's answer carries the count of the request it answers, and the
+`policy_moderator` sets it one higher on the `ResponseRequested` it sends for an agent's message.
+Once that would exceed the moderator's parameter `max_agent_hops` (default 3), it asks nobody - nor
+its policy, so a rotation is left as it is. The message is still delivered. Nothing tells the users
+yet that the chain was cut off. With `max_agent_hops: 0`, agents answer only users.
+
+A user's message starts a new chain. What an external agent says unasked when a long task ends
+continues the context of its answer to the request that began the task (`OpenTask::requested`), so
+it is as many hops away as that answer was.
+
+`max_route_decisions` in the `ChannelLoop` is a different thing: a safety net against faulty
+routing, counted in routing steps (`span_depth`), not a rule for users.
 
 The REST API returns each channel's `moderator` and `responder_policy` - their kinds as configured,
 `null` for a preconfigured component (`ComponentRegistry::kind_of`) - and the web UI explains the
@@ -410,8 +429,10 @@ gets it, but every moderator (through the shared `ModeratorActors::mentioned_res
 `ResponseRequested` to exactly the mentioned agents instead of applying its own policy. Mentioned
 agents that are asleep are woken first (see *Waking*).
 
-Only mentions written by a user are routed. Mentions in agent responses are resolved and rendered
-but do not steer the moderator, so agents cannot address each other in an unbounded loop.
+Mentions written by agents are routed as well: an agent can hand a question to another
+(`@researcher, can you look this up?`). The limit on chains between agents keeps two agents from
+addressing each other indefinitely; an agent that mentions itself or an author of the message is
+not asked (`mentioned_responders` leaves out the senders).
 
 The REST API lists each channel's `members` in no particular order, each with its handle (`null` for
 participants that cannot be mentioned, such as approvers), which the web UI uses for `@` completion

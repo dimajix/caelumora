@@ -1,6 +1,6 @@
 # 45 — Mentions written by agents are not routed
 
-**Status:** in progress
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -141,3 +141,15 @@ enough across hops has to be checked.
   `ChannelLoop::wake_mentioned` is gone; `route_event_impl` wakes everyone the moderator's decision
   asks to respond before it delivers anything of it. One difference: a mention in a quiet channel no
   longer wakes the mentioned agent, since nobody is asked there. CHANNELS.md (*Waking*) says so.
+- **2026-10-03** — Done. `PolicyModerator` counts a hop for every `ResponseRequested` it sends for
+  an agent's message, mentioned or chosen by the policy, and sets `agent_hops` on it; beyond
+  `max_agent_hops` (parameter of the moderator component, default 3) it asks nobody and does not
+  consult its policy, silently. `mentioned_responders` routes mentions by agents too; the senders
+  stay left out. `OpenTask::requested` keeps the context of the answer to the request that began or
+  took up a task, and `ExternalAgentActor::speak` continues it - in the request's span and chain.
+  Agents learn the handles and the notation from `channel_members_prompt_provider` (176), where it
+  is configured. Tests: the moderator asks agents an agent mentions, under every policy, one hop
+  further; a chain ends at the limit while the message is still delivered, and a user's message
+  starts a new one; the limit is a parameter; what an open task says unasked stays in its request's
+  span. CHANNELS.md (*Chains between agents*), COMPONENTS.md, WEB-UI.md and the web UI's policy
+  descriptions are updated. Open: a hint to the users when a chain is cut off.

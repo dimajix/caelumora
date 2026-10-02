@@ -9,10 +9,10 @@ interface ResponderPolicyInfo {
 
 const RESPONDER_POLICIES: Record<string, ResponderPolicyInfo> = {
   broadcast_policy: {label: 'Everyone', description: 'Every agent answers every message.'},
-  mentions_only_policy: {label: 'Mentions only', description: 'Agents answer only when you @-mention them.'},
+  mentions_only_policy: {label: 'Mentions only', description: 'Agents answer only when @-mentioned, by you or by another agent.'},
   random_policy: {label: 'Random', description: 'One agent, chosen at random, answers each message.'},
   round_robin_policy: {label: 'Round robin', description: 'The agents take turns answering.'},
-  user_driven_policy: {label: 'Only to you', description: 'Every agent answers your messages, but not each other.'},
+  user_driven_policy: {label: 'Only to you', description: 'Every agent answers your messages; one answers another only when @-mentioned.'},
 };
 
 /** The policy kinds this UI knows, for choosing one (issue 09). */

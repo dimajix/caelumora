@@ -187,7 +187,7 @@ impl ActorEvent {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventContext {
     pub session_id: SessionId,
     pub channel_id: ChannelId,

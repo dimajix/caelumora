@@ -2908,6 +2908,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn what_an_open_task_says_unasked_continues_the_answer_to_its_request() {
+        use crate::external::{ExternalAgentError, ExternalEvent};
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
+        ]).resuming(vec![vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]]));
+        let Stuck { agent, mut events, running, .. } = with_an_external_agent(remote).await;
+
+        // The answer to the request, with nothing, and later what the task
+        // says unasked.
+        let contexts = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut contexts = Vec::new();
+            while contexts.len() < 2 {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) {
+                    contexts.push(envelope.context);
+                }
+            }
+            contexts
+        }).await.expect("answered, and said unasked");
+        assert_eq!(contexts[1].span_id, contexts[0].span_id, "in the span of the request");
+        assert_eq!(contexts[1].agent_hops, contexts[0].agent_hops, "as far from the last user's message as the answer (issue 45)");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
         use crate::external::{ExternalAgentError, ExternalEvent};
 
@@ -2966,8 +2992,8 @@ mod tests {
 
         let stored = ExternalAgentChannelState {
             open_tasks: vec![
-                OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None },
-                OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None },
+                OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, requested: None },
+                OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, requested: None },
             ],
             ..ExternalAgentChannelState::default()
         };
@@ -2990,7 +3016,7 @@ mod tests {
     fn working_on(open: &str) -> caelumora_model::external_agent::ExternalAgentChannelState {
         use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState};
         ExternalAgentChannelState {
-            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None }],
+            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, requested: None }],
             ..ExternalAgentChannelState::default()
         }
     }

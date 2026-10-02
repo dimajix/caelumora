@@ -4,6 +4,7 @@
 //! so what we keep is what passed between it and us, and the handles of the
 //! protocol that tie the next exchange to the last one.
 
+use crate::actor::EventContext;
 use crate::chain::Stored;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
@@ -58,6 +59,12 @@ pub struct OpenTask {
     /// the task ended: not said yet, but said - once - with the rest when
     /// the task ends (issue 195).
     pub unsaid: Option<String>,
+    /// The context of the answer to the request that began it, or took it
+    /// up again: what comes of it later is said in that context continued,
+    /// so that it stays in the span and the chain between agents of the
+    /// request (issue 45). `None` for a task stored before it was kept.
+    #[serde(default)]
+    pub requested: Option<EventContext>,
 }
 
 /// An external agent in one channel, as its `ExternalAgentActor` keeps it.
@@ -144,7 +151,7 @@ mod tests {
         state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
         state.offered_up_to = Some(id(2));
         state.conversation = Some(ConversationId("c-1".to_string()));
-        state.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()) });
+        state.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
         assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the three small parts");
         replayed(&state, &mut copy);
 

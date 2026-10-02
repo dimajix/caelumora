@@ -153,7 +153,8 @@ have changed.
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who
 answers - the channel's `responder_policy` (issue 174) - is shown above it as its moderator, and for
-`mentions_only_policy` the input says that agents answer only when mentioned (`moderator.ts`).
+`mentions_only_policy` the input says that agents answer only when mentioned (`moderator.ts`) - by
+a user or by another agent.
 
 Where `can_change` is set, the member list offers adding a participant of the session - with how
 much of the history they may see (`AddParticipantDialog`, issue 46) - and removing one. The channel
