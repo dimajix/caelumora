@@ -303,38 +303,41 @@ impl ExternalAgentActor {
     /// in the channel (`speak`); `pending` holds what came so far of each.
     async fn on_followed(&self, state: &mut ExternalAgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
         let answer = pending.entry(task.clone()).or_default();
-        let failed = match event {
+        let outcome = match event {
             // It is known to be open and working, and nobody waits for its
             // pieces: what it says is said once it ends.
             Some(Ok(event)) => match answer.take(state, Some(&task), event) {
                 Step::Continue | Step::Started(_) | Step::Partial(_) => return,
-                Step::Ended => None,
-                Step::Failed(reason) => Some(reason),
+                Step::Ended => Ok(()),
+                Step::Failed(reason) => Err(reason),
             },
+            // The task has not ended: nothing is said of it. What came so
+            // far waits for whatever comes after, if anything.
             Some(Err(e)) => {
-                // Left open, as far as anyone knows; the next run follows it again.
                 warn!("External agent {}: following its open task failed: {:#}", self.id(), e);
-                None
+                return;
             }
+            // Ended with the task still open, as far as anyone knows: what
+            // came of it is dropped, not said cut off - the next run follows
+            // it again and says it when it ends.
             None => {
-                if pending.get(&task).is_some_and(|a| a.is_empty()) {
-                    pending.remove(&task);
-                    return;
+                if pending.remove(&task).is_some_and(|a| !a.is_empty()) {
+                    warn!("External agent {}: the open task's stream ended before the task did", self.id());
                 }
-                warn!("External agent {}: the open task's stream ended before the task did", self.id());
-                None
+                return;
             }
         };
         let answer = pending.remove(&task).unwrap_or_default();
-        self.speak(state, answer, failed, output).await;
+        self.speak(state, outcome.map(|()| answer), output).await;
     }
 
     /// Says in the channel, on the agent's own account, what came of an
     /// open task - a long task finishing, a question back - or that it
     /// failed: preceded by `WakeupRequested`, as a user's message is, so
-    /// that the channel's sleeping agents hear it. Kept in its history and
-    /// stored first.
-    async fn speak(&self, state: &mut ExternalAgentChannelState, answer: Answer, failed: Option<String>, output: &dyn EventSender) {
+    /// that the channel's sleeping agents hear it. What it says is kept in
+    /// its history and stored first; a failure, as when it answers a
+    /// request, keeps nothing of what came before it.
+    async fn speak(&self, state: &mut ExternalAgentChannelState, outcome: Result<Answer, String>, output: &dyn EventSender) {
         let Some(channel) = self.actor_runtime.channel_loop() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
@@ -343,17 +346,18 @@ impl ExternalAgentActor {
             event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
             security_context: self.security_context.clone(),
         };
-        let message = self.record(state, answer, self.classification_in(channel.classification()));
+        let events = match outcome {
+            Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
+            // Nobody asked: it wakes the others to hear it - and says
+            // nothing if it has nothing to say.
+            Ok(answer) => match self.record(state, answer, self.classification_in(channel.classification())) {
+                Some(message) => std::iter::once(ActorEvent::WakeupRequested).chain(answered(Some(message))).collect(),
+                None => Vec::new(),
+            },
+        };
         if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
-        let events = match (failed, message) {
-            (Some(reason), _) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
-            // Nobody asked: it wakes the others to hear it - and says
-            // nothing if it has nothing to say.
-            (None, Some(message)) => std::iter::once(ActorEvent::WakeupRequested).chain(answered(Some(message))).collect(),
-            (None, None) => Vec::new(),
-        };
         speaking.send_all(events, output).await;
     }
 

@@ -1,6 +1,6 @@
 # 184 — A followed task's failure or broken stream is said wrongly
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -38,3 +38,12 @@ twice, once cut off.
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series; both cases confirmed in
   `external_agent.rs` (`speak`, `on_followed`).
+- **2026-10-02** — Done. `speak` takes the outcome of the task, an answer or the reason it failed;
+  a failure publishes `TurnFailed` and records nothing, as on the request path. `on_followed` says
+  nothing on a broken stream: what came so far waits for what may still come, and is dropped
+  without a word when the stream ends before the task did - the same half answer reached `speak`
+  through the stream's end, which follows the error. The task stays open and is followed again on
+  the next run. Tests: `a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_before`,
+  `a_followed_task_whose_stream_breaks_says_nothing_and_stays_open`. Not covered by a test: a
+  stream that ends without an error before its task ends - the scripted remote agent never ends
+  its streams.

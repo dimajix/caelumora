@@ -2772,4 +2772,63 @@ mod tests {
         assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
         running.abort();
     }
+
+    /// The state of an external agent with one task working, as a restart
+    /// finds it.
+    fn working_on(open: &str) -> caelumora_model::external_agent::ExternalAgentChannelState {
+        use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState};
+        ExternalAgentChannelState {
+            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working }],
+            ..ExternalAgentChannelState::default()
+        }
+    }
+
+    /// Whether `agent` said anything - a message or an answer - among the
+    /// events published so far.
+    fn said_anything(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> bool {
+        std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
+            envelope.context.sender_id == ActorId::Agent(agent)
+                && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_) | ActorEvent::FullResponseGenerated(_))
+        })
+    }
+
+    #[tokio::test]
+    async fn a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_before() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+            .resuming(vec![vec![Ok(ExternalEvent::Message("Half of it".to_string())), Ok(ExternalEvent::Failed("out of coffee".to_string()))]]));
+        let (channel, _, agent, _) = external_channel(remote, external_components(), Some(working_on("t-1"))).await.unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let failed = turn_failed(&mut events, agent).await;
+        assert!(failed.contains("hermes could not finish: out of coffee"), "{failed}");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.open_tasks.is_empty(), "the failed task ended");
+        assert!(state.history.messages().is_empty(), "nothing the channel never saw is kept as said");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
+        use crate::external::{ExternalAgentError, ExternalEvent};
+        use caelumora_model::external_agent::OpenTaskState;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+            .resuming(vec![vec![
+                Ok(ExternalEvent::Message("Half of it".to_string())),
+                Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() }),
+            ]]));
+        let (channel, _, agent, _) = external_channel(remote, external_components(), Some(working_on("t-1"))).await.unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(!said_anything(&mut events, agent), "no half answer is published");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)], "left open, to be followed again");
+        assert!(state.history.messages().is_empty(), "nothing is kept as said");
+        running.abort();
+    }
 }

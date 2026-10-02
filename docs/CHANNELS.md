@@ -262,9 +262,11 @@ An **actor** is anything that sends and receives events in a channel.
     answer broke off before the task ended, or the channel was restarted meanwhile. Its actor
     follows every task left working (`ExternalAgent::resume`) beside the channel's events, once per
     run, and says what came of it on its own account - preceded by `WakeupRequested`, as a user's
-    message is, so that sleeping agents hear it. While it answers a request, what its other tasks
-    send waits. What it heard and said is all that is known of it, kept as its
-    `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
+    message is, so that sleeping agents hear it. Only the end of a task is said: a failed task as
+    `TurnFailed`, keeping nothing of what came before, and a stream that breaks before the task
+    ends says nothing - the task stays open and is followed again on the next run. While it answers
+    a request, what its other tasks send waits. What it heard and said is all that is known of it,
+    kept as its `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately through `SecurityContext::system()`.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
