@@ -23,7 +23,7 @@ pub mod static_system_prompt_provider;
 /// `ContextProvider` as a facet of which an agent has exactly one, with its
 /// default kind (issue 99).
 pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn crate::context::ContextProvider>(state_context_provider::STATE_CONTEXT_PROVIDER_KIND);
+    registry.single::<dyn crate::context::ContextProvider>(Some(state_context_provider::STATE_CONTEXT_PROVIDER_KIND));
 
     agent_memory::register(registry);
     channel_history::register(registry);

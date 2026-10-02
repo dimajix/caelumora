@@ -33,8 +33,8 @@ pub trait ResponderPolicy: Send + Sync + Debug {
 /// moderator and its policy as facets of which a channel has exactly one,
 /// with their default kinds.
 pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn Moderator>(policy_moderator::POLICY_MODERATOR_KIND);
-    registry.single::<dyn ResponderPolicy>(round_robin_policy::ROUND_ROBIN_POLICY_KIND);
+    registry.single::<dyn Moderator>(Some(policy_moderator::POLICY_MODERATOR_KIND));
+    registry.single::<dyn ResponderPolicy>(Some(round_robin_policy::ROUND_ROBIN_POLICY_KIND));
 
     broadcast_policy::register(registry);
     mentions_only_policy::register(registry);

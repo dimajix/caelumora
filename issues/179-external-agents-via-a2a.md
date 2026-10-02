@@ -542,3 +542,22 @@ Each step compiles, is tested, and leaves `main` working.
   is removed again, `Personality.roles` and `limiting_roles` take its
   place. Opened [181](181-where-roles-decide.md): where roles enter a
   permission check at all has never been reviewed.
+- **2026-10-02** — Step 2 done: the facet `ExternalAgent` in
+  `caelumora-runtime/src/external.rs` with `send`, `resume`, `cancel` and
+  `classification`; `OutboundMessage` (what was `said`, by whom, and the
+  task it `answers`), `ExternalEvent`, `ExternalStream`, and
+  `ExternalAgentError`, shown to users like `LLMError` and never naming
+  the secret behind a failed credential. `ScriptedExternalAgent` is the
+  stand-in for the tests of step 3 on. `external_impl::register_all`
+  registers `ExternalAgent` as a single. Two deviations from the plan:
+  - `ExternalEvent` has one `Failed(reason)` for a task the remote agent
+    failed or refused, and no `AuthRequired` - the actor treats them
+    alike, and a protocol maps its own states onto them.
+  - The single has no default, decided with the maintainer: a single may
+    have none (`ComponentRegistry::single::<T>(None)`), and
+    `ComponentRegistry::verify` is gone. A container asked for a single it
+    does not provide and that has no default fails to build it, as one
+    whose default kind is not registered as providing it fails the first
+    time the default is needed. Rejected: `a2a_agent` as the default (A2A
+    as the silent protocol), a kind that only fails, and no single at all
+    (the actor counting its providers).

@@ -21,7 +21,7 @@ how the agent uses its components during a turn is in
 *   **`ComponentRegistry`** holds a factory per kind, together with the
     facets that kind provides. `ComponentRegistry::built_in` registers
     every built-in kind; the binaries hand it to the `RuntimeManager` as it
-    is, which checks it (`verify`) and applies `component_defaults`. A test
+    is, which applies `component_defaults`. A test
     registers kinds of its own in it first - a stand-in for the model, say
     (issue 130).
 *   **`ComponentContainer`** builds the components of a `ComponentConfig`
@@ -48,6 +48,7 @@ in the agent loop.
 | `PromptProvider` | prompt parts | `crate::context` |
 | `ContextProvider` | what the model is given | `crate::context` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
+| `ExternalAgent` | the remote agent an external personality's agents are (issue 179) | `crate::external` |
 | `PerceiveInProcessor` | handling of incoming messages | `crate::message` |
 | `EmitOutProcessor` | handling of outgoing messages | `crate::message` |
 | `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
@@ -89,18 +90,23 @@ Components are wired the way Spring Boot wires beans (issue 99).
 ### Facets of which there is exactly one
 
 Of some facets an agent has exactly one: the `ContextProvider` (issue 98),
-the `ToolExecutor` (issue 127) and the `LLMClient` (issue 130); a channel
-has exactly one `Moderator` and one `ResponderPolicy` (issue 174). They are
-registered with
+the `ToolExecutor` (issue 127) and the `LLMClient` (issue 130), an external
+agent exactly one `ExternalAgent` (issue 179); a channel has exactly one
+`Moderator` and one `ResponderPolicy` (issue 174). They are registered with
 `ComponentRegistry::single::<T>(default_kind)` in the `register_all` of
 the directory that holds the default kind (`component_impl`, `tool_impl`,
-`llm_impl`, `moderator_impl`).
+`llm_impl`, `external_impl`, `moderator_impl`).
 
 *   Two components of one container that provide such a facet are refused
     before anything is built.
 *   If none does, a default is built the first time the facet is asked for
     (`ComponentContainer::one`, `ComponentContext::one`). A container that
     never asks - a session's commands, say - never builds one.
+*   A single may have no default (`single::<T>(None)`) where none makes
+    sense: of `ExternalAgent`, the remote agent is always named. A
+    container that is asked for it and provides none fails then, as it
+    does if a default kind is not registered as providing the facet -
+    nothing is checked beforehand.
 *   What a container's single is, is known without building it:
     `ComponentRegistry::kind_of` names the kind of the component that
     provides it, or of the default - `None` if the container refers to a
@@ -156,6 +162,7 @@ component kind**, named after the kind (`calculator_tool.rs`, `notes.rs`,
 | `tool_impl/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
 | `command_impl/` | command providers (`help_command`, `wakeup_command`) |
 | `llm_impl/` | language models (`ollama_client`) |
+| `external_impl/` | the ways to reach an external agent (issue 179) |
 | `moderator_impl/` | the moderator and its responder policies |
 | `component_impl/` | everything else, and every component that offers several facets |
 

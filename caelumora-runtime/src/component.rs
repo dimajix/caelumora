@@ -190,11 +190,12 @@ struct Registration {
 }
 
 /// A facet of which there is exactly one per container, with the kind that
-/// is built if no component of the container provides it.
+/// is built if no component of the container provides it - if there is one
+/// that makes sense.
 #[derive(Debug, Clone)]
 struct Single {
     facet: FacetType,
-    default_kind: String,
+    default_kind: Option<String>,
 }
 
 /// Reserved `kind` that resolves to a preconfigured component stored in the `EntityStore`
@@ -235,8 +236,8 @@ impl ComponentRegistry {
     }
 
     /// A registry with every built-in component kind (the `register_all` of
-    /// `component_impl`, `tool_impl`, `command_impl`, `llm_impl` and
-    /// `moderator_impl`), resolving references to
+    /// `component_impl`, `tool_impl`, `command_impl`, `llm_impl`,
+    /// `external_impl` and `moderator_impl`), resolving references to
     /// preconfigured components in `entity_store`. A binary passes it to
     /// the `RuntimeManager` as it is; a test may register kinds of its own
     /// first, such as a stand-in for the model.
@@ -246,6 +247,7 @@ impl ComponentRegistry {
         crate::tool_impl::register_all(&mut registry);
         crate::command_impl::register_all(&mut registry);
         crate::llm_impl::register_all(&mut registry);
+        crate::external_impl::register_all(&mut registry);
         crate::moderator_impl::register_all(&mut registry);
         registry
     }
@@ -275,28 +277,12 @@ impl ComponentRegistry {
 
     /// Makes `T` a facet of which there is exactly one per container, built
     /// from `default_kind` - unless the configuration names another default
-    /// (`set_defaults`) - if no component of the container provides it.
-    pub fn single<T: ?Sized + 'static>(&mut self, default_kind: &str) {
+    /// (`set_defaults`) - if no component of the container provides it. With
+    /// no default, a container that is asked for `T` and provides none fails
+    /// to build it (issue 179: a remote agent has no default).
+    pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
         let facet = FacetType::of::<T>();
-        self.singles.insert(facet.id, Single { facet, default_kind: default_kind.to_string() });
-    }
-
-    /// Checks that the default kind of every single is registered and
-    /// provides it.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` naming the facet and kind otherwise.
-    pub fn verify(&self) -> ComponentResult<()> {
-        for single in self.singles.values() {
-            let provided = self.kinds.get(&single.default_kind)
-                .is_some_and(|registration| registration.provides.iter().any(|f| f.id == single.facet.id));
-            if !provided {
-                return Err(ComponentError::InvalidConfig(format!(
-                    "the default kind '{}' of {} is not registered as providing it", single.default_kind, single.facet.name
-                )));
-            }
-        }
-        Ok(())
+        self.singles.insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
     }
 
     /// Takes the configuration's defaults (`AppConfig::component_defaults`):
@@ -359,13 +345,14 @@ impl ComponentRegistry {
     }
 
     /// What is built for the single `facet` if no component of a container
-    /// provides it: the configuration's default, or else the default kind.
+    /// provides it: the configuration's default, or else the default kind,
+    /// if it has one.
     fn default_of(&self, facet: TypeId) -> Option<ComponentDescriptor> {
         if let Some(descriptor) = self.defaults.get(&facet) {
             return Some(descriptor.clone());
         }
-        let single = self.singles.get(&facet)?;
-        Some(ComponentDescriptor::new(&single.default_kind, &single.default_kind))
+        let kind = self.singles.get(&facet)?.default_kind.as_deref()?;
+        Some(ComponentDescriptor::new(kind, kind))
     }
 
     /// `node` itself, or - for `kind: "ref"` - the preconfigured descriptor
@@ -561,7 +548,7 @@ impl Graph {
     /// The default for the single `facet`, built if it is not yet.
     async fn default(self: &Arc<Self>, facet: FacetType, asked: Option<(&str, FacetType)>) -> ComponentResult<Arc<ComponentNode>> {
         let descriptor = self.registry.default_of(facet.id)
-            .ok_or_else(|| ComponentError::InvalidConfig(format!("{} has no default", facet.name)))?;
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("no component provides {}, and it has no default", facet.name)))?;
         {
             let mut defaults = self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match defaults.get(&facet.id) {
@@ -571,6 +558,14 @@ impl Graph {
             }
         }
         let provides = self.registry.provides(&descriptor.kind).unwrap_or_default().to_vec();
+        if !provides.iter().any(|f| f.id == facet.id) {
+            // A kind registered in code under a name that is wrong, or
+            // registered without the facet: a mistake no configuration can
+            // make, found the first time the default is needed.
+            return Err(ComponentError::InvalidConfig(format!(
+                "the default kind '{}' of {} is not registered as providing it", descriptor.kind, facet.name
+            )));
+        }
         let node = self.construct(&descriptor, &provides).await?;
         self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(facet.id, State::Built(node.clone()));
         Ok(node)
@@ -900,14 +895,13 @@ mod tests {
         });
         registry.register(ComponentKind::new("other").provides::<dyn Choice>(), move |descriptor, _| Ok(choice(&descriptor.id)));
         registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
-        registry.single::<dyn Choice>("default");
+        registry.single::<dyn Choice>(Some("default"));
         (registry, built)
     }
 
     #[tokio::test]
     async fn of_a_single_facet_there_is_the_configured_one_or_the_default_built_when_first_asked_for() {
         let (registry, built) = choices();
-        registry.verify().expect("the default kind provides the facet");
         let registry = Arc::new(registry);
 
         let without = ComponentContainer::from_config(&config(&[("a", "part")]), &registry, &test_context()).await.unwrap();
@@ -962,9 +956,26 @@ mod tests {
             let message = registry.set_defaults(&nodes).expect_err(expected).to_string();
             assert!(message.contains(expected), "{message}");
         }
+    }
 
-        registry.single::<dyn Named>("missing");
-        assert!(registry.verify().is_err(), "a default kind that is not registered");
+    #[tokio::test]
+    async fn a_single_without_a_usable_default_fails_where_it_is_asked_for() {
+        let (mut registry, _) = choices();
+        registry.single::<dyn Named>(None);
+        let registry = Arc::new(registry);
+        let built = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.expect("nobody asked for it");
+        let message = built.one::<dyn Named>().await.expect_err("there is none").to_string();
+        assert!(message.contains("no component provides Named, and it has no default"), "{message}");
+        assert_eq!(registry.kind_of::<dyn Named>(&config(&[])), None, "no kind to tell");
+        let provided = ComponentContainer::from_config(&config(&[("a", "part")]), &registry, &test_context()).await.unwrap();
+        assert_eq!(provided.one::<dyn Named>().await.expect("the container's own").id, "a");
+
+        let (mut registry, _) = choices();
+        registry.single::<dyn Named>(Some("missing"));
+        let registry = Arc::new(registry);
+        let built = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.unwrap();
+        let message = built.one::<dyn Named>().await.expect_err("a default kind that is not registered").to_string();
+        assert!(message.contains("the default kind 'missing' of Named is not registered as providing it"), "{message}");
     }
 }
 

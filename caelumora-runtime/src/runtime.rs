@@ -257,7 +257,6 @@ impl RuntimeManager {
         component_defaults: ComponentConfig,
         mut component_registry: ComponentRegistry,
     ) -> ComponentResult<Self> {
-        component_registry.verify()?;
         component_registry.set_defaults(&component_defaults)?;
 
         let event_bus = Arc::new(EventBus::new(security_manager.clone()));

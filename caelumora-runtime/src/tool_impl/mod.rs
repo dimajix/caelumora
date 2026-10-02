@@ -15,7 +15,7 @@ pub mod stop_tool;
 /// Registers the tool kinds with `registry`, and the `ToolExecutor` as a
 /// facet of which an agent has exactly one, with its default kind.
 pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn crate::tool::ToolExecutor>(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND);
+    registry.single::<dyn crate::tool::ToolExecutor>(Some(default_tool_executor::DEFAULT_TOOL_EXECUTOR_KIND));
 
     calculator_tool::register(registry);
     default_tool_executor::register(registry);

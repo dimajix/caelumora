@@ -9,6 +9,7 @@
 
 use crate::command::CommandError;
 use crate::component::ComponentError;
+use crate::external::ExternalAgentError;
 use crate::llm::LLMError;
 use crate::session::SessionError;
 use crate::tool::ToolError;
@@ -24,6 +25,8 @@ use caelumora_model::template::TemplateError;
 pub fn user_message(error: &anyhow::Error) -> Option<String> {
     error.chain().find_map(|e| {
         if let Some(e) = e.downcast_ref::<LLMError>() {
+            Some(e.to_string())
+        } else if let Some(e) = e.downcast_ref::<ExternalAgentError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ComponentError>() {
             Some(e.to_string())
