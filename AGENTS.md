@@ -90,6 +90,39 @@ When a proposal adds a second implementation of something that exists, look for 
 the two that have no reason — naming, construction, error handling — and propose aligning them, in
 whichever direction is the better one. A deliberate difference is fine, but say why it exists.
 
+### Keeping the big picture
+A feature is not done when it works, but when the code around it still reads as if it had been
+designed with the feature in mind. Before implementing, ask where the new thing belongs in the
+overall structure; if it only fits by bending the existing code, propose the refactoring that makes
+room for it first - as an architecture decision, with what it costs - instead of building the
+feature in somehow. Proposing such refactorings is part of the work, not an extra.
+
+*   **Few generic types, not many helpers.** A new type or trait needs a responsibility of its own.
+    One that only bundles parameters, wraps a single call, or serves a single call site is a sign
+    that the responsibility belongs to an existing type. Before adding a trait, check whether an
+    existing one can be generalized to cover the case; before adding a family of near-identical
+    types, check whether one generic type would do.
+*   **One owner per concern.** Every crate, module and type can be described in one sentence; if
+    the description of a change needs an "and also", something is on the wrong object. Logic that
+    belongs together by subject lives together - its data, rules and checks in one place - and is
+    not spread over crates because its callers happen to be there: `caelumora-model` holds data
+    and rules, `caelumora-runtime` everything that runs, `caelumora-rest-server` only maps HTTP to
+    the runtime (see [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an
+    owner does not offer, extend the owner rather than computing it at the caller.
+*   **A clear and consistent public API.** The same concept has the same name everywhere (the
+    `…_id` of what it identifies, `load_…` for loading, `…Provider` for a facet). Similar things
+    are constructed, configured and fail the same way. Make visible only what is used from outside
+    (`pub(crate)`, `pub(super)` by default), and do not expose internals that make callers rebuild
+    logic the owner should provide.
+*   **No repeated logic.** When writing something that resembles existing code - a second `match`
+    over the same kinds, a second copy of a check, a conversion done again - move it to one place
+    (a method of the type it is about, a shared function, a generic) before adding the second use,
+    not after the third. Repetition already present that your change touches is worth naming.
+*   **Debt is raised, not built around.** Structural problems you notice next to your change go into
+    your summary as a proposed refactoring or a new issue - never silently worked around.
+*   **Restructure, then extend.** A refactoring that prepares a feature is a step of its own,
+    without behaviour changes, so that both can be reviewed separately.
+
 ### Branches and commits
 Until further notice, work directly on `main`. Do not create feature branches unless asked to.
 
