@@ -374,10 +374,10 @@ impl ExternalAgentActor {
 
     /// Says in the channel, on the agent's own account, what came of an
     /// open task - a long task finishing, a question back - or that it
-    /// failed: preceded by `WakeupRequested`, as a user's message is, so
-    /// that the channel's sleeping agents hear it. What it says is kept in
-    /// its history and stored first; a failure, as when it answers a
-    /// request, keeps nothing of what came before it. It speaks in the
+    /// failed. It wakes nobody: sleeping agents hear it all the same, and
+    /// only one it mentions is woken, to answer it (issue 199). What it
+    /// says is kept in its history and stored first; a failure, as when it
+    /// answers a request, keeps nothing of what came before it. It speaks in the
     /// context `requested` of the answer to the request that began the
     /// task, continued: in its span, and as many hops between agents away
     /// from the last user's message as that answer (issue 45). A task
@@ -396,10 +396,9 @@ impl ExternalAgentActor {
         };
         let events = match outcome {
             Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
-            // Nobody asked: it wakes the others to hear it - and says
-            // nothing if it has nothing to say.
+            // Nobody asked: it says nothing if it has nothing to say.
             Ok(answer) => match self.record(state, answer, self.classification_in(channel.classification())) {
-                Some(message) => std::iter::once(ActorEvent::WakeupRequested).chain(answered(Some(message))).collect(),
+                Some(message) => answered(Some(message)),
                 None => Vec::new(),
             },
         };

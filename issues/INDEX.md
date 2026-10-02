@@ -98,7 +98,7 @@ argues against it, and what came out of the last attempt.
 | [174](174-moderator-as-component.md) | done | The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended. |
 | [175](175-user-driven-moderator.md) | done | There is no moderator under which every agent answers a person's message but no agent's message makes another agent answer. |
 | [187](187-deleted-channel-keeps-remote-tasks.md) | done | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
-| [199](199-external-agent-speak-wakes-all.md) | open | An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither. |
+| [199](199-external-agent-speak-wakes-all.md) | done | An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither. |
 
 ## Identity and access management
 

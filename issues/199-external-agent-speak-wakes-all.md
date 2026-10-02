@@ -1,6 +1,6 @@
 # 199 — An external agent's report wakes every agent
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -49,3 +49,9 @@ answering.
 ## History
 
 - **2026-10-02** — Issue created while discussing [45](45-agent-mentions.md).
+- **2026-10-03** — Done. `ExternalAgentActor::speak` no longer sends a `WakeupRequested`: the
+  report is delivered to every agent, sleeping or not, and wakes only an agent it mentions, which
+  the channel wakes because the moderator asks it to respond (45). A quiet channel stays quiet.
+  The test of a followed task's report now expects no `WakeupRequested`; that an agent not asked
+  keeps sleeping is covered by `the_channel_wakes_only_whom_the_moderator_asks_to_respond`.
+  CHANNELS.md no longer gives sleeping agents' hearing as the reason for a wakeup.

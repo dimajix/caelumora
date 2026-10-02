@@ -2899,7 +2899,7 @@ mod tests {
                 }
             }
         }).await.expect("said without being asked");
-        assert!(woke, "the channel's agents are woken for it, as for a user's message");
+        assert!(!woke, "nobody is woken for it: sleeping agents hear it all the same (issue 199)");
         assert_eq!(said[0].content.as_deref(), Some("Here it is."));
         let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
         assert!(state.open_tasks.is_empty(), "the task ended");

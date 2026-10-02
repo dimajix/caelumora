@@ -299,10 +299,12 @@ An **actor** is anything that sends and receives events in a channel.
     rather than cut off: what came so far is kept with the open task (`OpenTask::unsaid`) and said
     once, with the rest, when the task ends - not twice if the remote agent gives its whole result
     again (issue 195). Its actor follows every task left working (`ExternalAgent::resume`) beside
-    the channel's events, once per run, and says what came of it on its own account - preceded by
-    `WakeupRequested`, as a user's message is, so that sleeping agents hear it. Only the end of a
-    task is said: a failed task as `TurnFailed`, keeping nothing of what came before, and a stream
-    that breaks before the task ends says nothing - the task stays open and is followed again on the
+    the channel's events, once per run, and says what came of it on its own account, in the
+    context of its answer to the request that began the task (issue 45). It wakes nobody and does
+    not end a quiet channel: sleeping agents hear it all the same, and only an agent it mentions is
+    woken, to answer it (issue 199). Only the end of a task is said: a failed task as
+    `TurnFailed`, keeping nothing of what came before, and a stream that breaks before the task
+    ends says nothing - the task stays open and is followed again on the
     next run. While it answers a request, what its other tasks send waits. What it heard and said is
     all that is known of it, kept as its `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
