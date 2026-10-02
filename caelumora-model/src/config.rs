@@ -228,7 +228,7 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
     /// The user commands every session has (issue 28), as `CommandProvider`
     /// components; a session template can add its own. Defaults to `/help`
-    /// and `/wakeup`; an empty `component_nodes` list switches them off.
+    /// and `/wakeup`; an empty list switches them off.
     pub commands: ComponentConfig,
     /// Components that replace the built-in default of a facet of which an
     /// agent has exactly one (issue 99) - the model it talks to (issue 130)
@@ -570,7 +570,7 @@ users:
         assert_eq!(AppConfig::default().commands.component_nodes.len(), expected);
         assert_eq!(AppConfig::from_yaml("persistence: {}").unwrap().commands.component_nodes.len(), expected);
 
-        let config = AppConfig::from_yaml("commands:\n  component_nodes: []\n").unwrap();
+        let config = AppConfig::from_yaml("commands: []\n").unwrap();
         assert!(config.commands.component_nodes.is_empty(), "an explicit empty list means no global commands");
     }
 

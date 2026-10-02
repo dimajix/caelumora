@@ -5,10 +5,11 @@ use serde_json::Value;
 
 /// The components of a personality, a template or the configuration -
 /// written by hand (configuration, seed files), so the fields with a
-/// default may be left out there (issue 108).
+/// default may be left out there (issue 108). Written as the list of its
+/// descriptors, directly under the key that holds it (issue 201).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ComponentConfig {
-    #[serde(default)]
     pub component_nodes: Vec<ComponentDescriptor>,
 }
 

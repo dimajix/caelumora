@@ -1,6 +1,6 @@
 # 201 — Components are written one level deeper than they need to be
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -55,3 +55,9 @@ planned to be.
 - **2026-10-03** — Issue created, after setting `max_agent_hops` in the seed's channels raised why
   `components` still holds a `component_nodes`. Decided: old stored data may be deleted, no
   migration and no transition deserializer.
+- **2026-10-03** — Done. `ComponentConfig` stays as it is in code, field `component_nodes`
+  included; only its serialized form changes: `#[serde(transparent)]` writes and reads it as the
+  list of its descriptors. The seed, `examples/config.yaml`, CHANNELS.md, CONFIGURATION.md and
+  COMPONENTS.md use the new form, as do the two tests that wrote the old one. The REST API takes no
+  components as such (a channel's request names its moderator and policy by kind), and the web UI
+  reads none.

@@ -54,11 +54,10 @@ users:
 # session template can add its own under `commands`. Without this section the
 # built-in ones are used; an empty list switches them off.
 #commands:
-#  component_nodes:
-#    - id: help
-#      kind: help_command
-#    - id: wakeup
-#      kind: wakeup_command
+#  - id: help
+#    kind: help_command
+#  - id: wakeup
+#    kind: wakeup_command
 
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
@@ -69,18 +68,17 @@ users:
 # the model, `ollama_client` with the Ollama server at 127.0.0.1:11434 and
 # the model gemma4:26b.
 #component_defaults:
-#  component_nodes:
-#    - id: model
-#      kind: ollama_client
-#      params:
-#        endpoint:
-#          url: "http://127.0.0.1:11434"
-#        model: "gemma4:26b"
-#        think: true
-#        reasoning_history: current_turn
-#        system_messages: only_at_start
-#    - id: context
-#      kind: state_context_provider
+#  - id: model
+#    kind: ollama_client
+#    params:
+#      endpoint:
+#        url: "http://127.0.0.1:11434"
+#      model: "gemma4:26b"
+#      think: true
+#      reasoning_history: current_turn
+#      system_messages: only_at_start
+#  - id: context
+#    kind: state_context_provider
 
 # Who may do what (issue 11). `ownership` - the default - lets owners do
 # everything with their sessions, agents and templates, contributors (e.g.

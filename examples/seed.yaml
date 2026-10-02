@@ -18,66 +18,64 @@ personalities:
   introduction: A self-made millionaire who always wanted to be a quiz-master - polite, helpful and
     fond of a good quiz.
   components:
-    component_nodes:
-    - id: system-prompt
-      kind: static_system_prompt_provider
-      params:
-        prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
-          and helpful.
-      fail_policy: FailClosed
-    - id: channel-members
-      kind: channel_members_prompt_provider
-      fail_policy: FailClosed
-    - id: create-plan-tool
-      kind: create_plan_tool
-      fail_policy: FailClosed
-    - id: calculator-tool
-      kind: calculator_tool
-      fail_policy: FailClosed
-    - id: notes
-      kind: notes
-      fail_policy: FailClosed
-    - id: memory
-      kind: agent_memory
-      fail_policy: FailClosed
-    - id: channel-history
-      kind: channel_history
-      fail_policy: FailClosed
-    - id: stop-tool
-      kind: stop_tool
-      fail_policy: FailClosed
+  - id: system-prompt
+    kind: static_system_prompt_provider
+    params:
+      prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
+        and helpful.
+    fail_policy: FailClosed
+  - id: channel-members
+    kind: channel_members_prompt_provider
+    fail_policy: FailClosed
+  - id: create-plan-tool
+    kind: create_plan_tool
+    fail_policy: FailClosed
+  - id: calculator-tool
+    kind: calculator_tool
+    fail_policy: FailClosed
+  - id: notes
+    kind: notes
+    fail_policy: FailClosed
+  - id: memory
+    kind: agent_memory
+    fail_policy: FailClosed
+  - id: channel-history
+    kind: channel_history
+    fail_policy: FailClosed
+  - id: stop-tool
+    kind: stop_tool
+    fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
   description: A sassy and witty assistant
   introduction: A witty and slightly sarcastic assistant who loves to play quiz games.
   components:
-    component_nodes:
-    - id: system-prompt
-      kind: static_system_prompt_provider
-      params:
-        prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
-      fail_policy: FailClosed
-    - id: channel-members
-      kind: channel_members_prompt_provider
-      fail_policy: FailClosed
-    - id: create-plan-tool
-      kind: create_plan_tool
-      fail_policy: FailClosed
-    - id: calculator-tool
-      kind: calculator_tool
-      fail_policy: FailClosed
-    - id: notes
-      kind: notes
-      fail_policy: FailClosed
-    - id: private-notes
-      kind: private_notes
-      fail_policy: FailClosed
-    - id: channel-history
-      kind: channel_history
-      fail_policy: FailClosed
-    - id: stop-tool
-      kind: stop_tool
-      fail_policy: FailClosed
+  - id: system-prompt
+    kind: static_system_prompt_provider
+    params:
+      prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
+    fail_policy: FailClosed
+  - id: channel-members
+    kind: channel_members_prompt_provider
+    fail_policy: FailClosed
+  - id: create-plan-tool
+    kind: create_plan_tool
+    fail_policy: FailClosed
+  - id: calculator-tool
+    kind: calculator_tool
+    fail_policy: FailClosed
+  - id: notes
+    kind: notes
+    fail_policy: FailClosed
+  - id: private-notes
+    kind: private_notes
+    fail_policy: FailClosed
+  - id: channel-history
+    kind: channel_history
+    fail_policy: FailClosed
+  - id: stop-tool
+    kind: stop_tool
+    fail_policy: FailClosed
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
@@ -91,16 +89,15 @@ personalities:
   roles:
   - staff
   components:
-    component_nodes:
-    - id: remote
-      kind: a2a_agent
-      params:
-        endpoint:
-          url: http://localhost:9900
-          auth:
-            type: bearer
-            secret: HERMES_A2A_TOKEN
-      fail_policy: FailClosed
+  - id: remote
+    kind: a2a_agent
+    params:
+      endpoint:
+        url: http://localhost:9900
+        auth:
+          type: bearer
+          secret: HERMES_A2A_TOKEN
+    fail_policy: FailClosed
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
   name: simple-session
@@ -117,11 +114,10 @@ session_templates:
   channels:
   - name: main
     components:
-      component_nodes:
-      - id: moderator
-        kind: policy_moderator
-        params:
-          max_agent_hops: 20
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
     participants:
     - user
     - approval
@@ -145,11 +141,10 @@ session_templates:
   channels:
   - name: main
     components:
-      component_nodes:
-      - id: moderator
-        kind: policy_moderator
-        params:
-          max_agent_hops: 20
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
     participants:
     - user
     - approval
@@ -174,13 +169,12 @@ session_templates:
   channels:
   - name: main
     components:
-      component_nodes:
-      - id: moderator
-        kind: policy_moderator
-        params:
-          max_agent_hops: 20
-      - id: responders
-        kind: mentions_only_policy
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
+    - id: responders
+      kind: mentions_only_policy
     participants:
     - user
     - approval
@@ -205,13 +199,12 @@ session_templates:
   channels:
   - name: main
     components:
-      component_nodes:
-      - id: moderator
-        kind: policy_moderator
-        params:
-          max_agent_hops: 20
-      - id: responders
-        kind: user_driven_policy
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
+    - id: responders
+      kind: user_driven_policy
     participants:
     - user
     - approval
@@ -240,13 +233,12 @@ session_templates:
   # (round robin).
   - name: main
     components:
-      component_nodes:
-      - id: moderator
-        kind: policy_moderator
-        params:
-          max_agent_hops: 20
-      - id: responders
-        kind: mentions_only_policy
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
+    - id: responders
+      kind: mentions_only_policy
     participants:
     - user
     - approval

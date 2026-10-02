@@ -363,9 +363,8 @@ own - in the name of the channel's owner - and takes the one `Moderator` of. `Mo
 channels:
 - name: main
   components:
-    component_nodes:
-    - id: responders
-      kind: mentions_only_policy
+  - id: responders
+    kind: mentions_only_policy
 ```
 
 The built-in moderator, `policy_moderator` (the default), routes the way every channel routes:

@@ -10,8 +10,9 @@ is in [AGENT-TURN.md](AGENT-TURN.md).
 ## Configuration, registry and container
 
 *   **`ComponentConfig`** declares the components of a personality, of a session's commands or of a
-    channel (its moderator, issue 174). Their order matters: it is the order in which they are
-    handed out.
+    channel (its moderator, issue 174). It is written as the list of its descriptors, directly
+    under the key that holds it (`components`, `commands`, issue 201). Their order matters: it is
+    the order in which they are handed out.
 *   **`ComponentDescriptor`** configures one component: its `id`, its `kind`, its `params`, its
     `tags` and its `fail_policy` (`FailOpen`, the default, or `FailClosed`), which decides whether a
     failure of the component is skipped or fails the turn.
