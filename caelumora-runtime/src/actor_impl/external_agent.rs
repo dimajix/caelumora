@@ -14,7 +14,7 @@
 use crate::actor::Actor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::controller::AgentController;
-use crate::external::{ExternalAgent, ExternalEvent, OutboundMessage, Said};
+use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
@@ -27,7 +27,10 @@ use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenT
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::{AccessQuestions, SecurityContext};
 use chrono::Utc;
+use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
+use caelumora_model::session::{ChannelId, SessionId};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -39,6 +42,11 @@ pub struct ExternalAgentActor {
     agent_id: AgentId,
     agent_controller: Arc<AgentController>,
     actor_runtime: ActorRuntime,
+    /// Where it is, and in whose name it acts (issue 87): what it says on
+    /// its own is sent in these.
+    session_id: SessionId,
+    channel_id: ChannelId,
+    security_context: SecurityContext,
     /// The remote agent: exactly one (issue 179).
     remote: ComponentImpl<dyn ExternalAgent>,
     /// Its state in this channel, held by the run loop for as long as it
@@ -120,6 +128,9 @@ impl ExternalAgentActor {
             agent_id,
             agent_controller,
             actor_runtime,
+            session_id: channel.session_id,
+            channel_id: channel.id,
+            security_context,
             remote,
             state: Mutex::new(state),
             processing: std::sync::Mutex::new(ActorState::Idle),
@@ -284,6 +295,122 @@ impl ExternalAgentActor {
         Ok(Ending::Answered(message))
     }
 
+    /// Re-attaches to every task left working that is not followed yet
+    /// (`ExternalAgent::resume`): after a restart, or when the answer to a
+    /// request ended before its task did. A task is re-attached once per
+    /// run of the actor, so that a remote side that keeps breaking off does
+    /// not keep it busy; the next run tries again. A task that asked back
+    /// waits for the next request instead.
+    async fn follow_open_tasks(&self, state: &ExternalAgentChannelState, followed: &mut Followed, attempted: &mut HashSet<TaskId>) {
+        let working = state.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working).map(|t| t.task.clone());
+        for task in working.collect::<Vec<_>>() {
+            if !attempted.insert(task.clone()) {
+                continue;
+            }
+            match self.remote.resume(&self.security_context, &task).await {
+                Ok(stream) => {
+                    debug!("External agent {} follows its open task again", self.id());
+                    let tag = task.clone();
+                    let tagged = stream.map(move |event| (tag.clone(), Some(event)))
+                        .chain(futures::stream::once(async move { (task, None) }));
+                    followed.push(Box::pin(tagged));
+                }
+                Err(e) => warn!("External agent {} cannot follow its open task: {:#}", self.id(), e),
+            }
+        }
+    }
+
+    /// Takes in `event` of the followed `task` - `None` once its stream
+    /// ends. When the task has ended or asks back, what came of it is said
+    /// in the channel (`speak`); `pending` holds what came so far of each.
+    async fn on_followed(&self, state: &mut ExternalAgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
+        let answer = pending.entry(task.clone()).or_default();
+        let failed = match event {
+            Some(Ok(ExternalEvent::Conversation(conversation))) => {
+                state.conversation = Some(conversation);
+                return;
+            }
+            Some(Ok(ExternalEvent::Started(_))) => return,
+            Some(Ok(ExternalEvent::Partial(piece))) => {
+                answer.partial.push_str(&piece);
+                return;
+            }
+            Some(Ok(ExternalEvent::Message(text))) => {
+                answer.add(text);
+                return;
+            }
+            Some(Ok(ExternalEvent::InputRequired(question))) => {
+                answer.add(question);
+                set_open(state, &task, OpenTaskState::InputRequired);
+                None
+            }
+            Some(Ok(ExternalEvent::Completed | ExternalEvent::Canceled)) => {
+                close(state, Some(&task));
+                None
+            }
+            Some(Ok(ExternalEvent::Failed(reason))) => {
+                close(state, Some(&task));
+                Some(reason)
+            }
+            Some(Err(e)) => {
+                // Left open, as far as anyone knows; the next run follows it again.
+                warn!("External agent {}: following its open task failed: {:#}", self.id(), e);
+                None
+            }
+            None => {
+                if pending.get(&task).is_some_and(|a| a.is_empty()) {
+                    pending.remove(&task);
+                    return;
+                }
+                warn!("External agent {}: the open task's stream ended before the task did", self.id());
+                None
+            }
+        };
+        let answer = pending.remove(&task).unwrap_or_default();
+        self.speak(state, answer, failed, output).await;
+    }
+
+    /// Says in the channel, on the agent's own account, what came of an
+    /// open task - a long task finishing, a question back - or that it
+    /// failed: preceded by `WakeupRequested`, as a user's message is, so
+    /// that the channel's sleeping agents hear it. Kept in its history and
+    /// stored first.
+    async fn speak(&self, state: &mut ExternalAgentChannelState, answer: Answer, failed: Option<String>, output: &dyn EventSender) {
+        let Some(channel) = self.actor_runtime.channel_loop() else {
+            warn!("External agent {} has no channel to speak in", self.id());
+            return;
+        };
+        let speaking = Answering {
+            event_context: EventContext::new(self.session_id, self.channel_id, self.id(), self.name()),
+            security_context: self.security_context.clone(),
+        };
+        let message = answer.finish().map(|text| {
+            let classification = self.remote.classification().unwrap_or_else(|| channel.classification());
+            self.message(Some(text), classification)
+        });
+        if let Some(message) = &message {
+            trace!("External agent {} says {:?}", self.id(), message.content);
+            state.history.extend(vec![message.clone()]);
+        }
+        if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
+            warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
+        }
+        let events = match (failed, message) {
+            (Some(reason), _) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
+            (None, Some(message)) => vec![
+                ActorEvent::WakeupRequested,
+                ActorEvent::CompleteMessageGenerated(message.clone()),
+                ActorEvent::FullResponseGenerated(vec![message]),
+            ],
+            (None, None) => Vec::new(),
+        };
+        for event in events {
+            if let Err(e) = speaking.send(event, output).await {
+                warn!("{:#}", e);
+            }
+        }
+    }
+
     /// Asks the remote agent to cancel `task`, and forgets it: a cancel that
     /// does not get through leaves a task nobody waits for any more.
     async fn cancel_remote(&self, state: &mut ExternalAgentChannelState, security: &SecurityContext, task: &TaskId) {
@@ -307,6 +434,10 @@ impl ExternalAgentActor {
     }
 }
 
+/// The streams of the open tasks an actor follows, each event with its
+/// task, and `None` when the stream ends.
+type Followed = SelectAll<BoxStream<'static, (TaskId, Option<ExternalAgentResult<ExternalEvent>>)>>;
+
 /// What came back so far.
 #[derive(Default)]
 struct Answer {
@@ -317,6 +448,11 @@ struct Answer {
 }
 
 impl Answer {
+    /// Whether nothing came.
+    fn is_empty(&self) -> bool {
+        self.parts.is_empty() && self.partial.is_empty()
+    }
+
     /// A whole message: it replaces the pieces of it that came before.
     fn add(&mut self, text: String) {
         self.partial.clear();
@@ -392,22 +528,44 @@ impl Actor for ExternalAgentActor {
         let mut state = self.state.try_lock()
             .map_err(|_| anyhow!("ExternalAgentActor {} already running", self.id()))?;
         info!("ExternalAgentActor {} is starting", self.id());
+        // The open tasks it follows between requests, and what came of them
+        // so far. While it answers a request, what they send waits.
+        let mut followed = Followed::new();
+        let mut attempted = HashSet::new();
+        let mut pending = HashMap::new();
+        self.follow_open_tasks(&state, &mut followed, &mut attempted).await;
         loop {
-            // What others said, or a request to respond.
-            let request = tokio::select! {
+            // What others said, a request to respond, or an open task's news.
+            tokio::select! {
                 _ = self.ended.cancelled() => break,
-                request = rx.recv() => match request {
-                    Some(request) => request,
-                    None => break,
-                },
-            };
-            let span = crate::logging::envelope_span(&request.context, request.event.kind());
-            match &request.event {
-                ActorEvent::FullResponseGenerated(messages) => self.hear(&mut state, messages.clone()).instrument(span).await,
-                ActorEvent::ResponseRequested => self.respond(&mut state, &request, &*output).instrument(span).await,
-                _ => {}
+                request = rx.recv() => {
+                    let Some(request) = request else { break };
+                    let span = crate::logging::envelope_span(&request.context, request.event.kind());
+                    match &request.event {
+                        ActorEvent::FullResponseGenerated(messages) => self.hear(&mut state, messages.clone()).instrument(span).await,
+                        ActorEvent::ResponseRequested => {
+                            self.respond(&mut state, &request, &*output).instrument(span).await;
+                            self.follow_open_tasks(&state, &mut followed, &mut attempted).await;
+                        }
+                        _ => {}
+                    }
+                    rx.commit().await?;
+                }
+                Some((task, event)) = followed.next(), if !followed.is_empty() => {
+                    self.on_followed(&mut state, task, event, &mut pending, &*output).await;
+                }
             }
-            rx.commit().await?;
+        }
+        // Left the channel: nobody waits for its open tasks any more. A
+        // channel that merely stops keeps them, to be followed again.
+        if self.ended.is_cancelled() {
+            let working: Vec<TaskId> = state.open_tasks.iter().map(|t| t.task.clone()).collect();
+            for task in working {
+                self.cancel_remote(&mut state, &self.security_context, &task).await;
+            }
+            if let Err(e) = self.actor_runtime.store_external_channel_state(&state).await {
+                warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
+            }
         }
         info!("ExternalAgentActor {} has finished", self.id());
         Ok(())

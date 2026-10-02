@@ -2464,15 +2464,20 @@ mod tests {
     /// `remote` stands in for, after alice said "hello". The remote agent is
     /// its personality's component, of a kind registered for the test.
     async fn with_an_external_agent(remote: Arc<crate::external::testing::ScriptedExternalAgent>) -> Stuck {
-        let component = caelumora_model::component::ComponentDescriptor::new("remote", "test_remote");
-        let components = caelumora_model::component::ComponentConfig { component_nodes: vec![component] };
-        let channel = external_channel(remote, components).await.expect("the external agent can be run");
+        let channel = external_channel(remote, external_components(), None).await.expect("the external agent can be run");
         start(channel).await
     }
 
+    /// The components of an external personality: the remote agent, of the
+    /// kind `external_channel` registers for it.
+    fn external_components() -> caelumora_model::component::ComponentConfig {
+        caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("remote", "test_remote")] }
+    }
+
     /// A channel of alice and an external agent with `components`, built but
-    /// not running.
-    async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternalAgent>, components: caelumora_model::component::ComponentConfig) -> Result<(Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)> {
+    /// not running - with the agent's state in it `stored`, as a restart
+    /// finds it.
+    async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternalAgent>, components: caelumora_model::component::ComponentConfig, stored: Option<caelumora_model::external_agent::ExternalAgentChannelState>) -> Result<(Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)> {
         use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
         use caelumora_model::scope::Scope;
 
@@ -2519,6 +2524,9 @@ mod tests {
             history_limits: Vec::new(),
         };
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        if let Some(stored) = stored {
+            runtime.state_store().put_external_agent_channel_state(agent_id, channel.id, &stored).await.unwrap();
+        }
         let executor = CommandExecutor::empty(runtime.security_manager());
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;
         Ok((channel, context, agent_id, alice.id))
@@ -2700,8 +2708,68 @@ mod tests {
     #[tokio::test]
     async fn an_external_personality_that_names_no_remote_agent_cannot_be_run() {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
-        let refused = external_channel(remote, Default::default()).await.expect_err("nothing to reach");
+        let refused = external_channel(remote, Default::default(), None).await.expect_err("nothing to reach");
         let message = format!("{refused:#}");
         assert!(message.contains("no component provides ExternalAgent, and it has no default"), "{message}");
+    }
+
+
+    #[tokio::test]
+    async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unasked() {
+        use crate::external::{ExternalAgentError, ExternalEvent};
+
+        // The connection breaks while the remote agent works; re-attached,
+        // it finishes.
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
+        ]).resuming(vec![vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]]));
+        let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote).await;
+
+        let broke = turn_failed(&mut events, agent).await;
+        assert!(broke.contains("cannot reach"), "{broke}");
+        let mut woke = false;
+        let said = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                match envelope.event {
+                    ActorEvent::WakeupRequested => woke = true,
+                    ActorEvent::FullResponseGenerated(messages) => break messages,
+                    _ => {}
+                }
+            }
+        }).await.expect("said without being asked");
+        assert!(woke, "the channel's agents are woken for it, as for a user's message");
+        assert_eq!(said[0].content.as_deref(), Some("Here it is."));
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.open_tasks.is_empty(), "the task ended");
+        assert_eq!(state.history.messages().last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_waits() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState};
+
+        let stored = ExternalAgentChannelState {
+            open_tasks: vec![
+                OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working },
+                OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired },
+            ],
+            ..ExternalAgentChannelState::default()
+        };
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+            .resuming(vec![vec![Ok(ExternalEvent::Message("Finished while you were away.".to_string())), Ok(ExternalEvent::Completed)]]));
+        let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let said = answered(&mut events, agent).await;
+        assert_eq!(said[0].content.as_deref(), Some("Finished while you were away."), "what it did meanwhile, unasked");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), vec![task("t-asking")], "the one that asked back waits for the next request");
+        assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
+        running.abort();
     }
 }

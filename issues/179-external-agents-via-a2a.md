@@ -668,3 +668,18 @@ Each step compiles, is tested, and leaves `main` working.
   second map kept in step with the first. An `as_member` on the `Actor`
   trait was weighed and not taken: it would have made `Member` public and
   the actors depend on the channel that builds them.
+- **2026-10-02** — Step 5 done (continuing a task that asked back was done
+  in step 3): the actor follows every task left working - after a
+  restart, or when the answer to a request broke off before its task
+  ended - with `ExternalAgent::resume`, beside the channel's events in its
+  `run` loop, once per task and run, so that a remote side that keeps
+  breaking off does not keep it busy. What comes of such a task is said on
+  the agent's own account (`speak`): `WakeupRequested`, then the message,
+  as a user's; a task that fails is told with `TurnFailed`. A task that
+  asked back is not followed: it waits for the next request. While the
+  actor answers a request, what its other tasks send waits in their
+  streams. A stop - the agent left the channel - cancels every open task;
+  a channel that merely stops keeps them, to be followed again. Tested
+  with the scripted stand-in: an answer that breaks off and whose task is
+  then finished and said unasked; a restart that follows a working task
+  and leaves one that asked back waiting.

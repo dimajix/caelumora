@@ -307,9 +307,17 @@ An **actor** is anything that sends and receives events in a channel.
     `FullResponseGenerated`, a task the remote agent failed as
     `TurnFailed`. A question back from the remote agent is its answer; the
     next request continues that task. A cancel cancels the remote task and
-    publishes what came so far; a stop cancels it and publishes nothing.
-    What was sent and what came back is all that is known of it, kept as
-    its `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
+    publishes what came so far; a stop cancels it - and every other open
+    task of the agent - and publishes nothing.
+*   **An external agent speaks on its own** when a task outlives the
+    request it was given for: the answer broke off before the task ended,
+    or the channel was restarted meanwhile. Its actor follows every task
+    left working (`ExternalAgent::resume`) beside the channel's events,
+    once per run, and says what came of it on its own account - preceded
+    by `WakeupRequested`, as a user's message is, so that sleeping agents
+    hear it. While it answers a request, what its other tasks send waits.
+    What it heard and said is all that is known of it, kept as its
+    `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`,
     or `System` - the runtime itself, set only deliberately through
     `SecurityContext::system()`.
