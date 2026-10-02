@@ -3,7 +3,8 @@
 //! said is sent as a message over JSON-RPC, and what comes back - a task,
 //! its status, its artifacts, or a message of its own - is translated to
 //! `ExternalEvent`s. Streams over server-sent events where the card offers
-//! streaming, and waits for the task to end or ask back where it does not.
+//! streaming; where it does not, asks for the task until it ends or asks
+//! back.
 //! Only A2A 1.x over JSON-RPC: a card that offers nothing else is refused
 //! when the agent is asked, not when the component is built.
 
@@ -224,10 +225,11 @@ impl A2aAgentComponent {
     /// `GetTask` - after `first`, where it stands already - until it ends or
     /// asks back (issue 186): while it works, only that it was started is
     /// told, and it is asked again a little later each time.
-    fn polled(&self, security: &SecurityContext, endpoint: Endpoint, mut translation: Translation, mut first: Option<WireTask>, task: TaskId) -> ExternalStream {
+    fn polled(&self, security: &SecurityContext, endpoint: Endpoint, mut first: Option<WireTask>, task: TaskId) -> ExternalStream {
         let agent = self.clone();
         let security = security.clone();
         Box::pin(async_stream::stream! {
+            let mut translation = Translation::default();
             let mut wait = POLL_FIRST;
             let mut told = false;
             loop {
@@ -329,12 +331,21 @@ impl ExternalAgent for A2aAgentComponent {
         if let Some(task) = &message.answers {
             wire["taskId"] = json!(task.0);
         }
-        let params = json!({ "message": wire, "configuration": { "acceptedOutputModes": ["text/plain"] } });
+        let mut params = json!({ "message": wire, "configuration": { "acceptedOutputModes": ["text/plain"] } });
         if endpoint.streaming {
             self.stream(security, &endpoint, "SendStreamingMessage", params).await
         } else {
-            let response: StreamResponse = self.call(security, &endpoint, "SendMessage", params).await?;
-            Ok(answered(response))
+            // Answered at once with the task, which is followed until it
+            // ends: its id is known however long it runs (issue 186).
+            params["configuration"]["returnImmediately"] = json!(true);
+            let mut response: StreamResponse = self.call(security, &endpoint, "SendMessage", params).await?;
+            match response.task.take_if(|task| task.status.state.works()) {
+                Some(task) => {
+                    let id = TaskId(task.id.clone());
+                    Ok(self.polled(security, endpoint, Some(task), id))
+                }
+                None => Ok(answered(response)),
+            }
         }
     }
 
@@ -344,7 +355,7 @@ impl ExternalAgent for A2aAgentComponent {
         if endpoint.streaming {
             self.stream(security, &endpoint, "SubscribeToTask", params).await
         } else {
-            Ok(self.polled(security, endpoint, Translation::default(), None, task.clone()))
+            Ok(self.polled(security, endpoint, None, task.clone()))
         }
     }
 
@@ -851,6 +862,27 @@ mod tests {
         let security = SecurityContext::default();
         assert_eq!(all(agent.resume(&security, &task("t-1")).await.unwrap()).await, vec![ExternalEvent::Message("Done.".to_string()), ExternalEvent::Completed]);
         agent.cancel(&security, &task("t-1")).await.expect("past cancelling is no error");
+    }
+
+    #[tokio::test]
+    async fn without_streaming_a_long_task_is_answered_at_once_and_followed_until_it_ends() {
+        let task_in = |state: &str, artifacts: Value| json!({ "jsonrpc": "2.0", "id": "1", "result": { "task": { "id": "t-1", "contextId": "c-1", "status": { "state": state }, "artifacts": artifacts } } });
+        let ended = json!({ "jsonrpc": "2.0", "id": "1", "result": { "id": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_COMPLETED" }, "artifacts": [{ "artifactId": "a", "parts": [{ "text": "Done." }] }] } });
+        let (agent, stub) = agent("1.0", false, vec![
+            ("SendMessage", false, task_in("TASK_STATE_SUBMITTED", json!([]))),
+            ("GetTask", false, ended),
+        ]).await;
+
+        let events = all(agent.send(&SecurityContext::default(), None, hello()).await.unwrap()).await;
+        assert_eq!(events, vec![
+            ExternalEvent::Conversation(ConversationId("c-1".to_string())),
+            ExternalEvent::Started(task("t-1")),
+            ExternalEvent::Message("Done.".to_string()),
+            ExternalEvent::Completed,
+        ]);
+        let asked = stub.lock().unwrap().asked.clone();
+        assert_eq!(asked[0].1["configuration"]["returnImmediately"], true, "the request is not held open while the task runs");
+        assert_eq!(asked.iter().map(|(method, ..)| method.as_str()).collect::<Vec<_>>(), vec!["SendMessage", "GetTask"]);
     }
 
     #[tokio::test]

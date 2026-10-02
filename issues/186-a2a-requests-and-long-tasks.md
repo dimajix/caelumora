@@ -1,6 +1,6 @@
 # 186 — Long A2A tasks without streaming, and streamed requests without a timeout
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -42,3 +42,12 @@ actor.
 ## History
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series; to be verified first.
+- **2026-10-02** — Verified against the A2A 1.0 specification. The second point is no fault: §3.2.2
+  has `SendMessage` block until the task ends or is interrupted unless `returnImmediately` is set,
+  and 1.0 has no `blocking` any more. The first and third are, and so was a related one: without
+  streaming, `resume` asked `GetTask` once per run of the actor. Done in three steps: a streamed
+  request fails as unreachable when its stream has not begun within `timeout_secs`; without
+  streaming, a task is asked for with `GetTask` - after 1 s, twice as long each time, at most 30 s -
+  until it ends or asks back, both when it is resumed and when it is sent; and `SendMessage` asks
+  with `returnImmediately`, so the task's id is known at once and no request is held open while it
+  runs. `Translation` tells a task once, as it tells the conversation.
