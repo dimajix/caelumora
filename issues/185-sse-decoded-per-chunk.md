@@ -1,6 +1,6 @@
 # 185 — The A2A event stream is decoded chunk by chunk
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -38,3 +38,8 @@ shows rarely and cannot be reproduced on purpose.
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series; confirmed in
   `events_of`.
+- **2026-10-02** — Done. `events_of` frames the events with `sse-stream`, now a direct dependency,
+  and decodes each one whole; only the JSON-RPC decoding and `Translation` stay. `ollama_client.rs`
+  had the same fault worse - a JSON line split by the network was dropped with a warning, its
+  tokens lost - and now reads its lines through `tokio-util`'s `LinesCodec` in `answer_of`. Both
+  are covered by a test that feeds the stream in single bytes.
