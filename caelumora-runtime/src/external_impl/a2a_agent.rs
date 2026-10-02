@@ -55,8 +55,8 @@ struct A2aAgentConfig {
     url: String,
     #[serde(default)]
     auth: Option<RemoteAuthConfig>,
-    /// How long one request may take to be answered - not how long a
-    /// streamed task may run.
+    /// How long one request may take to be answered - a streamed one until
+    /// its stream begins; not how long a task may run.
     #[serde(default = "default_timeout_secs")]
     timeout_secs: u64,
     /// How the agent's answers are classified (issue 133); the channel's
@@ -171,7 +171,9 @@ impl A2aAgentComponent {
         }
     }
 
-    /// Posts the JSON-RPC request `method` with `params`, streamed or not.
+    /// Posts the JSON-RPC request `method` with `params`, streamed or not:
+    /// either is answered within the timeout, a streamed one with the
+    /// beginning of its stream (issue 186).
     async fn post(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: Value, streamed: bool) -> ExternalAgentResult<reqwest::Response> {
         let body = json!({ "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(), "method": method, "params": params });
         trace!("A2A agent component '{}' sends {}: {}", self.id, method, body);
@@ -184,7 +186,11 @@ impl A2aAgentComponent {
         if let Some(token) = self.token(security).await? {
             request = request.bearer_auth(token);
         }
-        request.send().await.map_err(|e| self.connection(&e))
+        let timeout = Duration::from_secs(self.config.timeout_secs);
+        match tokio::time::timeout(timeout, request.send()).await {
+            Ok(response) => response.map_err(|e| self.connection(&e)),
+            Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", self.config.timeout_secs) }),
+        }
     }
 
     /// The result of the JSON-RPC request `method`.
@@ -629,9 +635,14 @@ mod tests {
         use axum::response::IntoResponse;
         let method = body["method"].as_str().unwrap_or_default().to_string();
         let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
-        let mut stub = stub.lock().unwrap();
-        stub.asked.push((method.clone(), body["params"].clone(), header("a2a-version"), header("authorization")));
-        match stub.answers.get(&method).cloned() {
+        let answer = {
+            let mut stub = stub.lock().unwrap();
+            stub.asked.push((method.clone(), body["params"].clone(), header("a2a-version"), header("authorization")));
+            stub.answers.get(&method).cloned()
+        };
+        match answer {
+            // A server that takes the request and never answers.
+            Some((true, Value::Null)) => std::future::pending().await,
             Some((true, Value::Array(results))) => {
                 let body: String = results.iter().map(|r| format!("data: {}\n\n", json!({ "jsonrpc": "2.0", "id": "1", "result": r }))).collect();
                 ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body).into_response()
@@ -750,6 +761,15 @@ mod tests {
         assert_eq!(events, vec![ExternalEvent::Conversation(conversation), ExternalEvent::Started(task("t-1")), ExternalEvent::InputRequired("Which city?".to_string())]);
         let params = stub.lock().unwrap().asked[0].1.clone();
         assert_eq!((params["message"]["contextId"].as_str(), params["message"]["taskId"].as_str()), (Some("c-1"), Some("t-1")));
+    }
+
+    #[tokio::test]
+    async fn a_streamed_request_its_server_never_answers_ends_after_the_timeout() {
+        let (agent, _) = agent("1.0", true, vec![("SendStreamingMessage", true, Value::Null)]).await;
+        let started = std::time::Instant::now();
+        let error = agent.send(&SecurityContext::default(), None, hello()).await.err().expect("no answer").to_string();
+        assert!(error.contains("no answer within 2 s"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[tokio::test]
