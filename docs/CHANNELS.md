@@ -39,6 +39,22 @@ Channels can be created in and deleted from a running session: `SessionLoop::cre
 Only then is the running session changed and the change announced (`ChannelCreated`,
 `ChannelDeleted`).
 
+A deleted channel stops its actors before its task is aborted (issue 187).
+`ChannelLoop::stop_actors` tells every actor to `stop` and waits until their tasks have ended, at
+most `STOP_GRACE`. In that time an external agent cancels its open remote tasks and every actor
+stores its state. Only then is the channel's task aborted, and with it whatever still runs, and
+only then is the channel's state deleted, so that nothing stored late outlives the channel.
+
+### Stopping an actor
+
+`Actor::stop` is synchronous and goes past the events, like `cancel`: it takes effect at once, not
+after what is queued. Every actor ends its own task when stopped, which is why `stop` has no
+default. Waiting for that does not go through `run` either: `run`'s `JoinSet` alone owns the
+actors' tasks, so that they end with the channel's own task. Each actor's task is additionally
+tracked by a `TaskTracker` in `ChannelLoop::actors`, which whoever stopped the actor waits on.
+Removing a participant and deleting the channel use the same grace: an actor that has not ended
+after `STOP_GRACE` - a tool that hangs - is aborted.
+
 ### One writer per document
 
 Each document has one writer, which holds a lock while it changes and stores it: the

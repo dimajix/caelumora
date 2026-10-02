@@ -305,7 +305,10 @@ impl SessionLoop {
         }
 
         let task = self.channels.remove(&channel_id).and_then(|(_, entry)| entry.task);
-        running.stop_actors();
+        // Given the time to end by themselves before the channel's task -
+        // and with it whoever did not - is aborted (issue 187), and before
+        // the state is deleted, which they store on their way out.
+        running.stop_actors().await;
         let event_bus = self.runtime_manager.event_bus();
         if let Some(task) = task {
             task.abort();
@@ -349,11 +352,14 @@ impl SessionLoop {
                                 .map(|mut entry| {
                                     entry.task = None;
                                     entry.channel.security_attributes()
-                                })
-                                .unwrap_or_default();
-                            self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
+                                });
+                            // Gone: a deleted channel, whose actors all
+                            // stopped in time; `delete_channel` announces it.
+                            if let Some(attributes) = attributes {
+                                self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
+                            }
                         }
-                        // A deleted channel; `delete_channel` announced it.
+                        // A deleted channel; `delete_channel` announces it.
                         Err(e) if e.is_cancelled() => {}
                         Err(e) => return Err(e.into()),
                     }

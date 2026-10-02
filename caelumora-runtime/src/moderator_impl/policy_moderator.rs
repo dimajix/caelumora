@@ -288,6 +288,7 @@ mod tests {
             Ok(())
         }
         fn state(&self) -> ActorState { self.state }
+        fn stop(&self) {}
     }
 
     /// Three agents, the middle one asleep, registered with `moderator`.

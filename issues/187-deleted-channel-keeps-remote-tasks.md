@@ -1,6 +1,6 @@
 # 187 — Deleting a channel may leave an external agent's remote tasks running
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -31,3 +31,19 @@ actor to finish.
 ## History
 
 - **2026-10-02** — Opened after a cleanup review of the issue-179 series.
+- **2026-10-02** — Verified: the abort did reach the actors. Their tasks live in the `JoinSet` of
+  `ChannelLoop::run`, which is dropped with the aborted channel task, so the external agent's
+  cleanup never ran. A second consequence: an actor given time to end could store its state after
+  `delete_channel_state` had deleted it.
+
+  Rejected: stopping the channel through an `ActorChange` handled by `run` - a change queued there
+  waits behind whatever `run` is busy with, and `stop` and `cancel` go past the events for exactly
+  that reason. Giving up the `JoinSet` for plain `JoinHandle`s was rejected too: the actors would
+  then no longer end with an aborted channel, which stopping a session relies on.
+
+  Done: every actor's task is tracked by a `TaskTracker` (tokio-util) in `ChannelLoop::actors`,
+  inside the task the `JoinSet` owns. `stop_actors` stops every actor and waits on the trackers at
+  most `STOP_GRACE`; `delete_channel` awaits it before it aborts the channel's task and deletes the
+  state. `remove_participant` waits on the same tracker instead of sleeping. `Actor::stop` has no
+  default any more, and the `ApproverActor` ends its run when stopped. Covered by
+  `a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task`.

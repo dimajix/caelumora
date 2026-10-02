@@ -97,7 +97,7 @@ argues against it, and what came out of the last attempt.
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [174](174-moderator-as-component.md) | done | The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended. |
 | [175](175-user-driven-moderator.md) | done | There is no moderator under which every agent answers a person's message but no agent's message makes another agent answer. |
-| [187](187-deleted-channel-keeps-remote-tasks.md) | open | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
+| [187](187-deleted-channel-keeps-remote-tasks.md) | done | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
 
 ## Identity and access management
 

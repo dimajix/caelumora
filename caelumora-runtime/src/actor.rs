@@ -54,8 +54,9 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// up, not kept for a resume (issue 145). The act that removed it
     /// checked its permission and is who did it; stopping is its
     /// consequence, and like `cancel` and `wakeup` knows no caller.
-    /// Synchronous like `cancel`; an actor with state ends its own task once
-    /// that state is stored consistent, the channel closes its inbox and
-    /// aborts it only if it does not end by itself.
-    fn stop(&self) {}
+    /// Synchronous like `cancel`; every actor ends its own task, one with
+    /// state once that state is stored consistent. The channel waits for
+    /// that and aborts the task only if it does not end by itself in time
+    /// (issue 187) - which is why there is no default that does nothing.
+    fn stop(&self);
 }

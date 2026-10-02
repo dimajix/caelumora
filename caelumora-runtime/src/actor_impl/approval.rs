@@ -15,6 +15,7 @@ use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 /// An approval waiting for its decision, kept under the id the agent gave
 /// it: the same id from the agent's request through the users' answers to
@@ -39,6 +40,8 @@ pub struct ApproverActor {
     actor_runtime: ActorRuntime,
     channel: Arc<ChannelController>,
     pending: Mutex<HashMap<ApprovalId, PendingApproval>>,
+    /// Cancelled by `stop`: the channel is deleted, and the run ends.
+    ended: CancellationToken,
 }
 
 impl ApproverActor {
@@ -49,6 +52,7 @@ impl ApproverActor {
             actor_runtime,
             channel,
             pending: Mutex::new(HashMap::new()),
+            ended: CancellationToken::new(),
         }
     }
 
@@ -335,6 +339,7 @@ impl Actor for ApproverActor {
             };
 
             tokio::select! {
+                _ = self.ended.cancelled() => break,
                 maybe_env = rx.recv() => {
                     match maybe_env {
                         Some(env) => {
@@ -368,6 +373,12 @@ impl Actor for ApproverActor {
         }
         info!("ApproverActor {:?} finished", self.id);
         Ok(())
+    }
+
+    /// Ends the run: the channel is deleted - an approver never leaves one
+    /// otherwise. What is pending is left undecided; nobody is left to ask.
+    fn stop(&self) {
+        self.ended.cancel();
     }
 }
 

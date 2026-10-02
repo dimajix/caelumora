@@ -37,6 +37,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
+use tokio_util::task::TaskTracker;
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -56,9 +57,11 @@ pub struct ChannelMember {
 /// is read from anywhere; this one is `run`'s, whose `JoinSet` owns the tasks
 /// - so that they end with the channel's own task - and which starts and
 /// stops them as `ActorChange`s tell it (issue 91).
-struct ActorHandle {
+struct RunningActor {
     id: ActorId,
     abort_handle: AbortHandle,
+    /// What to wait on for the task to end (`ChannelActor::task`).
+    task: TaskTracker,
     sender: Box<dyn EventSender>,
 }
 
@@ -216,18 +219,39 @@ fn cannot_run(error: &anyhow::Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied))
 }
 
-/// The actors of a channel's participants, each with what it was built
-/// from.
-type Actors = HashMap<ActorId, (Arc<dyn Actor>, Member)>;
+/// The actor of a channel's participant, with what it was built from and
+/// what tells when its task has ended.
+#[derive(Debug, Clone)]
+struct ChannelActor {
+    actor: Arc<dyn Actor>,
+    member: Member,
+    /// Tracks the actor's task while `run` runs it, so that whoever stops
+    /// the actor can wait for the task to end without going through `run`
+    /// (issue 187) - `run`'s `JoinSet` alone owns the task.
+    task: TaskTracker,
+}
+
+/// The actors of a channel's participants.
+type Actors = HashMap<ActorId, ChannelActor>;
 
 /// How long a stopped actor gets to end its task by itself before it is
 /// aborted (issue 75): a tool that hangs is the case this is for.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 
+/// Waits until the tasks `tasks` track have ended, at most `STOP_GRACE`,
+/// and returns whether they did (issue 187). An actor whose task never
+/// started has nothing tracked, and is not waited for.
+async fn stopped(tasks: &[TaskTracker]) -> bool {
+    for task in tasks {
+        task.close();
+    }
+    tokio::time::timeout(STOP_GRACE, futures::future::join_all(tasks.iter().map(TaskTracker::wait))).await.is_ok()
+}
+
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
 enum ActorChange {
-    Start(Arc<dyn Actor>),
+    Start(ChannelActor),
     /// The actor to stop, and on whose behalf it was removed - in whose name
     /// `run` announces it (`ParticipantRemoved`, issue 162).
     Stop(ActorId, SecurityContext),
@@ -364,15 +388,17 @@ impl ChannelLoop {
     /// among the participants' actors, and it can be mentioned. The one way
     /// an actor enters the channel - when the channel is built and when a
     /// participant joins (issue 91). Its task is `run`'s to start.
-    async fn adopt(&self, actor: Arc<dyn Actor>, member: Member) {
+    async fn adopt(&self, actor: Arc<dyn Actor>, member: Member) -> ChannelActor {
         self.moderator.add_actor(actor.clone());
         let id = actor.id();
+        let adopted = ChannelActor { actor, member, task: TaskTracker::new() };
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
-            actors.insert(id, (actor.clone(), member.clone()));
+            actors.insert(id, adopted.clone());
             actors
         });
         self.rebuild_mentions();
+        adopted
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
@@ -447,7 +473,7 @@ impl ChannelLoop {
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
         let (store, security) = (self.runtime.entity_store(), self.runtime.security_manager());
-        for (_, member) in self.actors.load().values() {
+        for ChannelActor { member, .. } in self.actors.load().values() {
             member.require_cleared(store.as_ref(), security.as_ref(), context, &classification, self.id).await?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
@@ -560,8 +586,8 @@ impl ChannelLoop {
                 return Err(error);
             }
         };
-        self.adopt(actor.clone(), member).await;
-        let _ = self.changes_tx.send(ActorChange::Start(actor));
+        let adopted = self.adopt(actor, member).await;
+        let _ = self.changes_tx.send(ActorChange::Start(adopted));
         info!("{} joined channel {}", participant, self.id);
         Ok(())
     }
@@ -628,7 +654,7 @@ impl ChannelLoop {
     /// of lowering the channel.
     fn cancel_actors(&self) {
         self.quiet.store(true, Ordering::SeqCst);
-        for (actor, _) in self.actors.load().values() {
+        for ChannelActor { actor, .. } in self.actors.load().values() {
             actor.cancel();
         }
     }
@@ -644,7 +670,7 @@ impl ChannelLoop {
         let channel = self.channel.load();
         self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
         let asleep = self.actors.load().values()
-            .map(|(a, _)| a)
+            .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
             .map(|a| a.name())
             .collect();
@@ -672,10 +698,19 @@ impl ChannelLoop {
     /// Tells every actor of the channel to stop for good (`Actor::stop`) -
     /// for a channel that is deleted: nothing of it is resumed, and whoever
     /// follows it through their actor is told it ended, whether or not the
-    /// actors' tasks ever ran (issue 104).
-    pub(crate) fn stop_actors(&self) {
-        for (actor, _) in self.actors.load().values() {
+    /// actors' tasks ever ran (issue 104). Returns once their tasks have
+    /// ended, or `STOP_GRACE` has passed (issue 187): an external agent
+    /// cancels its open remote tasks on its way out, and every actor stores
+    /// its state consistent. Those still running then are the caller's to
+    /// abort, with the channel's task.
+    pub(crate) async fn stop_actors(&self) {
+        let actors = self.actors.load();
+        for ChannelActor { actor, .. } in actors.values() {
             actor.stop();
+        }
+        let tasks: Vec<TaskTracker> = actors.values().map(|a| a.task.clone()).collect();
+        if !stopped(&tasks).await {
+            warn!("Not every actor of channel {} stopped by itself: the rest is aborted", self.id);
         }
     }
 
@@ -686,7 +721,7 @@ impl ChannelLoop {
     /// write but not to wake could not write.
     fn wake_for_delivery(&self) {
         self.quiet.store(false, Ordering::SeqCst);
-        for (actor, _) in self.actors.load().values() {
+        for ChannelActor { actor, .. } in self.actors.load().values() {
             actor.wakeup();
         }
     }
@@ -705,7 +740,7 @@ impl ChannelLoop {
     /// All participants of the channel, in no particular order.
     pub fn members(&self) -> Vec<ChannelMember> {
         self.actors.load().values()
-            .map(|(a, _)| {
+            .map(|ChannelActor { actor: a, .. }| {
                 let name = a.name();
                 let handle = Some(handle_of(&name))
                     .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
@@ -725,7 +760,7 @@ impl ChannelLoop {
 
     fn mention_directory(actors: &Actors) -> MentionDirectory {
         let names: Vec<(ActorId, String)> = actors.values()
-            .map(|(a, _)| a)
+            .map(|a| &a.actor)
             .filter(|a| Self::is_mentionable(a.id()))
             .map(|a| (a.id(), a.name()))
             .collect();
@@ -733,7 +768,7 @@ impl ChannelLoop {
     }
 
     pub fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
-        self.actors.load().get(&actor_id).map(|(actor, _)| actor.clone())
+        self.actors.load().get(&actor_id).map(|a| a.actor.clone())
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -796,12 +831,12 @@ impl ChannelLoop {
     }
 
     /// Starts or stops an actor as a participant joined or left (issue 46).
-    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, ActorHandle>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
+    async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
-            ActorChange::Start(actor) => {
+            ActorChange::Start(joined) => {
                 // Joined before `run` started: already running.
-                if !running.contains_key(&actor.id()) {
-                    let handle = self.spawn_actor(actor, event_tx.clone(), join_set);
+                if !running.contains_key(&joined.actor.id()) {
+                    let handle = self.spawn_actor(&joined, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
             }
@@ -811,11 +846,10 @@ impl ChannelLoop {
                 // stored consistent. Only if it does not - a tool that hangs -
                 // is it aborted.
                 if let Some(handle) = running.remove(&id) {
-                    let abort_handle = handle.abort_handle.clone();
+                    let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
                     let (channel, actor) = (self.id, id);
                     tokio::spawn(async move {
-                        tokio::time::sleep(STOP_GRACE).await;
-                        if !abort_handle.is_finished() {
+                        if !stopped(&[task]).await {
                             warn!("Actor {} did not stop by itself after leaving channel {}: aborted", actor, channel);
                             abort_handle.abort();
                         }
@@ -837,7 +871,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId,ActorHandle>) -> bool {
+    async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId, RunningActor>) -> bool {
         if let Some(event) = maybe_event {
             // An actor that was removed may still finish the step it was in;
             // what it sends then no longer enters the channel (issue 162).
@@ -853,7 +887,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn process_envelope(&self, event: Envelope, running: &HashMap<ActorId,ActorHandle>) {
+    async fn process_envelope(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
         match event.event {
             // One per streamed chunk: far finer than per message.
             ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) => {
@@ -873,13 +907,14 @@ impl ChannelLoop {
     }
 
     /// Starts the tasks of the channel's actors as `run` begins.
-    fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> HashMap<ActorId,ActorHandle> {
+    fn spawn_actors(&self, actor_output:Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> HashMap<ActorId, RunningActor> {
         self.actors.load().iter()
-            .map(|(id, (actor, _))| (*id, self.spawn_actor(actor.clone(), actor_output.clone(), join_set)))
+            .map(|(id, actor)| (*id, self.spawn_actor(actor, actor_output.clone(), join_set)))
             .collect()
     }
 
-    fn spawn_actor(&self, actor: Arc<dyn Actor>, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> ActorHandle {
+    fn spawn_actor(&self, channel_actor: &ChannelActor, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> RunningActor {
+        let ChannelActor { actor, task, .. } = channel_actor.clone();
         let id = actor.id();
         let filter = actor.event_filter();
         let (tx, rx) = mpsc::channel(100);
@@ -887,13 +922,15 @@ impl ChannelLoop {
         let actor_rx = Box::new(InMemoryEventReceiver::new(rx));
         let actor_tx = Box::new(InMemoryEventSender::new(actor_output));
 
-        let abort_handle = join_set.spawn(async move {
+        // Tracked inside the `JoinSet`'s task: a task that is aborted counts
+        // as ended, too.
+        let abort_handle = join_set.spawn(task.track_future(async move {
             let result = actor.run(actor_rx, actor_tx).await;
             if let Err(e) = result {
                 tracing::error!("Actor {} stopped with an error: {:#}", actor.id(), e)
             }
             id
-        });
+        }));
 
         // Wrap the actor's input sender with its declared filter predicate.
         let filtered_sender = Box::new(FilteringEventSender::new(
@@ -901,7 +938,7 @@ impl ChannelLoop {
             filter,
         ));
 
-        ActorHandle { id, abort_handle, sender: filtered_sender }
+        RunningActor { id, abort_handle, task, sender: filtered_sender }
     }
 
     /// Whether every message `event` carries may enter the channel as its
@@ -969,7 +1006,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event(&self, running: &HashMap<ActorId,ActorHandle>, event: Envelope) {
+    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope) {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
@@ -984,7 +1021,7 @@ impl ChannelLoop {
         }
     }
 
-    async fn route_event_impl(&self, running: &HashMap<ActorId,ActorHandle>, event: &Envelope) -> bool {
+    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope) -> bool {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
             return true
@@ -1442,7 +1479,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(bob))).await;
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let actors = HashMap::from([(bob, ActorHandle { id: bob, abort_handle, sender: Box::new(InMemoryEventSender::new(tx)) })]);
+        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Box::new(InMemoryEventSender::new(tx)) })]);
         let from_alice = |event| Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
@@ -2728,6 +2765,30 @@ mod tests {
             );
         }
         running.abort();
+    }
+
+    /// What a deleted channel does with its actors before it aborts its
+    /// task (`SessionLoop::delete_channel`, issue 187): an external agent
+    /// has cancelled the remote task it followed by the time `stop_actors`
+    /// returns, and every actor - the approver too - ended by itself.
+    #[tokio::test]
+    async fn a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
+        ]));
+        let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        answered(&mut events, agent).await;
+
+        channel.stop_actors().await;
+        assert_eq!(*remote.cancelled.lock().unwrap(), vec![task("t-1")], "the open task is cancelled before the channel is aborted");
+        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.open_tasks.is_empty(), "and that is stored");
+        tokio::time::timeout(Duration::from_secs(1), running).await
+            .expect("every actor ended by itself, and with them the channel")
+            .expect("the channel's task was not aborted")
+            .expect("the channel ended without an error");
     }
 
     #[tokio::test]
