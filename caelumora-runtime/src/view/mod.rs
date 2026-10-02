@@ -575,6 +575,8 @@ mod tests {
         let said = |t: &str| Message { content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (first, second) = (said("first"), said("second"));
         channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(first.id) });
+        // And so does the agent, though alice, for whom it acts, sees it all.
+        channel.history_limits.push(HistoryLimit { participant: ActorId::Agent(helper.id), start: HistoryStart::After(first.id) });
         store.create_channel(&system, &channel).await.unwrap();
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![first.clone(), second.clone()]);
@@ -594,6 +596,8 @@ mod tests {
         let texts = |messages: &[Message]| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         assert_eq!(texts(&for_alice.history().await.unwrap().messages), ["first", "second"]);
         assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages), ["second"], "bob joined after the first");
+        let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id)));
+        assert_eq!(texts(&reach(as_helper).await.history().await.unwrap().messages), ["second"], "the agent reads with its own limit, not its owner's");
         let notes = for_alice.notes().await.unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!((notes[0].agent, notes[0].name.as_str(), notes[0].notes[0].text.as_str()), (ActorId::Agent(helper.id), "Helper", "noted"));

@@ -165,7 +165,9 @@ impl ChannelView {
     /// `Failed` if the stored history cannot be read; `NoChannelNamed` if
     /// nothing of a channel read entry by entry can be.
     pub async fn history(&self) -> ViewResult<VisibleHistory> {
-        let actor = self.views().viewer().context().initiator_id;
+        // Whoever reads: an agent reads as itself, not as the owner it acts
+        // for - its own limit applies, not the owner's.
+        let actor = self.views().viewer().context().caller_id;
         let mut history = match &self.running {
             Some(channel_loop) => channel_loop.visible_history(actor).await,
             None => {
