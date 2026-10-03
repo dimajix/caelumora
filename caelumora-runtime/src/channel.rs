@@ -2942,6 +2942,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn after_a_restart_an_external_agent_is_given_only_the_prompt_parts_it_was_not_given() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::external_agent::ConversationId;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Hello again.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        // Before the restart it was given the frame, and how much it heard
+        // then.
+        let mut stored = caelumora_model::agent::AgentChannelState::default();
+        stored.remote.converse_in(ConversationId("c-1".to_string()));
+        stored.remote.give("frame".to_string(), caelumora_model::digest::prompt("[Frame]\nBe brief."));
+        stored.remote.give("heard".to_string(), caelumora_model::digest::prompt("[Heard]\n0"));
+        let built = external_channel(remote.clone(), external_components_with_prompts(), Some(stored)).await.expect("the external agent can be run");
+        let Stuck { agent, mut events, running, .. } = start(built).await;
+        answered(&mut events, agent).await;
+
+        let sent = remote.sent.lock().unwrap().clone();
+        assert_eq!(sent[0].1.prompts, ["[Heard]\n1"], "what it has is not given again, what changed is");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_next_call() {
         use crate::external::ExternalEvent;
 

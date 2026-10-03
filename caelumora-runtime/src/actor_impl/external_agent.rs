@@ -8,9 +8,9 @@
 //! as an agent run here does (issue 206): all of it into its history, with
 //! its own answers; what can be given on - text others said - as it passes
 //! its perceive processors, into its transcript (issue 196). When it is
-//! asked, it gives the remote agent the parts of its prompt providers that
-//! it was not given yet - the frame of what was said, such as who is in the
-//! channel (issue 204) - and its transcript - which then starts anew, so
+//! asked, it gives the remote agent the prompt parts its context provider
+//! assembles that it was not given yet - the frame of what was said, such
+//! as who is in the channel (issues 204, 214) - and its transcript - which then starts anew, so
 //! that it holds what the remote agent has not heard yet, and what was
 //! given in each call stays as a branch of it, the context of that call's
 //! answer (issue 205) - and publishes what comes back. That is all that is
@@ -28,7 +28,8 @@ use super::{catch_up, failure_message, lowered_message, perceive};
 use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent_state::AgentStateHandle;
-use crate::context::{prompt_parts, Prompt, PromptProvider};
+use crate::component_impl::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
+use crate::context::ContextProvider;
 use crate::controller::AgentController;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::message::PerceiveInProcessor;
@@ -42,7 +43,8 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::ContextRef;
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_model::context::{ContextRef, PromptPart};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
 use caelumora_model::work::Work;
@@ -70,13 +72,16 @@ pub struct ExternalAgentActor {
     remote: ComponentImpl<dyn ExternalAgent>,
     /// What filters what reaches it, as an agent's do (issue 196).
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
-    /// What gives the remote agent the frame of what was said - such as who
-    /// is in the channel - in the order of its configuration (issue 204).
-    prompt_providers: Vec<ComponentImpl<dyn PromptProvider>>,
-    /// What became of the part of each of `prompt_providers`, in their
-    /// order. Kept while the actor runs: after a restart every part is
-    /// given again. A plain lock, never held across an await.
-    prompts: std::sync::Mutex<Vec<PromptDelivery>>,
+    /// What the remote agent is given besides what was said - the frame of
+    /// it, such as who is in the channel (issues 204, 214): exactly one, by
+    /// default `external_context_provider`.
+    context_provider: ComponentImpl<dyn ContextProvider>,
+    /// The prompt parts the remote agent has not been given yet, by what
+    /// tells them apart (`part_key`), in the order they came: a part that
+    /// changed, until a send that reaches the remote agent gave it - also
+    /// when its provider, telling only changes, has nothing new by then. A
+    /// plain lock, never held across an await.
+    pending_prompts: std::sync::Mutex<Vec<(String, PromptPart)>>,
     /// The agent's own state (issue 62), which its prompt providers read,
     /// as an agent's run here do.
     agent_state: Arc<AgentStateHandle>,
@@ -95,38 +100,10 @@ pub struct ExternalAgentActor {
     ended: CancellationToken,
 }
 
-/// What the remote agent was given of the part of one prompt provider
-/// (issue 204): the text it was given last - an unchanged part is not given
-/// again, since the remote agent keeps its conversation - and a part not
-/// given yet, which goes with the next request that reaches it. A provider
-/// that tells only what changed has nothing new the next time; what it told
-/// is not lost by a send that failed.
-#[derive(Debug, Default)]
-struct PromptDelivery {
-    given: Option<String>,
-    pending: Option<Prompt>,
-}
-
-impl PromptDelivery {
-    /// Takes `fresh`, the provider's part now: a text other than the one
-    /// given last is pending - in place of an older pending one, which it
-    /// is newer than - the one given last is not, and none leaves pending
-    /// what is.
-    fn offer(&mut self, fresh: Option<Prompt>) {
-        let Some(fresh) = fresh else { return };
-        if self.given.as_deref() == Some(fresh.text.as_str()) {
-            self.pending = None;
-        } else {
-            self.pending = Some(fresh);
-        }
-    }
-
-    /// Records the pending part as given.
-    fn delivered(&mut self) {
-        if let Some(given) = self.pending.take() {
-            self.given = Some(given.text);
-        }
-    }
+/// What tells `part`, the `index`th the context provider gave, apart from
+/// the others: the component it came from, else its place among them.
+fn part_key(part: &PromptPart, index: usize) -> String {
+    part.source.clone().unwrap_or_else(|| format!("#{index}"))
 }
 
 /// How an exchange with the remote agent ended.
@@ -162,14 +139,19 @@ impl ExternalAgentActor {
         let attributes = agent.security_attributes.clone();
         drop(agent);
 
-        let components = ComponentContainer::from_config(
+        // Its context provider is, unless it configures one, not a turn's.
+        let defaults = ComponentConfig {
+            component_nodes: vec![ComponentDescriptor::new(EXTERNAL_CONTEXT_PROVIDER_KIND, EXTERNAL_CONTEXT_PROVIDER_KIND)],
+        };
+        let components = ComponentContainer::with_defaults(
             &personality.components,
+            &defaults,
             &actor_runtime.component_registry(),
             &ComponentContext::new(security_context.clone(), actor_runtime.security_manager(), actor_runtime.secret_manager()),
         ).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
-        let prompt_providers = components.get_all::<dyn PromptProvider>(None);
+        let context_provider = components.one::<dyn ContextProvider>().await?;
 
         // Answers that may never enter the channel would each be dropped
         // there in silence: refused here instead, once - and once more with
@@ -185,7 +167,6 @@ impl ExternalAgentActor {
         let state = actor_runtime.load_channel_state().await?;
         let agent_state = actor_runtime.agent_state(attributes).await?;
         let views = actor_runtime.views(security_context.clone());
-        let prompts = std::sync::Mutex::new(prompt_providers.iter().map(|_| PromptDelivery::default()).collect());
         Ok(Self {
             agent_id,
             agent_controller,
@@ -193,8 +174,8 @@ impl ExternalAgentActor {
             security_context,
             remote,
             perceive_in_processors,
-            prompt_providers,
-            prompts,
+            context_provider,
+            pending_prompts: std::sync::Mutex::new(Vec::new()),
             agent_state,
             views,
             state: Mutex::new(state),
@@ -204,25 +185,39 @@ impl ExternalAgentActor {
         })
     }
 
-    /// The parts of its prompt providers for `work` the remote agent was not
-    /// given yet (issue 204), in the order of its configuration: each that
-    /// changed since it was given, and what a send that failed did not
-    /// deliver. Positions mean nothing here: every part goes first.
+    /// The prompt parts for `work` the remote agent has not been given yet
+    /// (issues 204, 214), from its context provider: each that is not what
+    /// it was given last of it (`RemoteState::given_prompts`), and each that
+    /// a send which failed did not give - in the order they came. The work
+    /// has seen all the parts and the knowledge they hold, given now or
+    /// before: the remote agent knows them.
     ///
     /// # Errors
-    /// That of a prompt provider that fails closed.
-    async fn pending_prompts(&self, state: &AgentChannelState, work: &Work) -> Result<Vec<Prompt>> {
+    /// If its context provider cannot assemble them.
+    async fn prompts_to_give(&self, state: &AgentChannelState, work: &mut Work) -> Result<Vec<(String, PromptPart)>> {
         let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, Some(&self.views));
-        let fresh = prompt_parts(&self.prompt_providers, &reading).await?;
-        let mut prompts = self.prompts();
-        for (delivery, fresh) in prompts.iter_mut().zip(fresh) {
-            delivery.offer(fresh);
+        let (parts, knowledge) = self.context_provider.current_context(&reading).await
+            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
+        for reference in knowledge {
+            work.record_knowledge(reference);
         }
-        Ok(prompts.iter().filter_map(|d| d.pending.clone()).collect())
+        let mut pending = self.pending_prompts();
+        for (index, part) in parts.into_iter().enumerate() {
+            work.see_classified(part.classification.as_ref());
+            let key = part_key(&part, index);
+            let due = !state.remote.has_given(&key, &caelumora_model::digest::prompt(&part.text));
+            match pending.iter().position(|(k, _)| *k == key) {
+                Some(at) if due => pending[at].1 = part,
+                Some(at) => { pending.remove(at); }
+                None if due => pending.push((key, part)),
+                None => {}
+            }
+        }
+        Ok(pending.clone())
     }
 
-    fn prompts(&self) -> std::sync::MutexGuard<'_, Vec<PromptDelivery>> {
-        self.prompts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn pending_prompts(&self) -> std::sync::MutexGuard<'_, Vec<(String, PromptPart)>> {
+        self.pending_prompts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn set_processing(&self, state: ActorState) {
@@ -331,18 +326,13 @@ impl ExternalAgentActor {
             debug!("External agent {} has nothing new to give; nothing to ask", self.id());
             return Ok(Ending::Answered(None));
         }
-        let prompts = self.pending_prompts(state, &work).await?;
+        let prompts = self.prompts_to_give(state, &mut work).await?;
         let mut parts = Vec::with_capacity(prompts.len());
-        for prompt in prompts {
-            // Given to the remote agent: it has seen it, and it is part of
-            // the context of what comes of this call.
-            work.see_classified(prompt.classification.as_ref());
-            for reference in prompt.knowledge {
-                work.record_knowledge(reference);
-            }
-            let reference = state.keep_prompt(MessageRole::User, prompt.text.clone(), None, prompt.classification);
+        for (_, part) in &prompts {
+            // Part of the context of what comes of this call; seen already.
+            let reference = state.keep_prompt(part.role, part.text.clone(), part.after, part.classification.clone());
             work.context.prompts.push(reference);
-            parts.push(prompt.text);
+            parts.push(part.text.clone());
         }
         let said = given.iter()
             .map(|m| Said { sender: m.sender_name.clone(), text: m.content.clone().unwrap_or_default() })
@@ -353,7 +343,10 @@ impl ExternalAgentActor {
         // back - its prompt parts are given, the transcript starts anew, and
         // what was given is the context of what comes of this call (issue
         // 205). A send that failed sends it again with the next call.
-        self.prompts().iter_mut().for_each(PromptDelivery::delivered);
+        for (key, part) in prompts {
+            state.remote.give(key, caelumora_model::digest::prompt(&part.text));
+        }
+        self.pending_prompts().clear();
         work.context.transcript = state.transcript.start_anew();
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
@@ -673,7 +666,7 @@ impl Answer {
     fn take(&mut self, state: &mut AgentChannelState, task: Option<&TaskId>, event: ExternalEvent) -> Step {
         match event {
             ExternalEvent::Conversation(conversation) => {
-                state.remote.conversation = Some(conversation);
+                state.remote.converse_in(conversation);
                 Step::Continue
             }
             ExternalEvent::Started(started) => Step::Started(started),

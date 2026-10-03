@@ -394,12 +394,12 @@ mod tests {
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
         assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
 
-        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC) }]);
+        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }]);
         assert_eq!(turn.label(), Classification::PUBLIC);
         state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
         assert_eq!(turn.label(), internal, "what others said during the turn");
-        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
+        turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }]);
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");
         assert_eq!(turn.agent_channel_state().turn.as_ref().unwrap().work.context.prompts[0].classification, None, "and is recorded so");
     }

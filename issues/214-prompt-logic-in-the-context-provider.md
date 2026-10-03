@@ -1,6 +1,6 @@
 # 214 — The prompt logic is split between the context provider and a free function
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -101,3 +101,22 @@ without an alias.
   message processors' stages and the prompt providers use it; a failure that fails closed is now
   named "component '...' failed" for both, and the warning reads alike. `TurnContextProvider` asks
   its providers itself again; `prompt_parts` remains only for `ExternalAgentActor`, until step 3.
+- **2026-10-03** — Before step 3, decided with the maintainer, in place of what "What the remote
+  agent was given" above says: giving a part again is the actor's responsibility, not the context
+  provider's - the actor knows what a prompt is anyway, it sets a turn's. So the component has no
+  state: `PromptPart` gains `source`, the component a part came from alone, and the actor records
+  by it what the remote agent was given last. The alternative - the actor only storing the context
+  of its last call, the component keeping all the rest - was weighed and not taken. The default of
+  an external agent's `ContextProvider` is given by its actor, for its container alone
+  (`ComponentContainer::with_defaults`), rather than by the registry per kind of personality.
+- **2026-10-03** — Step 3, done: `external_context_provider` (`ExternalContextProvider`) asks its
+  prompt providers by their fail policy and returns each part on its own, with its `source`, role
+  user, unplaced. `ExternalAgentActor` takes its `ContextProvider` from its container, built with
+  that default; it keeps the parts not given yet by `source` - else by their place - in memory,
+  gives those, and after a send that reached the remote agent records their digests in
+  `RemoteState::given_prompts` (stored; `RemoteState::give`, `has_given`). Another conversation
+  opened by the remote agent forgets them (`RemoteState::converse_in`). The work has seen every
+  part returned and the knowledge they hold. `prompt_parts` and `PromptDelivery` are gone. Tests:
+  the component, a container's own defaults, `RemoteState`, and that after a restart only a part
+  that changed is given; the tests of 204 hold as they were. CHANNELS.md, COMPONENTS.md and
+  CONFIGURATION.md say so.

@@ -284,14 +284,17 @@ An **actor** is anything that sends and receives events in a channel.
     agent does (issues 196, 206): all of it into its history, with its own answers; what can be
     given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
     of its personality, into its transcript. What it reads of the channel, its prompt providers
-    read. When it is asked to respond, it gives the remote agent the parts of its personality's
-    `PromptProvider`s first, such as who is in the channel (`channel_members_prompt_provider` with
-    `changes_only`, issue 204, see [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)) - each
-    read as for a turn, from an `AgentWork`, in the order of the configuration, positions ignored,
-    and each only when it changed since it was given, since the remote agent keeps its
-    conversation; a part a failed send did not give is given with the next one, and after a restart
-    every part is given again. A2A has no system message: the parts are text of the user's message
-    too, ahead of what was said. Then it gives the remote agent its transcript, which then starts anew
+    read. When it is asked to respond, it gives the remote agent the prompt parts of its
+    personality first, such as who is in the channel (`channel_members_prompt_provider` with
+    `changes_only`, issue 204, see [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). Its
+    `ContextProvider` assembles them, as an agent's does for a turn (issue 214) - by default
+    `external_context_provider`, which gives each part on its own, with the component it came from,
+    in the order of the configuration, positions ignored. The actor gives each part only when it is
+    not what the remote agent was given last of it (`RemoteState::given_prompts`, stored), since the
+    remote agent keeps its conversation; a part a failed send did not give is given with the next
+    one, also when its provider has nothing new by then. After a restart only what changed is given;
+    when the remote agent opens another conversation, all of it again. A2A has no system message:
+    the parts are text of the user's message too, ahead of what was said. Then it gives the remote agent its transcript, which then starts anew
     (`Transcript::start_anew`, issue 205): the transcript's active path is what the remote agent has
     not heard yet - what a failed send did not give is given with the next one, and a restart gives
     nothing twice - and what each call gave stays as a branch from its root. It publishes what

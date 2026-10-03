@@ -209,14 +209,17 @@ pub enum SystemMessages {
 
 /// A prompt part as a `ContextProvider` places it: its text, the role it is
 /// given in, and the transcript entry it follows - `None`: before
-/// everything - and how what it holds besides knowledge is classified,
-/// `None` if that is not known (issue 168).
+/// everything - how what it holds besides knowledge is classified, `None`
+/// if that is not known (issue 168), and the component it came from, if
+/// from one alone (issue 214): what an external agent's actor tells the
+/// parts it gives apart by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptPart {
     pub role: MessageRole,
     pub text: String,
     pub after: Option<Digest>,
     pub classification: Option<Classification>,
+    pub source: Option<String>,
 }
 
 /// What an agent's model saw when it produced a message (issue 06): the

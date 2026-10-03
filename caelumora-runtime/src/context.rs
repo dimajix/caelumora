@@ -5,7 +5,6 @@
 //! has exactly one `ContextProvider` and any number of `PromptProvider`s
 //! (issue 98).
 
-use crate::component::ComponentImpl;
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -47,11 +46,6 @@ impl Prompt {
     /// in its reference.
     pub fn of_knowledge(text: String, knowledge: Vec<KnowledgeRef>) -> Self {
         Self { text, knowledge, classification: Some(Classification::PUBLIC) }
-    }
-
-    /// The part with its text trimmed: what surrounds it is not part of it.
-    pub fn trimmed(self) -> Self {
-        Self { text: self.text.trim().to_string(), ..self }
     }
 
     /// `text`, holding no knowledge from elsewhere, classified
@@ -123,22 +117,6 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     /// The part for `work` - a turn about to start, or a request to an
     /// external agent about to be sent (issue 204); empty text for none.
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt>;
-}
-
-/// The parts of `providers` for `work`, one for each, in their order (issue
-/// 204): each as its component's fail policy says - a part that fails open
-/// is left out with a warning, `None`, as is one with no text; one that
-/// fails closed fails all.
-///
-/// # Errors
-/// The error of a provider that fails closed, naming its component.
-pub(crate) async fn prompt_parts(providers: &[ComponentImpl<dyn PromptProvider>], work: &AgentWork<'_>) -> Result<Vec<Option<Prompt>>> {
-    let mut parts = Vec::with_capacity(providers.len());
-    for provider in providers {
-        let prompt = provider.apply_fail_policy(provider.get_prompt(work).await)?;
-        parts.push(prompt.map(Prompt::trimmed).filter(|p| !p.text.is_empty()));
-    }
-    Ok(parts)
 }
 
 /// Assembles what the model of an agent is given besides the conversation,

@@ -97,10 +97,13 @@ directory that holds the default kind (`component_impl`, `tool_impl`, `llm_impl`
 *   What a container's single is, is known without building it: `ComponentRegistry::kind_of` names
     the kind of the component that provides it, or of the default - `None` if the container refers
     to a preconfigured component, which might provide it.
-*   The default comes from, in this order: the container's own component, the configuration
+*   The default comes from, in this order: the container's own component, the defaults the
+    container was built with (`ComponentContainer::with_defaults`, issue 214 - an external agent's
+    actor gives its `ContextProvider` so, `external_context_provider`), the configuration
     (`AppConfig::component_defaults`, one component per such facet, checked when the
     `RuntimeManager` is made, see [CONFIGURATION.md](CONFIGURATION.md)), and finally the kind
-    registered in code.
+    registered in code. `kind_of` knows only the registry's: it is asked of channels, which are
+    built without defaults of their own.
 
 ### Factories and tags
 
@@ -207,7 +210,8 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `position` (`start` or `before_turn_input`, default `start`), `classification` (default public, issue 168) | A fixed prompt part. |
 | `channel_members_prompt_provider` | `PromptProvider` | `position` (`start` or `before_turn_input`, default `start`), `changes_only` (default false; for external agents, issue 204) | Tells the agent its own name and handle and who else is in its channel, with their introductions; with `changes_only`, only when that changed, with who joined and who left ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
-| `turn_context_provider` | `ContextProvider` | - | The default context provider: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
+| `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
+| `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent (issue 214): each prompt part on its own, with the component it came from, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent` | `endpoint` (its `url` the agent's base URL, or its card's own; its timeout 30 s, per request, a streamed one until its stream begins), `classification` (the channel's) | An external agent reached over A2A 1.x by JSON-RPC (issue 179): reads its agent card, streams over server-sent events where the card offers it; where not, is answered at once with the task and asks for it until it ends or asks back (issue 186). A card it cannot read, or one that offers no JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. |
 | `ollama_client` | `LLMClient` | `endpoint` (`url: http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends (issue 149). |
 | `default_tool_executor` | `ToolExecutor` | - | The default executor: runs a call on the `ToolProvider` that has the tool ([TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). |

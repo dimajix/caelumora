@@ -46,7 +46,7 @@ impl Turn<'_> {
     /// later (issues 06, 47).
     pub fn set_context(&mut self, parts: Vec<PromptPart>) {
         let prompts = parts.into_iter()
-            .map(|PromptPart { role, text, after, classification }| self.keep_prompt(role, text, after, classification))
+            .map(|PromptPart { role, text, after, classification, .. }| self.keep_prompt(role, text, after, classification))
             .collect();
         self.current_mut().work.context.prompts = prompts;
     }
@@ -148,7 +148,7 @@ mod tests {
         state.transcript.push(question.clone());
 
         let (first, second) = (text(MessageRole::Assistant, "Let me think."), text(MessageRole::Assistant, "4"));
-        let system = || PromptPart { role: MessageRole::System, text: "You are good at sums.".to_string(), after: None, classification: None };
+        let system = || PromptPart { role: MessageRole::System, text: "You are good at sums.".to_string(), after: None, classification: None, source: None };
         let order = |items: &[ContextItem]| items.iter().map(|item| match item {
             ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),

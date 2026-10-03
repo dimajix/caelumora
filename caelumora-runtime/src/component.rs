@@ -294,6 +294,17 @@ impl ComponentRegistry {
     /// `ref`, has an unknown kind, does not provide exactly one single, or
     /// provides one that another of them provides too; nothing is taken then.
     pub fn set_defaults(&mut self, config: &ComponentConfig) -> ComponentResult<()> {
+        self.defaults = self.defaults_of(config)?;
+        Ok(())
+    }
+
+    /// The components of `config` as defaults of singles, by the single each
+    /// provides - for the whole registry (`set_defaults`) or one container
+    /// (`ComponentContainer::with_defaults`).
+    ///
+    /// # Errors
+    /// As `set_defaults`.
+    fn defaults_of(&self, config: &ComponentConfig) -> ComponentResult<HashMap<TypeId, ComponentDescriptor>> {
         let mut defaults: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
         for node in &config.component_nodes {
             if node.kind == PRECONFIGURED_REF_KIND {
@@ -314,8 +325,7 @@ impl ComponentRegistry {
                 )));
             }
         }
-        self.defaults = defaults;
-        Ok(())
+        Ok(defaults)
     }
 
     /// The kind of the component of `config` that provides `T`, a facet of
@@ -486,6 +496,9 @@ struct Graph {
     context: ComponentContext,
     planned: Vec<Planned>,
     states: Mutex<Vec<State>>,
+    /// The defaults of singles for this graph alone, in place of the
+    /// registry's (`ComponentContainer::with_defaults`).
+    own_defaults: HashMap<TypeId, ComponentDescriptor>,
     /// The defaults built for singles no component of the graph provides.
     defaults: Mutex<HashMap<TypeId, State>>,
 }
@@ -572,7 +585,8 @@ impl Graph {
 
     /// The default for the single `facet`, built if it is not yet.
     async fn default(self: &Arc<Self>, facet: FacetType, asked: Option<(&str, FacetType)>) -> ComponentResult<Arc<ComponentNode>> {
-        let descriptor = self.registry.default_of(facet.id)
+        let descriptor = self.own_defaults.get(&facet.id).cloned()
+            .or_else(|| self.registry.default_of(facet.id))
             .ok_or_else(|| ComponentError::InvalidConfig(format!("no component provides {}, and it has no default", facet.name)))?;
         {
             let mut defaults = self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -628,6 +642,25 @@ impl ComponentContainer {
         registry: &Arc<ComponentRegistry>,
         context: &ComponentContext,
     ) -> ComponentResult<Self> {
+        Self::with_defaults(config, &ComponentConfig::default(), registry, context).await
+    }
+
+    /// Builds the components of `config` as `from_config` does, with the
+    /// components of `defaults` as the defaults of the singles they provide
+    /// - in place of the registry's, for this container alone: for a kind of
+    /// owner whose singles want another default, such as an external agent's
+    /// `ContextProvider` (issue 214).
+    ///
+    /// # Errors
+    /// As `from_config`; and as `ComponentRegistry::set_defaults` for
+    /// `defaults`.
+    pub async fn with_defaults(
+        config: &ComponentConfig,
+        defaults: &ComponentConfig,
+        registry: &Arc<ComponentRegistry>,
+        context: &ComponentContext,
+    ) -> ComponentResult<Self> {
+        let own_defaults = registry.defaults_of(defaults)?;
         let mut ids = HashSet::new();
         let mut planned = Vec::with_capacity(config.component_nodes.len());
         for node in &config.component_nodes {
@@ -658,6 +691,7 @@ impl ComponentContainer {
             context: ComponentContext { building: None, ..context.clone() },
             states: Mutex::new(planned.iter().map(|_| State::Pending).collect()),
             planned,
+            own_defaults,
             defaults: Mutex::new(HashMap::new()),
         });
         for index in 0..graph.planned.len() {
@@ -955,6 +989,22 @@ mod tests {
         let container = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.unwrap();
         assert_eq!(container.one::<dyn Choice>().await.unwrap().id, "configured");
         assert_eq!(built.load(Ordering::SeqCst), 0, "the built-in default is not built");
+    }
+
+    #[tokio::test]
+    async fn a_container_may_have_defaults_of_its_own_in_place_of_the_registrys() {
+        let (mut registry, built) = choices();
+        registry.set_defaults(&config(&[("configured", "default")])).unwrap();
+        let registry = Arc::new(registry);
+
+        let own = ComponentContainer::with_defaults(&config(&[]), &config(&[("its_own", "other")]), &registry, &test_context()).await.unwrap();
+        assert_eq!(own.one::<dyn Choice>().await.unwrap().id, "its_own", "in place of the configuration's too");
+        let mine = ComponentContainer::with_defaults(&config(&[("mine", "other")]), &config(&[("its_own", "other")]), &registry, &test_context()).await.unwrap();
+        assert_eq!(mine.one::<dyn Choice>().await.unwrap().id, "mine", "what the container configures still comes first");
+        assert_eq!(built.load(Ordering::SeqCst), 0, "no other default is built");
+
+        let refused = ComponentContainer::with_defaults(&config(&[]), &config(&[("x", "part")]), &registry, &test_context()).await;
+        assert!(matches!(refused, Err(ComponentError::InvalidConfig(_))), "a default must provide one single");
     }
 
     #[test]

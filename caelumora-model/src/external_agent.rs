@@ -5,9 +5,11 @@
 //! `AgentChannelState`, as for every agent (issue 206) - and the handles of
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
+use crate::digest::Digest;
 use crate::work::Work;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// The remote agent's handle for its conversation with one channel - an
@@ -77,13 +79,40 @@ pub struct RemoteState {
     pub conversation: Option<ConversationId>,
     /// The tasks given to it that have not ended.
     pub open_tasks: Vec<OpenTask>,
+    /// What it was given last of each prompt part in its conversation
+    /// (issue 214): the digest of the text, by the component the part came
+    /// from. A part is given again only when it changed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub given_prompts: BTreeMap<String, Digest>,
 }
 
 impl RemoteState {
     /// Whether nothing is kept: so for an agent run here, and an external
     /// one before it was first asked.
     pub fn is_empty(&self) -> bool {
-        self.conversation.is_none() && self.open_tasks.is_empty()
+        self.conversation.is_none() && self.open_tasks.is_empty() && self.given_prompts.is_empty()
+    }
+
+    /// Records that the remote agent keeps its conversation as
+    /// `conversation`. If it opened another than the one it had, what it was
+    /// given of the prompt parts is no longer known to it.
+    pub fn converse_in(&mut self, conversation: ConversationId) {
+        if self.conversation.as_ref().is_some_and(|before| *before != conversation) {
+            self.given_prompts.clear();
+        }
+        self.conversation = Some(conversation);
+    }
+
+    /// Whether the remote agent was given last of the part of `source` the
+    /// text of `digest`.
+    pub fn has_given(&self, source: &str, digest: &Digest) -> bool {
+        self.given_prompts.get(source) == Some(digest)
+    }
+
+    /// Records that the remote agent was given the part of `source` with the
+    /// text of `digest`.
+    pub fn give(&mut self, source: String, digest: Digest) {
+        self.given_prompts.insert(source, digest);
     }
 
     /// The task that asked back, if any: the next message to the remote
@@ -174,6 +203,13 @@ mod tests {
         assert_eq!(remote.work_of(&one).map(|w| w.security_context.initiator_id), Some(bob.initiator_id), "in the contexts of the request");
         assert!(remote.work_of(&two).is_none(), "none kept");
         remote.open(&one, OpenTaskState::InputRequired);
+
+        remote.give("members".to_string(), crate::digest::prompt("[Who is in this channel]"));
+        assert!(remote.has_given("members", &crate::digest::prompt("[Who is in this channel]")));
+        remote.converse_in(ConversationId("c-1".to_string()));
+        assert!(remote.has_given("members", &crate::digest::prompt("[Who is in this channel]")), "the first conversation keeps what it was given");
+        remote.converse_in(ConversationId("c-2".to_string()));
+        assert!(remote.given_prompts.is_empty(), "another one has none of it");
 
         remote.close(&one);
         assert_eq!(remote.asking(), None);

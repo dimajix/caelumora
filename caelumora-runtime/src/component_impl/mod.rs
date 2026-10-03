@@ -15,6 +15,7 @@ pub mod create_plan_tool;
 pub mod notes;
 pub mod private_notes;
 pub mod turn_context_provider;
+pub mod external_context_provider;
 pub mod static_system_prompt_provider;
 
 /// Registers the component kinds of this directory with `registry`, and the
@@ -30,5 +31,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     notes::register(registry);
     private_notes::register(registry);
     turn_context_provider::register(registry);
+    external_context_provider::register(registry);
     static_system_prompt_provider::register(registry);
 }

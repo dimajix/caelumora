@@ -49,7 +49,7 @@ impl ContextProvider for TurnContextProvider {
         let mut parts = Vec::with_capacity(2);
         if !start.is_empty() {
             let (text, classification) = joined(start);
-            parts.push(PromptPart { role: MessageRole::System, text, after: None, classification });
+            parts.push(PromptPart { role: MessageRole::System, text, after: None, classification, source: None });
         }
         if !before_input.is_empty() {
             // Before the newest message, which is the turn's input - unless
@@ -64,7 +64,7 @@ impl ContextProvider for TurnContextProvider {
                 None => None,
             };
             let (text, classification) = joined(before_input);
-            parts.push(PromptPart { role: MessageRole::User, text, after, classification });
+            parts.push(PromptPart { role: MessageRole::User, text, after, classification, source: None });
         }
         Ok((parts, knowledge))
     }

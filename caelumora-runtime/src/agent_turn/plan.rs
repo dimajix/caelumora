@@ -210,7 +210,7 @@ mod tests {
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
             let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
-            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
+            turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }]);
             turn.set_plan(plan_of(&["only"]));
             turn.advance_plan(0);
             let mut internal = step.clone();
