@@ -289,3 +289,14 @@ without changing behaviour; step 4 changes behaviour.
   the memory store's map, and `ActorRuntime::load_/store_external_channel_state` are gone. The views
   still read the state per kind; that is step 3. Stored states of external agents under the old
   directory are no longer read and are to be deleted.
+- **2026-10-03** — Decided after trying both: `remote` is a plain `RemoteState`, not an `Option`
+  (stored only when not empty, `RemoteState::is_empty`), and is read and changed directly, as
+  `notes` or `prompts`; `remote()` and `remote_mut()` are gone. Its `None` meant nothing an empty
+  part does not, and the accessors only made up for that. The turn stays an `Option`: its `None`
+  means "between turns", and `Turn` encapsulates it.
+- **2026-10-03** — To be looked at in a refactoring at the end of this issue: the counterpart of
+  `TurnState` for an external agent is the `OpenTask`, not `RemoteState`. Unlike a turn, it does not
+  keep in whose name it was begun - `resume` and `speak` act in the agent's own `SecurityContext`,
+  not in the chain of the request that began the task, though its `EventContext` is kept
+  (`requested`, issue 45) - nor the channel's classification when it began. Its `ContextRef` is
+  [205](205-external-agent-message-context.md)'s.

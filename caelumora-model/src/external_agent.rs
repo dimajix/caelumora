@@ -82,6 +82,12 @@ pub struct RemoteState {
 }
 
 impl RemoteState {
+    /// Whether nothing is kept: so for an agent run here, and an external
+    /// one before it was first asked.
+    pub fn is_empty(&self) -> bool {
+        self.offered_up_to.is_none() && self.conversation.is_none() && self.open_tasks.is_empty()
+    }
+
     /// The task that asked back, if any: the next message to the remote
     /// agent answers it.
     pub fn asking(&self) -> Option<&TaskId> {

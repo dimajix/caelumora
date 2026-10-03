@@ -202,11 +202,10 @@ pub struct AgentChannelState {
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
-    /// What an external agent keeps of the remote side (issue 179), `None`
-    /// for an agent run here - and for an external one that has kept
-    /// nothing yet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote: Option<RemoteState>,
+    /// What an external agent keeps of the remote side (issue 179), empty
+    /// for an agent run here.
+    #[serde(default, skip_serializing_if = "RemoteState::is_empty")]
+    pub remote: RemoteState,
 }
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
@@ -366,21 +365,7 @@ pub struct TurnEntry {
     pub context: ContextRef,
 }
 
-/// The remote part of a state that has none.
-static NO_REMOTE: RemoteState = RemoteState { offered_up_to: None, conversation: None, open_tasks: Vec::new() };
-
 impl AgentChannelState {
-    /// What an external agent keeps of the remote side; empty if it kept
-    /// nothing yet.
-    pub fn remote(&self) -> &RemoteState {
-        self.remote.as_ref().unwrap_or(&NO_REMOTE)
-    }
-
-    /// What an external agent keeps of the remote side, to be changed.
-    pub fn remote_mut(&mut self) -> &mut RemoteState {
-        self.remote.get_or_insert_with(RemoteState::default)
-    }
-
     /// What the history recorded the message `id` - on whichever branch -
     /// was produced from, or `None` if this agent did not produce it (or it
     /// was before references were recorded).
@@ -411,7 +396,7 @@ pub enum AgentChannelStateChange {
     Turn(Option<TurnState>),
     /// What an external agent keeps of the remote side, whole: small, and
     /// bounded by its open tasks.
-    Remote(Option<RemoteState>),
+    Remote(RemoteState),
 }
 
 impl Journaled for AgentChannelState {
@@ -636,11 +621,11 @@ pub(crate) mod tests {
         let mut state = AgentChannelState::default();
         state.history.extend(vec![make_message(id(1))]);
         let mut copy = stored(&mut state);
-        assert!(copy.remote.is_none() && state.remote().open_tasks.is_empty(), "nothing kept of the remote side yet");
+        assert!(copy.remote.is_empty(), "nothing kept of the remote side yet");
 
         state.history.extend(vec![make_message(id(2))]);
         state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let remote = state.remote_mut();
+        let remote = &mut state.remote;
         remote.offered_up_to = Some(id(2));
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
@@ -648,10 +633,10 @@ pub(crate) mod tests {
         replayed(&state, &mut copy);
 
         state.mark_stored();
-        state.remote_mut().open_tasks.clear();
+        state.remote.open_tasks.clear();
         assert_eq!(state.changes().len(), 3, "the small parts alone");
         replayed(&state, &mut copy);
-        assert!(copy.remote().open_tasks.is_empty());
+        assert!(copy.remote.open_tasks.is_empty());
     }
 
     #[test]
