@@ -673,6 +673,43 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// An external agent's task begun before its channel was lowered is given up
+/// as a turn is (issue 212): the remote agent is asked to cancel it in the
+/// name of who asked for it, and whether what came of it may still be
+/// published is asked in his name too.
+#[tokio::test]
+async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoever_asked() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = with_remote_at_work(&calls, None).await;
+    let remote = remote_personality(&world).await;
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = session.channels()[0].clone();
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut events = main.subscribe();
+    main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+    calls_made(&calls, 1).await;
+
+    let (failed, asked) = world.asked(async {
+        main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel runs");
+                if let caelumora_model::actor::ActorEvent::TurnFailed { message } = envelope.event {
+                    break message;
+                }
+            }
+        }).await.expect("the users are told")
+    }).await;
+    assert!(failed.contains("lowered"), "{failed}");
+    let bobs: Vec<&String> = asked.iter().filter(|line| line.starts_with("bob as hermes")).collect();
+    // The lowering cancels the answer, which cancels its remote task - as
+    // every cancel does - and only then is asked whether it may go on.
+    assert_eq!(bobs, ["bob as hermes: ReadSecret yes", "bob as hermes: Publish no"], "cancelled, and asked whether it goes on, in his name");
+    assert_eq!(calls.lock().unwrap().as_slice(), ["send", "cancel"]);
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- Users and their profiles -------------------------------------------------
 
 /// U1: a user's record is the system's, their profile their own; what they

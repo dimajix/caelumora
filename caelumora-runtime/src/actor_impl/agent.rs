@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, catch_up, event_for, failure_message, perceive};
+use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, perceive};
 use crate::actor::{Actor, Answering};
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
@@ -327,7 +327,7 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
         let told = match &reason {
             GivenUpReason::Failed { message } => Some(message.clone()),
-            GivenUpReason::Lowered { channel } => Some(format!("The channel's classification was lowered to {channel} while {agent_name} was answering; the answer was discarded.")),
+            GivenUpReason::Lowered { channel } => Some(lowered_message(&agent_name, channel)),
             GivenUpReason::Stopped => None,
         };
         let Some(turn) = self.turn(state) else { return };

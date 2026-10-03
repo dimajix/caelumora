@@ -14,7 +14,7 @@
 //! ties it to the remote side (`RemoteState`, issue 206). It reads nothing
 //! of the channel itself.
 
-use super::{catch_up, failure_message, perceive};
+use super::{catch_up, failure_message, lowered_message, perceive};
 use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::controller::AgentController;
@@ -74,6 +74,9 @@ enum Ending {
     Answered(Option<Box<Message>>),
     /// It failed or refused the task, for the reason given.
     Failed(String),
+    /// The channel was lowered to this classification since it began: it
+    /// is given up, nothing of it is published (issue 212).
+    Lowered(Classification),
     /// The actor was stopped meanwhile: nothing is published.
     Stopped,
 }
@@ -182,6 +185,10 @@ impl ExternalAgentActor {
                 info!("External agent {} {} failed its task: {}", self.id(), self.name(), reason);
                 vec![ActorEvent::TurnFailed { message: format!("{} could not answer: {reason}", self.name()) }]
             }
+            Ok(Ending::Lowered(channel)) => {
+                info!("External agent {} {} gives up its answer: the channel was lowered to {}", self.id(), self.name(), channel);
+                vec![ActorEvent::TurnFailed { message: lowered_message(&self.name(), &channel) }]
+            }
             Ok(Ending::Stopped) => Vec::new(),
             Err(e) => {
                 tracing::error!("External agent {} {} could not answer: {:#}", self.id(), self.name(), e);
@@ -215,6 +222,16 @@ impl ExternalAgentActor {
         work.see(&brought);
         state.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| work.see(&m.classification));
         let given = state.transcript.messages_after(state.remote.sent_up_to.as_ref());
+        // A task that asked back before the channel was lowered is not
+        // taken up: it is cancelled, and the request begins a new one.
+        if let Some(asking) = state.remote.asking().cloned() {
+            if let Some(begun) = state.remote.work_of(&asking) {
+                if self.lowered(&begun).await.is_some() {
+                    info!("External agent {} does not take up the task that asked back: the channel was lowered since", self.id());
+                    self.cancel_remote(state, &begun.security_context, &asking).await;
+                }
+            }
+        }
         let answers = state.remote.asking().cloned();
         if given.is_empty() && answers.is_none() {
             debug!("External agent {} has nothing new to give; nothing to ask", self.id());
@@ -240,6 +257,11 @@ impl ExternalAgentActor {
                     }
                     if self.ended.is_cancelled() {
                         return Ok(Ending::Stopped);
+                    }
+                    // A lowering cancels the channel's actors: what came so
+                    // far is then not published, but given up (issue 212).
+                    if let Some(channel) = self.lowered(&work).await {
+                        return Ok(Ending::Lowered(channel));
                     }
                     break;
                 }
@@ -301,12 +323,19 @@ impl ExternalAgentActor {
     /// ended before its task did. A task is re-attached once per
     /// run of the actor, so that a remote side that keeps breaking off does
     /// not keep it busy; the next run tries again. A task that asked back
-    /// waits for the next request instead.
-    async fn follow_open_tasks(&self, state: &AgentChannelState, followed: &mut Followed, attempted: &mut HashSet<TaskId>) {
+    /// waits for the next request instead. A task whose channel was lowered
+    /// since it began is given up instead of followed (`give_up_task`).
+    async fn follow_open_tasks(&self, state: &mut AgentChannelState, followed: &mut Followed, attempted: &mut HashSet<TaskId>, output: &dyn EventSender) {
         let working = state.remote.working().cloned();
         for task in working.collect::<Vec<_>>() {
             if !attempted.insert(task.clone()) {
                 continue;
+            }
+            if let Some(work) = state.remote.work_of(&task) {
+                if let Some(channel) = self.lowered(&work).await {
+                    self.give_up_task(state, &task, &work, channel, output).await;
+                    continue;
+                }
             }
             match self.remote.resume(&self.acting_for(state, &task), &task).await {
                 Ok(stream) => {
@@ -355,6 +384,13 @@ impl ExternalAgentActor {
         let answer = pending.remove(&task).unwrap_or_default();
         // Said now, if it asks back and stays open.
         state.remote.set_unsaid(&task, None);
+        // Not said at all if its channel was lowered since it began.
+        if let Some(work) = &work {
+            if let Some(channel) = self.lowered(work).await {
+                self.give_up_task(state, &task, work, channel, output).await;
+                return;
+            }
+        }
         self.speak(state, work, outcome.map(|()| answer), output).await;
     }
 
@@ -377,10 +413,7 @@ impl ExternalAgentActor {
             return;
         };
         let (speaking, label) = match work {
-            Some(work) => {
-                let label = work.label();
-                (Answering { event_context: work.event_context.next(self.id(), self.name()), security_context: work.security_context }, label)
-            }
+            Some(work) => (self.speaking_for(&work), work.label()),
             None => (
                 Answering {
                     event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
@@ -401,6 +434,38 @@ impl ExternalAgentActor {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
         speaking.send_all(events, output).await;
+    }
+
+    /// The contexts what comes of `work` later is said in: those of the
+    /// answer to the request that began it, continued.
+    fn speaking_for(&self, work: &Work) -> Answering {
+        Answering { event_context: work.event_context.next(self.id(), self.name()), security_context: work.security_context.clone() }
+    }
+
+    /// The channel's classification as it is now, if `work` - begun under
+    /// another - may no longer flow into it (`AccessQuestions::may_publish`,
+    /// in the work's name, as `AgentActor::turn_flow`): then it is given up
+    /// (issue 212). `None` while it flows, or without a channel.
+    async fn lowered(&self, work: &Work) -> Option<Classification> {
+        let channel = self.actor_runtime.channel_loop()?.classification();
+        let flows = self.actor_runtime.security_manager().may_publish(&work.security_context, self.id(), &work.classification, &channel).await;
+        (!flows).then_some(channel)
+    }
+
+    /// Gives up the open `task`, done as `work`, whose channel was lowered
+    /// to `channel` since it began (issue 212): nothing of what came of it
+    /// is said, the remote agent is asked to cancel it if it has not ended,
+    /// it is forgotten and stored so, and the users are told in its
+    /// contexts, as for a turn.
+    async fn give_up_task(&self, state: &mut AgentChannelState, task: &TaskId, work: &Work, channel: Classification, output: &dyn EventSender) {
+        info!("External agent {} {} gives up its open task: the channel was lowered to {}", self.id(), self.name(), channel);
+        if state.remote.work_of(task).is_some() {
+            self.cancel_remote(state, &work.security_context, task).await;
+        }
+        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
+            warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
+        }
+        self.speaking_for(work).send_all(vec![ActorEvent::TurnFailed { message: lowered_message(&self.name(), &channel) }], output).await;
     }
 
     /// The authority the open `task` is done with: that of the request that
@@ -608,7 +673,7 @@ impl Actor for ExternalAgentActor {
         let mut followed = Followed::new();
         let mut attempted = HashSet::new();
         let mut pending = HashMap::new();
-        self.follow_open_tasks(&state, &mut followed, &mut attempted).await;
+        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
         loop {
             // What others said, a request to respond, or an open task's news.
             tokio::select! {
@@ -620,7 +685,7 @@ impl Actor for ExternalAgentActor {
                         ActorEvent::FullResponseGenerated(messages) => self.hear(&mut state, std::mem::take(messages)).instrument(span).await,
                         ActorEvent::ResponseRequested => {
                             self.respond(&mut state, &request, &*output).instrument(span).await;
-                            self.follow_open_tasks(&state, &mut followed, &mut attempted).await;
+                            self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
                         }
                         _ => {}
                     }

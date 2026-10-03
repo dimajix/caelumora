@@ -2584,7 +2584,7 @@ mod tests {
         store.create_user(&SecurityContext::system(), &alice).await.unwrap();
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
-        let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
+        let security: Arc<dyn SecurityManager> = Arc::new(FlowRule);
         let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
         let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
         registry.register(
@@ -3209,6 +3209,80 @@ mod tests {
         assert_eq!(told.context.span_id, request.span_id, "in its span");
         let called_as: Vec<_> = remote.called_as.lock().unwrap().iter().map(|(call, security)| (*call, security.initiator_id)).collect();
         assert_eq!(called_as, [("resume", bob)], "followed in bob's name, as it was begun");
+        running.abort();
+    }
+
+    /// The state of an external agent with one task `standing` so, begun
+    /// while its channel was confidential - above the channel as it is now.
+    fn begun_above(open: &str, standing: caelumora_model::external_agent::OpenTaskState) -> caelumora_model::agent::AgentChannelState {
+        use caelumora_model::agent::AgentChannelState;
+        use caelumora_model::confidentiality::{Classification, Confidentiality};
+        use caelumora_model::external_agent::{OpenTask, RemoteState, Work};
+        let work = Work::new(EventContext::default(), SecurityContext::default(), Classification::general(Confidentiality::Confidential));
+        AgentChannelState {
+            remote: RemoteState {
+                open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: standing, unsaid: None, work: Some(work) }],
+                ..RemoteState::default()
+            },
+            ..AgentChannelState::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::confidentiality::{Classification, Confidentiality};
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Partial("Let me think".to_string()))],
+        ]));
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(remote.clone()).await;
+        settled(&helper, ActorState::Planning).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
+        let told = turn_failed(&mut events, agent).await;
+        assert!(told.contains("lowered"), "{told}");
+        settled(&helper, ActorState::Idle).await;
+        assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the remote task is cancelled");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote.open_tasks.is_empty(), "and forgotten");
+        assert!(state.history.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of the answer is kept");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_task_begun_before_its_channel_was_lowered_is_given_up_instead_of_followed() {
+        use caelumora_model::external_agent::OpenTaskState;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+        let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(begun_above("t-1", OpenTaskState::Working))).await.unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let told = turn_failed(&mut events, agent).await;
+        assert!(told.contains("lowered"), "{told}");
+        let calls: Vec<&str> = remote.called_as.lock().unwrap().iter().map(|(call, _)| *call).collect();
+        assert_eq!(calls, ["cancel"], "cancelled, not followed");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote.open_tasks.is_empty(), "and forgotten");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_task_that_asked_back_before_its_channel_was_lowered_is_not_taken_up() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::external_agent::OpenTaskState;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Hello.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let built = external_channel(remote.clone(), external_components(), Some(begun_above("t-1", OpenTaskState::InputRequired))).await.unwrap();
+        let Stuck { mut events, agent, running, .. } = start(built).await;
+
+        answered(&mut events, agent).await;
+        assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the task that asked back is cancelled");
+        assert_eq!(remote.sent.lock().unwrap()[0].1.answers, None, "and the request begins a new one");
         running.abort();
     }
 

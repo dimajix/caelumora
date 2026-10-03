@@ -280,4 +280,16 @@ About 20 lines in the model (method, two fields, `Work` if decided), 120 in the 
   of who asked, and the remote agent is not called. Open tasks stored with the two context fields
   of 211 lose them and act as the agent itself. Tests: `Work` in the model, the label in
   `channel.rs`, the refusal in the security suite.
+- **2026-10-03** — Step 3 done: work whose bound may no longer flow into its channel
+  (`ExternalAgentActor::lowered`, `may_publish` in the work's name) is given up at the three places
+  of the plan - an exchange cancelled by the lowering ends as `Ending::Lowered`, nothing of it
+  published or kept; a task to be followed, or one whose end is to be said, is cancelled at the
+  remote agent if it has not ended, forgotten, and the users told (`give_up_task`); a task that
+  asked back is cancelled when the next request would take it up, which begins a new one.
+  `lowered_message` in `actor_impl` is the text both actors tell. The channel tests of external
+  agents run under `FlowRule` instead of a policy that permits everything, so that a lowering is
+  one. Tests: three in `channel.rs`, one in the security suite - where the remote task is
+  cancelled, as every cancel does, before it is asked whether it may go on. Not tested: a task
+  followed while the channel is lowered, whose end is then given up in `on_followed` - the scripted
+  remote agent cannot hold back its events until the lowering.
 

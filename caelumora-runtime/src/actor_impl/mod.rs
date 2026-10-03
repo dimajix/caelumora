@@ -96,6 +96,13 @@ fn failure_message(error: &anyhow::Error) -> String {
     crate::error::user_message(error).unwrap_or_else(|| "internal error - the details are in the server log".to_string())
 }
 
+/// What the channel's users are told when the work of the agent `name` -
+/// a turn, or an external agent's answer or task - was given up because
+/// the channel was lowered to `channel` since it began (issues 141, 212).
+fn lowered_message(name: &str, channel: &caelumora_model::confidentiality::Classification) -> String {
+    format!("The channel's classification was lowered to {channel} while {name} was answering; the answer was discarded.")
+}
+
 /// The event that publishes `message`: internal messages (plan steps)
 /// are intermediate, the others what the channel shows as the answer;
 /// `partial` for a streamed chunk.
