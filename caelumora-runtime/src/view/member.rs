@@ -19,7 +19,6 @@ use caelumora_model::agent::{Agent, AgentChannelState, AgentId, PersonalityKind}
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
-use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::mention::handle_of;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
@@ -295,8 +294,7 @@ impl AgentMember for ExternalAgentMember {
 
     async fn context(&self) -> ViewResult<Box<dyn AgentContextView>> {
         let place = &self.0;
-        let state: ExternalAgentChannelState = place.store.get_external_agent_channel_state(place.agent, place.channel).await
-            .map_err(|e| place.failed(e))?;
+        let state = place.store.get_agent_channel_state(place.agent, place.channel).await.map_err(|e| place.failed(e))?;
         Ok(Box::new(ExternalContext::of(ActorId::Agent(place.agent), state)))
     }
 }

@@ -442,7 +442,7 @@ mod tests {
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
         use caelumora_model::agent::PersonalityKind;
-        use caelumora_model::external_agent::ExternalAgentChannelState;
+        use caelumora_model::agent::AgentChannelState;
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -461,15 +461,14 @@ mod tests {
 
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (question, answer) = (said("question"), said("answer"));
-        let mut state = ExternalAgentChannelState::default();
+        let mut state = AgentChannelState::default();
         state.history.extend(vec![question.clone(), answer.clone()]);
         state.transcript.extend(vec![question.clone()]);
-        store.put_external_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
-        // What an agent run here would have kept: not the external agent's.
-        let mut stray = caelumora_model::agent::AgentChannelState::default();
+        // What only an agent run here keeps: not read of an external agent.
+        let stray = &mut state;
         stray.notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         stray.private_notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
-        store.put_agent_channel_state(remote.id, channel.id, &mut stray).await.unwrap();
+        store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let member = for_alice.member(ActorId::Agent(remote.id)).await.unwrap();

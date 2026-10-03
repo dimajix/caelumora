@@ -7,7 +7,7 @@ use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, P
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::confidentiality::{Classification, Visibility};
-use crate::external_agent::{ConversationId, ExternalAgentChannelState};
+use crate::external_agent::ConversationId;
 use crate::name::{Name, ScopedName};
 use crate::scope::Scope;
 use crate::security::SecurityContext;
@@ -174,9 +174,9 @@ pub(crate) async fn entity_store_behaves(store: &dyn EntityStore) {
 
 /// Agent states that were never stored read as their default, a channel
 /// state as `NotFound`; deleting a channel's state takes its agents' states
-/// in the channel along - external ones too - and nothing else.
+/// in the channel along - of either kind - and nothing else.
 pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
-    let (agent, other_agent) = (AgentId::new(), AgentId::new());
+    let (agent, other_agent, remote_agent) = (AgentId::new(), AgentId::new(), AgentId::new());
     let (channel, other_channel) = (ChannelId::new(), ChannelId::new());
 
     store.get_agent_state(agent).await.expect("a missing agent state is no error");
@@ -190,20 +190,19 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     store.put_agent_channel_state(agent, other_channel, &mut in_turn).await.expect("put agent channel state");
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get agent channel state").turn.is_some(), "the stored state comes back");
 
-    assert!(store.get_external_agent_channel_state(agent, channel).await.expect("a missing external agent channel state is no error").remote.conversation.is_none());
-    let mut talking = ExternalAgentChannelState::default();
-    talking.remote.conversation = Some(ConversationId("c-1".to_string()));
+    // An external agent's: its history, its transcript and its remote part.
+    let mut talking = AgentChannelState::default();
+    talking.remote_mut().conversation = Some(ConversationId("c-1".to_string()));
     let hello = crate::message::Message { content: Some("hello".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
     let answer = crate::message::Message { content: Some("hi".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
     talking.history.extend(vec![hello.clone(), answer]);
     talking.transcript.extend(vec![hello]);
-    store.put_external_agent_channel_state(agent, channel, &mut talking).await.expect("put external agent channel state");
-    store.put_external_agent_channel_state(agent, other_channel, &mut talking).await.expect("put external agent channel state");
-    let stored = store.get_external_agent_channel_state(agent, channel).await.expect("get");
-    assert_eq!(stored.remote.conversation, talking.remote.conversation, "the stored state comes back");
+    store.put_agent_channel_state(remote_agent, channel, &mut talking).await.expect("put agent channel state");
+    store.put_agent_channel_state(remote_agent, other_channel, &mut talking).await.expect("put agent channel state");
+    let stored = store.get_agent_channel_state(remote_agent, channel).await.expect("get");
+    assert_eq!(stored.remote, talking.remote, "the stored state comes back");
     assert_eq!(serde_json::to_value(talking.changes()).expect("json"), serde_json::to_value(stored.changes()).expect("json"), "what was put is marked stored: nothing pending beyond what a loaded state has");
     assert_eq!((stored.history.digest(), stored.transcript.digest()), (talking.history.digest(), talking.transcript.digest()), "with its history and its transcript");
-    assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_some(), "the two states of one agent are kept apart");
 
     store.put_agent_state(agent, &mut AgentState::default()).await.expect("put agent state");
     store.get_agent_state(agent).await.expect("get agent state");
@@ -217,8 +216,8 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(), "the agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(other_agent, channel).await.expect("get").turn.is_none(), "the agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_some(), "other channels keep theirs");
-    assert!(store.get_external_agent_channel_state(agent, channel).await.expect("get").remote.conversation.is_none(), "the external agents' states in the channel are gone");
-    assert!(store.get_external_agent_channel_state(agent, other_channel).await.expect("get").remote.conversation.is_some(), "other channels keep theirs");
+    assert!(store.get_agent_channel_state(remote_agent, channel).await.expect("get").remote.is_none(), "the external agents' states in the channel are gone");
+    assert!(store.get_agent_channel_state(remote_agent, other_channel).await.expect("get").remote.is_some(), "other channels keep theirs");
     store.get_channel_state(other_channel).await.expect("other channels keep theirs");
     store.delete_channel_state(channel).await.expect("nothing left to delete is no error");
 }

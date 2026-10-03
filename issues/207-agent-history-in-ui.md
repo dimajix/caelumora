@@ -8,7 +8,7 @@
 Of an agent's state in a channel, the web UI shows the context of a single message (`ContextPanel`,
 issues 06 and 47) and, through the REST API, the turns it gave up (issue 145). The agent's
 **history** - all that was offered to it, and what it said itself (`AgentChannelState::history`,
-`ExternalAgentChannelState::history`, see [AGENT-TURN.md](../docs/AGENT-TURN.md)) - cannot be shown
+of either kind of agent, see [AGENT-TURN.md](../docs/AGENT-TURN.md)) - cannot be shown
 at all: `AgentContextView` hands out the transcript but not the history, and no route returns
 either.
 

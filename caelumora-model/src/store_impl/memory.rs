@@ -1,7 +1,6 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
-use crate::external_agent::ExternalAgentChannelState;
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, Journaled, StateStore, StoreError, StoreResult};
 use crate::template::{SessionTemplate, SessionTemplateId};
@@ -26,7 +25,6 @@ pub struct MemoryStore {
     user_profiles: RwLock<HashMap<UserId, UserProfile>>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
-    external_agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), ExternalAgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
     components: RwLock<HashMap<String, ComponentDescriptor>>,
 }
@@ -57,7 +55,6 @@ impl MemoryStore {
             user_profiles: Default::default(),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
-            external_agent_channel_states: Default::default(),
             channel_states: Default::default(),
             components: Default::default(),
         }
@@ -302,17 +299,6 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    async fn get_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<ExternalAgentChannelState> {
-        Ok(self.read_lock(&self.external_agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default())
-    }
-
-    async fn put_external_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut ExternalAgentChannelState) -> StoreResult<()> {
-        // Marked first: the copy kept is the state as stored, with nothing pending.
-        state.mark_stored();
-        self.write_lock(&self.external_agent_channel_states, |v| v.insert((agent_id, channel_id), state.clone()));
-        Ok(())
-    }
-
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         Ok(self.read_lock(&self.agent_states, |v| v.get(&agent_id).cloned()).unwrap_or_default())
     }
@@ -338,7 +324,6 @@ impl StateStore for MemoryStore {
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
         self.write_lock(&self.channel_states, |v| v.remove(&channel_id));
         self.write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
-        self.write_lock(&self.external_agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
         Ok(())
     }
 

@@ -2561,7 +2561,7 @@ mod tests {
     /// A channel of alice and an external agent with `components`, built but
     /// not running - with the agent's state in it `stored`, as a restart
     /// finds it.
-    async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternalAgent>, components: caelumora_model::component::ComponentConfig, stored: Option<caelumora_model::external_agent::ExternalAgentChannelState>) -> Result<(Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)> {
+    async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternalAgent>, components: caelumora_model::component::ComponentConfig, stored: Option<caelumora_model::agent::AgentChannelState>) -> Result<(Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)> {
         use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
         use caelumora_model::scope::Scope;
 
@@ -2610,7 +2610,7 @@ mod tests {
         };
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         if let Some(mut stored) = stored {
-            runtime.state_store().put_external_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
+            runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
         }
         let executor = CommandExecutor::empty(runtime.security_manager());
         let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime, Arc::new(executor))).await?;
@@ -2696,7 +2696,7 @@ mod tests {
         let own = message(ActorId::Agent(agent), "mine");
         let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
         let kept = || async {
-            channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap()
+            channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()
                 .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
         };
 
@@ -2724,7 +2724,7 @@ mod tests {
         alice.send_message("the secret is 42".to_string(), None).await.unwrap();
         assert!(answered(&mut events, agent).await.is_empty(), "nothing new reached it, so it is not asked");
 
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(contents(state.history.messages()), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
         assert_eq!(contents(state.transcript.messages()), vec!["hello"], "its transcript what it was given");
@@ -2807,9 +2807,9 @@ mod tests {
         assert_eq!(sent[1].0, Some(conversation.clone()), "and keeps it");
         assert_eq!(sent[1].1.said, vec![said("How are you?")], "only what it has not heard, not its own answer");
 
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert_eq!(state.remote.conversation, Some(conversation));
-        assert!(state.remote.open_tasks.is_empty(), "both tasks ended");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.remote().conversation, Some(conversation));
+        assert!(state.remote().open_tasks.is_empty(), "both tasks ended");
         let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
         assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
         let given: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
@@ -2834,8 +2834,8 @@ mod tests {
         alice.send_message("Still there?".to_string(), None).await.unwrap();
         let unreachable = turn_failed(&mut events, agent).await;
         assert!(unreachable.contains("cannot reach the external agent at https://agent.example"), "{unreachable}");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert!(state.remote.open_tasks.is_empty(), "the failed task ended");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote().open_tasks.is_empty(), "the failed task ended");
         running.abort();
     }
 
@@ -2856,8 +2856,8 @@ mod tests {
         assert_eq!(ended.first().and_then(|m| m.content.as_deref()), Some("Let me think"), "what came so far");
         settled(&helper, ActorState::Idle).await;
         assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the remote task is cancelled too");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert!(state.remote.open_tasks.is_empty());
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote().open_tasks.is_empty());
         running.abort();
     }
 
@@ -2902,8 +2902,8 @@ mod tests {
 
         channel.stop_actors().await;
         assert_eq!(*remote.cancelled.lock().unwrap(), vec![task("t-1")], "the open task is cancelled before the channel is aborted");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert!(state.remote.open_tasks.is_empty(), "and that is stored");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote().open_tasks.is_empty(), "and that is stored");
         tokio::time::timeout(Duration::from_secs(1), running).await
             .expect("every actor ended by itself, and with them the channel")
             .expect("the channel's task was not aborted")
@@ -2923,15 +2923,15 @@ mod tests {
 
         let question = answered(&mut events, agent).await;
         assert_eq!(question[0].content.as_deref(), Some("Which city?"), "the question is the answer");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::InputRequired)]);
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.remote().open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::InputRequired)]);
 
         let alice = channel.user_actor(alice_of(&context)).unwrap();
         alice.send_message("Bonn".to_string(), None).await.unwrap();
         assert_eq!(answered(&mut events, agent).await[0].content.as_deref(), Some("Sunny in Bonn."));
         assert_eq!(remote.sent.lock().unwrap()[1].1.answers, Some(task("t-1")), "the reply continues the task that asked");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert!(state.remote.open_tasks.is_empty(), "and it ended");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote().open_tasks.is_empty(), "and it ended");
         running.abort();
     }
 
@@ -2970,8 +2970,8 @@ mod tests {
         }).await.expect("said without being asked");
         assert!(!woke, "nobody is woken for it: sleeping agents hear it all the same (issue 199)");
         assert_eq!(said[0].content.as_deref(), Some("Here it is."));
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert!(state.remote.open_tasks.is_empty(), "the task ended");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote().open_tasks.is_empty(), "the task ended");
         assert_eq!(state.history.messages().last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
         running.abort();
     }
@@ -3025,7 +3025,7 @@ mod tests {
             let said = answered(&mut events, agent).await;
             assert_eq!(said.len(), 1);
             assert_eq!(said[0].content.as_deref(), Some(expected), "said once, in full");
-            let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
             let own: Vec<_> = state.history.messages().into_iter().filter(|m| m.sender_id == ActorId::Agent(agent)).filter_map(|m| m.content).collect();
             assert_eq!(own, vec![expected.to_string()], "and kept once");
             running.abort();
@@ -3043,31 +3043,32 @@ mod tests {
 
         let state = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-                if !state.remote.open_tasks.is_empty() { break state }
+                let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+                if !state.remote().open_tasks.is_empty() { break state }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         }).await.expect("stored before the task ends, as a crash would find it");
-        assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
+        assert_eq!(state.remote().open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
         assert_eq!(state.transcript.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["hello"], "with what it was given for it");
-        assert!(state.remote.offered_up_to.is_some(), "and how far it was offered: a restart gives nothing twice");
+        assert!(state.remote().offered_up_to.is_some(), "and how far it was offered: a restart gives nothing twice");
         running.abort();
     }
 
     #[tokio::test]
     async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_waits() {
         use crate::external::ExternalEvent;
-        use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState, RemoteState};
+        use caelumora_model::agent::AgentChannelState;
+        use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
 
-        let stored = ExternalAgentChannelState {
-            remote: RemoteState {
+        let stored = AgentChannelState {
+            remote: Some(RemoteState {
                 open_tasks: vec![
                     OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, requested: None },
                     OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, requested: None },
                 ],
                 ..RemoteState::default()
-            },
-            ..ExternalAgentChannelState::default()
+            }),
+            ..AgentChannelState::default()
         };
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Finished while you were away.".to_string())), Ok(ExternalEvent::Completed)]]));
@@ -3077,22 +3078,23 @@ mod tests {
 
         let said = answered(&mut events, agent).await;
         assert_eq!(said[0].content.as_deref(), Some("Finished while you were away."), "what it did meanwhile, unasked");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert_eq!(state.remote.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), vec![task("t-asking")], "the one that asked back waits for the next request");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.remote().open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), vec![task("t-asking")], "the one that asked back waits for the next request");
         assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
         running.abort();
     }
 
     /// The state of an external agent with one task working, as a restart
     /// finds it.
-    fn working_on(open: &str) -> caelumora_model::external_agent::ExternalAgentChannelState {
-        use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTask, OpenTaskState, RemoteState};
-        ExternalAgentChannelState {
-            remote: RemoteState {
+    fn working_on(open: &str) -> caelumora_model::agent::AgentChannelState {
+        use caelumora_model::agent::AgentChannelState;
+        use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
+        AgentChannelState {
+            remote: Some(RemoteState {
                 open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, requested: None }],
                 ..RemoteState::default()
-            },
-            ..ExternalAgentChannelState::default()
+            }),
+            ..AgentChannelState::default()
         }
     }
 
@@ -3117,8 +3119,8 @@ mod tests {
 
         let failed = turn_failed(&mut events, agent).await;
         assert!(failed.contains("hermes could not finish: out of coffee"), "{failed}");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert!(state.remote.open_tasks.is_empty(), "the failed task ended");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert!(state.remote().open_tasks.is_empty(), "the failed task ended");
         assert!(state.history.messages().is_empty(), "nothing the channel never saw is kept as said");
         running.abort();
     }
@@ -3139,8 +3141,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         assert!(!said_anything(&mut events, agent), "no half answer is published");
-        let state = channel.state_store.get_external_agent_channel_state(agent, channel.id).await.unwrap();
-        assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)], "left open, to be followed again");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(state.remote().open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)], "left open, to be followed again");
         assert!(state.history.messages().is_empty(), "nothing is kept as said");
         running.abort();
     }

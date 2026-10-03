@@ -7,7 +7,6 @@ use crate::recorder::Recorder;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
@@ -143,7 +142,8 @@ impl ActorRuntime {
         self.runtime.runtime_manager.agent_states().get(agent, attributes).await
     }
 
-    /// The state of this agent in its channel, as stored.
+    /// The state of this agent in its channel, as stored - of either kind
+    /// (issue 206).
     ///
     /// # Errors
     /// If this actor is no agent, or whatever the `StateStore` reports.
@@ -160,25 +160,6 @@ impl ActorRuntime {
     pub async fn store_channel_state(&self, state: &mut AgentChannelState) -> Result<()> {
         let agent = self.agent_id()?;
         Ok(self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?)
-    }
-
-    /// The state of this external agent in its channel, as stored (issue
-    /// 179).
-    ///
-    /// # Errors
-    /// If this actor is no agent, or whatever the `StateStore` reports.
-    pub async fn load_external_channel_state(&self) -> Result<ExternalAgentChannelState> {
-        let agent = self.agent_id()?;
-        Ok(self.runtime.runtime_manager.state_store().get_external_agent_channel_state(agent, self.channel_id).await?)
-    }
-
-    /// Stores the state of this external agent in its channel.
-    ///
-    /// # Errors
-    /// If this actor is no agent, or whatever the `StateStore` reports.
-    pub async fn store_external_channel_state(&self, state: &mut ExternalAgentChannelState) -> Result<()> {
-        let agent = self.agent_id()?;
-        Ok(self.runtime.runtime_manager.state_store().put_external_agent_channel_state(agent, self.channel_id, state).await?)
     }
 
     /// The global events about the actor's channel (issue 69): nothing about
@@ -343,13 +324,10 @@ mod tests {
 
         assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
         assert!(hers.agent_state(Default::default()).await.is_err());
-        assert!(hers.load_external_channel_state().await.is_err(), "nor an external agent's");
 
         let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()), SessionId::new(), ChannelId::new());
         its.store_channel_state(&mut AgentChannelState::default()).await.expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
-        its.store_external_channel_state(&mut ExternalAgentChannelState::default()).await.expect("an external agent's state in its channel");
-        its.load_external_channel_state().await.expect("and back");
     }
 
     #[test]

@@ -2,6 +2,7 @@ use crate::actor::{ActorId, ActorState, EventContext};
 use crate::approval::{ApprovalRequest, ApprovalStatus};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
+use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
 use crate::context::{ContextRef, KnowledgeRef};
 use crate::chain::{Node, Stored};
@@ -163,18 +164,27 @@ impl Agent {
     }
 }
 
+/// An agent in one channel, of either kind (issue 206): what it heard and
+/// said, what it was given, and the part only its kind keeps - the turn
+/// under way of an agent run here, what an external agent keeps of the
+/// remote side. What an external agent cannot have - notes, prompt parts,
+/// tool sets, a turn - stays empty.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentChannelState {
     /// Where the agent's actor stood when the state was stored - a turn
     /// state if it was cut off in the middle of one (issue 75). The actor
-    /// owns the live value and writes it in when it stores.
+    /// owns the live value and writes it in when it stores. Always `Idle`
+    /// for an external agent: it is resumed from its open tasks, not from
+    /// where its actor stood.
     pub processing_state: ActorState,
-    /// The conversation of the channel as the agent keeps it, each of its
-    /// own messages with what it was produced from (issue 06).
+    /// The conversation of the channel as the agent keeps it - all that was
+    /// offered to it (issue 196) - each of its own messages with what it was
+    /// produced from (issue 06).
     pub history: MessageHistory,
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
-    /// (issue 50).
+    /// (issue 50). Of an external agent, what the remote agent was given,
+    /// in the order it was given (issue 179).
     pub transcript: Transcript,
     /// The notes the agent published in this channel (issue 17).
     pub notes: NoteChain,
@@ -192,6 +202,11 @@ pub struct AgentChannelState {
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
+    /// What an external agent keeps of the remote side (issue 179), `None`
+    /// for an agent run here - and for an external one that has kept
+    /// nothing yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteState>,
 }
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
@@ -351,7 +366,21 @@ pub struct TurnEntry {
     pub context: ContextRef,
 }
 
+/// The remote part of a state that has none.
+static NO_REMOTE: RemoteState = RemoteState { offered_up_to: None, conversation: None, open_tasks: Vec::new() };
+
 impl AgentChannelState {
+    /// What an external agent keeps of the remote side; empty if it kept
+    /// nothing yet.
+    pub fn remote(&self) -> &RemoteState {
+        self.remote.as_ref().unwrap_or(&NO_REMOTE)
+    }
+
+    /// What an external agent keeps of the remote side, to be changed.
+    pub fn remote_mut(&mut self) -> &mut RemoteState {
+        self.remote.get_or_insert_with(RemoteState::default)
+    }
+
     /// What the history recorded the message `id` - on whichever branch -
     /// was produced from, or `None` if this agent did not produce it (or it
     /// was before references were recorded).
@@ -380,6 +409,9 @@ pub enum AgentChannelStateChange {
     /// The turn under way, whole: it is changed in place at every step
     /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
     Turn(Option<TurnState>),
+    /// What an external agent keeps of the remote side, whole: small, and
+    /// bounded by its open tasks.
+    Remote(Option<RemoteState>),
 }
 
 impl Journaled for AgentChannelState {
@@ -395,6 +427,7 @@ impl Journaled for AgentChannelState {
         changes.extend(self.tool_sets.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::ToolSet { digest, tools }));
         changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
+        changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
         changes
     }
 
@@ -417,6 +450,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::ToolSet { digest, tools } => self.tool_sets.apply(digest, tools),
             AgentChannelStateChange::ProcessingState(state) => self.processing_state = state,
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
+            AgentChannelStateChange::Remote(remote) => self.remote = remote,
         }
         Ok(())
     }
@@ -583,15 +617,41 @@ pub(crate) mod tests {
             AgentChannelStateChange::ToolSet { .. } => "tool_set",
             AgentChannelStateChange::ProcessingState(_) => "processing_state",
             AgentChannelStateChange::Turn(_) => "turn",
+            AgentChannelStateChange::Remote(_) => "remote",
         }).collect();
-        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "tool_set", "processing_state", "turn"], "what was added, then the small parts whole");
+        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "tool_set", "processing_state", "turn", "remote"], "what was added, then the small parts whole");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.turn = None;
-        assert_eq!(state.changes().len(), 2, "between turns a step is the small parts alone");
+        assert_eq!(state.changes().len(), 3, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
+    }
+
+    #[test]
+    fn what_changed_in_an_external_agents_state_replays_onto_what_was_stored() {
+        use crate::external_agent::{ConversationId, OpenTask, OpenTaskState, TaskId};
+        use crate::message::tests::{id, make_message};
+        let mut state = AgentChannelState::default();
+        state.history.extend(vec![make_message(id(1))]);
+        let mut copy = stored(&mut state);
+        assert!(copy.remote.is_none() && state.remote().open_tasks.is_empty(), "nothing kept of the remote side yet");
+
+        state.history.extend(vec![make_message(id(2))]);
+        state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let remote = state.remote_mut();
+        remote.offered_up_to = Some(id(2));
+        remote.conversation = Some(ConversationId("c-1".to_string()));
+        remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
+        assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the small parts");
+        replayed(&state, &mut copy);
+
+        state.mark_stored();
+        state.remote_mut().open_tasks.clear();
+        assert_eq!(state.changes().len(), 3, "the small parts alone");
+        replayed(&state, &mut copy);
+        assert!(copy.remote().open_tasks.is_empty());
     }
 
     #[test]

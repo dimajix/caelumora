@@ -8,7 +8,6 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
-use caelumora_model::external_agent::ExternalAgentChannelState;
 use caelumora_model::message::MessageId;
 use caelumora_model::message_history::MessageHistory;
 use caelumora_model::note::Note;
@@ -113,11 +112,11 @@ impl AgentContextView for InternalContext {
 #[derive(Debug, Clone)]
 pub(crate) struct ExternalContext {
     actor: ActorId,
-    state: ExternalAgentChannelState,
+    state: AgentChannelState,
 }
 
 impl ExternalContext {
-    pub(crate) fn of(actor: ActorId, state: ExternalAgentChannelState) -> Self {
+    pub(crate) fn of(actor: ActorId, state: AgentChannelState) -> Self {
         Self { actor, state }
     }
 }

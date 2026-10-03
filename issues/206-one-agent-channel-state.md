@@ -282,3 +282,10 @@ without changing behaviour; step 4 changes behaviour.
   three, and the task helpers of the `ExternalAgentActor` are its methods (`asking`, `working`,
   `open`, `close`, `unsaid_of`, `set_unsaid`, `requested_in`, `set_requested`). No change of
   behaviour; stored states of external agents from before cannot be read and are to be deleted.
+- **2026-10-03** — Step 2 done: `AgentChannelState` holds an external agent's part
+  (`remote: Option<RemoteState>`, read through `remote()` and changed through `remote_mut()`) and is
+  the state of both kinds. `ExternalAgentChannelState` with its change type, the second pair of
+  `StateStore` methods with the JSON store's directory `runtime/external_agent_channel_state` and
+  the memory store's map, and `ActorRuntime::load_/store_external_channel_state` are gone. The views
+  still read the state per kind; that is step 3. Stored states of external agents under the old
+  directory are no longer read and are to be deleted.

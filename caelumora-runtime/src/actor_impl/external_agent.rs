@@ -9,8 +9,9 @@
 //! heard since it was last asked to its perceive processors, gives the
 //! remote agent what passes them - kept as its transcript (issue 196) - and
 //! publishes what comes back. That is all that is known of it, and all
-//! that is kept (`ExternalAgentChannelState`); it reads nothing of the
-//! channel itself.
+//! that is kept: in its `AgentChannelState`, as every agent's, with what
+//! ties it to the remote side (`RemoteState`, issue 206). It reads nothing
+//! of the channel itself.
 
 use super::apply_stage_processors;
 use crate::actor::Actor;
@@ -26,7 +27,8 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::external_agent::{ExternalAgentChannelState, OpenTaskState, TaskId};
+use caelumora_model::agent::AgentChannelState;
+use caelumora_model::external_agent::{OpenTaskState, TaskId};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::{AccessQuestions, SecurityContext};
 use chrono::Utc;
@@ -53,7 +55,7 @@ pub struct ExternalAgentActor {
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
-    state: Mutex<ExternalAgentChannelState>,
+    state: Mutex<AgentChannelState>,
     /// `Planning` while the remote agent works on an answer, else `Idle`.
     /// A plain lock, never held across an await.
     processing: std::sync::Mutex<ActorState>,
@@ -136,7 +138,7 @@ impl ExternalAgentActor {
             ));
         }
 
-        let state = actor_runtime.load_external_channel_state().await?;
+        let state = actor_runtime.load_channel_state().await?;
         Ok(Self {
             agent_id,
             agent_controller,
@@ -167,13 +169,13 @@ impl ExternalAgentActor {
     /// (issue 196), for the record and for the remote agent to be given
     /// when it is next asked; stored at once, so that a restart loses none
     /// of it.
-    async fn hear(&self, state: &mut ExternalAgentChannelState, messages: Vec<Message>) {
+    async fn hear(&self, state: &mut AgentChannelState, messages: Vec<Message>) {
         if messages.is_empty() {
             return;
         }
         trace!("External agent {} hears {:?}", self.id(), messages.iter().map(|m| &m.content).collect::<Vec<_>>());
         state.history.extend(messages);
-        if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
+        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
     }
@@ -182,14 +184,14 @@ impl ExternalAgentActor {
     /// answer ends here: published, failed with `TurnFailed`, or - stopped -
     /// not at all; and the state is stored. An error ends the answer, never
     /// the actor.
-    async fn respond(&self, state: &mut ExternalAgentChannelState, request: &Envelope, output: &dyn EventSender) {
+    async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let answering = Answering {
             event_context: request.context.next(self.id(), self.name()),
             security_context: request.security.next(self.id()),
         };
         let token = self.begin();
         let ending = self.exchange(state, &answering, &token, output).await;
-        if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
+        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
         let events = match ending {
@@ -215,7 +217,7 @@ impl ExternalAgentActor {
     /// comes back, until the task ends, asks back, or `token` is cancelled.
     async fn exchange(
         &self,
-        state: &mut ExternalAgentChannelState,
+        state: &mut AgentChannelState,
         answering: &Answering,
         token: &CancellationToken,
         output: &dyn EventSender,
@@ -227,22 +229,26 @@ impl ExternalAgentActor {
         let (offered, last) = unoffered(state, self.id());
         // What passes its processors is what it processes (issue 196).
         let given = apply_stage_processors(&self.perceive_in_processors, offered, &self.security_context).await?;
-        let answers = state.remote.asking().cloned();
+        let answers = state.remote().asking().cloned();
         if given.is_empty() && answers.is_none() {
             debug!("External agent {} has nothing new to give; nothing to ask", self.id());
             // What its processors dropped is not offered again.
-            state.remote.offered_up_to = last.or(state.remote.offered_up_to);
+            if last.is_some() {
+                state.remote_mut().offered_up_to = last;
+            }
             return Ok(Ending::Answered(None));
         }
         let said = given.iter()
             .map(|m| Said { sender: m.sender_name.clone(), text: m.content.clone().unwrap_or_default() })
             .collect();
         trace!("External agent {} is given {:?}", self.id(), said);
-        let mut stream = self.remote.send(&answering.security_context, state.remote.conversation.as_ref(), OutboundMessage { said, answers: answers.clone() }).await?;
+        let mut stream = self.remote.send(&answering.security_context, state.remote().conversation.as_ref(), OutboundMessage { said, answers: answers.clone() }).await?;
         // Sent: from now on the remote agent has heard it, whatever comes
         // back.
         state.transcript.extend(given);
-        state.remote.offered_up_to = last.or(state.remote.offered_up_to);
+        if last.is_some() {
+            state.remote_mut().offered_up_to = last;
+        }
 
         let mut task = answers;
         let mut answer = Answer::default();
@@ -273,7 +279,7 @@ impl ExternalAgentActor {
                     // rest when it ends - not now, cut off, and then again
                     // (issue 195). The request is answered with nothing.
                     if let Some(open) = &task {
-                        state.remote.set_unsaid(open, answer.finish());
+                        state.remote_mut().set_unsaid(open, answer.finish());
                         return Ok(Ending::Answered(None));
                     }
                     // No task to follow: what came is all there is.
@@ -290,10 +296,10 @@ impl ExternalAgentActor {
                 // the task works leaves it to be followed after the restart,
                 // not forgotten while the remote agent goes on with it.
                 Step::Started(started) => {
-                    state.remote.open(&started, OpenTaskState::Working);
-                    state.remote.set_requested(&started, &answering.event_context);
+                    state.remote_mut().open(&started, OpenTaskState::Working);
+                    state.remote_mut().set_requested(&started, &answering.event_context);
                     task = Some(started);
-                    if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
+                    if let Err(e) = self.actor_runtime.store_channel_state(state).await {
                         warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
                     }
                 }
@@ -316,8 +322,8 @@ impl ExternalAgentActor {
     /// run of the actor, so that a remote side that keeps breaking off does
     /// not keep it busy; the next run tries again. A task that asked back
     /// waits for the next request instead.
-    async fn follow_open_tasks(&self, state: &ExternalAgentChannelState, followed: &mut Followed, attempted: &mut HashSet<TaskId>) {
-        let working = state.remote.working().cloned();
+    async fn follow_open_tasks(&self, state: &AgentChannelState, followed: &mut Followed, attempted: &mut HashSet<TaskId>) {
+        let working = state.remote().working().cloned();
         for task in working.collect::<Vec<_>>() {
             if !attempted.insert(task.clone()) {
                 continue;
@@ -338,10 +344,10 @@ impl ExternalAgentActor {
     /// Takes in `event` of the followed `task` - `None` once its stream
     /// ends. When the task has ended or asks back, what came of it is said
     /// in the channel (`speak`); `pending` holds what came so far of each.
-    async fn on_followed(&self, state: &mut ExternalAgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
+    async fn on_followed(&self, state: &mut AgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
         // Read before the task may be closed by what comes of it.
-        let requested = state.remote.requested_in(&task);
-        let answer = pending.entry(task.clone()).or_insert_with(|| Answer::after(state.remote.unsaid_of(&task)));
+        let requested = state.remote().requested_in(&task);
+        let answer = pending.entry(task.clone()).or_insert_with(|| Answer::after(state.remote().unsaid_of(&task)));
         let outcome = match event {
             // It is known to be open and working, and nobody waits for its
             // pieces: what it says is said once it ends.
@@ -368,7 +374,7 @@ impl ExternalAgentActor {
         };
         let answer = pending.remove(&task).unwrap_or_default();
         // Said now, if it asks back and stays open.
-        state.remote.set_unsaid(&task, None);
+        state.remote_mut().set_unsaid(&task, None);
         self.speak(state, requested, outcome.map(|()| answer), output).await;
     }
 
@@ -382,7 +388,7 @@ impl ExternalAgentActor {
     /// task, continued: in its span, and as many hops between agents away
     /// from the last user's message as that answer (issue 45). A task
     /// stored before that context was kept starts afresh.
-    async fn speak(&self, state: &mut ExternalAgentChannelState, requested: Option<EventContext>, outcome: Result<Answer, String>, output: &dyn EventSender) {
+    async fn speak(&self, state: &mut AgentChannelState, requested: Option<EventContext>, outcome: Result<Answer, String>, output: &dyn EventSender) {
         let Some(channel) = self.actor_runtime.channel_loop() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
@@ -402,7 +408,7 @@ impl ExternalAgentActor {
                 None => Vec::new(),
             },
         };
-        if let Err(e) = self.actor_runtime.store_external_channel_state(state).await {
+        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
         speaking.send_all(events, output).await;
@@ -410,11 +416,11 @@ impl ExternalAgentActor {
 
     /// Asks the remote agent to cancel `task`, and forgets it: a cancel that
     /// does not get through leaves a task nobody waits for any more.
-    async fn cancel_remote(&self, state: &mut ExternalAgentChannelState, security: &SecurityContext, task: &TaskId) {
+    async fn cancel_remote(&self, state: &mut AgentChannelState, security: &SecurityContext, task: &TaskId) {
         if let Err(e) = self.remote.cancel(security, task).await {
             warn!("External agent {} cannot cancel its task: {:#}", self.id(), e);
         }
-        state.remote.close(task);
+        state.remote_mut().close(task);
     }
 
     /// How its answers are classified in a channel classified `channel`:
@@ -425,7 +431,7 @@ impl ExternalAgentActor {
 
     /// The message `answer` comes to - `None` if nothing came - kept in its
     /// history.
-    fn record(&self, state: &mut ExternalAgentChannelState, answer: Answer, classification: Classification) -> Option<Message> {
+    fn record(&self, state: &mut AgentChannelState, answer: Answer, classification: Classification) -> Option<Message> {
         let message = self.message(Some(answer.finish()?), classification);
         trace!("External agent {} answers {:?}", self.id(), message.content);
         state.history.extend(vec![message.clone()]);
@@ -485,10 +491,10 @@ impl Answer {
     /// Takes in `event` of `task` - the one it belongs to, if known - what it
     /// says into the answer, what it tells of the conversation and the task
     /// into `state`.
-    fn take(&mut self, state: &mut ExternalAgentChannelState, task: Option<&TaskId>, event: ExternalEvent) -> Step {
+    fn take(&mut self, state: &mut AgentChannelState, task: Option<&TaskId>, event: ExternalEvent) -> Step {
         match event {
             ExternalEvent::Conversation(conversation) => {
-                state.remote.conversation = Some(conversation);
+                state.remote_mut().conversation = Some(conversation);
                 Step::Continue
             }
             ExternalEvent::Started(started) => Step::Started(started),
@@ -503,19 +509,19 @@ impl Answer {
             ExternalEvent::InputRequired(question) => {
                 self.add(question);
                 if let Some(task) = task {
-                    state.remote.open(task, OpenTaskState::InputRequired);
+                    state.remote_mut().open(task, OpenTaskState::InputRequired);
                 }
                 Step::Ended
             }
             ExternalEvent::Completed | ExternalEvent::Canceled => {
                 if let Some(task) = task {
-                    state.remote.close(task);
+                    state.remote_mut().close(task);
                 }
                 Step::Ended
             }
             ExternalEvent::Failed(reason) => {
                 if let Some(task) = task {
-                    state.remote.close(task);
+                    state.remote_mut().close(task);
                 }
                 Step::Failed(reason)
             }
@@ -571,8 +577,8 @@ fn worth_giving(message: &Message, own: ActorId) -> bool {
 /// what came after `offered_up_to` - everything, if nothing was ever
 /// offered - and is worth giving; with the last message heard, up to which
 /// it is offered now. `None` if it heard nothing new.
-fn unoffered(state: &ExternalAgentChannelState, own: ActorId) -> (Vec<Message>, Option<MessageId>) {
-    let new = state.history.messages_after(state.remote.offered_up_to);
+fn unoffered(state: &AgentChannelState, own: ActorId) -> (Vec<Message>, Option<MessageId>) {
+    let new = state.history.messages_after(state.remote().offered_up_to);
     let last = new.last().map(|m| m.id);
     (new.into_iter().filter(|m| worth_giving(m, own)).collect(), last)
 }
@@ -602,7 +608,7 @@ impl Actor for ExternalAgentActor {
         let missed = state.history.missing_from(visible);
         if !missed.is_empty() {
             state.history.extend(missed);
-            self.actor_runtime.store_external_channel_state(&mut state).await?;
+            self.actor_runtime.store_channel_state(&mut state).await?;
         }
         Ok(())
     }
@@ -642,11 +648,11 @@ impl Actor for ExternalAgentActor {
         // Left the channel: nobody waits for its open tasks any more. A
         // channel that merely stops keeps them, to be followed again.
         if self.ended.is_cancelled() {
-            let working: Vec<TaskId> = state.remote.open_tasks.iter().map(|t| t.task.clone()).collect();
+            let working: Vec<TaskId> = state.remote().open_tasks.iter().map(|t| t.task.clone()).collect();
             for task in working {
                 self.cancel_remote(&mut state, &self.security_context, &task).await;
             }
-            if let Err(e) = self.actor_runtime.store_external_channel_state(&mut state).await {
+            if let Err(e) = self.actor_runtime.store_channel_state(&mut state).await {
                 warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
             }
         }
@@ -696,14 +702,14 @@ mod tests {
         let empty = Message { content: None, ..said(alice, "alice", "") };
         let step = Message { internal: true, ..said(alice, "alice", "thinking") };
 
-        let mut state = ExternalAgentChannelState::default();
+        let mut state = AgentChannelState::default();
         state.history.extend(vec![first.clone(), mine, empty, step, second.clone()]);
-        let ids = |state: &ExternalAgentChannelState| unoffered(state, own).0.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        let ids = |state: &AgentChannelState| unoffered(state, own).0.into_iter().map(|m| m.id).collect::<Vec<_>>();
         assert_eq!(ids(&state), vec![first.id, second.id], "never offered anything: what others said, with text");
         assert_eq!(unoffered(&state, own).1, Some(second.id), "offered up to the last message heard");
-        state.remote.offered_up_to = Some(first.id);
+        state.remote_mut().offered_up_to = Some(first.id);
         assert_eq!(ids(&state), vec![second.id], "after what was offered");
-        state.remote.offered_up_to = Some(second.id);
+        state.remote_mut().offered_up_to = Some(second.id);
         let (new, last) = unoffered(&state, own);
         assert!(new.is_empty() && last.is_none(), "nothing new");
     }
@@ -711,18 +717,18 @@ mod tests {
     #[test]
     fn what_the_remote_agent_sends_is_taken_into_the_answer_and_the_state() {
         let task = TaskId("t-1".to_string());
-        let mut state = ExternalAgentChannelState::default();
-        state.remote.open(&task, OpenTaskState::Working);
+        let mut state = AgentChannelState::default();
+        state.remote_mut().open(&task, OpenTaskState::Working);
         let mut answer = Answer::default();
 
         assert!(matches!(answer.take(&mut state, Some(&task), ExternalEvent::Partial("Wh".to_string())), Step::Partial(p) if p == "Wh"));
         assert!(matches!(answer.take(&mut state, Some(&task), ExternalEvent::InputRequired("Which city?".to_string())), Step::Ended));
-        assert_eq!(state.remote.open_tasks[0].state, OpenTaskState::InputRequired, "asking back keeps the task open");
+        assert_eq!(state.remote().open_tasks[0].state, OpenTaskState::InputRequired, "asking back keeps the task open");
         assert_eq!(answer.finish().as_deref(), Some("Which city?"), "the question replaces its pieces");
 
         let mut answer = Answer::default();
         assert!(matches!(answer.take(&mut state, Some(&task), ExternalEvent::Failed("no".to_string())), Step::Failed(r) if r == "no"));
-        assert!(state.remote.open_tasks.is_empty(), "a failed task is forgotten");
+        assert!(state.remote().open_tasks.is_empty(), "a failed task is forgotten");
     }
 
     #[test]

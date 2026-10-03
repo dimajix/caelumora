@@ -1,15 +1,12 @@
 //! What Caelumora keeps of an external agent (issue 179): an agent that runs
 //! elsewhere and takes part in a channel through an `ExternalAgentActor`.
 //! We cannot look into it - its context, its tools, its memory are its own -
-//! so what we keep is what passed between it and us, and the handles of the
-//! protocol that tie the next exchange to the last one.
+//! so what we keep is what passed between it and us - in its
+//! `AgentChannelState`, as for every agent (issue 206) - and the handles of
+//! the protocol that tie the next exchange to the last one (`RemoteState`).
 
 use crate::actor::EventContext;
-use crate::chain::Stored;
 use crate::message::MessageId;
-use crate::message_history::{HistoryEntry, MessageHistory};
-use crate::store::Journaled;
-use crate::transcript::{Transcript, TranscriptEntry};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -67,25 +64,8 @@ pub struct OpenTask {
     pub requested: Option<EventContext>,
 }
 
-/// An external agent in one channel, as its `ExternalAgentActor` keeps it.
-/// Not an `AgentChannelState`: there is no turn, no notes - nothing of what
-/// we cannot see (issue 179). Stored under a key of its own. Its history and
-/// its transcript are only ever appended to, for the record.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExternalAgentChannelState {
-    /// The conversation of the channel as the agent took part in it: all
-    /// that was offered to it, and all it answered (issues 06, 196).
-    pub history: MessageHistory,
-    /// What the remote agent was given, in the order it was given - what
-    /// passed the agent's perceive processors (issue 196), all we know of
-    /// what it knows.
-    pub transcript: Transcript,
-    /// What ties the next exchange with the remote agent to the last one.
-    pub remote: RemoteState,
-}
-
-/// What an external agent keeps of the remote side in one channel, beside
-/// what it heard and gave (issue 206): how far it offered what it heard,
+/// What an external agent keeps of the remote side in one channel, as part
+/// of its `AgentChannelState` (issue 206): how far it offered what it heard,
 /// the remote conversation and the tasks that have not ended.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteState {
@@ -161,69 +141,9 @@ impl RemoteState {
     }
 }
 
-/// A change to an [`ExternalAgentChannelState`] since it was last stored
-/// (issue 193): a variant per part of the state, the growing ones as what
-/// was added, the small one whole.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExternalAgentChannelStateChange {
-    History(Stored<HistoryEntry>),
-    Transcript(Stored<TranscriptEntry>),
-    Remote(RemoteState),
-}
-
-impl Journaled for ExternalAgentChannelState {
-    type Change = ExternalAgentChannelStateChange;
-
-    fn changes(&self) -> Vec<Self::Change> {
-        let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.history.changes().map(ExternalAgentChannelStateChange::History));
-        changes.extend(self.transcript.changes().map(ExternalAgentChannelStateChange::Transcript));
-        changes.push(ExternalAgentChannelStateChange::Remote(self.remote.clone()));
-        changes
-    }
-
-    fn mark_stored(&mut self) {
-        self.history.mark_stored();
-        self.transcript.mark_stored();
-    }
-
-    fn apply(&mut self, change: Self::Change) -> Result<(), String> {
-        match change {
-            ExternalAgentChannelStateChange::History(change) => self.history.apply(change)?,
-            ExternalAgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
-            ExternalAgentChannelStateChange::Remote(remote) => self.remote = remote,
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::tests::{replayed, stored};
-    use crate::message::tests::{id, make_message};
-
-    #[test]
-    fn what_changed_in_an_external_agents_state_replays_onto_what_was_stored() {
-        let mut state = ExternalAgentChannelState::default();
-        state.history.extend(vec![make_message(id(1))]);
-        let mut copy = stored(&mut state);
-
-        state.history.extend(vec![make_message(id(2))]);
-        state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        state.remote.offered_up_to = Some(id(2));
-        state.remote.conversation = Some(ConversationId("c-1".to_string()));
-        state.remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
-        assert_eq!(state.changes().len(), 2 + 1, "the history's, the transcript's, the remote part");
-        replayed(&state, &mut copy);
-
-        state.mark_stored();
-        state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 1, "the remote part alone");
-        replayed(&state, &mut copy);
-        assert!(copy.remote.open_tasks.is_empty());
-    }
 
     #[test]
     fn the_remote_part_keeps_each_open_task_once_and_forgets_it_when_it_ends() {

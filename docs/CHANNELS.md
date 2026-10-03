@@ -306,7 +306,8 @@ An **actor** is anything that sends and receives events in a channel.
     `TurnFailed`, keeping nothing of what came before, and a stream that breaks before the task
     ends says nothing - the task stays open and is followed again on the
     next run. While it answers a request, what its other tasks send waits. What it heard and said is
-    all that is known of it, kept as its `ExternalAgentChannelState` (see [STORAGE.md](STORAGE.md)).
+    all that is known of it, kept in its `AgentChannelState` as every agent's, with what ties it to
+    the remote side (`RemoteState`, issue 206; see [STORAGE.md](STORAGE.md)).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately through `SecurityContext::system()`.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
@@ -334,8 +335,7 @@ channel)`) and hands out only what concerns that actor (issue 69):
 *   the services every actor needs: `security_manager`, `secret_manager`, `component_registry`,
     `command_executor` - the model is not among them, an agent has it as a component (issue 130);
 *   its own agent state (`agent_state`) and its state in the channel (`load_channel_state` /
-    `store_channel_state`, of an external agent `load_external_channel_state` /
-    `store_external_channel_state`);
+    `store_channel_state`, of either kind of agent, issue 206);
 *   its own event subscription (`subscribe_channel` - its channel, nothing else) and announcement
     (`announce_channel_state_changed`);
 *   the loop of its channel (`channel_loop`, `pub(crate)`), and a stored session as a given context

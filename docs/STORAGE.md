@@ -61,18 +61,18 @@ the store stays as it is. Without a `seed`, nothing is seeded.
 The `StateStore` trait (in `caelumora-model`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history.
-*   **`AgentChannelState`**: an agent in one channel - its processing state, history and transcript,
-    its public and private notes, the texts of its prompt parts by digest, and the turn under way,
-    if any (processing state, pending tool calls, plan, the turn's messages, changes not yet taken
-    over). See [AGENT-TURN.md](AGENT-TURN.md).
-*   **`ExternalAgentChannelState`**: an external agent in one channel (issue 179) - its history (all
-    it was offered and all it answered), its transcript (what the remote agent was given - what
-    passed its perceive processors, issue 196), and what it keeps of the remote side
-    (`RemoteState`, issue 206): up to which message of the history it offered anything on
-    (`offered_up_to`), the remote conversation and the tasks given to it that have not ended, with
-    what came of them and was not said yet (issue 195). History and transcript are only ever
-    appended to, for the record; the remote part is recorded whole. Kept under a key of its own, not
-    as an `AgentChannelState`: there is no turn and nothing of what we cannot see.
+*   **`AgentChannelState`**: an agent in one channel, of either kind (issue 206) - its processing
+    state, history and transcript, its public and private notes, the texts of its prompt parts by
+    digest, and the part only its kind keeps:
+    *   of an agent run here, the turn under way, if any (processing state, pending tool calls,
+        plan, the turn's messages, changes not yet taken over). See [AGENT-TURN.md](AGENT-TURN.md).
+    *   of an external agent (issue 179), what it keeps of the remote side (`remote`, a
+        `RemoteState`): up to which message of the history it offered anything on
+        (`offered_up_to`), the remote conversation and the tasks given to it that have not ended,
+        with what came of them and was not said yet (issue 195). Its history is all it was offered
+        and all it answered, its transcript what the remote agent was given - what passed its
+        perceive processors (issue 196); notes, prompt parts, tool sets and the turn stay empty,
+        and its processing state `Idle`.
 *   **`AgentState`**: the agent itself, across its channels and - for agents of user or global
     scope - across sessions. So far it holds the agent's memory (`agent_memory`, see
     [MEMORY.md](MEMORY.md)).
@@ -82,9 +82,9 @@ The `StateStore` trait (in `caelumora-model`) stores the runtime state of channe
 Every state the `StateStore` keeps is `Journaled` (issue 193): it tells what changed since it was
 last stored, as a sequence of changes, and replays such changes onto what was stored before. The
 changes of a state are one enum with a variant per part of it - `AgentChannelStateChange`,
-`ExternalAgentChannelStateChange`, `ChannelStateChange`, `AgentStateChange` - with "state" in
-the name on purpose: a change of the state, what was said, noted, remembered, as against an
-update of the entity, its name and composition.
+`ChannelStateChange`, `AgentStateChange` - with "state" in the name on purpose: a change of the
+state, what was said, noted, remembered, as against an update of the entity, its name and
+composition.
 
 *   A growing part records what was added. A chain - a history, a transcript, a ledger of notes
     or memory - tells a `Stored<E>`: the nodes added, or changed in their place, since it was last
@@ -144,8 +144,8 @@ same time.
 Every kind of state has exactly one writer:
 
 *   `ChannelState`: its `ChannelLoop`;
-*   `AgentChannelState`: the `AgentActor` of that agent and channel;
-*   `ExternalAgentChannelState`: the `ExternalAgentActor` of that agent and channel;
+*   `AgentChannelState`: the actor of that agent and channel - its `AgentActor`, or its
+    `ExternalAgentActor` for an external agent;
 *   `AgentState`: its handle.
 
 This holds because a session starts only once, however many requests ask for it at the same time.

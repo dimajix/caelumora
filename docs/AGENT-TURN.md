@@ -503,7 +503,7 @@ only one of them produced it.
     reason, time and messages. The context of each of those messages is asked for like that of any
     other.
 
-Of an external agent (issue 179) the view reads its own state (`ExternalAgentChannelState`): its
+Of an external agent (issue 179) the view reads the same `AgentChannelState` (issue 206): its
 transcript is what the remote agent was given, it has no notes, no private notes, no given-up turns
 and no pending approvals, and `context_of` answers `NotRecorded` for every message - what the remote
 agent made of what it was given is its own.
