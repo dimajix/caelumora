@@ -269,3 +269,16 @@ without changing behaviour; step 4 changes behaviour.
   (`RemoteState`) beside the turn, in five steps, of which the first three only restructure. Open:
   the shape of the kind-specific part, whether both kinds take in what others said the same way,
   and the order with 205.
+- **2026-10-03** — Decided, as recommended in the plan's *Open questions*:
+  1. The external agent's part is a field `remote: Option<RemoteState>` beside `turn`, not an enum
+     of kinds.
+  2. Both kinds take in what others said the same way: an external agent filters and runs its
+     perceive processors when it hears, and a mark in its transcript replaces `offered_up_to`
+     (step 4).
+  3. Order: steps 1 to 3, then step 4, then [205](205-external-agent-message-context.md), whose
+     reference is recorded against the mark.
+- **2026-10-03** — Step 1 done: `RemoteState` (`offered_up_to`, `conversation`, `open_tasks`) is a
+  part of `ExternalAgentChannelState` of its own, recorded whole as one change (`Remote`) instead of
+  three, and the task helpers of the `ExternalAgentActor` are its methods (`asking`, `working`,
+  `open`, `close`, `unsaid_of`, `set_unsaid`, `requested_in`, `set_requested`). No change of
+  behaviour; stored states of external agents from before cannot be read and are to be deleted.

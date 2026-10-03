@@ -80,6 +80,15 @@ pub struct ExternalAgentChannelState {
     /// passed the agent's perceive processors (issue 196), all we know of
     /// what it knows.
     pub transcript: Transcript,
+    /// What ties the next exchange with the remote agent to the last one.
+    pub remote: RemoteState,
+}
+
+/// What an external agent keeps of the remote side in one channel, beside
+/// what it heard and gave (issue 206): how far it offered what it heard,
+/// the remote conversation and the tasks that have not ended.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteState {
     /// The last message of the history that was offered to the perceive
     /// processors on the way to the remote agent; what came after it is
     /// offered next. Kept apart from the transcript, since the processors
@@ -92,17 +101,75 @@ pub struct ExternalAgentChannelState {
     pub open_tasks: Vec<OpenTask>,
 }
 
+impl RemoteState {
+    /// The task that asked back, if any: the next message to the remote
+    /// agent answers it.
+    pub fn asking(&self) -> Option<&TaskId> {
+        self.open_tasks.iter().find(|t| t.state == OpenTaskState::InputRequired).map(|t| &t.task)
+    }
+
+    /// The tasks the remote agent is working on.
+    pub fn working(&self) -> impl Iterator<Item = &TaskId> {
+        self.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working).map(|t| &t.task)
+    }
+
+    /// Records `task` as open, standing at `state`.
+    pub fn open(&mut self, task: &TaskId, state: OpenTaskState) {
+        match self.find_mut(task) {
+            Some(open) => open.state = state,
+            None => self.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, requested: None }),
+        }
+    }
+
+    /// Forgets `task`: it ended.
+    pub fn close(&mut self, task: &TaskId) {
+        self.open_tasks.retain(|t| &t.task != task);
+    }
+
+    /// What came of the open `task` before and was not said yet.
+    pub fn unsaid_of(&self, task: &TaskId) -> Option<String> {
+        self.find(task).and_then(|t| t.unsaid.clone())
+    }
+
+    /// Keeps `unsaid` with the open `task`, to be said when it ends.
+    pub fn set_unsaid(&mut self, task: &TaskId, unsaid: Option<String>) {
+        if let Some(open) = self.find_mut(task) {
+            open.unsaid = unsaid;
+        }
+    }
+
+    /// The context of the answer to the request that began the open
+    /// `task`, if it is kept.
+    pub fn requested_in(&self, task: &TaskId) -> Option<EventContext> {
+        self.find(task).and_then(|t| t.requested.clone())
+    }
+
+    /// Keeps `requested`, the context of the answer to the request that
+    /// began or took up the open `task`, with it.
+    pub fn set_requested(&mut self, task: &TaskId, requested: &EventContext) {
+        if let Some(open) = self.find_mut(task) {
+            open.requested = Some(requested.clone());
+        }
+    }
+
+    fn find(&self, task: &TaskId) -> Option<&OpenTask> {
+        self.open_tasks.iter().find(|t| &t.task == task)
+    }
+
+    fn find_mut(&mut self, task: &TaskId) -> Option<&mut OpenTask> {
+        self.open_tasks.iter_mut().find(|t| &t.task == task)
+    }
+}
+
 /// A change to an [`ExternalAgentChannelState`] since it was last stored
 /// (issue 193): a variant per part of the state, the growing ones as what
-/// was added, the small ones whole.
+/// was added, the small one whole.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalAgentChannelStateChange {
     History(Stored<HistoryEntry>),
     Transcript(Stored<TranscriptEntry>),
-    OfferedUpTo(Option<MessageId>),
-    Conversation(Option<ConversationId>),
-    OpenTasks(Vec<OpenTask>),
+    Remote(RemoteState),
 }
 
 impl Journaled for ExternalAgentChannelState {
@@ -112,9 +179,7 @@ impl Journaled for ExternalAgentChannelState {
         let mut changes: Vec<Self::Change> = Vec::new();
         changes.extend(self.history.changes().map(ExternalAgentChannelStateChange::History));
         changes.extend(self.transcript.changes().map(ExternalAgentChannelStateChange::Transcript));
-        changes.push(ExternalAgentChannelStateChange::OfferedUpTo(self.offered_up_to));
-        changes.push(ExternalAgentChannelStateChange::Conversation(self.conversation.clone()));
-        changes.push(ExternalAgentChannelStateChange::OpenTasks(self.open_tasks.clone()));
+        changes.push(ExternalAgentChannelStateChange::Remote(self.remote.clone()));
         changes
     }
 
@@ -127,9 +192,7 @@ impl Journaled for ExternalAgentChannelState {
         match change {
             ExternalAgentChannelStateChange::History(change) => self.history.apply(change)?,
             ExternalAgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
-            ExternalAgentChannelStateChange::OfferedUpTo(last) => self.offered_up_to = last,
-            ExternalAgentChannelStateChange::Conversation(conversation) => self.conversation = conversation,
-            ExternalAgentChannelStateChange::OpenTasks(tasks) => self.open_tasks = tasks,
+            ExternalAgentChannelStateChange::Remote(remote) => self.remote = remote,
         }
         Ok(())
     }
@@ -149,16 +212,40 @@ mod tests {
 
         state.history.extend(vec![make_message(id(2))]);
         state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        state.offered_up_to = Some(id(2));
-        state.conversation = Some(ConversationId("c-1".to_string()));
-        state.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
-        assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the three small parts");
+        state.remote.offered_up_to = Some(id(2));
+        state.remote.conversation = Some(ConversationId("c-1".to_string()));
+        state.remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
+        assert_eq!(state.changes().len(), 2 + 1, "the history's, the transcript's, the remote part");
         replayed(&state, &mut copy);
 
         state.mark_stored();
-        state.open_tasks.clear();
-        assert_eq!(state.changes().len(), 3, "the small parts alone");
+        state.remote.open_tasks.clear();
+        assert_eq!(state.changes().len(), 1, "the remote part alone");
         replayed(&state, &mut copy);
-        assert!(copy.open_tasks.is_empty());
+        assert!(copy.remote.open_tasks.is_empty());
+    }
+
+    #[test]
+    fn the_remote_part_keeps_each_open_task_once_and_forgets_it_when_it_ends() {
+        let (one, two) = (TaskId("t-1".to_string()), TaskId("t-2".to_string()));
+        let mut remote = RemoteState::default();
+        remote.open(&one, OpenTaskState::Working);
+        remote.open(&two, OpenTaskState::Working);
+        remote.open(&one, OpenTaskState::InputRequired);
+        assert_eq!(remote.open_tasks.len(), 2, "opened again, a task stands where it stands now");
+        assert_eq!(remote.asking(), Some(&one));
+        assert_eq!(remote.working().collect::<Vec<_>>(), [&two]);
+
+        remote.set_unsaid(&two, Some("so far".to_string()));
+        assert_eq!(remote.unsaid_of(&two).as_deref(), Some("so far"));
+        assert_eq!(remote.unsaid_of(&one), None);
+        let requested = EventContext::default();
+        remote.set_requested(&one, &requested);
+        assert!(remote.requested_in(&one).is_some() && remote.requested_in(&two).is_none());
+
+        remote.close(&one);
+        assert_eq!(remote.asking(), None);
+        remote.set_unsaid(&one, Some("late".to_string()));
+        assert_eq!(remote.open_tasks.len(), 1, "what is said of a closed task opens it not again");
     }
 }

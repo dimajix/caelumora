@@ -99,3 +99,7 @@ there are none. Which task the call answered may be shown too.
   - Option 2 (the messages stored with each answer) is dropped.
 
   Merging the two states is issue [206](206-one-agent-channel-state.md).
+- **2026-10-03** — Order decided in [206](206-one-agent-channel-state.md): the two states are
+  merged first, and the external agent's transcript gets a mark of what was sent. So
+  `ContextResolver::of` and `TranscriptView::of` need not take the parts they read, and the context
+  of a message is the entries between two marks. This issue follows step 4 of 206.
