@@ -145,6 +145,8 @@ pub(crate) mod testing {
         pub(crate) called_as: Mutex<Vec<(&'static str, SecurityContext)>>,
         /// How many requests to come cannot reach it.
         unreachable: Mutex<usize>,
+        /// How it classifies what it brings in itself.
+        declared: Option<Classification>,
     }
 
     impl ScriptedExternalAgent {
@@ -156,6 +158,11 @@ pub(crate) mod testing {
         /// Answers `resume` with `events`, once per call, in order.
         pub(crate) fn resuming(self, events: Vec<Vec<ExternalAgentResult<ExternalEvent>>>) -> Self {
             Self { resumed: Mutex::new(events.into()), ..self }
+        }
+
+        /// Declares what it brings in itself classified `classification`.
+        pub(crate) fn declaring(self, classification: Classification) -> Self {
+            Self { declared: Some(classification), ..self }
         }
 
         /// Cannot be reached by the next `requests`: they fail before
@@ -200,7 +207,7 @@ pub(crate) mod testing {
         }
 
         fn classification(&self) -> Option<Classification> {
-            None
+            self.declared.clone()
         }
     }
 }

@@ -528,11 +528,13 @@ async fn what_an_agent_saw_is_its_owners_alone() {
 
 /// A remote agent that takes every request on as a task and works on it
 /// for ever. Every call reads its credential, as an A2A agent does - in the
-/// name it is called in - and is recorded.
+/// name it is called in - and is recorded. What it brings in itself is
+/// classified as it `declared`.
 #[derive(Debug)]
 struct RemoteAtWork {
     secrets: Arc<SecretManager>,
     calls: Arc<Mutex<Vec<&'static str>>>,
+    declared: Option<Classification>,
 }
 
 impl RemoteAtWork {
@@ -562,8 +564,30 @@ impl ExternalAgent for RemoteAtWork {
     }
 
     fn classification(&self) -> Option<Classification> {
-        None
+        self.declared.clone()
     }
+}
+
+/// The world, with the kind `remote_at_work`: a `RemoteAtWork` declaring
+/// `declared`, recording its calls in `calls`.
+async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>) -> World {
+    let calls = calls.clone();
+    World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: context.secret_manager.clone(), calls: calls.clone(), declared: declared.clone() }));
+        Ok(facets)
+    })).await
+}
+
+/// An external personality whose agent is reached as `remote_at_work`.
+async fn remote_personality(world: &World) -> Personality {
+    let remote = Personality {
+        kind: PersonalityKind::External,
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "remote_at_work")] },
+        ..world.personality("remote", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &remote).await.unwrap();
+    remote
 }
 
 /// Waits until `calls` holds `count` calls.
@@ -582,20 +606,8 @@ async fn calls_made(calls: &Mutex<Vec<&'static str>>, count: usize) {
 #[tokio::test]
 async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let world = World::with_kinds({
-        let calls = calls.clone();
-        |registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: context.secret_manager.clone(), calls: calls.clone() }));
-            Ok(facets)
-        })
-    }).await;
-    let remote = Personality {
-        kind: PersonalityKind::External,
-        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "remote_at_work")] },
-        ..world.personality("remote", None, &[]).await
-    };
-    world.store.update_personality(&World::system(), &remote).await.unwrap();
+    let world = with_remote_at_work(&calls, None).await;
+    let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
     let main = session.channels()[0].clone();
@@ -625,6 +637,40 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
     assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "followed in his name too, whoever opened the session");
     world.manager.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
+}
+
+/// An external agent whose answers, as its component declares them, may no
+/// longer enter its channel once the channel was lowered is refused with
+/// every request (issue 212): asked in the name of who asks, the remote
+/// agent is not called, and the users are told.
+#[tokio::test]
+async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_refused() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = with_remote_at_work(&calls, Some(Classification::general(Confidentiality::Internal))).await;
+    let remote = remote_personality(&world).await;
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = session.channels()[0].clone();
+    main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut events = main.subscribe();
+
+    let (failed, asked) = world.asked(async {
+        main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel runs");
+                if let caelumora_model::actor::ActorEvent::TurnFailed { message } = envelope.event {
+                    break message;
+                }
+            }
+        }).await.expect("the users are told")
+    }).await;
+    assert!(failed.contains("may not be published"), "{failed}");
+    let publish: Vec<&String> = asked.iter().filter(|line| line.starts_with("bob as hermes: Publish")).collect();
+    assert_eq!(publish, ["bob as hermes: Publish no"], "asked in the name of who asked");
+    assert!(calls.lock().unwrap().is_empty(), "the remote agent is not called");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Users and their profiles -------------------------------------------------

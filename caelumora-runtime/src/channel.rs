@@ -3075,6 +3075,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_external_agent_answers_as_what_it_was_given_whatever_it_declares() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::confidentiality::Classification;
+
+        // It declares to bring in nothing that is not public; it was told
+        // what is internal.
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Partial("He".to_string())), Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
+        ]).declaring(Classification::PUBLIC));
+        let Stuck { mut events, agent, running, .. } = with_an_external_agent(remote).await;
+
+        let mut partials = Vec::new();
+        let answer = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) {
+                    continue;
+                }
+                match envelope.event {
+                    ActorEvent::PartialMessageGenerated(m) => partials.push(m.classification),
+                    ActorEvent::FullResponseGenerated(messages) => break messages,
+                    _ => {}
+                }
+            }
+        }).await.expect("the agent answers");
+        assert_eq!(answer[0].classification, Classification::CHANNEL_DEFAULT, "what it was given, not what it declares");
+        assert_eq!(partials, [Classification::CHANNEL_DEFAULT], "its pieces too");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn a_task_is_stored_as_soon_as_it_is_begun() {
         use crate::external::ExternalEvent;
         use caelumora_model::external_agent::OpenTaskState;
@@ -3093,10 +3124,11 @@ mod tests {
         assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
         assert_eq!(state.transcript.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["hello"], "with what it was given for it");
         assert_eq!(state.remote.sent_up_to, state.transcript.digest(), "and how far it was sent: a restart gives nothing twice");
-        let (event_context, security_context) = state.remote.contexts_of(&task("t-1")).expect("with the contexts it is done in");
+        let work = state.remote.work_of(&task("t-1")).expect("with the work it is");
         let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
-        assert_eq!(security_context, sent_as, "the authority of the request it was sent with");
-        assert_eq!(event_context.sender_id, ActorId::Agent(agent), "the request's envelope, continued in the agent's name");
+        assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
+        assert_eq!(work.event_context.sender_id, ActorId::Agent(agent), "the request's envelope, continued in the agent's name");
+        assert_eq!(work.classification, caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT, "bound by the channel as it began");
         running.abort();
     }
 
@@ -3109,8 +3141,8 @@ mod tests {
         let stored = AgentChannelState {
             remote: RemoteState {
                 open_tasks: vec![
-                    OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, event_context: None, security_context: None },
-                    OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, event_context: None, security_context: None },
+                    OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, work: None },
+                    OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, work: None },
                 ],
                 ..RemoteState::default()
             },
@@ -3149,8 +3181,11 @@ mod tests {
                     since: chrono::Utc::now(),
                     state: OpenTaskState::Working,
                     unsaid: None,
-                    event_context: Some(request.next(hermes, "hermes".to_string())),
-                    security_context: Some(SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes)),
+                    work: Some(caelumora_model::external_agent::Work::new(
+                        request.next(hermes, "hermes".to_string()),
+                        SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes),
+                        caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+                    )),
                 }],
                 ..RemoteState::default()
             },
@@ -3184,7 +3219,7 @@ mod tests {
         use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
         AgentChannelState {
             remote: RemoteState {
-                open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, event_context: None, security_context: None }],
+                open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, work: None }],
                 ..RemoteState::default()
             },
             ..AgentChannelState::default()

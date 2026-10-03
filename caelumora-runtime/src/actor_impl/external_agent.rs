@@ -29,9 +29,9 @@ use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::agent::AgentChannelState;
-use caelumora_model::external_agent::{OpenTaskState, TaskId};
+use caelumora_model::external_agent::{OpenTaskState, TaskId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
 use chrono::Utc;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
@@ -105,9 +105,10 @@ impl ExternalAgentActor {
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
 
         // Answers that may never enter the channel would each be dropped
-        // there in silence: refused here instead, once.
+        // there in silence: refused here instead, once - and once more with
+        // every request, should the channel have been lowered since.
         let classification = remote.classification().unwrap_or_else(|| channel.classification.clone());
-        if !actor_runtime.security_manager().may_publish(&security_context, ActorId::Agent(agent_id), &classification, &channel.classification).await {
+        if !may_answer_in(actor_runtime.security_manager().as_ref(), &security_context, ActorId::Agent(agent_id), &classification, &channel.classification).await {
             return Err(anyhow!(
                 "the answers of external agent {} are classified {}, which may not be published in channel {} ({})",
                 agent_id, classification, channel.id, channel.classification
@@ -203,7 +204,16 @@ impl ExternalAgentActor {
         answering.send(ActorEvent::ResponseStarted, output).await?;
         let channel = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("external agent {} has no channel to answer in", self.id()))?;
-        let classification = self.classification_in(channel.classification());
+        // The work of this exchange, as a turn: bound by the channel as it
+        // is now, and written as what it has seen - what the remote agent
+        // brings in itself, and all it was given in this channel (issue 212).
+        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
+        let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
+        if !may_answer_in(self.actor_runtime.security_manager().as_ref(), &work.security_context, self.id(), &brought, &work.classification).await {
+            return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
+        }
+        work.see(&brought);
+        state.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| work.see(&m.classification));
         let given = state.transcript.messages_after(state.remote.sent_up_to.as_ref());
         let answers = state.remote.asking().cloned();
         if given.is_empty() && answers.is_none() {
@@ -226,7 +236,7 @@ impl ExternalAgentActor {
                 biased;
                 _ = token.cancelled() => {
                     if let Some(task) = &task {
-                        self.cancel_remote(state, &answering.security_context, task).await;
+                        self.cancel_remote(state, &work.security_context, task).await;
                     }
                     if self.ended.is_cancelled() {
                         return Ok(Ending::Stopped);
@@ -266,7 +276,7 @@ impl ExternalAgentActor {
                 // leaves it to be followed after the restart, not forgotten
                 // while the remote agent goes on with it.
                 Step::Started(started) => {
-                    state.remote.begin(&started, &answering.event_context, &answering.security_context);
+                    state.remote.begin(&started, &work);
                     task = Some(started);
                     if let Err(e) = self.actor_runtime.store_channel_state(state).await {
                         warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
@@ -274,7 +284,7 @@ impl ExternalAgentActor {
                 }
                 // Shown as it is written, to whoever waits for the answer.
                 Step::Partial(piece) => {
-                    let partial = self.message(Some(piece), classification.clone());
+                    let partial = self.message(Some(piece), work.label());
                     answering.send(ActorEvent::PartialMessageGenerated(partial), output).await?;
                 }
                 Step::Ended => break,
@@ -282,7 +292,7 @@ impl ExternalAgentActor {
             }
         }
 
-        Ok(Ending::Answered(self.record(state, answer, classification).map(Box::new)))
+        Ok(Ending::Answered(self.record(state, answer, work.label()).map(Box::new)))
     }
 
     /// Re-attaches to every task left working that is not followed yet
@@ -316,7 +326,7 @@ impl ExternalAgentActor {
     /// in the channel (`speak`); `pending` holds what came so far of each.
     async fn on_followed(&self, state: &mut AgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
         // Read before the task may be closed by what comes of it.
-        let contexts = state.remote.contexts_of(&task);
+        let work = state.remote.work_of(&task);
         let answer = pending.entry(task.clone()).or_insert_with(|| Answer::after(state.remote.unsaid_of(&task)));
         let outcome = match event {
             // It is known to be open and working, and nobody waits for its
@@ -345,7 +355,7 @@ impl ExternalAgentActor {
         let answer = pending.remove(&task).unwrap_or_default();
         // Said now, if it asks back and stays open.
         state.remote.set_unsaid(&task, None);
-        self.speak(state, contexts, outcome.map(|()| answer), output).await;
+        self.speak(state, work, outcome.map(|()| answer), output).await;
     }
 
     /// Says in the channel, on the agent's own account, what came of an
@@ -353,28 +363,36 @@ impl ExternalAgentActor {
     /// failed. It wakes nobody: sleeping agents hear it all the same, and
     /// only one it mentions is woken, to answer it (issue 199). What it
     /// says is kept in its history and stored first; a failure, as when it
-    /// answers a request, keeps nothing of what came before it. It speaks in
-    /// the task's `contexts` (`RemoteState::contexts_of`): with the
-    /// authority of the request that began it, and in the event context of
-    /// the answer to it, continued - in its span, and as many hops between
-    /// agents away from the last user's message as that answer (issue 45).
-    /// A task without them speaks afresh, as the agent itself.
-    async fn speak(&self, state: &mut AgentChannelState, contexts: Option<(EventContext, SecurityContext)>, outcome: Result<Answer, String>, output: &dyn EventSender) {
+    /// answers a request, keeps nothing of what came before it. It speaks as
+    /// the task's `work` is done (`RemoteState::work_of`): with the
+    /// authority of the request that began it, in the event context of the
+    /// answer to it, continued - in its span, and as many hops between
+    /// agents away from the last user's message as that answer (issue 45) -
+    /// and classified as the work has seen (issue 212). A task without it
+    /// speaks afresh, as the agent itself, classified as its remote agent
+    /// declares, else as the channel is now.
+    async fn speak(&self, state: &mut AgentChannelState, work: Option<Work>, outcome: Result<Answer, String>, output: &dyn EventSender) {
         let Some(channel) = self.actor_runtime.channel_loop() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
-        let speaking = match contexts {
-            Some((event_context, security_context)) => Answering { event_context: event_context.next(self.id(), self.name()), security_context },
-            None => Answering {
-                event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
-                security_context: self.security_context.clone(),
-            },
+        let (speaking, label) = match work {
+            Some(work) => {
+                let label = work.label();
+                (Answering { event_context: work.event_context.next(self.id(), self.name()), security_context: work.security_context }, label)
+            }
+            None => (
+                Answering {
+                    event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
+                    security_context: self.security_context.clone(),
+                },
+                self.remote.classification().unwrap_or_else(|| channel.classification()),
+            ),
         };
         let events = match outcome {
             Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
             // Nobody asked: it says nothing if it has nothing to say.
-            Ok(answer) => match self.record(state, answer, self.classification_in(channel.classification())) {
+            Ok(answer) => match self.record(state, answer, label) {
                 Some(message) => answered(Some(message)),
                 None => Vec::new(),
             },
@@ -389,7 +407,7 @@ impl ExternalAgentActor {
     /// began it, as a turn acts with its request's (issue 211) - else, for a
     /// task stored before it was kept, the agent's own.
     fn acting_for(&self, state: &AgentChannelState, task: &TaskId) -> SecurityContext {
-        state.remote.contexts_of(task).map(|(_, security)| security).unwrap_or_else(|| self.security_context.clone())
+        state.remote.work_of(task).map(|work| work.security_context).unwrap_or_else(|| self.security_context.clone())
     }
 
     /// Asks the remote agent to cancel `task`, and forgets it: a cancel that
@@ -399,12 +417,6 @@ impl ExternalAgentActor {
             warn!("External agent {} cannot cancel its task: {:#}", self.id(), e);
         }
         state.remote.close(task);
-    }
-
-    /// How its answers are classified in a channel classified `channel`:
-    /// as the remote agent's component says, else as the channel.
-    fn classification_in(&self, channel: Classification) -> Classification {
-        self.remote.classification().unwrap_or(channel)
     }
 
     /// The message `answer` comes to - `None` if nothing came - kept in its
@@ -540,6 +552,16 @@ impl Answer {
 fn answered(message: Option<Message>) -> Vec<ActorEvent> {
     let complete = message.clone().map(ActorEvent::CompleteMessageGenerated);
     complete.into_iter().chain([ActorEvent::FullResponseGenerated(message.into_iter().collect())]).collect()
+}
+
+/// Whether what a remote agent brings in itself - classified `brought`, as
+/// its component declares, else as the channel - may enter a channel
+/// classified `channel`, put there by `agent` in `security`
+/// (`AccessQuestions::may_publish`): asked when its actor is built, and
+/// before every exchange, as the channel may have been lowered since
+/// (issue 212).
+async fn may_answer_in(policy: &dyn SecurityManager, security: &SecurityContext, agent: ActorId, brought: &Classification, channel: &Classification) -> bool {
+    policy.may_publish(security, agent, brought, channel).await
 }
 
 /// Whether the remote agent is given `message`: said by another, with text

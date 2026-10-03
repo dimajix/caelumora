@@ -6,6 +6,7 @@
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
 use crate::actor::EventContext;
+use crate::confidentiality::Classification;
 use crate::security::SecurityContext;
 use crate::digest::Digest;
 use chrono::{DateTime, Utc};
@@ -47,9 +48,9 @@ pub enum OpenTaskState {
 
 /// A task given to the remote agent that has not ended: after a restart the
 /// actor re-attaches to it, since it may have ended meanwhile. The external
-/// agent's counterpart of a `TurnState` (issue 211): one piece of work, with
-/// the contexts it is done in - those of the request that began it, or took
-/// it up again.
+/// agent's counterpart of a `TurnState` (issue 211): one piece of work
+/// (`Work`), done as the request that began it, or took it up again,
+/// says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenTask {
     pub task: TaskId,
@@ -60,17 +61,52 @@ pub struct OpenTask {
     /// the task ended: not said yet, but said - once - with the rest when
     /// the task ends (issue 195).
     pub unsaid: Option<String>,
+    /// The work it is: the contexts it is done in and what it writes as.
+    /// The remote agent is called in them for as long as the task is open,
+    /// to follow it, to cancel it, and what comes of it is said in them,
+    /// classified as it. `None` for a task stored before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<Work>,
+}
+
+/// A piece of work of an external agent - one exchange with the remote
+/// agent, and the task it may begin (issues 211, 212): the contexts it is
+/// done in and what it writes as, what a `TurnState` holds of itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Work {
     /// The envelope it answers, continued in the agent's name - as
     /// `TurnState::event_context`: what comes of it later is said in it,
     /// continued, so that it stays in the span and the chain between agents
     /// of the request (issue 45).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_context: Option<EventContext>,
-    /// Whose authority it acts with - as `TurnState::security_context`: the
-    /// remote agent is called in it for as long as the task is open, to
-    /// follow it, to cancel it, and what comes of it is said in it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub security_context: Option<SecurityContext>,
+    pub event_context: EventContext,
+    /// Whose authority it acts with - as `TurnState::security_context`.
+    pub security_context: SecurityContext,
+    /// The channel's classification when it began - as
+    /// `TurnState::classification`: what it may write as at most.
+    pub classification: Classification,
+    /// The join of what it has seen - what the remote agent was given and
+    /// what it brings in itself - within `classification` (`see`). As
+    /// `TurnState::seen`.
+    pub seen: Classification,
+}
+
+impl Work {
+    /// Work begun in the contexts given, in a channel classified
+    /// `classification`, which has seen nothing yet.
+    pub fn new(event_context: EventContext, security_context: SecurityContext, classification: Classification) -> Self {
+        Self { event_context, security_context, classification, seen: Classification::PUBLIC }
+    }
+
+    /// What it writes as: what it has seen so far (issue 168).
+    pub fn label(&self) -> Classification {
+        self.seen.clone()
+    }
+
+    /// Records that it has seen what is classified `classification`
+    /// (`Classification::join_within`), as a turn does (`TurnState::see`).
+    pub fn see(&mut self, classification: &Classification) {
+        self.seen = self.seen.join_within(classification, &self.classification);
+    }
 }
 
 /// What an external agent keeps of the remote side in one channel, as part
@@ -108,13 +144,13 @@ impl RemoteState {
         self.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working).map(|t| &t.task)
     }
 
-    /// Records `task` as begun - or, asked back before, taken up again - in
-    /// answer to a request, done in its contexts from now on: working.
-    pub fn begin(&mut self, task: &TaskId, event_context: &EventContext, security_context: &SecurityContext) {
+    /// Records `task` as begun - or, asked back before, taken up again - by
+    /// `work`, the exchange in answer to a request: working, and done as
+    /// that work is from now on.
+    pub fn begin(&mut self, task: &TaskId, work: &Work) {
         self.open(task, OpenTaskState::Working);
         if let Some(open) = self.find_mut(task) {
-            open.event_context = Some(event_context.clone());
-            open.security_context = Some(security_context.clone());
+            open.work = Some(work.clone());
         }
     }
 
@@ -122,7 +158,7 @@ impl RemoteState {
     pub fn open(&mut self, task: &TaskId, state: OpenTaskState) {
         match self.find_mut(task) {
             Some(open) => open.state = state,
-            None => self.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, event_context: None, security_context: None }),
+            None => self.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, work: None }),
         }
     }
 
@@ -143,12 +179,10 @@ impl RemoteState {
         }
     }
 
-    /// The contexts the open `task` is done in (`begin`), if they are kept:
-    /// a task stored before they were, or not begun in answer to a request,
-    /// has none.
-    pub fn contexts_of(&self, task: &TaskId) -> Option<(EventContext, SecurityContext)> {
-        let open = self.find(task)?;
-        Some((open.event_context.clone()?, open.security_context.clone()?))
+    /// The work the open `task` is (`begin`), if it is kept: a task stored
+    /// before it was, or not begun in answer to a request, has none.
+    pub fn work_of(&self, task: &TaskId) -> Option<Work> {
+        self.find(task)?.work.clone()
     }
 
     fn find(&self, task: &TaskId) -> Option<&OpenTask> {
@@ -165,6 +199,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn work_writes_as_what_it_has_seen_never_above_its_channel() {
+        let internal = Classification::general(crate::confidentiality::Confidentiality::Internal);
+        let mut work = Work::new(EventContext::default(), SecurityContext::default(), internal.clone());
+        assert_eq!(work.label(), Classification::PUBLIC, "nothing seen");
+        work.see(&Classification::PUBLIC);
+        assert_eq!(work.label(), Classification::PUBLIC);
+        work.see(&internal);
+        assert_eq!(work.label(), internal, "what it was given");
+        work.see(&Classification::general(crate::confidentiality::Confidentiality::Confidential));
+        assert_eq!(work.label(), internal, "never above its channel");
+    }
+
+    #[test]
     fn the_remote_part_keeps_each_open_task_once_and_forgets_it_when_it_ends() {
         let (one, two) = (TaskId("t-1".to_string()), TaskId("t-2".to_string()));
         let mut remote = RemoteState::default();
@@ -179,10 +226,10 @@ mod tests {
         assert_eq!(remote.unsaid_of(&two).as_deref(), Some("so far"));
         assert_eq!(remote.unsaid_of(&one), None);
         let bob = SecurityContext::new(crate::actor::ActorId::User(crate::user::UserId::new()), Default::default(), Default::default());
-        remote.begin(&one, &EventContext::default(), &bob);
+        remote.begin(&one, &Work::new(EventContext::default(), bob.clone(), Classification::CHANNEL_DEFAULT));
         assert_eq!(remote.working().collect::<Vec<_>>(), [&one, &two], "taken up again, it works");
-        assert_eq!(remote.contexts_of(&one).map(|(_, s)| s.initiator_id), Some(bob.initiator_id), "in the contexts of the request");
-        assert!(remote.contexts_of(&two).is_none(), "none kept");
+        assert_eq!(remote.work_of(&one).map(|w| w.security_context.initiator_id), Some(bob.initiator_id), "in the contexts of the request");
+        assert!(remote.work_of(&two).is_none(), "none kept");
         remote.open(&one, OpenTaskState::InputRequired);
 
         remote.close(&one);

@@ -649,7 +649,7 @@ pub(crate) mod tests {
         let remote = &mut state.remote;
         remote.sent_up_to = state.transcript.digest();
         remote.conversation = Some(ConversationId("c-1".to_string()));
-        remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), event_context: None, security_context: None });
+        remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
         assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the small parts");
         replayed(&state, &mut copy);
 
