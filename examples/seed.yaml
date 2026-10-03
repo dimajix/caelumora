@@ -80,7 +80,8 @@ personalities:
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
 # only what its roles let it: an external agent that names none sees only
-# what is public.
+# what is public. Its remote agent keeps its conversation, so it is told who
+# is in the channel once, and again only when that changes (issue 204).
 - id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
   name: hermes-remote
   kind: external
@@ -89,6 +90,11 @@ personalities:
   roles:
   - staff
   components:
+  - id: channel-members
+    kind: channel_members_prompt_provider
+    params:
+      changes_only: true
+    fail_policy: FailClosed
   - id: remote
     kind: a2a_agent
     params:
