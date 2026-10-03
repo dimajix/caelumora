@@ -67,6 +67,7 @@ argues against it, and what came out of the last attempt.
 | [178](178-scoped-lookup-by-name.md) | open | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [193](193-external-state-rewritten-whole.md) | done | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
+| [215](215-json-store-concurrent-puts-of-one-state.md) | open | Concurrent puts of one state in the JSON store can leave a journal beside the new snapshot and lose a change appended in between, and the test that puts one state concurrently fails now and then. |
 
 ## Sessions and channels
 
