@@ -1,6 +1,6 @@
 # 215 — Concurrent puts of one state in the JSON store leave a journal, and can lose a change
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -54,3 +54,12 @@ concurrent puts of one state are fine.
 
 - **2026-10-03** — Issue created after the test failed once in a workspace run during issue 214,
   which does not touch the store.
+- **2026-10-03** — Decided with the maintainer: option 1. A lock in the store (option 2) was
+  rejected as false safety: it would serialize two writers' puts but not make them right, since a
+  put appends the changes of the one instance since it was stored, and the other's would be replayed
+  onto what the first stored. Every state has one writer today - the `ChannelLoop`, the agent's
+  actor in the channel, the `AgentStateHandle`, each under a lock of its own - so the rule is stated,
+  not enforced: in the doc comment of `StateStore` and in STORAGE.md ("One writer per state"), which
+  now also says that entities have no such rule and why the temporary files are still needed. The
+  test writes one personality sixteen times at once, as two requests may, instead of putting one
+  state concurrently; it passed 30 runs in a row.

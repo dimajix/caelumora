@@ -142,18 +142,27 @@ same time.
 
 ### One writer per state
 
-Every kind of state has exactly one writer:
+Every state has exactly one writer, and its puts never overlap (issue 215). A store may keep only
+what changed since the state was last stored - the `JsonFileStore` appends it to the journal - and
+what changed is known of the one instance that was stored, not of another: a second writer, even
+one that puts after the first, would have its changes replayed onto what the first stored. A lock in
+the store would not help; the rule is the runtime's to keep, and it does:
 
 *   `ChannelState`: its `ChannelLoop`;
 *   `AgentChannelState`: the actor of that agent and channel - its `AgentActor`, or its
     `ExternalAgentActor` for an external agent;
-*   `AgentState`: its handle.
+*   `AgentState`: its handle, which stores it under its lock;
+
+each holding the state under a lock of its own while it changes and stores it.
 
 This holds because a session starts only once, however many requests ask for it at the same time.
 `SessionManager::open_session` holds a lock per session id while it starts one, and `stop_session`
 and `delete_session` take the same lock, so a stop cannot miss a start under way, and a deleted
-session cannot be started again from the store meanwhile. The JSON stores additionally write every
-file through a temporary file of its own.
+session cannot be started again from the store meanwhile.
+
+Entities have no such rule: two requests may change one at the same time, and the last write wins.
+The JSON stores write every file through a temporary file of its own, so that neither write fails
+for the other's (issue 62).
 
 ### Deleting state
 

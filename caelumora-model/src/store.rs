@@ -149,6 +149,12 @@ pub trait EntityStore : Debug + Sync + Send {
 /// chooses - and on `Ok` has marked it stored (`Journaled::mark_stored`).
 /// On `Err` nothing is marked: the changes stay pending, and the next put
 /// includes them. So what is pending is never what a store has.
+///
+/// Every state has exactly one writer, and its puts never overlap (issue
+/// 215): a store may keep only what changed since the state was last stored,
+/// which is known of the one instance that stored it, not of another. Two
+/// writers of one state, even one after the other, would store the changes
+/// of the one onto what the other stored.
 #[async_trait]
 pub trait StateStore : Debug + Sync + Send {
     /// An agent in a channel, of either kind (issue 206).

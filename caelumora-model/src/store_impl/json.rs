@@ -631,26 +631,36 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files() {
+        // Entities may be written at the same time - by two requests that
+        // change one (issue 62); a state has one writer (issue 215).
+        use crate::agent::{Personality, PersonalityId};
         let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = Arc::new(JsonFileStore::new(dir.path(), security_manager).unwrap());
-        let (agent, channel) = (AgentId::new(), ChannelId::new());
+        let store = Arc::new(store(dir.path()));
+        let system = SecurityContext::system();
+        let personality = Personality {
+            id: PersonalityId::new(), name: crate::name::ScopedName::new("plain", Default::default()).unwrap(),
+            kind: Default::default(), roles: None, description: String::new(), introduction: None,
+            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
+        };
+        store.create_personality(&system, &personality).await.unwrap();
 
         let mut writes = tokio::task::JoinSet::new();
-        for _ in 0..16 {
-            let store = store.clone();
-            writes.spawn(async move { store.put_agent_channel_state(agent, channel, &mut AgentChannelState::default()).await });
+        for i in 0..16 {
+            let (store, system) = (store.clone(), system.clone());
+            let changed = Personality { description: format!("version {i}"), ..personality.clone() };
+            writes.spawn(async move { store.update_personality(&system, &changed).await });
         }
         while let Some(result) = writes.join_next().await {
             result.unwrap().expect("no writer loses its temporary file to another");
         }
 
-        let parent = store.agent_channel_state_path(agent, channel).parent().unwrap().to_path_buf();
-        let names: Vec<String> = std::fs::read_dir(parent).unwrap()
+        let path = store.personality_path(personality.id);
+        let names: Vec<String> = std::fs::read_dir(path.parent().unwrap()).unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names, [format!("{agent}.json")], "only the file itself");
-        store.get_agent_channel_state(agent, channel).await.expect("readable");
+        assert_eq!(names, [path.file_name().unwrap().to_string_lossy().into_owned()], "only the file itself");
+        let stored = store.get_personality(&system, personality.id).await.expect("readable");
+        assert!(stored.description.starts_with("version "), "one of the writes, whole");
     }
 
     #[tokio::test]
