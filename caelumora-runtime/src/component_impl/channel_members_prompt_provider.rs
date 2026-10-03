@@ -235,9 +235,9 @@ mod tests {
 
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id));
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), Default::default())
+        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
+        let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun")
             .with_views(ViewsFactory::in_session(session_loop, runtime, context.clone()));
-        turn.next_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context, channel.classification.clone(), Vec::new());
 
         let prompt = ChannelMembersPromptProvider { position: PromptPosition::Start }.get_prompt(&turn).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\

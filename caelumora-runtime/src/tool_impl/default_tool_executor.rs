@@ -126,7 +126,7 @@ mod tests {
     async fn a_call_runs_with_the_tool_that_provides_it_and_an_unknown_one_is_reported() {
         let executor = DefaultToolExecutor::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
         let output = executor.execute(&call("test_tool"), &mut context).await.unwrap();
         assert_eq!(output.value, json!({"result": "ok"}));

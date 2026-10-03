@@ -132,7 +132,7 @@ plain access: a snapshot (`agent_state().current()`) and staging changes to the 
 turn, `agent_memory::AgentMemory` (recall, remember, forget), which the component and anything else
 use.
 
-When the turn completes, `Turn::commit_turn` applies the staged changes to the state as it is at
+When the turn completes, `Turn::commit` applies the staged changes to the state as it is at
 that moment, under the handle's lock, and stores it. The handle then announces
 `GlobalEvent::AgentStateChanged`, with the agent's attributes and without content. No actor thus
 overwrites another's changes, and every next turn sees them (issue 62). Numbers for new memory

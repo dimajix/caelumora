@@ -94,8 +94,7 @@ mod tests {
     async fn test_stop_tool() {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let result = provider.execute(STOP_TOOL_NAME, &json!({}), &mut turn).await.unwrap();
         assert_eq!(result.value["status"], "stopped");

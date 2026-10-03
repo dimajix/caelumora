@@ -1,5 +1,5 @@
-//! How a turn ends: taken over when it completes (`Turn::commit_turn`), or
-//! given up when it fails or is stopped (`Turn::give_up_turn`), which keeps
+//! How a turn ends: taken over when it completes (`Turn::commit`), or
+//! given up when it fails or is stopped (`Turn::give_up`), which keeps
 //! its messages as a branch of the transcript that is no longer active
 //! (issue 145). Both end it and return it as an [`EndedTurn`], which sends
 //! the turn's last event.
@@ -49,7 +49,7 @@ impl EndedTurn {
     }
 }
 
-/// What is still needed of a turn once it is taken over (`commit_turn`).
+/// What is still needed of a turn once it is taken over (`commit`).
 #[derive(Debug)]
 pub struct CommittedTurn {
     /// The messages that are not internal: the turn's answer, for
@@ -114,7 +114,7 @@ impl Turn<'_> {
     ///
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
-    pub(crate) async fn commit_turn(&mut self, cancelled: bool) -> CommittedTurn {
+    pub(crate) async fn commit(mut self, cancelled: bool) -> CommittedTurn {
         let abandoned_calls = self.abandon_tool_calls(if cancelled { "it was cancelled" } else { "it ended" });
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(&turn, abandoned_calls);
@@ -141,7 +141,7 @@ impl Turn<'_> {
     /// with `names_only`, only which tools ran, classified so. A step whose
     /// calls do not all have their result yet is ended first
     /// (`abandon_tool_calls`), so that those that ran are told too.
-    pub(crate) fn give_up_turn(&mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
+    pub(crate) fn give_up(mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
         let abandoned_calls = self.abandon_tool_calls(because(&reason));
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let ended = EndedTurn::of(&turn, abandoned_calls);
@@ -193,8 +193,7 @@ mod tests {
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
         use caelumora_model::note::{NoteChange, NoteId};
         use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::new(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
         let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
         result.started_at = ran.then(chrono::Utc::now);
@@ -216,8 +215,8 @@ mod tests {
     fn a_turn_given_up_stays_as_a_branch_and_nothing_it_staged_is_applied() {
         let mut state = a_state_with("mail bob");
         let (transcript, history) = (state.transcript.digest(), state.history.digest());
-        let mut turn = a_turn_that_called(&mut state, "send_mail", false);
-        turn.give_up_turn(GivenUpReason::Stopped, None);
+        let turn = a_turn_that_called(&mut state, "send_mail", false);
+        turn.give_up(GivenUpReason::Stopped, None);
 
         assert!(state.turn.is_none(), "the turn is over");
         assert_eq!(state.history.digest(), history, "the history is where the turn began");
@@ -234,8 +233,8 @@ mod tests {
     #[test]
     fn what_ran_in_a_turn_given_up_is_told_in_full_or_by_name() {
         let mut state = a_state_with("mail bob");
-        let mut turn = a_turn_that_called(&mut state, "send_mail", true);
-        turn.give_up_turn(GivenUpReason::Failed { message: "boom".to_string() }, None);
+        let turn = a_turn_that_called(&mut state, "send_mail", true);
+        turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, None);
         let told = state.transcript.messages().pop().unwrap();
         let text = told.content.unwrap();
         assert!(text.contains("send_mail") && text.contains("bob") && text.contains("sent"), "{text}");
@@ -243,8 +242,8 @@ mod tests {
 
         let mut state = a_state_with("mail bob");
         let lowered = Classification::general(caelumora_model::confidentiality::Confidentiality::Public);
-        let mut turn = a_turn_that_called(&mut state, "send_mail", true);
-        turn.give_up_turn(GivenUpReason::Stopped, Some(lowered.clone()));
+        let turn = a_turn_that_called(&mut state, "send_mail", true);
+        turn.give_up(GivenUpReason::Stopped, Some(lowered.clone()));
         let told = state.transcript.messages().pop().unwrap();
         let text = told.content.unwrap();
         assert!(text.contains("send_mail") && !text.contains("bob") && !text.contains("sent"), "{text}");
@@ -256,8 +255,7 @@ mod tests {
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
         use caelumora_model::approval::{ApprovalId, ApprovalStatus};
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::new(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::default(), String::new(), state, crate::agent_state::AgentStateHandle::detached());
         let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
@@ -276,8 +274,8 @@ mod tests {
     async fn a_cancelled_turn_is_taken_over_with_every_call_answered() {
         use caelumora_model::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
-        let mut turn = a_turn_with_an_open_step(&mut state);
-        let committed = turn.commit_turn(true).await;
+        let turn = a_turn_with_an_open_step(&mut state);
+        let committed = turn.commit(true).await;
 
         let messages = state.transcript.messages();
         let roles: Vec<MessageRole> = messages.iter().map(|m| m.role).collect();
@@ -294,8 +292,8 @@ mod tests {
     fn a_turn_given_up_with_an_open_step_tells_what_ran_in_it() {
         use caelumora_model::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
-        let mut turn = a_turn_with_an_open_step(&mut state);
-        turn.give_up_turn(GivenUpReason::Failed { message: "boom".to_string() }, None);
+        let turn = a_turn_with_an_open_step(&mut state);
+        turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, None);
 
         let told = state.transcript.messages().pop().unwrap().content.unwrap();
         assert!(told.contains("send_mail") && !told.contains("delete"), "only what ran: {told}");
@@ -307,9 +305,8 @@ mod tests {
     #[test]
     fn a_turn_given_up_before_it_said_anything_leaves_nothing() {
         let mut state = a_state_with("hello");
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
-        turn.give_up_turn(GivenUpReason::Stopped, None);
+        let turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
+        turn.give_up(GivenUpReason::Stopped, None);
         assert!(state.transcript.given_up_turns().is_empty());
         assert_eq!(state.transcript.entries().len(), 1);
     }
@@ -317,8 +314,7 @@ mod tests {
     #[tokio::test]
     async fn committing_a_turn_answers_with_its_final_messages_and_clears_its_work() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
 
         let mut internal = message("working on it");
         internal.internal = true;
@@ -328,10 +324,10 @@ mod tests {
         turn.push_message(internal);
         turn.push_message(final_answer.clone());
 
-        let committed = turn.commit_turn(false).await;
+        let committed = turn.commit(false).await;
         assert_eq!(committed.final_messages.len(), 1, "internal steps are not part of the answer");
         assert_eq!(committed.final_messages[0].id, final_answer.id);
-        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "but of the transcript");
-        assert!(turn.messages().next().is_none() && turn.agent_channel_state().turn.is_none(), "nothing of the turn's work is stored with the state");
+        assert_eq!(agent_channel_state.transcript.messages().len(), 2, "but of the transcript");
+        assert!(agent_channel_state.turn.is_none(), "nothing of the turn's work is stored with the state");
     }
 }

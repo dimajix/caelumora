@@ -72,7 +72,7 @@ mod tests {
     async fn test_calculator_tool() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -95,7 +95,7 @@ mod tests {
     async fn test_calculator_tool_invalid_expression() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
         let result = provider.execute(CALCULATE_TOOL_NAME, &params, &mut turn).await;

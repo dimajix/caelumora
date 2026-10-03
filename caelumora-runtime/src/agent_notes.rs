@@ -3,7 +3,7 @@
 //!
 //! Both are chains in the agent's `AgentChannelState`; `Turn` offers only
 //! plain access to them - reading them, staging `NoteChange`s that
-//! `commit_turn` pushes when the turn completes (issue 65). [`AgentNotes`]
+//! `commit` pushes when the turn completes (issue 65). [`AgentNotes`]
 //! is the logic on top: numbering, noting, revoking, reclassifying - each
 //! looking at the notes as they stand with the turn's own changes in them
 //! ([`AgentNotes::effective`], issue 156). The `notes` and `private_notes`

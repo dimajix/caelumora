@@ -8,13 +8,15 @@
 //! pending tool calls and the plan, the changes not yet taken over - and on
 //! the agent's own state (issues 62, 65). What those states hold is the
 //! business of wrappers such as `crate::agent_notes::AgentNotes` and
-//! `crate::agent_memory::AgentMemory`. A turn is begun with `next_turn`.
+//! `crate::agent_memory::AgentMemory`. A turn is begun on the agent's state
+//! (`AgentChannelState::begin_turn`); a `Turn` is had only while one is
+//! under way (`Turn::of`), and ending it uses it up.
 //!
 //! This file holds the handle and what components work with; the rest of a
 //! turn's logic is in a file per subject:
 //!
-//! - `ending` - taking the turn over (`commit_turn`) and giving it up
-//!   (`give_up_turn`, issue 145), and what is left of it then;
+//! - `ending` - taking the turn over (`commit`) and giving it up (`give_up`,
+//!   issue 145), and what is left of it then;
 //! - `context` - what the model is given: the transcript, the prompt parts
 //!   and the tools (issues 47, 49, 136, 137);
 //! - `plan` - the plan in play and its progress;
@@ -24,9 +26,8 @@
 //! tool executor, sending. What only the actor calls is `pub(crate)`; the
 //! rest is the API components work with.
 //!
-//! Between turns there is no working state. What a `Turn` is asked about it
-//! then reads as empty; nothing in the runtime asks - work between turns
-//! (perceiving a message) touches only the transcript and the history.
+//! Between turns the actor works on its `AgentChannelState` itself:
+//! perceiving, catching up and storing need no turn.
 
 mod context;
 mod ending;
@@ -44,7 +45,7 @@ use caelumora_model::actor::{ActorEvent, ActorState, Envelope, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, ModelProfile};
+use caelumora_model::context::KnowledgeRef;
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
 use caelumora_model::message::Message;
 use caelumora_model::note::NoteChange;
@@ -67,10 +68,6 @@ pub struct Turn<'a> {
     /// The agent's own state, shared by all its actors (issue 62). The turn
     /// reads it and stages changes, never holds it.
     agent_state: Arc<AgentStateHandle>,
-    /// How the agent's model is given its context (issues 49, 63): a
-    /// property of that model (`LLMClient::profile`), fixed in the context
-    /// of every turn that begins (`next_turn`).
-    profile: ModelProfile,
     /// What the turn navigates (issue 163): the agent's session, read from
     /// its channel at the turn's classification. `None` for a turn outside
     /// of a channel - in tests - which reads nothing elsewhere.
@@ -78,17 +75,27 @@ pub struct Turn<'a> {
 }
 
 impl<'a> Turn<'a> {
-    /// The handle for one step of the agent `agent_id`'s run loop, whose
-    /// model is given its context by `profile`.
-    pub fn new(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, profile: ModelProfile) -> Self {
-        Self {
+    /// The turn under way in the agent `agent_id`'s `agent_channel_state`,
+    /// as a step of its run loop works with it; `None` between turns. A
+    /// turn is begun on the state (`AgentChannelState::begin_turn`), and
+    /// ended through its handle (`commit`, `give_up`).
+    pub fn of(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Option<Self> {
+        agent_channel_state.turn.as_ref()?;
+        Some(Self {
             agent_id,
             agent_name,
             agent_channel_state,
             agent_state,
-            profile,
             views: None,
-        }
+        })
+    }
+
+    /// A turn begun on `agent_channel_state` with default contexts, no
+    /// tools and the default profile - what a test needs to work in one.
+    #[cfg(test)]
+    pub(crate) fn begun(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
+        agent_channel_state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), Default::default());
+        Self { agent_id, agent_name, agent_channel_state, agent_state, views: None }
     }
 
     /// With what the turn navigates: the agent's views.
@@ -116,14 +123,15 @@ impl<'a> Turn<'a> {
         &self.agent_name
     }
 
-    /// The working state of the turn under way; an empty one between turns.
+    /// The working state of the turn under way. A `Turn` is only had while
+    /// one is (`of`); the empty one it falls back to cannot be reached.
     fn current(&self) -> &TurnState {
         self.agent_channel_state.turn.as_ref().unwrap_or(&NO_TURN)
     }
 
-    /// The working state of the turn under way, to change. Between turns
-    /// nothing may change it: a test catches that; in a release build it
-    /// starts from an empty turn rather than failing.
+    /// The working state of the turn under way, to change. That there is
+    /// one is checked in tests; in a release build it would start from an
+    /// empty turn rather than fail.
     fn current_mut(&mut self) -> &mut TurnState {
         debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
         self.agent_channel_state.turn.get_or_insert_with(TurnState::default)
@@ -136,7 +144,7 @@ impl<'a> Turn<'a> {
     }
 
     /// The classification of the agent's channel as it was when the turn
-    /// began (`next_turn`): the most the turn may read, and the most it
+    /// began (`AgentChannelState::begin_turn`): the most the turn may read, and the most it
     /// writes as.
     pub fn classification(&self) -> Classification {
         self.current().classification.clone()
@@ -166,7 +174,7 @@ impl<'a> Turn<'a> {
     }
 
     /// Stages `change` to the agent's memory, made at `origin`, applied when
-    /// the turn completes (`commit_turn`).
+    /// the turn completes (`commit`).
     pub fn stage_memory(&mut self, change: MemoryChange, origin: MemoryOrigin) {
         self.current_mut().memory.push((change, origin));
     }
@@ -177,36 +185,11 @@ impl<'a> Turn<'a> {
         &self.current().memory
     }
 
-    /// Begins a turn on the agent's state (`AgentChannelState::begin_turn`),
-    /// its model given its context as the turn's profile says.
-    pub(crate) fn next_turn(
-        &mut self,
-        event_context: EventContext,
-        security_context: SecurityContext,
-        classification: Classification,
-        tools: Vec<Tool>,
-    ) {
-        self.agent_channel_state.begin_turn(event_context, security_context, classification, tools, self.profile);
-    }
-
-    /// Begins a turn with default contexts and no tools - what a test needs
-    /// to work in one.
-    #[cfg(test)]
-    pub(crate) fn begin(&mut self) {
-        self.next_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new());
-    }
-
     /// The agent's tools as they were when the turn began: what its model
     /// is offered, and what its calls are labelled and put up for approval
     /// by (issue 137).
     pub(crate) fn tools(&self) -> &[Tool] {
         &self.current().tools
-    }
-
-    /// The event context of the current turn: carries the ids (`span_id`,
-    /// `correlation_id`) that tie the turn to the envelope that started it.
-    pub(crate) fn event_context(&self) -> &EventContext {
-        &self.current().event_context
     }
 
     /// The messages the turn produced so far.
@@ -265,19 +248,8 @@ impl<'a> Turn<'a> {
         self.agent_channel_state
     }
 
-    /// The agent's state in this channel, to store it: a store marks it
-    /// stored (issue 193).
-    pub(crate) fn agent_channel_state_mut(&mut self) -> &mut AgentChannelState {
-        self.agent_channel_state
-    }
-
-    /// Writes where the actor stands into the state, before it is stored.
-    pub(crate) fn set_processing_state(&mut self, state: ActorState) {
-        self.agent_channel_state.processing_state = state;
-    }
-
     /// Stages `change` to the agent's notes of `kind` in this channel,
-    /// applied when the turn completes (`commit_turn`).
+    /// applied when the turn completes (`commit`).
     pub fn stage_note(&mut self, kind: NoteKind, change: NoteChange) {
         kind.staged_mut(self.current_mut()).push(change);
     }
@@ -361,8 +333,7 @@ mod tests {
     #[test]
     fn a_resumed_turn_keeps_its_count_of_model_calls() {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
         for _ in 1..MAX_MODEL_CALLS {
             assert!(turn.count_model_call());
         }
@@ -370,7 +341,7 @@ mod tests {
         // Stored and loaded again, as after a restart.
         let stored = serde_json::to_value(&state).unwrap();
         let mut state: AgentChannelState = serde_json::from_value(stored).unwrap();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let mut turn = Turn::of(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
         assert!(turn.count_model_call(), "the last one it may make");
         assert!(!turn.count_model_call(), "the limit holds across the restart");
 
@@ -387,8 +358,8 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = crate::transport_impl::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), Default::default(), Vec::new());
+        state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "note_private".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
@@ -426,13 +397,14 @@ mod tests {
         let said = |classification: &Classification, content: &str| Message { content: Some(content.to_string()), ..message_classified(classification) };
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.next_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Vec::new());
+        state.begin_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Vec::new(), Default::default());
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
         assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC) }]);
         assert_eq!(turn.label(), Classification::PUBLIC);
-        turn.agent_channel_state_mut().perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
+        state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
         assert_eq!(turn.label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");

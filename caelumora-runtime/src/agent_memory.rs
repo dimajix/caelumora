@@ -3,7 +3,7 @@
 //!
 //! The memory is part of the agent's `AgentState`; `Turn` offers only
 //! plain access to it - a snapshot, staging `MemoryChange`s that
-//! `commit_turn` applies when the turn completes. [`AgentMemory`] is the
+//! `commit` applies when the turn completes. [`AgentMemory`] is the
 //! logic on top: which entries may
 //! be recalled in the turn's channel - as the policy decides, asked in the
 //! agent's name (issue 131) - remembering, forgetting and reclassifying. The

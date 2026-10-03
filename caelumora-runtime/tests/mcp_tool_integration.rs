@@ -105,10 +105,8 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert!(!tools[0].requires_approval, "no approval unless configured");
 
     let mut agent_channel_state = caelumora_model::agent::AgentChannelState::default();
-    let mut turn = caelumora_runtime::agent_turn::Turn::new(
-        caelumora_model::agent::AgentId::default(),
-        "test-agent".to_string(),
-        &mut agent_channel_state, caelumora_runtime::agent_state::AgentStateHandle::detached(), Default::default());
+    agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
+    let mut turn = caelumora_runtime::agent_turn::Turn::of(caelumora_model::agent::AgentId::default(), "test-agent".to_string(), &mut agent_channel_state, caelumora_runtime::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
 
     let result = provider
         .execute("test-echo__echo", &json!({ "message": "hello mcp" }), &mut turn)

@@ -280,8 +280,7 @@ mod tests {
             security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()),
             security_context: SecurityContext::default().next(ActorId::Agent(agent)),
         };
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
         let above = serde_json::json!({ "id": 1, "level": "strictly_confidential" });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &above, &mut turn).await, Err(ToolError::PermissionDenied(_))), "never above the channel");
@@ -290,7 +289,7 @@ mod tests {
         let public_with_compartments = serde_json::json!({ "id": 1, "level": "public", "compartments": ["hr"] });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &public_with_compartments, &mut turn).await, Err(ToolError::InvalidParameter(_))));
         tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), &mut turn).await.expect("released");
-        turn.commit_turn(false).await;
+        turn.commit(false).await;
         assert_eq!(state.notes.current()[0].classification, Classification::general(Confidentiality::Public));
     }
 
@@ -302,33 +301,30 @@ mod tests {
             security_context: Default::default(),
         };
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
             assert_eq!(noted.value["id"], 1);
             assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), &mut turn).await;
             assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");
-            assert!(turn.commit_turn(false).await.channel_state_changed, "the turn changed notes");
-            assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
+            assert!(turn.commit(false).await.channel_state_changed, "the turn changed notes");
+            assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), &mut turn).await.unwrap();
-            turn.commit_turn(false).await;
-            let notes = AgentNotes::current(&turn, NoteKind::Public);
+            turn.commit(false).await;
+            let notes = state.notes.current();
             assert_eq!(notes.iter().map(|n| (n.id.0, n.text.as_str())).collect::<Vec<_>>(), [(2, "coffee")], "a new number for the new version");
         }
         {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), &mut turn).await.unwrap();
-            turn.next_turn(Default::default(), Default::default(), Default::default(), Vec::new());
-            assert!(!turn.commit_turn(false).await.channel_state_changed);
+            let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
+            assert!(!turn.commit(false).await.channel_state_changed);
         }
     }
 
@@ -340,19 +336,17 @@ mod tests {
             security_context: Default::default(),
         };
         {
-            let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), &mut turn).await.unwrap();
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.expect("noted in this turn");
             let again = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await;
             assert!(matches!(again, Err(ToolError::InvalidParameter(_))), "revoked already");
             let revoked = tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1, "level": "public" }), &mut turn).await;
             assert!(matches!(revoked, Err(ToolError::InvalidParameter(_))), "a revoked note is not reclassified");
-            turn.commit_turn(false).await;
-            assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty());
+            turn.commit(false).await;
+            assert!(state.notes.current().is_empty());
         }
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 2);
     }

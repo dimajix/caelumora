@@ -19,7 +19,7 @@ All three kinds of memory work alike:
 *   **Only the author changes them.** An agent notes, revokes, remembers and forgets only its own
     entries.
 *   **Commit, don't write.** A tool stages its change on the turn; the change is applied by
-    `Turn::commit_turn` when the turn completes, and a turn that fails leaves none (issue 65).
+    `Turn::commit` when the turn completes, and a turn that fails leaves none (issue 65).
 *   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory.
     `agent_notes::AgentNotes` and `agent_memory::AgentMemory` hold the logic, and the components use
     them.
@@ -121,7 +121,7 @@ notes, chosen per personality ([68](../issues/68-notes-in-agent-state.md)).
 *   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in the channel, as the
     memory is now.
 *   **Staging.** A change is staged as a `MemoryChange` with where it is made
-    (`Turn::stage_memory`, kept in `TurnState::memory`). `commit_turn` applies it to the agent's
+    (`Turn::stage_memory`, kept in `TurnState::memory`). `Turn::commit` applies it to the agent's
     state as it is when the turn completes, under the
     handle's lock, stores it and announces `GlobalEvent::AgentStateChanged`. Actors of the same
     agent in other channels and sessions thus neither lose nor overwrite each other's changes (see
@@ -172,7 +172,7 @@ another session can be told, issue 134), and what was read there (`KnowledgeSour
     recalled were written in.
 
 `Turn::record_knowledge` records a read together with the number of messages the turn had produced
-by then. `commit_turn` puts it into the `ContextRef` of every message produced after it
+by then. `Turn::commit` puts it into the `ContextRef` of every message produced after it
 (`ContextRef::knowledge`). A `PromptProvider` returns a `Prompt` with its text and the knowledge it
 contains, so prompt parts record their reads as well.
 

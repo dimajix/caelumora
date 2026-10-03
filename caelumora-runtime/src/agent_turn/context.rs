@@ -81,6 +81,8 @@ impl Turn<'_> {
 mod tests {
     use super::*;
     use crate::agent_turn::tests::seen;
+    use caelumora_model::actor::EventContext;
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::context::{KnowledgeRef, ModelProfile};
     use caelumora_model::message::MessageId;
@@ -110,13 +112,13 @@ mod tests {
         let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         {
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), profile(ReasoningHistory::CurrentTurn));
-            turn.begin();
+            state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::CurrentTurn));
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
             turn.set_context(Vec::new());
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
-            turn.commit_turn(false).await;
+            turn.commit(false).await;
         }
 
         // What was recorded says what the model was given - not what the
@@ -132,8 +134,8 @@ mod tests {
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), profile(ReasoningHistory::Always));
-        turn.begin();
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::Always));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
         turn.set_context(Vec::new());
         turn.push_message(third);
         assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [true, false, true, true, true]);
@@ -154,15 +156,14 @@ mod tests {
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
         }).collect::<Vec<_>>();
         {
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.set_context(vec![system()]);
             let (given, _) = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
             turn.push_message(first.clone());
             turn.push_message(second.clone());
-            turn.commit_turn(false).await;
+            turn.commit(false).await;
         }
 
         assert_eq!(order(&seen(&state, agent, first.id).expect("the agent produced it")),
@@ -180,13 +181,12 @@ mod tests {
             classification: None,
         };
         {
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.push_message(before.clone());
             turn.record_knowledge(read.clone());
             turn.record_knowledge(read.clone());
             turn.push_message(after.clone());
-            turn.commit_turn(false).await;
+            turn.commit(false).await;
         }
         let knowledge_of = |id| state.recorded_context_of(id).unwrap().knowledge;
         assert!(knowledge_of(before.id).is_empty(), "produced before the read");
@@ -194,8 +194,7 @@ mod tests {
 
         // The same prompt in another turn is kept once.
         {
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.begin();
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             turn.set_context(vec![system()]);
         }
         assert_eq!(state.prompts.len(), 1);
@@ -217,14 +216,14 @@ mod tests {
         let mut state = AgentChannelState::default();
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
-            let mut turn = Turn::new(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-            turn.next_turn(Default::default(), Default::default(), Default::default(), tools.clone());
+            state.begin_turn(Default::default(), Default::default(), Default::default(), tools.clone(), Default::default());
+            let mut turn = Turn::of(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools.iter().map(Tool::definition).collect::<Vec<_>>(), "the model is offered what the turn began with");
             for message in messages {
                 turn.push_message((*message).clone());
             }
-            futures::executor::block_on(turn.commit_turn(false));
+            futures::executor::block_on(turn.commit(false));
         };
         take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
         take_turn(&mut state, Vec::new(), &[&third]);

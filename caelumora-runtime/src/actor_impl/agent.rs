@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
+use caelumora_model::turn::TurnState;
 use crate::controller::AgentController;
 use caelumora_model::approval::ApprovalStatus;
 use caelumora_model::channel::Channel;
@@ -155,27 +156,43 @@ impl AgentActor {
         Some(output.remove(0))
     }
 
+    /// The turn under way in `state`, as its steps work with it; `None`
+    /// between turns.
+    fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
+        Turn::of(self.agent_id, self.agent_controller.name(), state, self.agent_state.clone())
+            .map(|turn| turn.with_views(self.views.clone()))
+    }
+
+    /// The turn under way in `state`, for a step of a turn. Without one -
+    /// `prepare_resume` makes sure a state in a turn has its working state -
+    /// the step fails as a turn's step does.
+    fn turn_under_way<'s>(&self, state: &'s mut AgentChannelState) -> Result<Turn<'s>> {
+        self.turn(state).ok_or_else(|| anyhow!("Agent {} has no turn under way in {:?}", self.id(), self.control.state()))
+    }
+
     /// Starts a new turn in answer to a `ResponseRequested` - whose envelope
     /// has `event_context` and `security_context` - with the channel as it
-    /// is now: begins it, announces `ResponseStarted` and builds the
-    /// context. The run loop then goes on in `Planning`. Fails without a
+    /// is now: begins it on `state`, announces `ResponseStarted` and builds
+    /// the context. The run loop then goes on in `Planning`. Fails without a
     /// channel, which happens only while it is being torn down.
     async fn request_response(
         &self,
-        turn: &mut Turn<'_>,
+        state: &mut AgentChannelState,
         event_context: &EventContext,
         security_context: &SecurityContext,
         output: &dyn EventSender,
     ) -> Result<()> {
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
-        turn.next_turn(
+        state.begin_turn(
             event_context.next(self.id(), self.agent_controller.name()),
             security_context.next(self.id()),
             classification,
             self.tool_executor.tools(),
+            self.llm_client.profile(),
         );
         self.control.begin_turn();
+        let mut turn = self.turn_under_way(state)?;
 
         debug!("Starting generating messages for agent {} {}", self.id(), turn.agent_name());
         turn.send_event(ActorEvent::ResponseStarted, output).await?;
@@ -183,30 +200,30 @@ impl AgentActor {
         // whatever its fail policy: without a context there is nothing to
         // give the model. Parts that may be left out are the prompt
         // providers', each by its own policy.
-        self.context_provider.current_context(turn).await
+        self.context_provider.current_context(&mut turn).await
             .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
     }
 
-    /// Stores the agent's state in its channel as `turn` holds it, with
-    /// where the actor stands now. A failure is logged: the actor carries
-    /// on with the state in memory.
-    async fn store_channel_state(&self, turn: &mut Turn<'_>) {
-        turn.set_processing_state(self.control.state());
-        if let Err(e) = self.actor_runtime.store_channel_state(turn.agent_channel_state_mut()).await {
+    /// Stores the agent's state in its channel, with where the actor stands
+    /// now. A failure is logged: the actor carries on with the state in
+    /// memory.
+    async fn store_channel_state(&self, state: &mut AgentChannelState) {
+        state.processing_state = self.control.state();
+        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("Cannot store agent channel state of agent {}: {:#}", self.agent_id, e);
         }
     }
 
-    /// Moves the actor to `state` and stores its state in the channel.
-    async fn settle(&self, turn: &mut Turn<'_>, state: ActorState) {
-        self.control.go_to(state);
-        self.store_channel_state(turn).await;
+    /// Moves the actor to `next` and stores its state in the channel.
+    async fn settle(&self, state: &mut AgentChannelState, next: ActorState) {
+        self.control.go_to(next);
+        self.store_channel_state(state).await;
     }
 
-    /// Takes the turn over and ends it - after `Reflecting`, or after a
-    /// cancel - and returns the state the agent lands in: the one a tool
-    /// requested (the stop tool), or `Idle`; a cancelled turn lands `Idle`
-    /// whatever was requested.
+    /// Takes the turn under way in `state` over and ends it - after
+    /// `Reflecting`, or after a cancel - and returns the state the agent
+    /// lands in: the one a tool requested (the stop tool), or `Idle`; a
+    /// cancelled turn lands `Idle` whatever was requested.
     ///
     /// `context` (this agent's own future-turn LLM input) keeps every message
     /// accumulated this turn, including internal deliberation/plan-execution
@@ -223,11 +240,12 @@ impl AgentActor {
     /// is announced even with no final messages - a plan cancelled before
     /// any step produced a visible answer still has to tell observers (e.g.
     /// the web UI) that generation stopped.
-    async fn end_turn(&self, turn: &mut Turn<'_>, cancelled: bool, output: &dyn EventSender) -> Result<ActorState> {
+    async fn end_turn(&self, state: &mut AgentChannelState, cancelled: bool, output: &dyn EventSender) -> Result<ActorState> {
+        let turn = self.turn_under_way(state)?;
         // Read before the turn is taken over, which ends it.
         let next = if cancelled { ActorState::Idle } else { turn.requested_state().unwrap_or(ActorState::Idle) };
-        let CommittedTurn { final_messages, channel_state_changed, ended } = turn.commit_turn(cancelled).await;
-        self.store_channel_state(turn).await;
+        let CommittedTurn { final_messages, channel_state_changed, ended } = turn.commit(cancelled).await;
+        self.store_channel_state(state).await;
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
         }
@@ -244,7 +262,7 @@ impl AgentActor {
     async fn handle_waiting(
         &self,
         asleep: bool,
-        turn: &mut Turn<'_>,
+        state: &mut AgentChannelState,
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
@@ -256,15 +274,15 @@ impl AgentActor {
                 // No turn: nothing here is a turn's work, and nothing is
                 // asked of the policy (issues 85, 90).
                 ActorEvent::FullResponseGenerated(messages) => {
-                    perceive(turn.agent_channel_state_mut(), messages, |_| true, &self.perceive_in_processors, &self.security_context).await;
+                    perceive(state, messages, |_| true, &self.perceive_in_processors, &self.security_context).await;
                     false
                 }
                 ActorEvent::ResponseRequested if !asleep => {
-                    match self.request_response(turn, &event.context, &event.security, output).await {
+                    match self.request_response(state, &event.context, &event.security, output).await {
                         Ok(()) => true,
                         // E.g. a fail-closed context provider: the turn never starts.
                         Err(e) => {
-                            self.fail_turn(turn, &e, output).await;
+                            self.fail_turn(state, &e, output).await;
                             false
                         }
                     }
@@ -276,34 +294,37 @@ impl AgentActor {
         Ok(Some(if started { ActorState::Planning } else { self.control.state() }))
     }
 
-    /// Ends the current turn after `error`: logs the full error, gives the
-    /// turn up (issue 145) - its messages stay as a branch no longer active,
-    /// nothing it staged is applied - and tells the channel with
-    /// `TurnFailed`, so that users see what went wrong instead of a turn that
-    /// never ends.
-    async fn fail_turn(&self, turn: &mut Turn<'_>, error: &anyhow::Error, output: &dyn EventSender) {
+    /// Ends the turn under way in `state` after `error`: logs the full
+    /// error, gives the turn up (issue 145) - its messages stay as a branch
+    /// no longer active, nothing it staged is applied - and tells the
+    /// channel with `TurnFailed`, so that users see what went wrong instead
+    /// of a turn that never ends. An error before a turn began is logged
+    /// only: there is no turn to end, nor a request to answer in.
+    async fn fail_turn(&self, state: &mut AgentChannelState, error: &anyhow::Error, output: &dyn EventSender) {
         let agent_name = self.agent_controller.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);
 
         let message = crate::error::user_message(error)
             .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
-        self.give_up(turn, GivenUpReason::Failed { message }, output).await;
+        self.give_up(state, GivenUpReason::Failed { message }, output).await;
     }
 
-    /// Gives `turn` up for `reason` (issue 145) - failed, lowered, stopped:
-    /// its messages stay as a branch no longer active, and the calls of its
-    /// tools that ran are told on the active branch, in full while the turn
-    /// still flows into the channel, else by name, classified as the channel
-    /// is now (issue 141). The approval requests it still waited for are
-    /// withdrawn (issue 148), and the channel's users are told with
-    /// `TurnFailed` - unless the agent was stopped: it left the channel,
-    /// which takes nothing from it any longer, and the approvers discard
-    /// its requests as it leaves.
-    async fn give_up(&self, turn: &mut Turn<'_>, reason: GivenUpReason, output: &dyn EventSender) {
-        let names_only = match self.turn_flow(turn).await {
+    /// Gives the turn under way in `state` up for `reason` (issue 145) -
+    /// failed, lowered, stopped: its messages stay as a branch no longer
+    /// active, and the calls of its tools that ran are told on the active
+    /// branch, in full while the turn still flows into the channel, else by
+    /// name, classified as the channel is now (issue 141). The approval
+    /// requests it still waited for are withdrawn (issue 148), and the
+    /// channel's users are told with `TurnFailed` - unless the agent was
+    /// stopped: it left the channel, which takes nothing from it any
+    /// longer, and the approvers discard its requests as it leaves. Between
+    /// turns there is nothing to give up.
+    async fn give_up(&self, state: &mut AgentChannelState, reason: GivenUpReason, output: &dyn EventSender) {
+        let Some(under_way) = state.turn.as_ref() else { return };
+        let names_only = match self.turn_flow(under_way).await {
             TurnFlow::Flows => None,
             TurnFlow::Lowered(channel) => Some(channel),
-            TurnFlow::NoChannel => Some(turn.classification()),
+            TurnFlow::NoChannel => Some(under_way.classification.clone()),
         };
         let agent_name = self.agent_controller.name();
         let told = match &reason {
@@ -311,7 +332,8 @@ impl AgentActor {
             GivenUpReason::Lowered { channel } => Some(format!("The channel's classification was lowered to {channel} while {agent_name} was answering; the answer was discarded.")),
             GivenUpReason::Stopped => None,
         };
-        let ended = turn.give_up_turn(reason, names_only);
+        let Some(turn) = self.turn(state) else { return };
+        let ended = turn.give_up(reason, names_only);
         let Some(message) = told else { return };
         if let Err(e) = self.withdraw_approval_requests(&ended, output).await {
             warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
@@ -321,16 +343,16 @@ impl AgentActor {
         }
     }
 
-    /// Whether what `turn` saw may still flow into the channel as it is
-    /// now (`AccessQuestions::may_publish`, in the agent's name, as its tools'
-    /// results are admitted) - which it may not once the channel was
-    /// lowered below the classification the turn began with (issue 141).
-    async fn turn_flow(&self, turn: &Turn<'_>) -> TurnFlow {
+    /// Whether what the turn `under_way` saw may still flow into the channel
+    /// as it is now (`AccessQuestions::may_publish`, in the agent's name, as
+    /// its tools' results are admitted) - which it may not once the channel
+    /// was lowered below the classification the turn began with (issue 141).
+    async fn turn_flow(&self, under_way: &TurnState) -> TurnFlow {
         let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else {
             return TurnFlow::NoChannel;
         };
-        let context = turn.security_context();
-        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &turn.classification(), &channel).await {
+        let context = &under_way.security_context;
+        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &under_way.classification, &channel).await {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
@@ -720,55 +742,45 @@ impl Actor for AgentActor {
         // Whatever step it resumes at, a turn may wait for approvals: one
         // stored right after asking resumes executing its tools, then waits.
         if self.control.state().in_turn() && self.control.state() != ActorState::Cancelling {
-            let mut turn = Turn::new(self.agent_id, self.agent_controller.name(), &mut state, self.agent_state.clone(), self.llm_client.profile());
-            if let Err(e) = self.request_pending_approvals(&mut turn, &*output).await {
-                warn!("AgentActor {} cannot ask again for the approvals it waits for: {:#}", self.id(), e);
+            if let Some(mut turn) = self.turn(&mut state) {
+                if let Err(e) = self.request_pending_approvals(&mut turn, &*output).await {
+                    warn!("AgentActor {} cannot ask again for the approvals it waits for: {:#}", self.id(), e);
+                }
             }
         }
 
         loop {
             let current_state = self.control.state();
-            // The name as the agent's controller has it now.
-            let mut turn = Turn::new(
-                self.agent_id,
-                self.agent_controller.name(),
-                &mut state,
-                self.agent_state.clone(),
-                self.llm_client.profile(),
-            )
-            .with_views(self.views.clone());
 
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
-            let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, turn.event_context());
+            let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.event_context));
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was
             // about to do; nothing of it is run or taken over (issue 141).
-            if current_state.in_turn() {
-                if let TurnFlow::Lowered(channel) = self.turn_flow(&turn).await {
+            if let Some(under_way) = state.turn.as_ref().filter(|_| current_state.in_turn()) {
+                if let TurnFlow::Lowered(channel) = self.turn_flow(under_way).await {
                     info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id(), self.agent_controller.name(), channel);
-                    self.give_up(&mut turn, GivenUpReason::Lowered { channel }, &*output).instrument(span).await;
-                    self.settle(&mut turn, ActorState::Idle).await;
+                    self.give_up(&mut state, GivenUpReason::Lowered { channel }, &*output).instrument(span).await;
+                    self.settle(&mut state, ActorState::Idle).await;
                     continue;
                 }
             }
 
+            // Between turns the actor works on its state; a step of a turn
+            // on the turn under way.
             let result = async { Ok::<_, anyhow::Error>(match current_state {
-                ActorState::Idle => {
-                    self.handle_waiting(false, &mut turn, &mut rx, &*output).await?
-                }
+                ActorState::Idle => self.handle_waiting(false, &mut state, &mut rx, &*output).await?,
+                ActorState::Sleeping => self.handle_waiting(true, &mut state, &mut rx, &*output).await?,
                 ActorState::WaitingForApproval => {
-                    self.handle_waiting_for_approval(&mut turn, &mut rx).await?
+                    self.handle_waiting_for_approval(&mut self.turn_under_way(&mut state)?, &mut rx).await?
                 }
-                ActorState::Sleeping => {
-                    self.handle_waiting(true, &mut turn, &mut rx, &*output).await?
-                }
-                ActorState::Cancelling => Some(self.end_turn(&mut turn, true, &*output).await?),
-                ActorState::Planning => Some(self.handle_llm_turn(&mut turn, &*output).await?),
-                ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut turn, &*output).await?),
-                ActorState::Reflecting => Some(self.end_turn(&mut turn, false, &*output).await?),
+                ActorState::Planning => Some(self.handle_llm_turn(&mut self.turn_under_way(&mut state)?, &*output).await?),
+                ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),
+                ActorState::Cancelling => Some(self.end_turn(&mut state, true, &*output).await?),
+                ActorState::Reflecting => Some(self.end_turn(&mut state, false, &*output).await?),
             }) }.instrument(span.clone()).await;
 
             // A failure inside a turn ends the turn, not the agent (issue 02).
@@ -777,7 +789,7 @@ impl Actor for AgentActor {
             let next_state = match result {
                 Ok(next) => next,
                 Err(e) if current_state.in_turn() => {
-                    self.fail_turn(&mut turn, &e, &*output).instrument(span).await;
+                    self.fail_turn(&mut state, &e, &*output).instrument(span).await;
                     Some(ActorState::Idle)
                 }
                 Err(e) => return Err(e),
@@ -790,8 +802,8 @@ impl Actor for AgentActor {
             // resumed (issues 75, 145).
             let interrupt = self.control.take_interrupt();
             if interrupt == Some(Interrupt::Stop) {
-                self.give_up(&mut turn, GivenUpReason::Stopped, &*output).await;
-                self.settle(&mut turn, ActorState::Idle).await;
+                self.give_up(&mut state, GivenUpReason::Stopped, &*output).await;
+                self.settle(&mut state, ActorState::Idle).await;
                 break;
             }
 
@@ -807,7 +819,7 @@ impl Actor for AgentActor {
                 let cancelled = interrupt == Some(Interrupt::Cancel) && next.in_turn();
                 self.control.go_to(if cancelled { ActorState::Cancelling } else { next });
             }
-            self.store_channel_state(&mut turn).await;
+            self.store_channel_state(&mut state).await;
             // Channel is closed, actor wants to quit
             if next_state.is_none() {
                 break;
@@ -888,8 +900,8 @@ mod tests {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
-        turn.next_turn(Default::default(), Default::default(), channel.clone(), vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)]);
+        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)], Default::default());
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
 
         let mut message = answer(&["shown", "call_only", "unknown"]);
         stamp(&mut message, &turn, Visibility::Channel, true);
@@ -914,8 +926,8 @@ mod tests {
         let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)];
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
-            let mut turn = Turn::new(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
-            turn.next_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, tools);
+            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, tools, Default::default());
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached()).expect("a turn was begun");
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }

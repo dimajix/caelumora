@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 /// The working state of one turn (issue 85): what the turn is - fixed when
 /// it begins - and what it has produced and staged so far, none of it taken
-/// over yet. Taking the turn over (`commit_turn`) or giving it up
-/// (`give_up_turn`, issue 145) ends it as a whole; a branch switch (issue
+/// over yet. Taking the turn over (`Turn::commit`) or giving it up
+/// (`Turn::give_up`, issue 145) ends it as a whole; a branch switch (issue
 /// 08) will give it up the same way.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnState {

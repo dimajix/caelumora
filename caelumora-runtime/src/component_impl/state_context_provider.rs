@@ -152,8 +152,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
         let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed);
 
         let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
@@ -179,13 +178,12 @@ mod tests {
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 
-        let mut turn = Turn::new(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), Default::default());
         let mut earlier = message("earlier");
         earlier.role = MessageRole::User;
         let mut question = message("question");
         question.role = MessageRole::User;
-        turn.agent_channel_state_mut().perceive(Vec::new(), vec![earlier, question]);
-        turn.begin();
+        agent_channel_state.perceive(Vec::new(), vec![earlier, question]);
+        let mut turn = Turn::begun(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
             "the system prompt first, the notes before the turn's input");
@@ -194,8 +192,8 @@ mod tests {
         // A turn without new input - the newest message is the agent's own.
         let mut own = message("my answer");
         own.sender_id = ActorId::Agent(agent_id);
-        turn.agent_channel_state_mut().perceive(Vec::new(), vec![own]);
-        turn.begin();
+        agent_channel_state.perceive(Vec::new(), vec![own]);
+        let mut turn = Turn::begun(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
     }

@@ -419,4 +419,16 @@ Each step is a commit of its own.
   builds only what the agent is told before the state keeps the branch. Changed with it: the
   warning that a transcript changed during a turn no longer names the agent - the model does not
   know it; the agent's span, which every step of a turn runs in, does.
+- **2026-10-03** — Step 3 done: `Turn::of` replaces `Turn::new` and is `None` between turns; the
+  `profile` field, `next_turn`, `agent_channel_state_mut`, `set_processing_state`, `event_context`
+  and the tests' `begin` are gone, `Turn::begun` begins one for a test. `commit_turn` and
+  `give_up_turn` are `commit` and `give_up` and use the turn up. The `AgentActor` holds its state:
+  waiting, perceiving, storing, settling, ending, failing and giving up a turn take the state, and
+  the steps of a turn open it (`turn_under_way`); the check for a lowered channel and `turn_flow`
+  read the `TurnState`. `logging::agent_span` takes the event context of a turn under way, if any.
+  Changed with it: an error before a turn began - the actor has no channel, while it is torn
+  down - is logged and no longer answered with a `TurnFailed` sent in empty contexts; a step of a
+  turn that finds none fails as a turn's step, where it worked on an empty turn before. Tests that
+  used a `Turn` without a turn under way (calculator, sleep, `create_plan`, the MCP integration)
+  begin one now.
 

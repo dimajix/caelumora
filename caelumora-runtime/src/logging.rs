@@ -82,14 +82,15 @@ pub fn envelope_span(context: &EventContext, event: &'static str) -> tracing::Sp
 /// The span one iteration of an agent's run loop executes in, in `state`.
 /// The waiting states get an `agent` span; the states of a turn get a
 /// `turn` span carrying the ids of `turn`, the context of the envelope that
-/// started the turn, so the turn can be found by the same `span_id` as the
-/// REST request and the channel dispatch.
-pub fn agent_span(agent_id: AgentId, agent: &str, state: ActorState, turn: &EventContext) -> tracing::Span {
-    match state {
-        ActorState::Idle | ActorState::Sleeping => {
+/// started the turn under way, so the turn can be found by the same
+/// `span_id` as the REST request and the channel dispatch. Without a turn
+/// under way, an `agent` span too.
+pub fn agent_span(agent_id: AgentId, agent: &str, state: ActorState, turn: Option<&EventContext>) -> tracing::Span {
+    match turn.filter(|_| state.in_turn()) {
+        None => {
             tracing::info_span!("agent", agent_id = %agent_id, agent = %agent, state = ?state)
         }
-        _ => tracing::info_span!(
+        Some(turn) => tracing::info_span!(
             "turn",
             agent_id = %agent_id,
             agent = %agent,

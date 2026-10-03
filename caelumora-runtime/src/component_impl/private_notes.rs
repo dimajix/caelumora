@@ -253,22 +253,21 @@ mod tests {
             security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()),
             security_context: Default::default(),
         };
-        let mut turn = Turn::new(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
         assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty(), "not before the turn completes");
-        assert!(turn.commit_turn(false).await.channel_state_changed, "the channel state changed");
-        assert_eq!(AgentNotes::current(&turn, NoteKind::Private).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
-        assert_eq!(AgentNotes::current(&turn, NoteKind::Public).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
+        assert!(turn.commit(false).await.channel_state_changed, "the channel state changed");
+        assert_eq!(state.private_notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
+        assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
 
         // The next turn.
-        turn.begin();
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
         let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
-        assert!(turn.commit_turn(false).await.channel_state_changed, "private notes are part of the channel state too");
-        assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty());
+        assert!(turn.commit(false).await.channel_state_changed, "private notes are part of the channel state too");
+        assert!(state.private_notes.current().is_empty());
     }
 }

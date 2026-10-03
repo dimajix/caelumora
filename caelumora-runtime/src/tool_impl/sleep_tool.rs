@@ -105,7 +105,7 @@ mod tests {
     async fn sleep_waits_as_long_as_it_is_told_within_its_limit() {
         let tool = SleepToolProvider { seconds: 0.05, requires_approval: false };
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::new(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
 
         let started = std::time::Instant::now();
         let slept = tool.execute(SLEEP_TOOL_NAME, &Value::Null, &mut turn).await.unwrap();

@@ -20,9 +20,10 @@ to a turn.
     was heard stays in the history and is not offered again. An external agent takes in what it
     hears the same way (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of
     the policy (issues 85, 90).
-*   **Begin.** A `ResponseRequested` from the moderator begins a turn (`Turn::next_turn`, see
-    below), announces `ResponseStarted` and has the agent's `ContextProvider` assemble the context.
-    The agent goes on in `Planning`. A sleeping agent ignores it; only `wakeup` ends the sleep.
+*   **Begin.** A `ResponseRequested` from the moderator begins a turn on its state
+    (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted` and has the agent's
+    `ContextProvider` assemble the context. The agent goes on in `Planning`. A sleeping agent
+    ignores it; only `wakeup` ends the sleep.
 
 **In a turn** the agent moves through these states:
 
@@ -39,7 +40,7 @@ to a turn.
 *   **`WaitingForApproval`** waits for `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut`,
     records the decision and returns to `ExecutingTools`. Other events stay queued until the turn is
     over. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) for the approval process.
-*   **`Reflecting`** takes the turn over (`Turn::commit_turn`), stores the state and announces the
+*   **`Reflecting`** takes the turn over (`Turn::commit`), stores the state and announces the
     end with `FullResponseGenerated`. The agent then lands in the state a tool requested (`Sleeping`
     after `stop` or `bye`) or in `Idle`.
 *   **`Cancelling`** is entered when the channel cancels the turn. It takes the turn over like
@@ -59,7 +60,7 @@ answer, are prompt parts placed among the turn's messages, not messages (see [In
 turn](#instructions-within-a-turn)).
 
 An error in one of the turn's states ends the turn, not the agent: the agent logs it, gives the turn
-up (`Turn::give_up_turn`), emits `TurnFailed` and returns to `Idle` (see
+up (`Turn::give_up`), emits `TurnFailed` and returns to `Idle` (see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md)).
 
 ## The `Turn`
@@ -94,7 +95,9 @@ The working state of a turn is one value, `AgentChannelState::turn: Option<TurnS
 *   the tool calls, the plan and the state a tool requested.
 
 Work between turns does not touch it: perceiving a message only appends to the transcript and the
-history.
+history. Between turns the `AgentActor` works on its `AgentChannelState` itself; a `Turn` is had
+only while one is under way (`Turn::of`, `None` between turns), and taking it over or giving it up
+uses it up, which leaves the state to be stored.
 
 Beside its state, a turn reaches the agent's session: `Turn::session()` answers the `SessionView` of
 the turn's views (issue 163), from which the components read the other channels as the
@@ -104,12 +107,12 @@ reads nothing.
 
 ### Beginning and ending a turn
 
-*   **`Turn::next_turn`** begins a turn and fixes the first four of the values above. The
-    classification and the publication are taken once and hold for the whole turn, so that what the
-    turn reads, publishes and remembers is judged alike, even if the channel's level changes
+*   **`AgentChannelState::begin_turn`** begins a turn and fixes the first four of the values above.
+    The classification and the publication are taken once and hold for the whole turn, so that what
+    the turn reads, publishes and remembers is judged alike, even if the channel's level changes
     meanwhile. All four are stored with the channel state, so that a turn resumed after a restart is
     the same turn.
-*   **`Turn::commit_turn`** takes a completed turn over:
+*   **`Turn::commit`** takes a completed turn over:
     *   it appends the agent's messages to its transcript, and the non-internal ones to its history,
         each with a `ContextRef` (see below);
     *   it applies the changes staged to the agent's state in the channel, and those staged to its
@@ -118,9 +121,9 @@ reads nothing.
 
     It returns a `CommittedTurn`: the final messages for `FullResponseGenerated`, whether the
     channel state changed, and the ended turn.
-*   **`Turn::give_up_turn`** gives up a turn that failed or was stopped (issue 145). No end of a
+*   **`Turn::give_up`** gives up a turn that failed or was stopped (issue 145). No end of a
     turn loses its messages:
-    *   its messages are appended to the transcript and the history as by `commit_turn`, each with
+    *   its messages are appended to the transcript and the history as by `commit`, each with
         its `ContextRef`, and both heads go back to where the turn began: the messages stay as a
         branch no longer active (see [The transcript as a chain](#the-transcript-as-a-chain)). So
         the agent's model does not see them, nor does the channel, while what they were produced
@@ -256,7 +259,7 @@ regenerating an answer (08) will move them too.
 
 ### What is recorded
 
-`commit_turn` records a `ContextRef` with every message it appends to the history:
+`Turn::commit` records a `ContextRef` with every message it appends to the history:
 
 *   the digest of the transcript before the message,
 *   the turn's prompt parts, each as a `PromptRef`,
@@ -305,8 +308,8 @@ same turn. The agent's `LLMClient` declares it in its `ModelProfile`, as a `Reas
 
 Whatever the rule, a model is never given another actor's reasoning.
 
-The profile is handed to every `Turn` in `Turn::new`, from the agent's model, fixed in the context
-of a turn when it begins (`Turn::next_turn`) - so that a resumed turn keeps the profile it began
+The profile is the agent's model's, handed to `AgentChannelState::begin_turn` and fixed in the
+context of a turn when it begins - so that a resumed turn keeps the profile it began
 with - and applied in one place: the `ContextResolver`, which resolves what the model is given - the
 transcript before the turn, then the messages the turn produced (`ReasoningHistory::given`). A
 backend therefore gets only what its model may see and implements no rule of its own. The stored
@@ -462,13 +465,13 @@ What the model is given is not stored; it is resolved from what is (issues 49, 1
     (`TurnState::context`): the digest of the transcript so far, a `PromptRef` for every prompt
     part, the digest of the tools offered, the knowledge read, the model's profile, and how many of
     the transcript's last entries are the turn's own. References only - the turn keeps no copy of
-    the transcript. `Turn::next_turn` begins it on the transcript as it stands.
+    the transcript. `AgentChannelState::begin_turn` begins it on the transcript as it stands.
 *   **The turn's messages.** `Turn::push_message` gives a message the digest it will have in the
     transcript - computed as the chain would, continuing the transcript - keeps it with a copy of
     the context it was produced from (`TurnEntry`), and moves the context on past it. The messages
     go into the transcript only when the turn is taken over; a discarded turn leaves it untouched.
     Until then a `TranscriptView` continues the stored transcript with them. This relies on the
-    transcript not changing while a turn runs - nothing is perceived during one - and `commit_turn`
+    transcript not changing while a turn runs - nothing is perceived during one - and `Turn::commit`
     logs it if it did.
 *   **Placing the parts.** The `ContextProvider` calls `Turn::set_context` with every part as a
     `PromptPart`: its text, its role and the transcript entry it follows. An instruction within the
@@ -480,9 +483,9 @@ What the model is given is not stored; it is resolved from what is (issues 49, 1
     with every part after its entry, each as the profile gives it, and the tools offered.
     `Turn::full_context` resolves the turn's context and gives the model the result, a prompt part
     as a message in its role.
-*   **Recording.** `commit_turn` appends the turn's messages to the transcript and records with each
-    the context it was produced from. The same resolver resolves that `ContextRef` when what the
-    agent saw is asked for.
+*   **Recording.** `Turn::commit` appends the turn's messages to the transcript and records with
+    each the context it was produced from. The same resolver resolves that `ContextRef` when what
+    the agent saw is asked for.
 
 What the model was given and what is recorded as given are the same reference, resolved by one
 implementation, and therefore cannot diverge.
