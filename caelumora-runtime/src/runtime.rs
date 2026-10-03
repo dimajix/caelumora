@@ -339,7 +339,7 @@ mod tests {
             RuntimeManager::new(store.clone(), store.clone(), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, crate::component::ComponentRegistry::built_in(store.clone()))
         };
         // As in `examples/config.yaml`.
-        assert!(manager(serde_json::json!([{"id": "context", "kind": "state_context_provider"}])).is_ok());
+        assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());
         let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}])).err().expect("provides no context");
         assert!(refused.to_string().contains("exactly one facet"), "{refused}");
     }

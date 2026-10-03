@@ -14,14 +14,14 @@ pub mod channel_members_prompt_provider;
 pub mod create_plan_tool;
 pub mod notes;
 pub mod private_notes;
-pub mod state_context_provider;
+pub mod turn_context_provider;
 pub mod static_system_prompt_provider;
 
 /// Registers the component kinds of this directory with `registry`, and the
 /// `ContextProvider` as a facet of which an agent has exactly one, with its
 /// default kind (issue 99).
 pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn crate::context::ContextProvider>(Some(state_context_provider::STATE_CONTEXT_PROVIDER_KIND));
+    registry.single::<dyn crate::context::ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
 
     agent_memory::register(registry);
     channel_history::register(registry);
@@ -29,6 +29,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     create_plan_tool::register(registry);
     notes::register(registry);
     private_notes::register(registry);
-    state_context_provider::register(registry);
+    turn_context_provider::register(registry);
     static_system_prompt_provider::register(registry);
 }

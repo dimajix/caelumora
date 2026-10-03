@@ -360,7 +360,7 @@ remembers - is a *prompt part* (issue 47). The `ContextProvider` decides where t
 
 An agent has exactly one `ContextProvider` (issue 98), a facet registered with
 `ComponentRegistry::single`. A personality may configure its own, to try another way of assembling
-the context; otherwise it gets the default, `state_context_provider`, or the one
+the context; otherwise it gets the default, `turn_context_provider`, or the one
 `AppConfig::component_defaults` names. Two would overwrite each other's context, so a personality
 with two is refused.
 
@@ -381,7 +381,7 @@ every system message into the system prompt at the front. Information that chang
 does not belong in the system prompt. A part is never stored in the transcript, which stays a stable
 prefix.
 
-`StateContextProvider` asks for every `PromptProvider` of the agent by type (issue 99) and joins
+`TurnContextProvider` asks for every `PromptProvider` of the agent by type (issue 99) and joins
 their parts per position, in the order of the configuration. `static_system_prompt_provider` takes
 its position from its parameter `position` (`start` by default, or `before_turn_input`), and how its
 prompt is classified from `classification` (`public` by default). Every part is classified as its

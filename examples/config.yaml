@@ -78,7 +78,7 @@ users:
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
 #  - id: context
-#    kind: state_context_provider
+#    kind: turn_context_provider
 
 # Who may do what (issue 11). `ownership` - the default - lets owners do
 # everything with their sessions, agents and templates, contributors (e.g.

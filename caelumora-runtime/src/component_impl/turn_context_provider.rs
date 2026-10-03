@@ -1,5 +1,7 @@
-//! The `state_context_provider` component: the agent's stored context with
-//! the prompt parts of every `PromptProvider` of the agent (issues 47, 99).
+//! The `turn_context_provider` component: what the model of an agent run
+//! here is given in a turn besides the conversation - the prompt parts of
+//! every `PromptProvider` of the agent, placed around its transcript
+//! (issues 47, 99). The default `ContextProvider` of an agent run here.
 
 use crate::agent_turn::Turn;
 use caelumora_model::context::PromptPart;
@@ -12,19 +14,19 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::MessageRole;
 use std::sync::Arc;
 
-pub const STATE_CONTEXT_PROVIDER_KIND: &str = "state_context_provider";
+pub const TURN_CONTEXT_PROVIDER_KIND: &str = "turn_context_provider";
 
-/// The stored context with the prompt parts of `prompt_providers`: those at
+/// The prompt parts of `prompt_providers` around the transcript: those at
 /// `Start` joined into the system prompt before everything, those at
 /// `BeforeTurnInput` joined into one user message before the newest message
 /// of the turn. The default `ContextProvider` (issue 98).
 #[derive(Debug)]
-pub struct StateContextProvider {
+pub struct TurnContextProvider {
     pub prompt_providers: Vec<ComponentImpl<dyn PromptProvider>>,
 }
 
 #[async_trait]
-impl ContextProvider for StateContextProvider {
+impl ContextProvider for TurnContextProvider {
     async fn current_context(&self, state: &mut Turn) -> Result<()> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
@@ -79,7 +81,7 @@ fn joined(parts: Vec<(String, Option<Classification>)>) -> (String, Option<Class
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(STATE_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>(),
+        ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>(),
         |_descriptor, context| async move {
             // Every prompt part of the agent, in the order of its
             // configuration: the parts of one position are joined in this
@@ -88,7 +90,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let prompt_providers = context.all::<dyn PromptProvider>().await?;
 
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ContextProvider>(Arc::new(StateContextProvider {
+            facets.insert::<dyn ContextProvider>(Arc::new(TurnContextProvider {
                 prompt_providers
             }));
             Ok(facets)
@@ -137,11 +139,11 @@ mod tests {
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
         let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed);
 
-        let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
+        let open = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         open.current_context(&mut turn).await.expect("a part that fails open is left out");
         assert_eq!(turn.full_context().unwrap().0[0].content.as_deref(), Some("Be brief."), "the others are given");
 
-        let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
+        let closed = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
         let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
         assert!(format!("{error:#}").contains("component 'part'"), "{error:#}");
     }
@@ -150,7 +152,7 @@ mod tests {
     async fn prompt_parts_go_where_their_position_says_and_only_the_conversation_is_stored() {
         let agent_id = AgentId::new();
         let mut agent_channel_state = AgentChannelState::default();
-        let provider = StateContextProvider {
+        let provider = TurnContextProvider {
             prompt_providers: vec![
                 part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
                 part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),

@@ -22,7 +22,7 @@ pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 /// System prompt contributed by `CreatePlanToolProvider`'s `PromptProvider`
 /// impl, nudging the model towards `create_plan` for anything non-trivial.
 /// Composed alongside the personality's own system prompt by
-/// `StateContextProvider` once per turn - it stays for the whole turn
+/// `TurnContextProvider` once per turn - it stays for the whole turn
 /// (including once a plan is being executed), which is harmless: the far
 /// more specific `plan_step_instruction`/`plan_finalize_instruction`
 /// dominate by then.
