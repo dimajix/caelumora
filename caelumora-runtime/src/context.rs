@@ -5,16 +5,13 @@
 //! has exactly one `ContextProvider` and any number of `PromptProvider`s
 //! (issue 98).
 
-use crate::agent_turn::Turn;
 use crate::component::ComponentImpl;
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::context::KnowledgeRef;
-use caelumora_model::component::ComponentFailPolicy;
+use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
-use tracing::warn;
 
 /// Where a prompt part goes in the context (issue 47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -50,6 +47,11 @@ impl Prompt {
     /// in its reference.
     pub fn of_knowledge(text: String, knowledge: Vec<KnowledgeRef>) -> Self {
         Self { text, knowledge, classification: Some(Classification::PUBLIC) }
+    }
+
+    /// The part with its text trimmed: what surrounds it is not part of it.
+    pub fn trimmed(self) -> Self {
+        Self { text: self.text.trim().to_string(), ..self }
     }
 
     /// `text`, holding no knowledge from elsewhere, classified
@@ -133,34 +135,31 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
 pub(crate) async fn prompt_parts(providers: &[ComponentImpl<dyn PromptProvider>], work: &AgentWork<'_>) -> Result<Vec<Option<Prompt>>> {
     let mut parts = Vec::with_capacity(providers.len());
     for provider in providers {
-        let mut prompt = match provider.get_prompt(work).await {
-            Ok(prompt) => prompt,
-            Err(e) => match provider.fail_policy {
-                ComponentFailPolicy::FailOpen => {
-                    warn!("Prompt part of component '{}' left out: {:#}", provider.id, e);
-                    parts.push(None);
-                    continue;
-                }
-                ComponentFailPolicy::FailClosed => {
-                    return Err(e.context(format!("the prompt part of component '{}' failed", provider.id)));
-                }
-            },
-        };
-        prompt.text = prompt.text.trim().to_string();
-        parts.push((!prompt.text.is_empty()).then_some(prompt));
+        let prompt = provider.apply_fail_policy(provider.get_prompt(work).await)?;
+        parts.push(prompt.map(Prompt::trimmed).filter(|p| !p.text.is_empty()));
     }
     Ok(parts)
 }
 
-/// Assembles what the model is given in a turn (`Turn::set_context`), once,
-/// at its start. An agent has exactly one (`ComponentRegistry::single`,
-/// issue 98): the component of its personality that provides it, or the
-/// default - `turn_context_provider`, unless the configuration names
-/// another (`AppConfig::component_defaults`). Two would overwrite each
-/// other, so a personality with two is refused.
+/// Assembles what the model of an agent is given besides the conversation,
+/// once, at the start of its work (issue 214): the prompt parts, where they
+/// go, and the knowledge from other places they hold. It only answers; the
+/// caller sets what it answered - a turn with `Turn::set_context` and
+/// `Turn::record_knowledge`. An agent has exactly one
+/// (`ComponentRegistry::single`, issue 98): the component of its
+/// personality that provides it, or the default - `turn_context_provider`,
+/// unless the configuration names another (`AppConfig::component_defaults`).
+/// Two would each answer for the whole, so a personality with two is
+/// refused.
 #[async_trait]
 pub trait ContextProvider: Send + Sync + std::fmt::Debug {
-    async fn current_context(&self, turn: &mut Turn) -> Result<()>;
+    /// The prompt parts for `work`, each where it goes, and the knowledge
+    /// they hold.
+    ///
+    /// # Errors
+    /// If what the model is to be given cannot be had - a prompt provider
+    /// that fails closed.
+    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)>;
 }
 
 #[cfg(test)]

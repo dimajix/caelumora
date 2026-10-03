@@ -94,3 +94,10 @@ without an alias.
   (`TurnContextProvider`, `component_impl/turn_context_provider.rs`), in the code, the default of
   the facet, `examples/config.yaml` and the docs; no alias. Older issues keep the old name, as the
   record they are.
+- **2026-10-03** — Step 2: `ContextProvider::current_context` takes an `AgentWork` and returns
+  `(Vec<PromptPart>, Vec<KnowledgeRef>)`; the `AgentActor` sets them with `Turn::record_knowledge`
+  and `Turn::set_context`, which stays as it was. `ComponentImpl::apply_fail_policy` applies a
+  component's fail policy to a result of its facet - `None` for a part left out - and both the
+  message processors' stages and the prompt providers use it; a failure that fails closed is now
+  named "component '...' failed" for both, and the warning reads alike. `TurnContextProvider` asks
+  its providers itself again; `prompt_parts` remains only for `ExternalAgentActor`, until step 3.

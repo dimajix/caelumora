@@ -361,8 +361,14 @@ remembers - is a *prompt part* (issue 47). The `ContextProvider` decides where t
 An agent has exactly one `ContextProvider` (issue 98), a facet registered with
 `ComponentRegistry::single`. A personality may configure its own, to try another way of assembling
 the context; otherwise it gets the default, `turn_context_provider`, or the one
-`AppConfig::component_defaults` names. Two would overwrite each other's context, so a personality
-with two is refused.
+`AppConfig::component_defaults` names. Two would each answer for the whole context, so a
+personality with two is refused.
+
+A `ContextProvider` only answers (issue 214): given the turn to read as an `AgentWork`
+(`current_context`), it returns the prompt parts, each where it goes, and the knowledge they hold.
+The `AgentActor` sets them - `Turn::record_knowledge` for the knowledge, `Turn::set_context` for
+the parts, nothing else; that a provider does nothing else to the turn the type ensures, since an
+`AgentWork` only reads.
 
 The `ContextProvider` runs once, at the start of a turn, so a part stays in place across the tool
 loop. When it fails, the turn fails, whatever its fail policy: without a context there is nothing to
@@ -388,8 +394,9 @@ prompt is classified from `classification` (`public` by default). Every part is 
 provider says - a part that does not say counts as the channel - and what the parts of one position
 are joined into, as the join of theirs; the turn has seen it (issue 168).
 
-The parts may be left out, each by the fail policy of its own component: a part that fails open is
-left out of that turn with a warning; one that fails closed fails the turn.
+The parts may be left out, each by the fail policy of its own component
+(`ComponentImpl::apply_fail_policy`, which the message processors' stages use too): a part that
+fails open is left out of that turn with a warning; one that fails closed fails the turn.
 
 A `PromptProvider` is not given the `Turn` but what it reads of it, an `AgentWork` (`Turn::work`,
 issue 204): the agent, the contexts the turn is done in, the classification it began with and its
@@ -501,8 +508,9 @@ What the model is given is not stored; it is resolved from what is (issues 49, 1
     Until then a `TranscriptView` continues the stored transcript with them. This relies on the
     transcript not changing while a turn runs - nothing is perceived during one - and `Turn::commit`
     logs it if it did.
-*   **Placing the parts.** The `ContextProvider` calls `Turn::set_context` with every part as a
-    `PromptPart`: its text, its role and the transcript entry it follows. An instruction within the
+*   **Placing the parts.** The `ContextProvider` places every part as a `PromptPart` - its text,
+    its role and the transcript entry it follows - and the `AgentActor` sets them with
+    `Turn::set_context`. An instruction within the
     turn is placed after its last message (`Turn::place_turn_prompt`). Either way the text is kept
     in `AgentChannelState::prompts`, once per digest, and the reference goes into the turn's
     context, where it counts for the messages produced from then on - like knowledge read.

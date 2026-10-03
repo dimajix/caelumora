@@ -27,17 +27,13 @@ where
     T: MessageProcessor + ?Sized + Send + Sync,
 {
     for stage_processor in processors {
+        // What it was given, should it be left out.
         let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen).then(|| input.clone());
-        match stage_processor.process_messages(input, security).await {
-            Ok(output) => input = output,
-            Err(e) => match kept {
-                Some(kept) => {
-                    warn!("Component '{}' failed with fail-open policy: {}", stage_processor.id, e);
-                    input = kept;
-                }
-                None => return Err(e),
-            },
-        }
+        let output = stage_processor.process_messages(input, security).await;
+        input = match stage_processor.apply_fail_policy(output)? {
+            Some(output) => output,
+            None => kept.unwrap_or_default(),
+        };
     }
     Ok(input)
 }

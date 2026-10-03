@@ -3,10 +3,10 @@
 //! every `PromptProvider` of the agent, placed around its transcript
 //! (issues 47, 99). The default `ContextProvider` of an agent run here.
 
-use crate::agent_turn::Turn;
-use caelumora_model::context::PromptPart;
+use crate::work::AgentWork;
+use caelumora_model::context::{KnowledgeRef, PromptPart};
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::context::{prompt_parts, ContextProvider, PromptPosition, PromptProvider};
+use crate::context::{ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -27,16 +27,18 @@ pub struct TurnContextProvider {
 
 #[async_trait]
 impl ContextProvider for TurnContextProvider {
-    async fn current_context(&self, state: &mut Turn) -> Result<()> {
+    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
-        let parts = prompt_parts(&self.prompt_providers, &state.work()).await?;
-        for (provider, contribution) in self.prompt_providers.iter().zip(parts) {
-            let Some(contribution) = contribution else { continue };
-            for reference in contribution.knowledge {
-                state.record_knowledge(reference);
+        let mut knowledge = Vec::new();
+        for provider in &self.prompt_providers {
+            let Some(contribution) = provider.apply_fail_policy(provider.get_prompt(work).await)? else { continue };
+            let text = contribution.text.trim();
+            if text.is_empty() {
+                continue;
             }
-            let part = (contribution.text, contribution.classification);
+            knowledge.extend(contribution.knowledge);
+            let part = (text.to_string(), contribution.classification);
             match provider.position() {
                 PromptPosition::Start => start.push(part),
                 PromptPosition::BeforeTurnInput => before_input.push(part),
@@ -44,7 +46,6 @@ impl ContextProvider for TurnContextProvider {
         }
 
         // The system prompt before everything.
-        let transcript = &state.agent_channel_state().transcript;
         let mut parts = Vec::with_capacity(2);
         if !start.is_empty() {
             let (text, classification) = joined(start);
@@ -54,8 +55,9 @@ impl ContextProvider for TurnContextProvider {
             // Before the newest message, which is the turn's input - unless
             // the agent wrote it itself, in a turn that has none (e.g. after
             // `/wakeup`): then at the end.
+            let transcript = &work.agent_channel_state().transcript;
             let mut messages = transcript.entries().rev().filter_map(|n| n.entry.message().map(|m| (n.digest, m)));
-            let own = ActorId::Agent(state.agent_id());
+            let own = ActorId::Agent(work.agent_id());
             let after = match messages.next() {
                 Some((_, input)) if input.sender_id != own => messages.next().map(|(digest, _)| digest),
                 Some((own_message, _)) => Some(own_message),
@@ -64,9 +66,7 @@ impl ContextProvider for TurnContextProvider {
             let (text, classification) = joined(before_input);
             parts.push(PromptPart { role: MessageRole::User, text, after, classification });
         }
-        state.set_context(parts);
-
-        Ok(())
+        Ok((parts, knowledge))
     }
 }
 
@@ -102,6 +102,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::agent_state::AgentStateHandle;
+    use crate::agent_turn::Turn;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -122,6 +123,17 @@ mod tests {
         ComponentImpl { id: "part".to_string(), fail_policy, facet: provider }
     }
 
+    /// What `provider` answers for `turn`, set in it as the agent's actor
+    /// sets it.
+    async fn assemble(provider: &TurnContextProvider, turn: &mut Turn<'_>) -> anyhow::Result<()> {
+        let (parts, knowledge) = provider.current_context(&turn.work()).await?;
+        for reference in knowledge {
+            turn.record_knowledge(reference);
+        }
+        turn.set_context(parts);
+        Ok(())
+    }
+
     /// A prompt part that cannot be had.
     #[derive(Debug)]
     struct Unavailable;
@@ -140,11 +152,11 @@ mod tests {
         let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed);
 
         let open = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
-        open.current_context(&mut turn).await.expect("a part that fails open is left out");
+        assemble(&open, &mut turn).await.expect("a part that fails open is left out");
         assert_eq!(turn.full_context().unwrap().0[0].content.as_deref(), Some("Be brief."), "the others are given");
 
         let closed = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
-        let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
+        let error = assemble(&closed, &mut turn).await.expect_err("a part that fails closed fails the turn");
         assert!(format!("{error:#}").contains("component 'part'"), "{error:#}");
     }
 
@@ -168,7 +180,7 @@ mod tests {
         question.role = MessageRole::User;
         agent_channel_state.perceive(Vec::new(), vec![earlier, question]);
         let mut turn = Turn::begun(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
-        provider.current_context(&mut turn).await.unwrap();
+        assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
             "the system prompt first, the notes before the turn's input");
         assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
@@ -178,7 +190,7 @@ mod tests {
         own.sender_id = ActorId::Agent(agent_id);
         agent_channel_state.perceive(Vec::new(), vec![own]);
         let mut turn = Turn::begun(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
-        provider.current_context(&mut turn).await.unwrap();
+        assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
     }
 }

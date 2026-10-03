@@ -425,6 +425,31 @@ where
     pub facet: Arc<T>,
 }
 
+impl<T> ComponentImpl<T>
+where
+    T: ?Sized + Send + Sync,
+{
+    /// `result` of a call of the facet, as the component's fail policy
+    /// says: a failure fails the caller if the component fails closed,
+    /// named with the component; if it fails open, it is logged and the
+    /// component's part left out - `None`.
+    ///
+    /// # Errors
+    /// The failure of a component that fails closed.
+    pub fn apply_fail_policy<R>(&self, result: anyhow::Result<R>) -> anyhow::Result<Option<R>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(e) => match self.fail_policy {
+                ComponentFailPolicy::FailOpen => {
+                    tracing::warn!("Component '{}' failed and is left out, as it fails open: {:#}", self.id, e);
+                    Ok(None)
+                }
+                ComponentFailPolicy::FailClosed => Err(e.context(format!("component '{}' failed", self.id))),
+            },
+        }
+    }
+}
+
 impl<T> Deref for ComponentImpl<T>
 where
     T: ?Sized + Send + Sync,

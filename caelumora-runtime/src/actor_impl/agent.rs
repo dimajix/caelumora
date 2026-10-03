@@ -200,8 +200,13 @@ impl AgentActor {
         // whatever its fail policy: without a context there is nothing to
         // give the model. Parts that may be left out are the prompt
         // providers', each by its own policy.
-        self.context_provider.current_context(&mut turn).await
-            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
+        let (parts, knowledge) = self.context_provider.current_context(&turn.work()).await
+            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
+        for reference in knowledge {
+            turn.record_knowledge(reference);
+        }
+        turn.set_context(parts);
+        Ok(())
     }
 
     /// Stores the agent's state in its channel, with where the actor stands
