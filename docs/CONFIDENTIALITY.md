@@ -130,6 +130,13 @@ never above its channel, and only with configured compartments.
         agent is told which tools ran, not with what (see
         [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)); the users get a `TurnFailed`
         saying why.
+    *   an external agent's work is given up the same way (issue 212): an answer under way, which
+        the lowering cancels, publishes nothing of what came so far; an open task begun before is
+        cancelled at the remote agent and forgotten, when it would be followed, when what came of it
+        would be said, or when a request would take it up again. What the remote agent was given is
+        released with the channel, as an agent's transcript is; what is given up is the work begun
+        under the classification the channel had - one rule for both kinds of agent, and what the
+        web UI warns of.
 
     The web UI says so when a change releases the channel.
 *   **A message** (`ChannelLoop::reclassify_message`, REST `PUT …/messages/{mid}/classification`) is
@@ -194,7 +201,14 @@ limit holds back an agent run here whose model or tools are outside the system.
 
 An external agent, once let into a channel, is given everything said in it, as a cleared person
 hears everything; that it may receive it was decided at the door. What it answers is classified as
-its component is configured, else as the channel.
+a turn's messages are (issue 212): as what its work has seen - everything it was given in the
+channel, and what the remote agent brings in itself, classified as its component declares, else as
+the channel - never above the channel as it was when the work began (`Work::label`,
+`Classification::join_within`). A declaration does not lower what it was given: a remote agent
+declared public, told what is internal, answers internal. Whether what it brings in itself may
+enter the channel is asked when it joins and again with every request; a request it may not answer
+in the channel as it is now - lowered since - is answered with `TurnFailed`, and the remote agent
+is not called.
 
 The question is `ActionType::JoinChannel { participant, roles, channel }`: the channel knows the
 roles of a participant from what it resolves the participant to (`Member::clearances` in

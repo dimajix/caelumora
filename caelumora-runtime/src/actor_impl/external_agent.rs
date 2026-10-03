@@ -13,6 +13,11 @@
 //! that is kept: in its `AgentChannelState`, as every agent's, with what
 //! ties it to the remote side (`RemoteState`, issue 206). It reads nothing
 //! of the channel itself.
+//!
+//! Every request is a piece of work (`Work`), as a turn is (issues 211,
+//! 212): done in the request's contexts, bound by the channel as it was
+//! when it began, its answer classified as what it has seen - and given up
+//! when the channel was lowered since.
 
 use super::{catch_up, failure_message, lowered_message, perceive};
 use crate::actor::{Actor, Answering};

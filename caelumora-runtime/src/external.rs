@@ -114,8 +114,10 @@ pub trait ExternalAgent: Send + Sync + Debug {
     /// cancelled any more - it has ended - is no error.
     async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()>;
 
-    /// How the remote agent's answers are classified, if the component is
-    /// configured with a classification; otherwise they are the channel's.
+    /// How what the remote agent brings in itself is classified, if the
+    /// component is configured with a classification; otherwise as the
+    /// channel. Its answers are classified as what their work has seen -
+    /// this and all it was given (`Work::label`, issue 212).
     fn classification(&self) -> Option<Classification>;
 }
 

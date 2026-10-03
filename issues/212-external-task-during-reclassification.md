@@ -1,6 +1,6 @@
 # 212 — An external agent's task that began before its channel was lowered is answered into the lowered channel
 
-**Status:** in progress
+**Status:** done
 **Area:** Confidentiality, integrations
 
 ## The problem
@@ -292,4 +292,14 @@ About 20 lines in the model (method, two fields, `Work` if decided), 120 in the 
   cancelled, as every cancel does, before it is asked whether it may go on. Not tested: a task
   followed while the channel is lowered, whose end is then given up in `on_followed` - the scripted
   remote agent cannot hold back its events until the lowering.
+- **2026-10-03** — Step 4 done: CONFIDENTIALITY.md says how an external agent's answers are
+  classified - as what its work has seen, a declaration lowering nothing it was given - that
+  admission is asked again with every request, and that lowering a channel gives up an external
+  agent's work as it does a turn; CHANNELS.md describes `Work`, `OpenTask::work` and what a
+  lowering does to an answer and an open task. The trait's and the actor's comments say the same.
+  Fixed on the way: the bold opening of *An external agent speaks on its own* in CHANNELS.md, lost
+  in a rewrap of issue 211. *Done when* is met but for one point: the security suite covers the
+  answer while asked (and the admission), the task followed after a lowering only `channel.rs` -
+  its question is asked in the task's name as the other's is, through the same `lowered`. The
+  remote conversation needs nothing (finding 1).
 
