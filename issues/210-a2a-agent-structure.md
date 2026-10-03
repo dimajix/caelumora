@@ -238,3 +238,14 @@ is the restructuring and is reviewed on its own.
   helpers private. Five tests of the translation without HTTP are new: an artifact in chunks, the
   conversation and the task told once and again when they change, a message without a task, every
   task state with its fallback texts, a started task told without its artifacts.
+- **2026-10-03** — Step 2 done: what is sent is typed in `wire.rs` - `RpcRequest`,
+  `SendMessageParams`, `SendConfiguration`, `TaskParams`, the methods in `wire::method` - and one
+  `WireMessage` serves both directions, with `message_id`, `role` and `task_id` added and left out
+  when not set. `post`, `call` and `stream` take `impl Serialize`; `cancel` reads its result as
+  `IgnoredAny`. `translation::wire_message` builds the message from an `OutboundMessage`, beside
+  `ACCEPTED_OUTPUT_MODES` (only text is read). Two deviations from the plan: `WireRole` has a third
+  variant, `Unspecified` (`ROLE_UNSPECIFIED`, and any role not known), so that a message with a
+  role of a later version is still read; and the tests against the stub keep the method names as
+  literals, on purpose - they assert the protocol, which a constant written wrong would not catch.
+  Four tests are new: the request envelope, a message and its parameters as written by hand before,
+  a role not known, and the message built for what is said.

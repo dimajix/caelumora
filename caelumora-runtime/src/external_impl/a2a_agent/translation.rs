@@ -1,10 +1,29 @@
-//! What the remote agent sends, as `ExternalEvent`s (issue 210): a task,
-//! its status and its artifacts, or a message of its own.
+//! Between the wire and `crate::external` (issue 210): what is said, as
+//! the message sent to the remote agent; and what the remote agent sends -
+//! a task, its status and its artifacts, or a message of its own - as
+//! `ExternalEvent`s.
 
-use super::wire::{text_of, StreamResponse, WireMessage, WireStatus, WireTask, WireTaskState};
-use crate::external::ExternalEvent;
+use super::wire::{text_of, StreamResponse, WireMessage, WirePart, WireRole, WireStatus, WireTask, WireTaskState};
+use crate::external::{ExternalEvent, OutboundMessage};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use std::collections::HashMap;
+use uuid::Uuid;
+
+/// The media types of an answer that are taken: only text is read of it.
+pub(super) const ACCEPTED_OUTPUT_MODES: [&str; 1] = ["text/plain"];
+
+/// The message that gives the remote agent `message`, in `conversation` if
+/// it opened one: what each said, as the remote agent's user - by name,
+/// one part each - and the task it answers, if it asked back.
+pub(super) fn wire_message(message: &OutboundMessage, conversation: Option<&ConversationId>) -> WireMessage {
+    WireMessage {
+        message_id: Some(Uuid::new_v4().to_string()),
+        role: Some(WireRole::User),
+        context_id: conversation.map(|c| c.0.clone()),
+        task_id: message.answers.as_ref().map(|t| t.0.clone()),
+        parts: message.said.iter().map(|s| WirePart { text: Some(format!("{}: {}", s.sender, s.text)) }).collect(),
+    }
+}
 
 /// What a stream's responses become, as `ExternalEvent`s: keeps what it
 /// told already - the conversation, the task - and the pieces of artifacts
@@ -117,6 +136,22 @@ fn status_events(status: WireStatus, events: &mut Vec<ExternalEvent>) {
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+
+    #[test]
+    fn what_is_said_is_sent_as_the_users_message_one_part_each_by_name() {
+        use crate::external::Said;
+        let said = |sender: &str, text: &str| Said { sender: sender.to_string(), text: text.to_string() };
+        let first = OutboundMessage { said: vec![said("alice", "hello"), said("bob", "hi")], answers: None };
+        let sent = serde_json::to_value(wire_message(&first, None)).expect("json");
+        assert!(sent["messageId"].as_str().is_some_and(|id| !id.is_empty()));
+        assert_eq!(sent["role"], "ROLE_USER");
+        assert_eq!(sent["parts"], json!([{ "text": "alice: hello" }, { "text": "bob: hi" }]));
+        assert!(sent.get("contextId").is_none() && sent.get("taskId").is_none(), "no conversation yet, no task answered");
+
+        let reply = OutboundMessage { said: vec![said("alice", "Berlin")], answers: Some(task("t-1")) };
+        let sent = serde_json::to_value(wire_message(&reply, Some(&conversation("c-1")))).expect("json");
+        assert_eq!((sent["contextId"].as_str(), sent["taskId"].as_str()), (Some("c-1"), Some("t-1")));
+    }
 
     fn response(value: Value) -> StreamResponse {
         serde_json::from_value(value).expect("a response")

@@ -14,8 +14,8 @@
 mod translation;
 mod wire;
 
-use self::translation::Translation;
-use self::wire::{is_version_1, AgentCard, RpcResponse, StreamResponse, WireTask, A2A_VERSION, CARD_PATH, JSONRPC_BINDING, TASK_NOT_CANCELABLE};
+use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
+use self::wire::{is_version_1, method, AgentCard, RpcRequest, RpcResponse, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, A2A_VERSION, CARD_PATH, JSONRPC_BINDING, TASK_NOT_CANCELABLE};
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use crate::remote::{describe_chain, describe_request_error, redact_endpoint, RemoteEndpoint};
@@ -27,13 +27,11 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
 use sse_stream::SseStream;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
-use uuid::Uuid;
 
 pub const A2A_AGENT_KIND: &str = "a2a_agent";
 
@@ -174,9 +172,9 @@ impl A2aAgentComponent {
     /// Posts the JSON-RPC request `method` with `params`, streamed or not:
     /// either is answered within the timeout, a streamed one with the
     /// beginning of its stream (issue 186).
-    async fn post(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: Value, streamed: bool) -> ExternalAgentResult<reqwest::Response> {
-        let body = json!({ "jsonrpc": "2.0", "id": Uuid::new_v4().to_string(), "method": method, "params": params });
-        trace!("A2A agent component '{}' sends {}: {}", self.id, method, body);
+    async fn post(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: impl Serialize, streamed: bool) -> ExternalAgentResult<reqwest::Response> {
+        let body = RpcRequest::new(method, params);
+        trace!("A2A agent component '{}' sends {}: {}", self.id, method, serde_json::to_string(&body).unwrap_or_default());
         let mut request = self.http.post(&endpoint.url).header("A2A-Version", A2A_VERSION).json(&body);
         request = if streamed {
             request.header(reqwest::header::ACCEPT, "text/event-stream")
@@ -194,14 +192,14 @@ impl A2aAgentComponent {
     }
 
     /// The result of the JSON-RPC request `method`.
-    async fn call<T: DeserializeOwned>(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: Value) -> ExternalAgentResult<T> {
+    async fn call<T: DeserializeOwned>(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: impl Serialize) -> ExternalAgentResult<T> {
         let response = self.post(security, endpoint, method, params, false).await?;
         let answer: RpcResponse<T> = self.json_of(response).await?;
         answer.into_result(&self.shown())
     }
 
     /// The events of the streamed JSON-RPC request `method`.
-    async fn stream(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: Value) -> ExternalAgentResult<ExternalStream> {
+    async fn stream(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: impl Serialize) -> ExternalAgentResult<ExternalStream> {
         let response = self.post(security, endpoint, method, params, true).await?;
         self.require_success(&response)?;
         let is_stream = response.headers().get(reqwest::header::CONTENT_TYPE)
@@ -230,7 +228,7 @@ impl A2aAgentComponent {
             loop {
                 let found = match first.take() {
                     Some(found) => found,
-                    None => match agent.call::<WireTask>(&security, &endpoint, "GetTask", json!({ "id": task.0 })).await {
+                    None => match agent.call::<WireTask>(&security, &endpoint, method::GET_TASK, TaskParams { id: task.0.clone() }).await {
                         Ok(found) => found,
                         Err(e) => {
                             yield Err(e);
@@ -312,23 +310,20 @@ where
 impl ExternalAgent for A2aAgentComponent {
     async fn send(&self, security: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
         let endpoint = self.endpoint(security).await?;
-        // What each said, as the remote agent's user: by name, one part each.
-        let parts: Vec<Value> = message.said.iter().map(|s| json!({ "text": format!("{}: {}", s.sender, s.text) })).collect();
-        let mut wire = json!({ "messageId": Uuid::new_v4().to_string(), "role": "ROLE_USER", "parts": parts });
-        if let Some(conversation) = conversation {
-            wire["contextId"] = json!(conversation.0);
-        }
-        if let Some(task) = &message.answers {
-            wire["taskId"] = json!(task.0);
-        }
-        let mut params = json!({ "message": wire, "configuration": { "acceptedOutputModes": ["text/plain"] } });
+        let params = SendMessageParams {
+            message: wire_message(&message, conversation),
+            configuration: SendConfiguration {
+                accepted_output_modes: ACCEPTED_OUTPUT_MODES.map(str::to_string).to_vec(),
+                // Without streaming answered at once with the task, which is
+                // followed until it ends: its id is known however long it
+                // runs (issue 186).
+                return_immediately: !endpoint.streaming,
+            },
+        };
         if endpoint.streaming {
-            self.stream(security, &endpoint, "SendStreamingMessage", params).await
+            self.stream(security, &endpoint, method::SEND_STREAMING_MESSAGE, params).await
         } else {
-            // Answered at once with the task, which is followed until it
-            // ends: its id is known however long it runs (issue 186).
-            params["configuration"]["returnImmediately"] = json!(true);
-            let mut response: StreamResponse = self.call(security, &endpoint, "SendMessage", params).await?;
+            let mut response: StreamResponse = self.call(security, &endpoint, method::SEND_MESSAGE, params).await?;
             match response.task.take_if(|task| task.status.state.works()) {
                 Some(task) => {
                     let id = TaskId(task.id.clone());
@@ -341,9 +336,8 @@ impl ExternalAgent for A2aAgentComponent {
 
     async fn resume(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<ExternalStream> {
         let endpoint = self.endpoint(security).await?;
-        let params = json!({ "id": task.0 });
         if endpoint.streaming {
-            self.stream(security, &endpoint, "SubscribeToTask", params).await
+            self.stream(security, &endpoint, method::SUBSCRIBE_TO_TASK, TaskParams { id: task.0.clone() }).await
         } else {
             Ok(self.polled(security, endpoint, None, task.clone()))
         }
@@ -351,8 +345,8 @@ impl ExternalAgent for A2aAgentComponent {
 
     async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
         let endpoint = self.endpoint(security).await?;
-        let response = self.post(security, &endpoint, "CancelTask", json!({ "id": task.0 }), false).await?;
-        let answer: RpcResponse<Value> = self.json_of(response).await?;
+        let response = self.post(security, &endpoint, method::CANCEL_TASK, TaskParams { id: task.0.clone() }, false).await?;
+        let answer: RpcResponse<serde::de::IgnoredAny> = self.json_of(response).await?;
         match answer.error {
             Some(error) if error.code == TASK_NOT_CANCELABLE => Ok(()),
             Some(error) => Err(ExternalAgentError::Rejected { endpoint: self.shown(), message: error.message }),
@@ -390,6 +384,7 @@ mod tests {
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::DummySecurityManager;
     use futures::StreamExt;
+    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::Mutex;
 
