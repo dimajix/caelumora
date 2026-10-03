@@ -24,7 +24,6 @@ use caelumora_model::transcript::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
-use futures::stream::BoxStream;
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -186,22 +185,6 @@ impl AgentActor {
         // providers', each by its own policy.
         self.context_provider.current_context(turn).await
             .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))
-    }
-
-    /// Calls the LLM for one turn step. `create_plan_tool` (when wired in)
-    /// contributes its own planning nudge to the turn's context as a
-    /// `PromptProvider`, composed by `StateContextProvider` once per
-    /// turn - nothing plan-specific needs handling here. The model is
-    /// offered the tools the turn began with (issue 137). Fails if the
-    /// turn's context cannot be resolved.
-    async fn call_llm(
-        &self,
-        turn: &mut Turn<'_>,
-    ) -> Result<BoxStream<'static, crate::llm::LLMResult<MessageEvent>>> {
-        let (messages, tools) = turn.full_context()?;
-        Ok(self.llm_client
-            .chat_completion(&messages, &tools)
-            .await)
     }
 
     /// Stores the agent's state in its channel as `turn` holds it, with
@@ -472,7 +455,11 @@ impl AgentActor {
         }
 
         let cancelled = self.control.token();
-        let mut response = self.call_llm(turn).await?;
+        // The turn's context - prompt parts, a planning nudge among them if
+        // `create_plan_tool` is wired in, and the tools the turn began with
+        // (issue 137); it fails if it cannot be resolved.
+        let (messages, tools) = turn.full_context()?;
+        let mut response = self.llm_client.chat_completion(&messages, &tools).await;
         use futures::stream::TryStreamExt;
         loop {
             // A cancel wins over the next chunk, and returning drops the
