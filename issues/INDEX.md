@@ -188,6 +188,7 @@ argues against it, and what came out of the last attempt.
 | [203](203-concurrent-answers-in-view.md) | open | The chat view keeps one answer under way per channel, so the streamed answers of agents answering at once run into each other or vanish. |
 | [207](207-agent-history-in-ui.md) | open | An agent's history - all that was offered to it and what it said - cannot be shown; neither the views, the REST API nor the web UI hand it out. |
 | [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
+| [216](216-show-reasoning.md) | open | The web UI shows an agent's reasoning nowhere - neither in the chat, while it streams or afterwards, nor in the context panel - although the server hands it out. |
 
 ## Context and knowledge
 
