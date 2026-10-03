@@ -1,4 +1,4 @@
-//! The built-in components that reach an external agent, one file per
+//! The built-in components that reach an external agent, one module per
 //! component kind (issue 179). The facet trait, `ExternalAgent`, lives in
 //! `crate::external`.
 

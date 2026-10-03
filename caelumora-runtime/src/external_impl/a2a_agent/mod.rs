@@ -7,7 +7,15 @@
 //! back.
 //! Only A2A 1.x over JSON-RPC: a card that offers nothing else is refused
 //! when the agent is asked, not when the component is built.
+//!
+//! The protocol's types are in `wire`, what they tell as `ExternalEvent`s
+//! in `translation` (issue 210).
 
+mod translation;
+mod wire;
+
+use self::translation::Translation;
+use self::wire::{is_version_1, AgentCard, RpcResponse, StreamResponse, WireTask, A2A_VERSION, CARD_PATH, JSONRPC_BINDING, TASK_NOT_CANCELABLE};
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::external::{ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use crate::remote::{describe_chain, describe_request_error, redact_endpoint, RemoteEndpoint};
@@ -22,7 +30,6 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sse_stream::SseStream;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
@@ -30,22 +37,10 @@ use uuid::Uuid;
 
 pub const A2A_AGENT_KIND: &str = "a2a_agent";
 
-/// The version of A2A spoken, sent as `A2A-Version` with every request.
-const A2A_VERSION: &str = "1.0";
-
-/// Where an agent card is found, below the agent's base URL.
-const CARD_PATH: &str = ".well-known/agent-card.json";
-
-/// The protocol binding used: JSON-RPC over HTTP.
-const JSONRPC_BINDING: &str = "JSONRPC";
-
 /// How long a task that works is left before it is asked again, at first
 /// and at the most: twice as long each time (issue 186).
 const POLL_FIRST: Duration = Duration::from_secs(1);
 const POLL_LONGEST: Duration = Duration::from_secs(30);
-
-/// The JSON-RPC error code of a task that cannot be cancelled any more.
-const TASK_NOT_CANCELABLE: i64 = -32002;
 
 /// How long one request may take unless the endpoint says otherwise.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -262,11 +257,6 @@ impl A2aAgentComponent {
     }
 }
 
-/// Whether `version` is one of A2A 1.x.
-fn is_version_1(version: &str) -> bool {
-    version == "1" || version.starts_with("1.")
-}
-
 /// The events of a single `response`, as a stream.
 fn answered(response: StreamResponse) -> ExternalStream {
     Box::pin(futures::stream::iter(Translation::default().events(response).into_iter().map(Ok)))
@@ -375,285 +365,6 @@ impl ExternalAgent for A2aAgentComponent {
     }
 }
 
-/// What a stream's responses become, as `ExternalEvent`s: keeps what it
-/// told already - the conversation, the task - and the pieces of artifacts
-/// sent in chunks.
-#[derive(Debug, Default)]
-struct Translation {
-    conversation: Option<String>,
-    task: Option<String>,
-    artifacts: HashMap<String, String>,
-}
-
-impl Translation {
-    /// That `task`, which still works, was started.
-    fn started(&mut self, task: &WireTask) -> Vec<ExternalEvent> {
-        let mut events = Vec::new();
-        self.conversation(task.context_id.as_deref(), &mut events);
-        self.task(&task.id, &mut events);
-        events
-    }
-
-    fn events(&mut self, response: StreamResponse) -> Vec<ExternalEvent> {
-        let mut events = Vec::new();
-        if let Some(message) = response.message {
-            // An answer without a task: it is the whole of it.
-            self.conversation(message.context_id.as_deref(), &mut events);
-            let text = message.text();
-            if !text.is_empty() {
-                events.push(ExternalEvent::Message(text));
-            }
-            events.push(ExternalEvent::Completed);
-        }
-        if let Some(task) = response.task {
-            self.conversation(task.context_id.as_deref(), &mut events);
-            self.task(&task.id, &mut events);
-            for artifact in task.artifacts {
-                let text = text_of(&artifact.parts);
-                if !text.is_empty() {
-                    events.push(ExternalEvent::Message(text));
-                }
-            }
-            status_events(task.status, &mut events);
-        }
-        if let Some(update) = response.status_update {
-            self.conversation(update.context_id.as_deref(), &mut events);
-            status_events(update.status, &mut events);
-        }
-        if let Some(update) = response.artifact_update {
-            self.conversation(update.context_id.as_deref(), &mut events);
-            let piece = text_of(&update.artifact.parts);
-            let whole = self.artifacts.entry(update.artifact.artifact_id.clone()).or_default();
-            if !update.append {
-                whole.clear();
-            }
-            whole.push_str(&piece);
-            if update.last_chunk {
-                let whole = self.artifacts.remove(&update.artifact.artifact_id).unwrap_or_default();
-                if !whole.is_empty() {
-                    events.push(ExternalEvent::Message(whole));
-                }
-            } else if !piece.is_empty() {
-                events.push(ExternalEvent::Partial(piece));
-            }
-        }
-        events
-    }
-
-    /// The task, told once - and again if it changes.
-    fn task(&mut self, task: &str, events: &mut Vec<ExternalEvent>) {
-        if self.task.as_deref() != Some(task) {
-            self.task = Some(task.to_string());
-            events.push(ExternalEvent::Started(TaskId(task.to_string())));
-        }
-    }
-
-    /// The conversation, told once - and again if it changes.
-    fn conversation(&mut self, context: Option<&str>, events: &mut Vec<ExternalEvent>) {
-        if let Some(context) = context.filter(|c| !c.is_empty()) {
-            if self.conversation.as_deref() != Some(context) {
-                self.conversation = Some(context.to_string());
-                events.push(ExternalEvent::Conversation(ConversationId(context.to_string())));
-            }
-        }
-    }
-}
-
-/// What a task's `status` tells: nothing while it works; its end, its
-/// question, or why it failed.
-fn status_events(status: WireStatus, events: &mut Vec<ExternalEvent>) {
-    let text = status.message.as_ref().map(WireMessage::text).unwrap_or_default();
-    let or = |fallback: &str| if text.is_empty() { fallback.to_string() } else { text.clone() };
-    match status.state {
-        WireTaskState::Completed => {
-            if !text.is_empty() {
-                events.push(ExternalEvent::Message(text.clone()));
-            }
-            events.push(ExternalEvent::Completed);
-        }
-        WireTaskState::Canceled => events.push(ExternalEvent::Canceled),
-        WireTaskState::Failed => events.push(ExternalEvent::Failed(or("the task failed"))),
-        WireTaskState::Rejected => events.push(ExternalEvent::Failed(or("the task was refused"))),
-        WireTaskState::InputRequired => events.push(ExternalEvent::InputRequired(or("it needs more to go on"))),
-        WireTaskState::AuthRequired => events.push(ExternalEvent::Failed("it asks for an authentication it was not given".to_string())),
-        // Submitted, working: what it says meanwhile is not the answer.
-        WireTaskState::Other => {}
-    }
-}
-
-/// The text of `parts`, one part a line; what is no text is left out.
-fn text_of(parts: &[WirePart]) -> String {
-    parts.iter().filter_map(|p| p.text.as_deref()).collect::<Vec<_>>().join("\n")
-}
-
-/// A JSON-RPC response.
-#[derive(Debug, Deserialize)]
-struct RpcResponse<T> {
-    result: Option<T>,
-    error: Option<RpcError>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RpcError {
-    code: i64,
-    message: String,
-}
-
-impl<T> RpcResponse<T> {
-    fn into_result(self, endpoint: &str) -> ExternalAgentResult<T> {
-        match (self.result, self.error) {
-            (_, Some(error)) => Err(ExternalAgentError::Rejected { endpoint: endpoint.to_string(), message: format!("{} ({})", error.message, error.code) }),
-            (Some(result), None) => Ok(result),
-            (None, None) => Err(ExternalAgentError::InvalidResponse { endpoint: endpoint.to_string(), reason: "neither a result nor an error".to_string() }),
-        }
-    }
-}
-
-/// The parts of an agent card that are read.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentCard {
-    #[serde(default)]
-    supported_interfaces: Vec<AgentInterface>,
-    #[serde(default)]
-    capabilities: AgentCapabilities,
-}
-
-impl AgentCard {
-    /// What the card offers, for a refusal.
-    fn offered(&self) -> String {
-        if self.supported_interfaces.is_empty() {
-            return "nothing".to_string();
-        }
-        self.supported_interfaces.iter().map(|i| format!("{} {}", i.protocol_binding, i.protocol_version)).collect::<Vec<_>>().join(", ")
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentInterface {
-    url: String,
-    #[serde(default)]
-    protocol_binding: String,
-    #[serde(default)]
-    protocol_version: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentCapabilities {
-    #[serde(default)]
-    streaming: Option<bool>,
-}
-
-/// One response of a stream, or the answer to `SendMessage`: exactly one
-/// of its fields is set.
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamResponse {
-    task: Option<WireTask>,
-    message: Option<WireMessage>,
-    status_update: Option<StatusUpdate>,
-    artifact_update: Option<ArtifactUpdate>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireMessage {
-    #[serde(default)]
-    context_id: Option<String>,
-    #[serde(default)]
-    parts: Vec<WirePart>,
-}
-
-impl WireMessage {
-    fn text(&self) -> String {
-        text_of(&self.parts)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WirePart {
-    #[serde(default)]
-    text: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireTask {
-    id: String,
-    #[serde(default)]
-    context_id: Option<String>,
-    status: WireStatus,
-    #[serde(default)]
-    artifacts: Vec<WireArtifact>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireStatus {
-    state: WireTaskState,
-    #[serde(default)]
-    message: Option<WireMessage>,
-}
-
-/// The states of a task that tell something; any other - submitted,
-/// working, or one this version does not know - is `Other`.
-#[derive(Debug, Deserialize)]
-enum WireTaskState {
-    #[serde(rename = "TASK_STATE_COMPLETED")]
-    Completed,
-    #[serde(rename = "TASK_STATE_CANCELED")]
-    Canceled,
-    #[serde(rename = "TASK_STATE_FAILED")]
-    Failed,
-    #[serde(rename = "TASK_STATE_REJECTED")]
-    Rejected,
-    #[serde(rename = "TASK_STATE_INPUT_REQUIRED")]
-    InputRequired,
-    #[serde(rename = "TASK_STATE_AUTH_REQUIRED")]
-    AuthRequired,
-    #[serde(other)]
-    Other,
-}
-
-impl WireTaskState {
-    /// Whether the task still works: it has neither ended nor asks back.
-    fn works(&self) -> bool {
-        matches!(self, WireTaskState::Other)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WireArtifact {
-    #[serde(default)]
-    artifact_id: String,
-    #[serde(default)]
-    parts: Vec<WirePart>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StatusUpdate {
-    #[serde(default)]
-    context_id: Option<String>,
-    status: WireStatus,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ArtifactUpdate {
-    #[serde(default)]
-    context_id: Option<String>,
-    artifact: WireArtifact,
-    #[serde(default)]
-    append: bool,
-    #[serde(default)]
-    last_chunk: bool,
-}
-
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>(),
@@ -679,6 +390,7 @@ mod tests {
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::DummySecurityManager;
     use futures::StreamExt;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     /// The one secret of the tests.

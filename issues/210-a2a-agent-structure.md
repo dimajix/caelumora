@@ -1,6 +1,6 @@
 # 210 — The A2A agent is one file holding protocol, translation, transport and component
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -232,3 +232,9 @@ is the restructuring and is reviewed on its own.
   three steps decided. One point of the first proposal is corrected in the plan: polling keeps a
   translation of its own, so two of the three sources of answers are translated in one place, not
   all three.
+- **2026-10-03** — Step 1 done: `a2a_agent.rs` is `a2a_agent/mod.rs` (moved, its history kept),
+  with `wire.rs` (the wire types, the protocol's constants, `is_version_1`, `text_of`) and
+  `translation.rs` (`Translation`, `status_events`) beside it; `Translation` keeps its state and
+  helpers private. Five tests of the translation without HTTP are new: an artifact in chunks, the
+  conversation and the task told once and again when they change, a message without a task, every
+  task state with its fallback texts, a started task told without its artifacts.

@@ -280,7 +280,7 @@ argues against it, and what came out of the last attempt.
 | [197](197-one-chain-one-model-of-change.md) | done | The ledger appends every change while the message chains amend entries in place, and six types stand between a chain and what it stores. |
 | [201](201-component-nodes-wrapper.md) | done | Components are written under a `component_nodes` key inside their own key, a level that exists only because `ComponentConfig` is a struct with one field. |
 | [206](206-one-agent-channel-state.md) | in progress | Agents run here and external agents keep their channel state in two types with separate store methods, change types and views, though history and transcript are the same in both. |
-| [210](210-a2a-agent-structure.md) | open | The A2A agent is one file of 925 lines holding the protocol's types, their translation, the HTTP transport and the component, with what is sent built from untyped JSON. |
+| [210](210-a2a-agent-structure.md) | in progress | The A2A agent is one file of 925 lines holding the protocol's types, their translation, the HTTP transport and the component, with what is sent built from untyped JSON. |
 
 ## Integrations
 
