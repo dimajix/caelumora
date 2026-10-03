@@ -169,8 +169,8 @@ records digest and start together, see [MEMORY.md](MEMORY.md)) and for what a jo
 given.
 
 *   A **joining actor** is given the visible part (`Actor::catch_up`, issue 190) and takes it in as
-    what it hears: an agent keeps all of it in its history and what passes its perceive processors
-    in its transcript (issue 196), an external agent keeps it in its history and gives it to the
+    what it hears: an agent of either kind keeps all of it in its history and what passes its
+    perceive processors in its transcript (issues 196, 206) - an external agent gives that to the
     remote agent when it is next asked. Users and approvers keep nothing.
 *   A **rejoining actor** keeps only what was said after the last message it has - what it missed
     while away (`MessageHistory::missing_from`). The history is only ever appended to, so older
@@ -280,12 +280,14 @@ An **actor** is anything that sends and receives events in a channel.
     it, and hands it to the actor to be built from; the agent is `ActorId::Agent` either way, and
     nothing else - the participants, the REST API, the moderator - tells the two apart.
 *   **An external agent** has no turn and no tools. Its actor hears what others say, as every
-    participant does, and keeps all of it in its history, with its own answers - and, when it joins,
-    what it may see of the channel's, as an agent does; it reads nothing of the channel itself. When
-    it is asked to respond, it offers what it heard since it last offered anything (`offered_up_to`)
-    to the `PerceiveInProcessor`s of its personality, as an agent does (issue 196), gives the remote
-    agent what passes - recorded in its transcript, as an agent's transcript records what its model
-    is given - and publishes what comes back: pieces as `PartialMessageGenerated`, the answer as
+    participant does - and, when it joins, what it may see of the channel's - and takes it in as an
+    agent does (issues 196, 206): all of it into its history, with its own answers; what can be
+    given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
+    of its personality, into its transcript. It reads nothing of the channel itself. When it is
+    asked to respond, it gives the remote agent what its transcript gained since it was last sent
+    (`RemoteState::sent_up_to`, a mark in the transcript: what a failed send did not give is given
+    with the next one, and a restart gives nothing twice), and publishes what comes back: pieces as
+    `PartialMessageGenerated`, the answer as
     `FullResponseGenerated`, a task the remote agent failed as `TurnFailed`. A question back from
     the remote agent is its answer; the next request continues that task. A cancel cancels the
     remote task and publishes what came so far; a stop cancels it - and every other open task of the

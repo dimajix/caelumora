@@ -140,6 +140,8 @@ pub(crate) mod testing {
         pub(crate) sent: Mutex<Vec<(Option<ConversationId>, OutboundMessage)>>,
         /// Every task it was asked to cancel.
         pub(crate) cancelled: Mutex<Vec<TaskId>>,
+        /// How many requests to come cannot reach it.
+        unreachable: Mutex<usize>,
     }
 
     impl ScriptedExternalAgent {
@@ -153,6 +155,12 @@ pub(crate) mod testing {
             Self { resumed: Mutex::new(events.into()), ..self }
         }
 
+        /// Cannot be reached by the next `requests`: they fail before
+        /// anything is sent, and are not recorded.
+        pub(crate) fn unreachable_for(self, requests: usize) -> Self {
+            Self { unreachable: Mutex::new(requests), ..self }
+        }
+
         fn next(script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>) -> ExternalStream {
             let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
             Box::pin(futures::stream::iter(next.unwrap_or_default()).chain(futures::stream::pending()))
@@ -162,6 +170,12 @@ pub(crate) mod testing {
     #[async_trait]
     impl ExternalAgent for ScriptedExternalAgent {
         async fn send(&self, _: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
+            let mut unreachable = self.unreachable.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if *unreachable > 0 {
+                *unreachable -= 1;
+                return Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "refused".to_string() });
+            }
+            drop(unreachable);
             self.sent.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((conversation.cloned(), message));
             Ok(Self::next(&self.answers))
         }

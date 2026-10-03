@@ -4,9 +4,10 @@ pub mod approval;
 pub mod external_agent;
 
 use crate::component::ComponentImpl;
-use crate::message::MessageProcessor;
+use crate::message::{MessageProcessor, PerceiveInProcessor};
 use anyhow::Result;
 use caelumora_model::actor::ActorEvent;
+use caelumora_model::agent::AgentChannelState;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
@@ -38,6 +39,32 @@ where
         }
     }
     Ok(input)
+}
+
+/// Takes what others said, `heard`, into an agent's `state` (issues 196,
+/// 206), the same for both kinds of agent: all of it into its history; what
+/// of it the agent `takes` in, as it passes its perceive `processors`, into
+/// its transcript. A failing stage is logged and leaves the transcript as
+/// it was: what was heard stays in the history, and is not offered again.
+async fn perceive(
+    state: &mut AgentChannelState,
+    heard: Vec<Message>,
+    takes: impl Fn(&Message) -> bool,
+    processors: &[ComponentImpl<dyn PerceiveInProcessor>],
+    security: &SecurityContext,
+) {
+    if heard.is_empty() {
+        return;
+    }
+    let offered = heard.iter().filter(|m| takes(m)).cloned().collect();
+    let perceived = match apply_stage_processors(processors, offered, security).await {
+        Ok(perceived) => perceived,
+        Err(e) => {
+            warn!("The perceive stage failed: {:#}", e);
+            Vec::new()
+        }
+    };
+    state.perceive(heard, perceived);
 }
 
 /// The event that publishes `message`: internal messages (plan steps)

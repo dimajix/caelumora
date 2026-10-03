@@ -67,12 +67,12 @@ The `StateStore` trait (in `caelumora-model`) stores the runtime state of channe
     *   of an agent run here, the turn under way, if any (processing state, pending tool calls,
         plan, the turn's messages, changes not yet taken over). See [AGENT-TURN.md](AGENT-TURN.md).
     *   of an external agent (issue 179), what it keeps of the remote side (`remote`, a
-        `RemoteState`): up to which message of the history it offered anything on
-        (`offered_up_to`), the remote conversation and the tasks given to it that have not ended,
-        with what came of them and was not said yet (issue 195). Its history is all it was offered
-        and all it answered, its transcript what the remote agent was given - what passed its
-        perceive processors (issue 196); notes, prompt parts, tool sets and the turn stay empty,
-        and its processing state `Idle`.
+        `RemoteState`): how far its transcript was sent to the remote agent (`sent_up_to`, the
+        transcript's digest), the remote conversation and the tasks given to it that have not
+        ended, with what came of them and was not said yet (issue 195). Its history is all it was
+        offered and all it answered, its transcript what passed its perceive processors (issue
+        196) - what the remote agent was given, or is given with the next call; notes, prompt
+        parts, tool sets and the turn stay empty, and its processing state `Idle`.
 *   **`AgentState`**: the agent itself, across its channels and - for agents of user or global
     scope - across sessions. So far it holds the agent's memory (`agent_memory`, see
     [MEMORY.md](MEMORY.md)).

@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, event_for};
+use super::{apply_stage_processors, event_for, perceive};
 use crate::actor::Actor;
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, EndedTurn, Turn, MAX_MODEL_CALLS};
@@ -123,22 +123,6 @@ impl AgentActor {
             state: Mutex::new(agent_channel_state),
             control,
         })
-    }
-
-    /// Takes in what others said (issue 196): all that was offered to it
-    /// goes into its history; what passes its perceive processors is what
-    /// it processes, and goes into its transcript. No turn: nothing here is
-    /// a turn's work, and nothing is asked of the policy (issues 85, 90).
-    async fn perceive(&self, turn: &mut Turn<'_>, messages: Vec<Message>) {
-        if messages.is_empty() {
-            return;
-        }
-        turn.extend_history(messages.clone());
-        match apply_stage_processors(&self.perceive_in_processors, messages, &self.security_context).await {
-            Ok(messages) if !messages.is_empty() => turn.extend_transcript(messages),
-            Ok(_) => {}
-            Err(e) => warn!("PerceiveIn stage failed: {}", e),
-        }
     }
 
     /// A complete message as it leaves the agent - through the emit
@@ -286,8 +270,10 @@ impl AgentActor {
         let started = async {
             debug!("Received {}", event.describe());
             Ok::<_, anyhow::Error>(match event.event {
+                // No turn: nothing here is a turn's work, and nothing is
+                // asked of the policy (issues 85, 90).
                 ActorEvent::FullResponseGenerated(messages) => {
-                    self.perceive(turn, messages).await;
+                    perceive(turn.agent_channel_state_mut(), messages, |_| true, &self.perceive_in_processors, &self.security_context).await;
                     false
                 }
                 ActorEvent::ResponseRequested if !asleep => {
@@ -726,8 +712,7 @@ impl Actor for AgentActor {
         if missed.is_empty() {
             return Ok(());
         }
-        let mut turn = Turn::new(self.agent_id, self.agent_controller.name(), &mut state, self.agent_state.clone(), self.llm_client.profile());
-        self.perceive(&mut turn, missed).await;
+        perceive(&mut state, missed, |_| true, &self.perceive_in_processors, &self.security_context).await;
         self.actor_runtime.store_channel_state(&mut state).await
     }
 

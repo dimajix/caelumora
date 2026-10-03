@@ -184,7 +184,7 @@ mod tests {
         earlier.role = MessageRole::User;
         let mut question = message("question");
         question.role = MessageRole::User;
-        turn.extend_transcript(vec![earlier, question]);
+        turn.agent_channel_state_mut().perceive(Vec::new(), vec![earlier, question]);
         turn.begin();
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
@@ -194,7 +194,7 @@ mod tests {
         // A turn without new input - the newest message is the agent's own.
         let mut own = message("my answer");
         own.sender_id = ActorId::Agent(agent_id);
-        turn.extend_transcript(vec![own]);
+        turn.agent_channel_state_mut().perceive(Vec::new(), vec![own]);
         turn.begin();
         provider.current_context(&mut turn).await.unwrap();
         assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");

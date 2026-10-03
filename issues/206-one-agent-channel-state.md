@@ -307,3 +307,14 @@ without changing behaviour; step 4 changes behaviour.
   (issue [189](189-agent-kind-decided-twice.md)). Changed with it: an agent whose personality is
   gone keeps its state in the views - its notes, its context - where it had none, since which kind
   of state it kept was unknown.
+- **2026-10-03** — Step 4 done: both kinds take in what they hear the same way - in
+  `AgentChannelState::perceive` (history, transcript, what a turn under way has seen) after
+  `actor_impl::perceive` ran the perceive processors - when they hear it and when they catch up;
+  `Turn::extend_history` and `extend_transcript` are gone, and the `AgentActor` needs no `Turn` to
+  catch up. An external agent's transcript is now what passed its processors when it heard it, and
+  `RemoteState::sent_up_to`, a digest of its transcript, replaced `offered_up_to`: a call gives the
+  remote agent what the transcript gained since (`Transcript::messages_after`); `unoffered` is gone.
+  Changed with it: an external agent's processors see messages as they arrive, not batched per call,
+  and a failing stage no longer fails its answer but is logged and drops what it was given, as for
+  an agent run here. Stored states of external agents from before resend their whole transcript
+  once; they are to be deleted.

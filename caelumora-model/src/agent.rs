@@ -366,6 +366,18 @@ pub struct TurnEntry {
 }
 
 impl AgentChannelState {
+    /// Takes in what others said (issues 196, 206), the same for both kinds
+    /// of agent: all that was offered to it, `heard`, into its history; what
+    /// it perceived of that - what passed its perceive processors - into its
+    /// transcript, which a turn under way has then seen (issue 168).
+    pub fn perceive(&mut self, heard: Vec<Message>, perceived: Vec<Message>) {
+        self.history.extend(heard);
+        if let Some(turn) = self.turn.as_mut() {
+            perceived.iter().for_each(|m| turn.see_message(m));
+        }
+        self.transcript.extend(perceived);
+    }
+
     /// What the history recorded the message `id` - on whichever branch -
     /// was produced from, or `None` if this agent did not produce it (or it
     /// was before references were recorded).
@@ -615,6 +627,22 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn all_that_is_heard_is_kept_and_what_is_perceived_is_seen_by_a_turn_under_way() {
+        use crate::confidentiality::Confidentiality;
+        use crate::message::tests::{id, make_message};
+        let mut state = AgentChannelState::default();
+        state.perceive(vec![make_message(id(1)), make_message(id(2))], vec![make_message(id(1))]);
+        assert_eq!(state.history.messages().len(), 2, "all that was heard");
+        assert_eq!(state.transcript.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "what was perceived");
+
+        let channel = Classification::general(Confidentiality::Confidential);
+        state.turn = Some(TurnState { classification: channel.clone(), seen: Some(Classification::PUBLIC), ..TurnState::default() });
+        let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };
+        state.perceive(vec![confidential.clone()], vec![confidential]);
+        assert_eq!(state.turn.as_ref().map(TurnState::label), Some(channel), "the turn has seen it");
+    }
+
+    #[test]
     fn what_changed_in_an_external_agents_state_replays_onto_what_was_stored() {
         use crate::external_agent::{ConversationId, OpenTask, OpenTaskState, TaskId};
         use crate::message::tests::{id, make_message};
@@ -626,7 +654,7 @@ pub(crate) mod tests {
         state.history.extend(vec![make_message(id(2))]);
         state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
         let remote = &mut state.remote;
-        remote.offered_up_to = Some(id(2));
+        remote.sent_up_to = state.transcript.digest();
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), requested: None });
         assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the small parts");

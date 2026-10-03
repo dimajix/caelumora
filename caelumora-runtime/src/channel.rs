@@ -2839,6 +2839,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn what_an_external_agent_could_not_send_is_sent_with_its_next_call() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
+        ]).unreachable_for(1));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        let unreachable = turn_failed(&mut events, agent).await;
+        assert!(unreachable.contains("cannot reach the external agent"), "{unreachable}");
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("Still there?".to_string(), None).await.unwrap();
+        answered(&mut events, agent).await;
+        let sent = remote.sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].1.said.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["hello", "Still there?"], "nothing lost, nothing twice");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::agent::AgentChannelState;
+        use caelumora_model::message::MessageRole;
+
+        let said = |text: &str| Message { role: MessageRole::User, sender_name: "bob".to_string(), content: Some(text.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
+        let mut stored = AgentChannelState::default();
+        stored.perceive(vec![said("sent before")], vec![said("sent before")]);
+        stored.remote.sent_up_to = stored.transcript.digest();
+        stored.perceive(vec![said("heard, then the crash")], vec![said("heard, then the crash")]);
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Noted.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let built = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let Stuck { agent, mut events, running, .. } = start(built).await;
+
+        answered(&mut events, agent).await;
+        let sent = remote.sent.lock().unwrap().clone();
+        assert_eq!(sent[0].1.said.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["heard, then the crash", "hello"]);
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
         use crate::external::ExternalEvent;
 
@@ -3049,7 +3092,7 @@ mod tests {
         }).await.expect("stored before the task ends, as a crash would find it");
         assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
         assert_eq!(state.transcript.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["hello"], "with what it was given for it");
-        assert!(state.remote.offered_up_to.is_some(), "and how far it was offered: a restart gives nothing twice");
+        assert_eq!(state.remote.sent_up_to, state.transcript.digest(), "and how far it was sent: a restart gives nothing twice");
         running.abort();
     }
 

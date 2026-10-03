@@ -16,8 +16,10 @@ to a turn.
 *   **Perceive.** A `FullResponseGenerated` of another participant is appended to the agent's
     history - all that was offered to it - and passed through its `PerceiveInProcessor`s, which may
     drop, change or add messages; what passes is what the agent processes, and is appended to its
-    transcript - whatever the personality configures (issue 196). No turn begins, and nothing is
-    asked of the policy (issues 85, 90).
+    transcript - whatever the personality configures (issue 196). A failing stage is logged; what
+    was heard stays in the history and is not offered again. An external agent takes in what it
+    hears the same way (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of
+    the policy (issues 85, 90).
 *   **Begin.** A `ResponseRequested` from the moderator begins a turn (`Turn::next_turn`, see
     below), announces `ResponseStarted` and has the agent's `ContextProvider` assemble the context.
     The agent goes on in `Planning`. A sleeping agent ignores it; only `wakeup` ends the sleep.

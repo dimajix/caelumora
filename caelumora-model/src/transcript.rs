@@ -76,6 +76,14 @@ impl Chain<TranscriptEntry> {
         self.entries().filter_map(|e| e.entry.message()).cloned().collect()
     }
 
+    /// The messages of the active path after the entry `digest` names -
+    /// all of them if `digest` is `None` or not on it.
+    pub fn messages_after(&self, digest: Option<&Digest>) -> Vec<Message> {
+        let entries: Vec<_> = self.entries().collect();
+        let after = digest.and_then(|digest| entries.iter().position(|e| &e.digest == digest)).map_or(0, |at| at + 1);
+        entries[after..].iter().filter_map(|e| e.entry.message()).cloned().collect()
+    }
+
     /// Appends `msgs`.
     pub fn extend(&mut self, msgs: Vec<Message>) {
         for m in msgs {
@@ -129,6 +137,19 @@ mod tests {
     use super::*;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
+
+    #[test]
+    fn the_messages_after_an_entry_are_those_that_came_after_it() {
+        let mut transcript = Transcript::default();
+        transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let mark = transcript.digest();
+        transcript.extend(vec![make_message(id(3))]);
+        let ids = |messages: Vec<crate::message::Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(ids(transcript.messages_after(mark.as_ref())), vec![id(3)]);
+        assert_eq!(ids(transcript.messages_after(None)), vec![id(1), id(2), id(3)], "all, from the start");
+        assert_eq!(ids(transcript.messages_after(Some(&crate::digest::prompt("elsewhere")))), vec![id(1), id(2), id(3)], "all, for an entry not on it");
+        assert!(transcript.messages_after(transcript.digest().as_ref()).is_empty());
+    }
 
     #[test]
     fn message_context_empty_state() {

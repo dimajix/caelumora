@@ -594,18 +594,6 @@ impl<'a> Turn<'a> {
         &self.current().security_context
     }
 
-    /// Appends what others said to the transcript; a turn under way has
-    /// seen it (issue 168).
-    pub fn extend_transcript(&mut self, messages: Vec<Message>) {
-        if let Some(turn) = self.agent_channel_state.turn.as_mut() {
-            messages.iter().for_each(|m| turn.see_message(m));
-        }
-        self.agent_channel_state.transcript.extend(messages);
-    }
-    pub fn extend_history(&mut self, messages: Vec<Message>) {
-        self.agent_channel_state.history.extend(messages);
-    }
-
     /// Whether the turn was given or read private knowledge of the agent -
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
@@ -1299,7 +1287,7 @@ mod tests {
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC) }]);
         assert_eq!(turn.label(), Classification::PUBLIC);
-        turn.extend_transcript(vec![said(&internal, "Our numbers are good.")]);
+        turn.agent_channel_state_mut().perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
         assert_eq!(turn.label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");

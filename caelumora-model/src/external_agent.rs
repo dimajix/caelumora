@@ -6,7 +6,7 @@
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
 use crate::actor::EventContext;
-use crate::message::MessageId;
+use crate::digest::Digest;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -65,15 +65,15 @@ pub struct OpenTask {
 }
 
 /// What an external agent keeps of the remote side in one channel, as part
-/// of its `AgentChannelState` (issue 206): how far it offered what it heard,
+/// of its `AgentChannelState` (issue 206): how far its transcript was sent,
 /// the remote conversation and the tasks that have not ended.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteState {
-    /// The last message of the history that was offered to the perceive
-    /// processors on the way to the remote agent; what came after it is
-    /// offered next. Kept apart from the transcript, since the processors
-    /// may drop, change or add messages (issue 196).
-    pub offered_up_to: Option<MessageId>,
+    /// How far the remote agent was given its transcript: the digest of
+    /// the transcript as it stood when it was last sent. What came after it
+    /// is what the remote agent has not heard yet, sent with the next call
+    /// (issue 206); `None` if nothing was sent yet.
+    pub sent_up_to: Option<Digest>,
     /// The remote agent's conversation with this channel, once it opened
     /// one.
     pub conversation: Option<ConversationId>,
@@ -85,7 +85,7 @@ impl RemoteState {
     /// Whether nothing is kept: so for an agent run here, and an external
     /// one before it was first asked.
     pub fn is_empty(&self) -> bool {
-        self.offered_up_to.is_none() && self.conversation.is_none() && self.open_tasks.is_empty()
+        self.sent_up_to.is_none() && self.conversation.is_none() && self.open_tasks.is_empty()
     }
 
     /// The task that asked back, if any: the next message to the remote
