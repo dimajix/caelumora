@@ -2,6 +2,7 @@
 pub mod macros;
 pub mod agent;
 pub mod turn;
+pub mod work;
 pub mod external_agent;
 pub mod approval;
 pub mod channel;

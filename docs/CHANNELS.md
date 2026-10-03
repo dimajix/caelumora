@@ -295,9 +295,9 @@ An **actor** is anything that sends and receives events in a channel.
     publishes what came so far - unless the cancel came from lowering the channel, which gives the
     answer up (issue 212, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)); a stop cancels it - and
     every other open task of the agent - and publishes nothing. Each request is a piece of work
-    (`Work`), as a turn is: bound by the channel's classification as it is when it begins, and
-    classified as what it has seen - all that was given and what the remote agent declares to bring
-    in.
+    (`Work`), as a turn is - whose `TurnState` holds one: bound by the channel's classification as
+    it is when it begins, and classified as what it has seen - all that was given and what the
+    remote agent declares to bring in.
 *   **An external agent speaks on its own** when a task outlives the request it was given for: the
     answer broke off before the task ended, or the channel was restarted meanwhile - also by a
     crash: a task is stored as soon as the remote agent took it on, with what it was given for it. A

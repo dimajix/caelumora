@@ -148,30 +148,30 @@ impl<'a> Turn<'a> {
     /// began (`AgentChannelState::begin_turn`): the most the turn may read, and the most it
     /// writes as.
     pub fn classification(&self) -> Classification {
-        self.current().classification.clone()
+        self.current().work.classification.clone()
     }
 
     /// The classification of what the turn writes (issue 168): the join of
     /// everything it has seen so far, at most `classification`.
     pub fn label(&self) -> Classification {
-        self.current().label()
+        self.current().work.label()
     }
 
     /// Records that the turn has seen what is classified `classification`:
     /// what it writes from now on is classified at least so (`label`).
     pub fn see(&mut self, classification: &Classification) {
-        self.current_mut().see(classification);
+        self.current_mut().work.see(classification);
     }
 
     /// The agent's channel: where the envelope the turn answers was routed
     /// - the `ChannelLoop` stamps it on every envelope it routes.
     pub fn channel_id(&self) -> ChannelId {
-        self.current().event_context.channel_id
+        self.current().work.event_context.channel_id
     }
 
     /// The session of the agent's channel, as `channel_id`.
     pub fn session_id(&self) -> SessionId {
-        self.current().event_context.session_id
+        self.current().work.event_context.session_id
     }
 
     /// Stages `change` to the agent's memory, made at `origin`, applied when
@@ -224,14 +224,14 @@ impl<'a> Turn<'a> {
     }
 
     pub fn security_context(&self) -> &SecurityContext {
-        &self.current().security_context
+        &self.current().work.security_context
     }
 
     /// Whether the turn was given or read private knowledge of the agent -
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
     pub(crate) fn saw_private_knowledge(&self) -> bool {
-        self.current().context.knowledge.iter()
+        self.current().work.context.knowledge.iter()
             .any(|k| matches!(k.source,
                 caelumora_model::context::KnowledgeSource::PrivateNotes { .. } | caelumora_model::context::KnowledgeSource::Memory { .. }))
     }
@@ -239,7 +239,7 @@ impl<'a> Turn<'a> {
     /// Records that the turn read `reference` (issue 17): it is recorded
     /// with every message the turn produces from now on.
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
-        self.current_mut().record_knowledge(reference);
+        self.current_mut().work.record_knowledge(reference);
     }
 
     /// The agent's state in this channel as it stands: what components read
@@ -278,7 +278,7 @@ impl<'a> Turn<'a> {
     /// The contexts the turn publishes in: those it began with.
     pub(crate) fn answering(&self) -> Answering {
         let turn = self.current();
-        Answering { event_context: turn.event_context.clone(), security_context: turn.security_context.clone() }
+        Answering { event_context: turn.work.event_context.clone(), security_context: turn.work.security_context.clone() }
     }
 
     /// Sends `event` to the channel as the agent publishes it, in the
@@ -398,6 +398,6 @@ mod tests {
         assert_eq!(turn.label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None }]);
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");
-        assert_eq!(turn.agent_channel_state().turn.as_ref().unwrap().context.prompts[0].classification, None, "and is recorded so");
+        assert_eq!(turn.agent_channel_state().turn.as_ref().unwrap().work.context.prompts[0].classification, None, "and is recorded so");
     }
 }

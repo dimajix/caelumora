@@ -322,7 +322,7 @@ impl AgentActor {
         let names_only = match self.turn_flow(under_way).await {
             TurnFlow::Flows => None,
             TurnFlow::Lowered(channel) => Some(channel),
-            TurnFlow::NoChannel => Some(under_way.classification.clone()),
+            TurnFlow::NoChannel => Some(under_way.work.classification.clone()),
         };
         let agent_name = self.agent_controller.name();
         let told = match &reason {
@@ -349,8 +349,8 @@ impl AgentActor {
         let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else {
             return TurnFlow::NoChannel;
         };
-        let context = &under_way.security_context;
-        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &under_way.classification, &channel).await {
+        let context = &under_way.work.security_context;
+        if self.actor_runtime.security_manager().may_publish(context, context.caller_id, &under_way.work.classification, &channel).await {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
@@ -675,7 +675,7 @@ fn prepare_resume(state: &mut AgentChannelState) -> usize {
         return 0;
     };
     let mut answered = 0;
-    let classification = turn.classification.clone();
+    let classification = turn.work.classification.clone();
     for call in &mut turn.tool_calls {
         if call.status == ApprovalStatus::Approved && call.result.is_none() {
             call.result = Some(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::not_executed_result(), classification.clone()));
@@ -748,7 +748,7 @@ impl Actor for AgentActor {
             // Idle/WaitingForApproval/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
-            let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.event_context));
+            let span = crate::logging::agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.work.event_context));
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was

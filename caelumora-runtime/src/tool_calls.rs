@@ -65,7 +65,7 @@ impl<'t> ToolCalls<'t> {
     pub(crate) fn to_run(&mut self) -> Vec<(ApprovalId, ToolCall)> {
         let mut to_run = Vec::new();
         // A fixed text of the runtime's: as the turn (issue 168).
-        let label = self.turn.label();
+        let label = self.turn.work.label();
         for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
             let answer = match call.status {
                 ApprovalStatus::Denied => Some((ToolResultStatus::Denied, crate::tool::denied_result())),
@@ -98,7 +98,7 @@ impl<'t> ToolCalls<'t> {
     /// the approval status they had.
     pub(crate) fn abandon(&mut self, because: &str, internal: bool) -> Vec<ToolCallState> {
         // A fixed text of the runtime's: as the turn (issue 168).
-        let label = self.turn.label();
+        let label = self.turn.work.label();
         let mut abandoned = Vec::new();
         for call in self.turn.tool_calls.iter_mut().filter(|c| c.result.is_none()) {
             let content = crate::tool::abandoned_result(because);
@@ -123,18 +123,18 @@ impl<'t> ToolCalls<'t> {
             .collect();
         // The model sees the results from here on (issue 168).
         for result in &tool_results {
-            self.turn.see(&result.classification);
+            self.turn.work.see(&result.classification);
         }
         let message = Message {
             id: MessageId::new(),
-            sender_id: self.turn.event_context.sender_id,
+            sender_id: self.turn.work.event_context.sender_id,
             sender_name: self.agent_name.to_string(),
             role: MessageRole::Tool,
             tool_results,
             content: None,
             timestamp: chrono::Utc::now(),
             internal,
-            ..Message::new(self.turn.label())
+            ..Message::new(self.turn.work.label())
         };
         self.turn.push(message.clone());
         Some(message)
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn a_steps_calls_are_answered_run_and_given_back_to_the_model_in_one_message() {
         let mut turn = TurnState::default();
-        turn.event_context.sender_id = ActorId::Agent(AgentId::default());
+        turn.work.event_context.sender_id = ActorId::Agent(AgentId::default());
         fn view(turn: &mut TurnState) -> ToolCalls<'_> {
             ToolCalls::new(turn, "agent")
         }

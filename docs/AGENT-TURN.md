@@ -94,6 +94,11 @@ The working state of a turn is one value, `AgentChannelState::turn: Option<TurnS
 *   the changes staged to the agent's states,
 *   the tool calls, the plan and the state a tool requested.
 
+The envelope, the authority, the classification, the label and the context of the next message
+are the turn's `Work` (`caelumora_model::work`, `TurnState::work`): what any piece of work of an
+agent is, a turn as much as an external agent's exchange with its remote agent (issue 204, see
+[CHANNELS.md](CHANNELS.md)). The rest is the turn's own.
+
 Work between turns does not touch it: perceiving a message only appends to the transcript and the
 history. Between turns the `AgentActor` works on its `AgentChannelState` itself; a `Turn` is had
 only while one is under way (`Turn::of`, `None` between turns), and taking it over or giving it up
@@ -469,7 +474,7 @@ What the model is given is not stored; it is resolved from what is (issues 49, 1
 `caelumora_model::context`):
 
 *   **The turn's context.** A turn holds the `ContextRef` of its next message
-    (`TurnState::context`): the digest of the transcript so far, a `PromptRef` for every prompt
+    (`Work::context`): the digest of the transcript so far, a `PromptRef` for every prompt
     part, the digest of the tools offered, the knowledge read, the model's profile, and how many of
     the transcript's last entries are the turn's own. References only - the turn keeps no copy of
     the transcript. `AgentChannelState::begin_turn` begins it on the transcript as it stands.

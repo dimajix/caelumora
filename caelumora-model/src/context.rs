@@ -224,8 +224,8 @@ pub struct PromptPart {
 /// empty - the prompt parts of that turn, each where it was placed (issue
 /// 47), the tools it was offered (issue 137), the knowledge from other
 /// places read before the message was produced (issue 17), and the rules of
-/// the model (issue 63). A turn keeps
-/// one for its next message (`TurnState::context`); resolved by the
+/// the model (issue 63). A turn keeps one for its next message
+/// (`Work::context` of its `TurnState`); resolved by the
 /// [`ContextResolver`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
@@ -303,9 +303,9 @@ impl<'a> ContextResolver<'a> {
     }
 
     /// What the model of `agent` is given, or was given, for the message
-    /// `reference` is for - the next one of the turn under way
-    /// (`TurnState::context`) or one recorded in the history: the
-    /// transcript it names, of which the last `turn_entries` are the turn's
+    /// `reference` is for - the next one of the turn under way (`Work::context`
+    /// of its `TurnState`) or one recorded in the history: the transcript it
+    /// names, of which the last `turn_entries` are the turn's
     /// own, with the prompt parts where they were placed, and the tools it
     /// was offered. `None` if what it names is not here - a transcript that
     /// is not a prefix of this one, a prompt or a set of tools that was
@@ -435,7 +435,7 @@ mod tests {
     /// A turn of `state` begun on its transcript as it stands.
     fn begin(state: &mut AgentChannelState, profile: ModelProfile) {
         let context = ContextRef { transcript: state.transcript.digest(), profile, ..ContextRef::default() };
-        state.turn = Some(TurnState { context, ..TurnState::default() });
+        state.turn = Some(TurnState { work: crate::work::Work { context, ..Default::default() }, ..TurnState::default() });
     }
 
     /// A prompt part `text` in `role` after the end of `state`'s turn so
@@ -443,7 +443,7 @@ mod tests {
     fn place(state: &mut AgentChannelState, role: MessageRole, text: &str) {
         state.prompts.keep(prompt(text), || text.to_string());
         let turn = state.turn.as_mut().unwrap();
-        turn.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.context.transcript, classification: None });
+        turn.work.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.work.context.transcript, classification: None });
     }
 
     #[test]
@@ -462,7 +462,7 @@ mod tests {
         place(&mut state, MessageRole::User, "step 2");
         state.turn.as_mut().unwrap().push(own("second"));
 
-        let next = state.turn.as_ref().unwrap().context.clone();
+        let next = state.turn.as_ref().unwrap().work.context.clone();
         let current = ContextResolver::of(&state).resolve(&next, agent).expect("the view holds the turn's messages");
         assert_eq!(contents(&current.items), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
         let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
@@ -477,7 +477,7 @@ mod tests {
         under_way.turn = Some(turn.clone());
         assert_eq!(seen(&under_way, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
         state.transcript.extend(turn.messages().cloned().collect());
-        assert_eq!(state.transcript.digest(), turn.context.transcript, "the turn's digests are those of the transcript");
+        assert_eq!(state.transcript.digest(), turn.work.context.transcript, "the turn's digests are those of the transcript");
         assert_eq!(seen(&state, 0), ["earlier", "question", "prompt:step 1"]);
         assert_eq!(seen(&state, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
     }
@@ -507,9 +507,9 @@ mod tests {
             let mut state = state.clone();
             state.prompts.keep(prompt("system prompt"), || "system prompt".to_string());
             begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
-            state.turn.as_mut().unwrap().context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
+            state.turn.as_mut().unwrap().work.context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
             place(&mut state, MessageRole::System, "instruction");
-            let next = state.turn.as_ref().unwrap().context.clone();
+            let next = state.turn.as_ref().unwrap().work.context.clone();
             ContextResolver::of(&state).resolve(&next, ActorId::None).expect("everything it names is here")
                 .items.iter().map(ContextItem::role).collect::<Vec<_>>()
         };

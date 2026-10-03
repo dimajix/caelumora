@@ -365,7 +365,7 @@ stamped when it is written, so that the reading rule can follow it into other ch
 change of the channel changes none of it.
 
 The label is the join of the classifications of everything the turn has seen so far
-(`TurnState::see`): it starts at `public` and rises with
+(`Work::see`): it starts at `public` and rises with
 
 *   every message of the transcript - those it began with, and what others said while it ran - and
     every tool result in them,

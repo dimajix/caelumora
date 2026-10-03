@@ -22,7 +22,7 @@ impl Turn<'_> {
     /// so the two cannot diverge.
     pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<ToolDefinition>)> {
         let resolved = ContextResolver::of(self.agent_channel_state)
-            .resolve(&self.current().context, ActorId::Agent(self.agent_id))
+            .resolve(&self.current().work.context, ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
         let messages = resolved.items.into_iter()
             .map(|item| match item {
@@ -32,7 +32,7 @@ impl Turn<'_> {
                     content: Some(text),
                     sender_id: ActorId::Agent(self.agent_id),
                     sender_name: self.agent_name.clone(),
-                    ..Message::new(self.current().classification.clone())
+                    ..Message::new(self.current().work.classification.clone())
                 },
             })
             .collect();
@@ -48,7 +48,7 @@ impl Turn<'_> {
         let prompts = parts.into_iter()
             .map(|PromptPart { role, text, after, classification }| self.keep_prompt(role, text, after, classification))
             .collect();
-        self.current_mut().context.prompts = prompts;
+        self.current_mut().work.context.prompts = prompts;
     }
 
     /// Keeps the text of a prompt part once by digest, and returns the
@@ -56,7 +56,7 @@ impl Turn<'_> {
     /// classified `classification`. The model is given it: the turn has
     /// seen it (issue 168).
     fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
-        self.current_mut().see_classified(classification.as_ref());
+        self.current_mut().work.see_classified(classification.as_ref());
         let digest = caelumora_model::digest::prompt(&text);
         self.agent_channel_state.prompts.keep(digest, || text);
         PromptRef { text: digest, role, after, classification }
@@ -70,10 +70,10 @@ impl Turn<'_> {
     /// `role` there is to be given. It counts for the messages produced
     /// from now on.
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
-        let after = self.current().context.transcript;
+        let after = self.current().work.context.transcript;
         // Written by the runtime from what the turn produced: as the turn.
         let prompt = self.keep_prompt(role, text, after, Some(self.label()));
-        self.current_mut().context.prompts.push(prompt);
+        self.current_mut().work.context.prompts.push(prompt);
     }
 }
 

@@ -5,10 +5,7 @@
 //! `AgentChannelState`, as for every agent (issue 206) - and the handles of
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
-use crate::actor::EventContext;
-use crate::confidentiality::Classification;
-use crate::context::ContextRef;
-use crate::security::SecurityContext;
+use crate::work::Work;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -67,52 +64,6 @@ pub struct OpenTask {
     /// classified as it. `None` for a task stored before it was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<Work>,
-}
-
-/// A piece of work of an external agent - one exchange with the remote
-/// agent, and the task it may begin (issues 211, 212): the contexts it is
-/// done in and what it writes as, what a `TurnState` holds of itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Work {
-    /// The envelope it answers, continued in the agent's name - as
-    /// `TurnState::event_context`: what comes of it later is said in it,
-    /// continued, so that it stays in the span and the chain between agents
-    /// of the request (issue 45).
-    pub event_context: EventContext,
-    /// Whose authority it acts with - as `TurnState::security_context`.
-    pub security_context: SecurityContext,
-    /// The channel's classification when it began - as
-    /// `TurnState::classification`: what it may write as at most.
-    pub classification: Classification,
-    /// The join of what it has seen - what the remote agent was given and
-    /// what it brings in itself - within `classification` (`see`). As
-    /// `TurnState::seen`.
-    pub seen: Classification,
-    /// What the remote agent was given in the call it began with (issue
-    /// 205): the context of what comes of it - as `TurnState::context`, but
-    /// of the one call only, since the remote agent keeps what it was given
-    /// before. `None` until it was sent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<ContextRef>,
-}
-
-impl Work {
-    /// Work begun in the contexts given, in a channel classified
-    /// `classification`, which has seen nothing yet.
-    pub fn new(event_context: EventContext, security_context: SecurityContext, classification: Classification) -> Self {
-        Self { event_context, security_context, classification, seen: Classification::PUBLIC, context: None }
-    }
-
-    /// What it writes as: what it has seen so far (issue 168).
-    pub fn label(&self) -> Classification {
-        self.seen.clone()
-    }
-
-    /// Records that it has seen what is classified `classification`
-    /// (`Classification::join_within`), as a turn does (`TurnState::see`).
-    pub fn see(&mut self, classification: &Classification) {
-        self.seen = self.seen.join_within(classification, &self.classification);
-    }
 }
 
 /// What an external agent keeps of the remote side in one channel, as part
@@ -199,19 +150,9 @@ impl RemoteState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn work_writes_as_what_it_has_seen_never_above_its_channel() {
-        let internal = Classification::general(crate::confidentiality::Confidentiality::Internal);
-        let mut work = Work::new(EventContext::default(), SecurityContext::default(), internal.clone());
-        assert_eq!(work.label(), Classification::PUBLIC, "nothing seen");
-        work.see(&Classification::PUBLIC);
-        assert_eq!(work.label(), Classification::PUBLIC);
-        work.see(&internal);
-        assert_eq!(work.label(), internal, "what it was given");
-        work.see(&Classification::general(crate::confidentiality::Confidentiality::Confidential));
-        assert_eq!(work.label(), internal, "never above its channel");
-    }
+    use crate::actor::EventContext;
+    use crate::confidentiality::Classification;
+    use crate::security::SecurityContext;
 
     #[test]
     fn the_remote_part_keeps_each_open_task_once_and_forgets_it_when_it_ends() {

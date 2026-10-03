@@ -12,6 +12,7 @@ use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{GivenUp, GivenUpReason, Transcript, TranscriptEntry};
 use crate::turn::{TurnEntry, TurnState};
+use crate::work::Work;
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::name::{Name, ScopedName};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
@@ -215,7 +216,7 @@ impl AgentChannelState {
     pub fn perceive(&mut self, heard: Vec<Message>, perceived: Vec<Message>) {
         self.history.extend(heard);
         if let Some(turn) = self.turn.as_mut() {
-            perceived.iter().for_each(|m| turn.see_message(m));
+            perceived.iter().for_each(|m| turn.work.see_message(m));
         }
         self.transcript.extend(perceived);
     }
@@ -244,16 +245,10 @@ impl AgentChannelState {
             self.tool_sets.keep(digest, || definitions);
             digest
         });
-        let mut turn = TurnState {
-            event_context,
-            security_context,
-            classification,
-            tools,
-            context: ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() },
-            seen: Some(Classification::PUBLIC),
-            ..TurnState::default()
-        };
-        self.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| turn.see_message(m));
+        let mut work = Work::new(event_context, security_context, classification);
+        work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
+        self.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| work.see_message(m));
+        let turn = TurnState { work, tools, ..TurnState::default() };
         self.turn = Some(turn);
     }
 
@@ -508,12 +503,12 @@ pub(crate) mod tests {
         begin(&mut state, vec![tool.clone()]);
         begin(&mut state, vec![tool]);
         let turn = state.turn.as_ref().expect("a turn was begun");
-        assert_eq!(turn.label(), internal, "it has seen the transcript");
-        assert_eq!(turn.context.transcript, state.transcript.digest(), "it continues the transcript");
-        assert!(turn.context.tools.is_some() && state.tool_sets.len() == 1, "the set offered is kept once");
+        assert_eq!(turn.work.label(), internal, "it has seen the transcript");
+        assert_eq!(turn.work.context.transcript, state.transcript.digest(), "it continues the transcript");
+        assert!(turn.work.context.tools.is_some() && state.tool_sets.len() == 1, "the set offered is kept once");
 
         begin(&mut state, Vec::new());
-        assert!(state.turn.as_ref().is_some_and(|t| t.context.tools.is_none()), "no tools, no set");
+        assert!(state.turn.as_ref().is_some_and(|t| t.work.context.tools.is_none()), "no tools, no set");
     }
 
     #[test]
@@ -629,10 +624,10 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "what was perceived");
 
         let channel = Classification::general(Confidentiality::Confidential);
-        state.turn = Some(TurnState { classification: channel.clone(), seen: Some(Classification::PUBLIC), ..TurnState::default() });
+        state.turn = Some(TurnState { work: Work::new(Default::default(), Default::default(), channel.clone()), ..TurnState::default() });
         let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };
         state.perceive(vec![confidential.clone()], vec![confidential]);
-        assert_eq!(state.turn.as_ref().map(TurnState::label), Some(channel), "the turn has seen it");
+        assert_eq!(state.turn.as_ref().map(|t| t.work.label()), Some(channel), "the turn has seen it");
     }
 
     #[test]

@@ -37,7 +37,8 @@ use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::ContextRef;
 use caelumora_model::agent::AgentChannelState;
-use caelumora_model::external_agent::{OpenTaskState, TaskId, Work};
+use caelumora_model::external_agent::{OpenTaskState, TaskId};
+use caelumora_model::work::Work;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::security::{AccessQuestions, SecurityContext, SecurityManager};
 use chrono::Utc;
@@ -256,7 +257,7 @@ impl ExternalAgentActor {
         // back - the transcript starts anew, and what was given is the
         // context of what comes of this call (issue 205). A send that failed
         // sends it again with the next call.
-        work.context = Some(ContextRef { transcript: state.transcript.start_anew(), ..ContextRef::default() });
+        work.context = ContextRef { transcript: state.transcript.start_anew(), ..ContextRef::default() };
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
         if let Some(asked) = &answers {
@@ -324,7 +325,7 @@ impl ExternalAgentActor {
             }
         }
 
-        Ok(Ending::Answered(self.record(state, answer, work.label(), work.context).map(Box::new)))
+        Ok(Ending::Answered(self.record(state, answer, work.label(), Some(work.context)).map(Box::new)))
     }
 
     /// Records `task` as begun - or, asked back before, taken up again - by
@@ -437,7 +438,7 @@ impl ExternalAgentActor {
             return;
         };
         let (speaking, label, context) = match work {
-            Some(work) => (self.speaking_for(&work), work.label(), work.context),
+            Some(work) => (self.speaking_for(&work), work.label(), Some(work.context)),
             None => (
                 Answering {
                     event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),

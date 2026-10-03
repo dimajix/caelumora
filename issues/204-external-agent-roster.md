@@ -1,6 +1,6 @@
 # 204 — An external agent is not told who is in its channel
 
-**Status:** open
+**Status:** in progress
 **Area:** Integrations
 
 ## The problem
@@ -81,3 +81,28 @@ per external personality, as the prompt part is per personality.
   agent reads and stays the base; option 2 would be an extension of our own, with the roster as a
   data part or in `metadata`, sent only to a remote agent whose card offers it - useful only for
   agents built for it.
+- **2026-10-03** — Decided, after a discussion with the maintainer:
+  - **What is sent.** The roster as a leading text part of the request (option 1); A2A has no
+    system messages, so it is part of the user message, marked as the channel's frame. It is sent
+    when a conversation begins and when the members change: then the whole list again, with who
+    joined and who left - naming the change explicitly helps a model take it in.
+  - **Where it is made.** In `channel_members_prompt_provider`, which an external personality is
+    configured with as an agent's is - so it can be switched off per personality. A parameter, not
+    a second kind, switches it to telling changes only: it keeps what it named last and contributes
+    nothing while nothing changed. It starts empty, so after a restart the whole list is sent again,
+    which is accepted. Split into a kind of its own only if the two modes share too little.
+  - **How it reaches the remote agent.** `ExternalAgentActor` asks the prompt providers of its
+    personality before every request and sends their parts first; positions mean nothing there and
+    are ignored. What a failed send did not deliver is to be sent with the next request.
+  - **What the providers are given.** Not a `Turn`, which an external agent does not have, but a
+    lean replacement both kinds of agent have - the read-only part of a piece of work: who works,
+    in which contexts, bounded how, and the agent's states to read from. Not a type per facet:
+    `MessageProcessor` lost its `Turn` the same way once the external agent needed it. As a first
+    step, the duplication between `TurnState` and `Work` is removed: `TurnState` holds a `Work`.
+- **2026-10-03** — Step 1: `Work` moved to `caelumora_model::work` and `TurnState` holds one
+  (`TurnState::work`, stored flattened, so stored turns keep their form). `Work` took over what
+  `TurnState` had of it: `seen` as an `Option` (a turn stored before it was kept counts as having
+  seen its channel), `context` as a `ContextRef` (an external agent's is empty until sent), and
+  `label`, `see`, `see_classified`, `see_message`, `record_knowledge`. No change of behaviour, but
+  one: an external agent's task stored with a `Work` but before issue 205 recorded its answer with
+  no context, and now with an empty one.

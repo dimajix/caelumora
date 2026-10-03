@@ -3178,7 +3178,7 @@ mod tests {
         assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
         assert!(state.transcript.messages().is_empty(), "what it was given for it is sent: a restart gives nothing twice");
         let work = state.remote.work_of(&task("t-1")).expect("with the work it is");
-        let given = state.transcript.prefix(&work.context.as_ref().expect("with what it was given for it").transcript.expect("a message")).unwrap();
+        let given = state.transcript.prefix(&work.context.transcript.expect("with what it was given for it")).unwrap();
         assert_eq!(given.iter().filter_map(|e| e.entry.message()?.content.clone()).collect::<Vec<_>>(), ["hello"]);
         let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
         assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
@@ -3236,7 +3236,7 @@ mod tests {
                     since: chrono::Utc::now(),
                     state: OpenTaskState::Working,
                     unsaid: None,
-                    work: Some(caelumora_model::external_agent::Work::new(
+                    work: Some(caelumora_model::work::Work::new(
                         request.next(hermes, "hermes".to_string()),
                         SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes),
                         caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
@@ -3272,7 +3272,8 @@ mod tests {
     fn begun_above(open: &str, standing: caelumora_model::external_agent::OpenTaskState) -> caelumora_model::agent::AgentChannelState {
         use caelumora_model::agent::AgentChannelState;
         use caelumora_model::confidentiality::{Classification, Confidentiality};
-        use caelumora_model::external_agent::{OpenTask, RemoteState, Work};
+        use caelumora_model::external_agent::{OpenTask, RemoteState};
+        use caelumora_model::work::Work;
         let work = Work::new(EventContext::default(), SecurityContext::default(), Classification::general(Confidentiality::Confidential));
         AgentChannelState {
             remote: RemoteState {

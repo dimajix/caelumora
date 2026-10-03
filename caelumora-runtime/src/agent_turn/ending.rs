@@ -118,7 +118,7 @@ impl Turn<'_> {
         let abandoned_calls = self.abandon_tool_calls(because(&reason));
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let label = turn.label();
+        let label = turn.work.label();
         let TurnState { entries, .. } = turn;
         let messages: Vec<&Message> = entries.iter().filter_map(|e| e.node.entry.message()).collect();
         let executed = executed_calls(&messages);
