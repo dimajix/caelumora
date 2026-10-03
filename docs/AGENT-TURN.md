@@ -66,7 +66,10 @@ up (`Turn::give_up_turn`), emits `TurnFailed` and returns to `Idle` (see
 
 The agent's state in its channel is its `AgentChannelState`: its `MessageHistory`, its `Transcript`,
 its notes and the texts of its prompt parts. Its own state across channels is its `AgentState`. A
-step of the cycle works on a `Turn` (`caelumora_runtime::agent_turn`), the handle to both.
+step of the cycle works on a `Turn` (`caelumora_runtime::agent_turn`), the handle to both. Its
+module holds the handle and what components work with in `mod.rs`, and the rest of a turn's logic
+in a file per subject: `ending.rs` takes a turn over or gives it up, `context.rs` builds what the
+model is given, `plan.rs` moves the plan on.
 
 The working state of a turn is one value, `AgentChannelState::turn: Option<TurnState>`, which is
 `None` between turns (issue 85). It holds what the turn is and what it has done so far:

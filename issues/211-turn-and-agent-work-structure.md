@@ -1,6 +1,6 @@
 # 211 — `Turn` is the agent's handle between turns, the components' API and the turn's logic at once
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -406,3 +406,10 @@ Each step is a commit of its own.
   `TurnState`, `RemoteState` and `OpenTask` with the maintainer; all five steps decided. It is the
   refactoring agreed for the end of [206](206-one-agent-channel-state.md). Found on the way and
   given an issue of its own: [212](212-external-task-during-reclassification.md).
+- **2026-10-03** — Step 1 done: `agent_turn.rs` is the module `agent_turn/` - `mod.rs` (the
+  handle, what components work with, `next_turn` and `keep_tools` until step 2, the shared `send`),
+  `ending.rs`, `context.rs`, `plan.rs` - each `impl Turn` block with its helpers and its tests;
+  tests used by several files (`message`, `seen`) are in `mod.rs`. No signature changed. Deviating
+  from the plan: `set_plan`, `plan` and `take_plan` are in `plan.rs` with the rest of the plan, not
+  in `mod.rs`, so that the subject stays in one file.
+

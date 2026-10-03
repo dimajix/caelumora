@@ -281,7 +281,7 @@ argues against it, and what came out of the last attempt.
 | [201](201-component-nodes-wrapper.md) | done | Components are written under a `component_nodes` key inside their own key, a level that exists only because `ComponentConfig` is a struct with one field. |
 | [206](206-one-agent-channel-state.md) | in progress | Agents run here and external agents keep their channel state in two types with separate store methods, change types and views, though history and transcript are the same in both. |
 | [210](210-a2a-agent-structure.md) | done | The A2A agent is one file of 925 lines holding the protocol's types, their translation, the HTTP transport and the component, with what is sent built from untyped JSON. |
-| [211](211-turn-and-agent-work-structure.md) | open | `Turn` is the agent's handle on its state between turns, the components' API and the turn's logic at once, the two kinds of agent publish and catch up through code written twice, and an `OpenTask` keeps less of its contexts than a `TurnState`. |
+| [211](211-turn-and-agent-work-structure.md) | in progress | `Turn` is the agent's handle on its state between turns, the components' API and the turn's logic at once, the two kinds of agent publish and catch up through code written twice, and an `OpenTask` keeps less of its contexts than a `TurnState`. |
 
 ## Integrations
 
