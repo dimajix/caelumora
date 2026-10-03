@@ -185,6 +185,7 @@ argues against it, and what came out of the last attempt.
 | [202](202-send-while-generating.md) | done | While an agent generates an answer, the web UI does not let the user send a message, though nothing in the runtime needs that. |
 | [203](203-concurrent-answers-in-view.md) | open | The chat view keeps one answer under way per channel, so the streamed answers of agents answering at once run into each other or vanish. |
 | [207](207-agent-history-in-ui.md) | open | An agent's history - all that was offered to it and what it said - cannot be shown; neither the views, the REST API nor the web UI hand it out. |
+| [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
 
 ## Context and knowledge
 
