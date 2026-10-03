@@ -285,12 +285,13 @@ An **actor** is anything that sends and receives events in a channel.
     given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
     of its personality, into its transcript. What it reads of the channel, its prompt providers
     read. When it is asked to respond, it gives the remote agent the parts of its personality's
-    `PromptProvider`s first, such as who is in the channel (issue 204) - each read as for a turn,
-    from an `AgentWork`, in the order of the configuration, positions ignored, and each only when
-    it changed since it was given, since the remote agent keeps its conversation; a part a failed
-    send did not give is given with the next one, and after a restart every part is given again.
-    A2A has no system message: the parts are text of the user's message too, ahead of what was
-    said. Then it gives the remote agent its transcript, which then starts anew
+    `PromptProvider`s first, such as who is in the channel (`channel_members_prompt_provider` with
+    `changes_only`, issue 204, see [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)) - each
+    read as for a turn, from an `AgentWork`, in the order of the configuration, positions ignored,
+    and each only when it changed since it was given, since the remote agent keeps its
+    conversation; a part a failed send did not give is given with the next one, and after a restart
+    every part is given again. A2A has no system message: the parts are text of the user's message
+    too, ahead of what was said. Then it gives the remote agent its transcript, which then starts anew
     (`Transcript::start_anew`, issue 205): the transcript's active path is what the remote agent has
     not heard yet - what a failed send did not give is given with the next one, and a restart gives
     nothing twice - and what each call gave stays as a branch from its root. It publishes what

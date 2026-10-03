@@ -424,6 +424,14 @@ It goes into the system prompt by default (`position`): the roster changes rarel
 ought to reach the model at once, at the cost of the prompt cache from there on. How the senders of
 messages are marked in the conversation (issue 135) is to be explained beside it, once they are.
 
+An external agent is told the same roster (issue 204, see [CHANNELS.md](CHANNELS.md)), with the
+parameter `changes_only`: its remote agent keeps its conversation, so it is told the roster when it
+is first asked and then only when it changed - the whole of it again, followed by who joined and who
+left since it was last told ("Since you were last told who is here: - Joined: ..."), told apart by
+who they are, not by name. The component remembers what it told while it lives - it is built for
+each actor, so for each channel - and tells all of it again after a restart. For an agent run here
+the parameter makes no sense: its system prompt is built anew with every turn.
+
 ### Instructions within a turn
 
 The runtime steers the model within a turn, too: while a plan is executed, it tells the model which

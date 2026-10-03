@@ -1,6 +1,6 @@
 # 204 — An external agent is not told who is in its channel
 
-**Status:** in progress
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -126,3 +126,10 @@ per external personality, as the prompt part is per personality.
   uses too), and the work has seen them and the knowledge they hold. Not tested yet end to end:
   the roster of an external agent in a running session - the channel tests run without one, so the
   mechanics are tested with a fixed and a changing part; to follow with step 4.
+- **2026-10-03** — Step 4, done: `channel_members_prompt_provider` takes the parameter
+  `changes_only`. With it, the component keeps the roster it told last (built for each actor, so
+  for each channel) and tells it again only when it changed, followed by who joined and who left -
+  told apart by actor, so a new name is no new member. A test runs an external agent in a session,
+  is told alice, then the whole roster with "Joined: bob" after bob joins. AGENT-TURN.md,
+  CHANNELS.md and COMPONENTS.md say so. All of "Done when" holds; what leaves the system is public
+  (176), and whether it is sent is the personality's choice of components.

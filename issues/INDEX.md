@@ -294,7 +294,7 @@ argues against it, and what came out of the last attempt.
 | [186](186-a2a-requests-and-long-tasks.md) | done | An external agent without streaming may not deliver tasks longer than its request timeout, and a streamed request can wait forever. |
 | [188](188-remote-helpers-on-llm-error.md) | done | What remote integrations share - redacting the endpoint, describing errors, the endpoint's configuration - is not in `remote`, and MCP errors show the URL unredacted. |
 | [195](195-broken-answer-said-twice.md) | done | An external agent's answer that broke off before its task ended is published cut off, and said again in full when the followed task ends. |
-| [204](204-external-agent-roster.md) | in progress | An external agent is not told who is in its channel nor how to address them, so it cannot mention another agent. |
+| [204](204-external-agent-roster.md) | done | An external agent is not told who is in its channel nor how to address them, so it cannot mention another agent. |
 | [205](205-external-agent-message-context.md) | done | What an external agent was given for one of its messages is not recorded, so the web UI cannot show it, and its transcript ties no answer to the call it answered. |
 | [212](212-external-task-during-reclassification.md) | done | An external agent's task that began before its channel's classification was lowered is answered into the lowered channel, where a turn of an agent run here is given up. |
 | [213](213-external-task-taken-up-keeps-old-work.md) | done | An external agent's task taken up again by a later call keeps the work of the call that began it - its authority, envelope, bound and context - unless the remote agent tells the task as begun again. |

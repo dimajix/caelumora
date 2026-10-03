@@ -8,6 +8,13 @@
 //! The roster is read afresh at the start of every turn, so it follows
 //! joins and leaves. It goes into the system prompt by default: it changes
 //! rarely, and every change ought to reach the model at once.
+//!
+//! An agent that keeps its conversation itself - an external one (issue
+//! 204) - is told the roster once and then only when it changed (parameter
+//! `changes_only`): the whole of it again, with who joined and who left
+//! since it was last told, which helps a model take a change in. The
+//! component remembers what it told while it lives - it is built for each
+//! actor, so for each channel - and tells all of it again after a restart.
 
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
@@ -16,18 +23,39 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND: &str = "channel_members_prompt_provider";
 
 #[derive(Debug)]
 pub struct ChannelMembersPromptProvider {
     pub position: PromptPosition,
+    /// Whether it tells only of changes: then the agent itself and the
+    /// others it named last, `None` before it named any. A plain lock,
+    /// never held across an await.
+    told: Option<Mutex<Option<Roster>>>,
 }
+
+impl ChannelMembersPromptProvider {
+    /// The roster at `position`, told every time it is asked.
+    pub fn new(position: PromptPosition) -> Self {
+        Self { position, told: None }
+    }
+
+    /// The roster at `position`, told the first time it is asked and then
+    /// only when it changed, with the change (issue 204).
+    pub fn changes_only(position: PromptPosition) -> Self {
+        Self { position, told: Some(Mutex::new(None)) }
+    }
+}
+
+/// The agent itself, if it is a member, and the others.
+type Roster = (Option<Member>, Vec<Member>);
 
 /// A member of the channel as the prompt part names it.
 #[derive(Debug, Clone, PartialEq)]
 struct Member {
+    id: ActorId,
     name: String,
     handle: Option<String>,
     person: bool,
@@ -56,15 +84,32 @@ impl PromptProvider for ChannelMembersPromptProvider {
                 _ => continue,
             };
             let Some(name) = member.name() else { continue };
-            let entry = Member { name: name.to_string(), handle: member.handle(), person, introduction: one_line(member.introduction().await?) };
+            let entry = Member { id: member.id(), name: name.to_string(), handle: member.handle(), person, introduction: one_line(member.introduction().await?) };
             if member.id() == own {
                 me = Some(entry);
             } else {
                 others.push(entry);
             }
         }
+        let roster = (me, others);
+        let text = match &self.told {
+            None => render(roster.0.as_ref(), &roster.1),
+            Some(told) => {
+                let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if told.as_ref() == Some(&roster) {
+                    String::new()
+                } else {
+                    let mut text = render(roster.0.as_ref(), &roster.1);
+                    if let Some((_, before)) = told.as_ref() {
+                        text.push_str(&render_changes(before, &roster.1));
+                    }
+                    *told = Some(roster);
+                    text
+                }
+            }
+        };
         // Names and introductions are public (issue 176).
-        Ok(Prompt::classified(render(me.as_ref(), &others), Classification::PUBLIC))
+        Ok(Prompt::classified(text, Classification::PUBLIC))
     }
 }
 
@@ -91,14 +136,35 @@ fn render(me: Option<&Member>, others: &[Member]) -> String {
     }
     for member in others {
         let line = match (member.person, &member.introduction) {
-            (true, Some(introduction)) => format!("{}, a person. In their own words: \"{introduction}\"", named(member)),
-            (true, None) => format!("{}, a person.", named(member)),
-            (false, Some(introduction)) => format!("{}, an agent. {introduction}", named(member)),
-            (false, None) => format!("{}, an agent.", named(member)),
+            (true, Some(introduction)) => format!("{} In their own words: \"{introduction}\"", described(member)),
+            (false, Some(introduction)) => format!("{} {introduction}", described(member)),
+            (_, None) => described(member),
         };
         text.push_str(&format!("- {line}\n"));
     }
     text
+}
+
+/// Who of the others joined and who left since `before` was told, as an
+/// addition to the roster `render` makes of `others`; empty if nobody did.
+/// Told apart by who they are, not by their names, which may change.
+fn render_changes(before: &[Member], others: &[Member]) -> String {
+    let joined = others.iter().filter(|m| !before.iter().any(|b| b.id == m.id));
+    let left = before.iter().filter(|b| !others.iter().any(|m| m.id == b.id));
+    let lines: Vec<String> = joined.map(|m| format!("- Joined: {}\n", described(m)))
+        .chain(left.map(|m| format!("- Left: {}\n", described(m))))
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("Since you were last told who is here:\n{}", lines.concat())
+}
+
+/// A member with its handle and whether it is a person or an agent:
+/// `Kaya (@kaya), a person.`
+fn described(member: &Member) -> String {
+    let kind = if member.person { "a person" } else { "an agent" };
+    format!("{}, {kind}.", named(member))
 }
 
 /// A member's name with its handle, if it has one: `Kaya (@kaya)`.
@@ -125,8 +191,14 @@ pub fn register(registry: &mut ComponentRegistry) {
                 Some(value) => serde_json::from_value(value.clone())
                     .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string()))?,
             };
+            let changes_only = match descriptor.params.get("changes_only") {
+                None => false,
+                Some(value) => value.as_bool()
+                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'changes_only' must be true or false".to_string()))?,
+            };
+            let provider = if changes_only { ChannelMembersPromptProvider::changes_only(position) } else { ChannelMembersPromptProvider::new(position) };
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ChannelMembersPromptProvider { position }));
+            facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
         },
     );
@@ -156,7 +228,7 @@ mod tests {
     use caelumora_model::user::{User, UserId, UserProfile};
 
     fn member(name: &str, person: bool, introduction: Option<&str>) -> Member {
-        Member { name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
+        Member { id: ActorId::None, name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
     }
 
     #[test]
@@ -170,6 +242,17 @@ mod tests {
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n");
         assert!(render(Some(&me), &[]).ends_with("Nobody else is in this channel.\n"));
+    }
+
+    #[test]
+    fn who_joined_and_who_left_is_told_by_who_they_are() {
+        let with_id = |name: &str, person: bool| Member { id: ActorId::User(UserId::new()), ..member(name, person, None) };
+        let (kaya, sassy, bob) = (with_id("Kaya", true), with_id("Sassy", false), with_id("Bob", true));
+        let renamed = Member { name: "Kaya K.".to_string(), ..kaya.clone() };
+        assert_eq!(render_changes(&[kaya.clone(), sassy], &[renamed, bob]), "Since you were last told who is here:\n\
+            - Joined: Bob (@bob), a person.\n\
+            - Left: Sassy (@sassy), an agent.\n", "a new name is no new member");
+        assert_eq!(render_changes(std::slice::from_ref(&kaya), std::slice::from_ref(&kaya)), "", "nobody came or went");
     }
 
     #[test]
@@ -240,7 +323,7 @@ mod tests {
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun")
             .with_views(ViewsFactory::in_session(session_loop, runtime, context.clone()));
 
-        let prompt = ChannelMembersPromptProvider { position: PromptPosition::Start }.get_prompt(&turn.work()).await.unwrap();
+        let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.work()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
