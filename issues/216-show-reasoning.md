@@ -1,6 +1,6 @@
 # 216 — The web UI does not show an agent's reasoning
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -52,3 +52,13 @@ browser's network tab or in the stored state.
   that is the channel's is already in every published message and in the event stream; only the web
   UI does not show it. Narrowed at the maintainer's request to the missing display; who may see
   reasoning, and by which permission, is left out for now.
+- **2026-10-03** — Implemented in the web UI. The `Message` type carries `reasoning` and
+  `reasoning_visibility`; `MessageView` shows the reasoning folded above the content (`Reasoning`),
+  so the chat and the context panel show it the same way, the latter marking reasoning that is the
+  owner's. The answer under way in `ChatView` collects the reasoning of its partials as well as
+  their content and shows it under "Thinking" until the content begins. Not verified in the browser
+  yet: the store held no message with reasoning, and none was sent for the check.
+- **2026-10-03** — Closed at the maintainer's request. Left as they are: reasoning opened while
+  it streams is folded again once the message is complete, since the partials carry no id of the
+  message they become; and reasoning that is the owner's is still shown nowhere for the message it
+  belongs to - the context panel shows what the model was given, not the answer itself.

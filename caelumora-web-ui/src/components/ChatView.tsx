@@ -45,7 +45,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
-import {MessageFooter, MessageView} from './MessageView';
+import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {formatArguments, mergeToolResults} from '../messages';
 import {ContextPanel} from './ContextPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
@@ -88,7 +88,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     setChosenRelease(classification && {channelId, classification});
   const [compartments, setCompartments] = useState<Compartment[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
+  // The answer under way as it streams in: its reasoning and its content.
+  const [streamingMessage, setStreamingMessage] = useState<{reasoning: string; content: string} | null>(null);
   const [streamingSender, setStreamingSender] = useState<string | null>(null);
   // Who is generating (`actorKey`), so that their removal can end it (issue 162).
   const generatingActor = useRef<string | null>(null);
@@ -249,14 +250,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         if (actorEvent === 'ResponseStarted') {
           generatingActor.current = actorKey(envelope.context.sender_id);
           setIsGenerating(true);
-          setStreamingMessage('');
+          setStreamingMessage({reasoning: '', content: ''});
           setStreamingSender(envelope.context.sender_name || null);
         } else if (typeof actorEvent === 'string') {
           // The other payload-less events have nothing to show.
         } else if (actorEvent.PartialMessageGenerated) {
           generatingActor.current = actorKey(envelope.context.sender_id);
           setIsGenerating(true);
-          setStreamingMessage(prev => (prev || '') + (actorEvent.PartialMessageGenerated!.content || ''));
+          const partial = actorEvent.PartialMessageGenerated;
+          setStreamingMessage(prev => ({
+            reasoning: (prev?.reasoning ?? '') + (partial.reasoning ?? ''),
+            content: (prev?.content ?? '') + (partial.content ?? ''),
+          }));
           setStreamingSender(envelope.context.sender_name || null);
         } else if (actorEvent.CompleteMessageGenerated) {
           setMessages(prev => {
@@ -615,7 +620,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               ) : undefined}
             />
           ))}
-          {(isGenerating || streamingMessage) && (
+          {(isGenerating || streamingMessage?.reasoning || streamingMessage?.content) && (
             <div className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
               <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
                 <span>{streamingSender || 'Assistant'}</span>
@@ -628,7 +633,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   <span className="normal-case font-normal text-red-500 dark:text-red-400">stopped</span>
                 )}
               </div>
-              {streamingMessage && <MarkdownMessage content={streamingMessage} />}
+              {streamingMessage?.reasoning && (
+                <Reasoning text={streamingMessage.reasoning} thinking={isGenerating && !streamingMessage.content} />
+              )}
+              {streamingMessage?.content && <MarkdownMessage content={streamingMessage.content} />}
             </div>
           )}
           <div ref={messagesEndRef} />

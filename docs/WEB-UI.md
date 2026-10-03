@@ -116,12 +116,16 @@ else who may read it - the session's owner, say - is shown its history and no in
 *   **History.** The snapshot holds the last 20 messages; older ones are fetched on request. A
     message is shown with its tool calls, their status, their result and how long they took
     (`MessageView`); a call that is not public is marked with how far it may travel (issues 54, 61,
-    100).
-*   **While an agent answers**, its partial message is shown as it streams. A failed turn and the
-    channel-wide answer of a command are shown in the chat but never stored. When a participant is
-    removed, the channel says so with `ParticipantRemoved`, and nothing of it follows: its partial
-    answer and the stop button go, and its calls still without a result are shown as abandoned
-    (issue 162).
+    100). A message's reasoning, where the server hands it out, is folded above its content under
+    "Thought" and opened by the user (issue 216).
+*   **While an agent answers**, its partial message is shown as it streams, its reasoning
+    included: folded under "Thinking" until the answer begins (issue 216). Reasoning that is the
+    owner's never reaches the chat, and reasoning held back while the agent could still make a call
+    whose content is the owner's arrives only with the complete message
+    (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A failed turn and the channel-wide
+    answer of a command are shown in the chat but never stored. When a participant is removed, the
+    channel says so with `ParticipantRemoved`, and nothing of it follows: its partial answer and the
+    stop button go, and its calls still without a result are shown as abandoned (issue 162).
 *   **Approvals.** A tool call that needs approval is shown with approve and deny. Once this user
     answered, it waits for the decision; it disappears only when the approver ends it - decided,
     timed out, or withdrawn by an agent whose turn ended (issue 148). The pending approvals come
@@ -176,7 +180,8 @@ where they were given, a leading system prompt on top (issue 47), the knowledge 
 description and parameters (issue 137). Every prompt part, message and knowledge read shows how it
 was classified - "counts as the channel" where that is not known - and what set the message's label,
 which the panel's head names, is marked in amber (issue 170). The panel shows internal messages and
-tool results, which the chat hides; `MessageView` renders a message the same way in both. For an
+tool results, which the chat hides, and the reasoning of the messages the model was given, marked
+"owner only" where it is the owner's; `MessageView` renders a message the same way in both. For an
 answer of an external agent the panel shows the messages the remote agent was given in the call that
 produced it, and nothing else (issue 205): no prompt parts, tools or knowledge, and not what it was
 given in earlier calls. The panel's head words it so that it holds for both kinds of agent ("What

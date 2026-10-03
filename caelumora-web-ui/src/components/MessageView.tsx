@@ -1,8 +1,8 @@
-// One message as the chat shows it - content, tool calls with their status
-// and result - shared by the chat and the context panel (issue 41).
+// One message as the chat shows it - reasoning, content, tool calls with
+// their status and result - shared by the chat and the context panel (issue 41).
 
 import React, {useState} from 'react';
-import {Check, CheckCircle2, Copy, EyeOff, Info, Terminal, Wrench, XCircle} from 'lucide-react';
+import {Brain, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, EyeOff, Info, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ChannelMember, Message, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
@@ -108,6 +108,46 @@ const UsageInfo: React.FC<{message: Message}> = ({message}) => {
   );
 };
 
+/**
+ * A message's reasoning (issue 216), folded under a "Thought" toggle that the
+ * user opens - it is often longer than the answer. `thinking` while it is
+ * still streaming in and nothing of the answer has followed; `ownerOnly` if
+ * only the agent's owner sees it, which only the context panel shows.
+ */
+export const Reasoning: React.FC<{text: string; thinking?: boolean; ownerOnly?: boolean}> = ({text, thinking, ownerOnly}) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-1 text-xs opacity-60 hover:opacity-100 focus:opacity-100"
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <Brain size={13} />
+        {thinking ? (
+          <span className="inline-flex items-center gap-1.5">
+            Thinking
+            <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" />
+          </span>
+        ) : 'Thought'}
+        {ownerOnly && (
+          <span className="flex items-center gap-1 text-[11px] ml-1" title="Who sees this reasoning">
+            <EyeOff size={11} />
+            owner only
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 pl-3 border-l-2 border-gray-200 dark:border-gray-600 text-sm opacity-75">
+          <MarkdownMessage content={text} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** Copies the message's text - as stored, Markdown included - and confirms it briefly. */
 const CopyButton: React.FC<{text: string}> = ({text}) => {
   const [copied, setCopied] = useState(false);
@@ -175,6 +215,8 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, 
         <span key={badge} className="opacity-70 normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
       ))}
     </div>
+
+    {msg.reasoning && <Reasoning text={msg.reasoning} ownerOnly={msg.reasoning_visibility === 'owner'} />}
 
     {msg.content && (
       <MarkdownMessage

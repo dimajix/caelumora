@@ -177,6 +177,10 @@ export interface Message {
   /** Internal scaffolding (deliberation, plan steps, mid-plan tool steps): never shown in the chat. */
   internal?: boolean;
   content: string | null;
+  /** The model's reasoning (issue 216), if it may be seen here. */
+  reasoning?: string;
+  /** Who sees `reasoning` (issue 61); absent if the channel does. */
+  reasoning_visibility?: Visibility;
   sender_name?: string;
   timestamp?: string;
   tool_calls?: ToolCall[];
