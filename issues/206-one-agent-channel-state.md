@@ -323,3 +323,7 @@ without changing behaviour; step 4 changes behaviour.
   types any more. All points of *Done when* are met. Left open on purpose, as agreed: a refactoring
   at the end of this issue, beginning with the `OpenTask` as the external agent's counterpart of
   `TurnState` (see the entry above on it). Hence `in progress`, not `done`.
+- **2026-10-03** — The refactoring agreed for the end of this issue has a plan and an issue of its
+  own, [211](211-turn-and-agent-work-structure.md): `Turn` only while a turn runs, the state's
+  rules in the model, one `Answering` for both actors, and the `OpenTask` aligned with `TurnState`.
+  This issue is `done` once that one is.
