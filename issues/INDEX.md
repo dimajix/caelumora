@@ -279,7 +279,7 @@ argues against it, and what came out of the last attempt.
 | [196](196-perceive-processors-write-state.md) | done | Whether an agent's history is complete depends on two configurable components, and an external agent has no stage to filter what it perceives. |
 | [197](197-one-chain-one-model-of-change.md) | done | The ledger appends every change while the message chains amend entries in place, and six types stand between a chain and what it stores. |
 | [201](201-component-nodes-wrapper.md) | done | Components are written under a `component_nodes` key inside their own key, a level that exists only because `ComponentConfig` is a struct with one field. |
-| [206](206-one-agent-channel-state.md) | open | Agents run here and external agents keep their channel state in two types with separate store methods, change types and views, though history and transcript are the same in both. |
+| [206](206-one-agent-channel-state.md) | in progress | Agents run here and external agents keep their channel state in two types with separate store methods, change types and views, though history and transcript are the same in both. |
 
 ## Integrations
 

@@ -1,6 +1,6 @@
 # 206 — Agents run here and external agents keep their channel state in two types
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -318,3 +318,8 @@ without changing behaviour; step 4 changes behaviour.
   and a failing stage no longer fails its answer but is logged and drops what it was given, as for
   an agent run here. Stored states of external agents from before resend their whole transcript
   once; they are to be deleted.
+- **2026-10-03** — Step 5 done: STORAGE.md, CHANNELS.md and AGENT-TURN.md describe the one state,
+  the one view and the one way of taking in what is heard; no document or code names the removed
+  types any more. All points of *Done when* are met. Left open on purpose, as agreed: a refactoring
+  at the end of this issue, beginning with the `OpenTask` as the external agent's counterpart of
+  `TurnState` (see the entry above on it). Hence `in progress`, not `done`.

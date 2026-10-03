@@ -103,3 +103,12 @@ there are none. Which task the call answered may be shown too.
   merged first, and the external agent's transcript gets a mark of what was sent. So
   `ContextResolver::of` and `TranscriptView::of` need not take the parts they read, and the context
   of a message is the entries between two marks. This issue follows step 4 of 206.
+- **2026-10-03** — Prepared by [206](206-one-agent-channel-state.md), steps 1 to 4: an external
+  agent keeps an `AgentChannelState` like an agent run here, read by the one `AgentContextView`,
+  whose `context_of` resolves the `ContextRef` recorded with a message in the history - for an
+  external agent's answers none is recorded yet, so it answers `NotRecorded`. Its transcript is
+  what passed its perceive processors, and `RemoteState::sent_up_to` marks how far it was sent: the
+  messages of one call are the transcript's entries between the mark before the call and the one
+  after it. What is left here is to record that as a `ContextRef` with each answer (and with an
+  `OpenTask`, for what a task says unasked), to tell its resolution apart from that of an agent run
+  here, and to show it in the web UI.

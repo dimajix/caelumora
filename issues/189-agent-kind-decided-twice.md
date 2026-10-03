@@ -51,3 +51,7 @@ views can disagree about what an agent is.
   from its document (`MemberState::attributes`), so that asking whether the viewer may read a
   context reads no personality. A cached read shared by both stays with issue
   [182](182-entity-reads-not-cached.md).
+- **2026-10-03** — With [206](206-one-agent-channel-state.md) (step 3) the views no longer decide an
+  agent's kind at all: both kinds keep the same state, read by one `AgentMember`, and the
+  personality is read for the introduction alone. The kind is decided in `channel::Member::of`
+  only. An agent whose personality is gone keeps its state in the views.
