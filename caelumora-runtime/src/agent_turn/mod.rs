@@ -33,15 +33,16 @@ mod context;
 mod ending;
 mod plan;
 
-pub use ending::{CommittedTurn, EndedTurn};
+pub(crate) use ending::CommittedTurn;
 
+use crate::actor::Answering;
 use crate::agent_notes::NoteKind;
 use crate::agent_state::AgentStateHandle;
 use crate::tool_calls::ToolCalls;
 use crate::transport::EventSender;
 use crate::view::{SessionView, ViewsFactory};
-use anyhow::{Context, Result};
-use caelumora_model::actor::{ActorEvent, ActorState, Envelope, EventContext};
+use anyhow::Result;
+use caelumora_model::actor::{ActorEvent, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
@@ -94,7 +95,7 @@ impl<'a> Turn<'a> {
     /// tools and the default profile - what a test needs to work in one.
     #[cfg(test)]
     pub(crate) fn begun(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
-        agent_channel_state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), Default::default());
+        agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
         Self { agent_id, agent_name, agent_channel_state, agent_state, views: None }
     }
 
@@ -274,37 +275,26 @@ impl<'a> Turn<'a> {
         self.current().requested_state
     }
 
-    /// Sends `av` to the channel as the agent publishes it: messages without
-    /// what only the agent's owner sees (issues 54, 133), in the turn's
-    /// contexts. The agent keeps the full
+    /// The contexts the turn publishes in: those it began with.
+    pub(crate) fn answering(&self) -> Answering {
+        let turn = self.current();
+        Answering { event_context: turn.event_context.clone(), security_context: turn.security_context.clone() }
+    }
+
+    /// Sends `event` to the channel as the agent publishes it, in the
+    /// turn's contexts (`Answering::send`): messages without what only the
+    /// agent's owner sees (issues 54, 133). The agent keeps the full
     /// messages in its context; an event with nothing left to show is not
     /// sent.
-    pub async fn send_event(&self, av: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        let turn = self.current();
-        send(&turn.event_context, &turn.security_context, av, output).await
+    pub async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
+        self.answering().send(event, output).await
     }
-}
-
-/// Sends `av` as a turn publishes it: without what only its owner sees, in
-/// the turn's contexts - sent by its agent.
-async fn send(
-    event_context: &EventContext,
-    security_context: &SecurityContext,
-    av: ActorEvent,
-    output: &dyn EventSender,
-) -> Result<()> {
-    let Some(av) = av.published() else { return Ok(()) };
-    let ev = Envelope::new(security_context.clone(), event_context.clone(), av);
-    output
-        .send(ev)
-        .await
-        .context(format!("Actor {} failed to send event", event_context.sender_id))?;
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::actor::{Envelope, EventContext};
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};

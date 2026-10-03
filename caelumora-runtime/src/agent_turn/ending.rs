@@ -1,65 +1,35 @@
 //! How a turn ends: taken over when it completes (`Turn::commit`), or
 //! given up when it fails or is stopped (`Turn::give_up`), which keeps
 //! its messages as a branch of the transcript that is no longer active
-//! (issue 145). Both end it and return it as an [`EndedTurn`], which sends
-//! the turn's last event.
+//! (issue 145). Both use the turn up and return what is still needed of it:
+//! the contexts its last events are sent in (`Answering`) and the tool calls
+//! it abandoned.
 
-use super::{send, Turn};
+use super::Turn;
+use crate::actor::Answering;
 use crate::tool_calls::ToolCalls;
-use crate::transport::EventSender;
-use anyhow::Result;
-use caelumora_model::actor::{ActorEvent, EventContext};
 use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{executed_calls, Message};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
 use caelumora_model::transcript::GivenUpReason;
 use tracing::warn;
 
-/// What is left of a turn once it ended - taken over or given up: what its
-/// last events are sent with, the contexts the turn had (issue 85), and the
-/// tool calls it abandoned (issue 148). Nothing else; the rest of the turn
-/// was used up in ending it.
-#[derive(Debug)]
-pub struct EndedTurn {
-    event_context: EventContext,
-    security_context: SecurityContext,
-    abandoned_calls: Vec<ToolCallState>,
-}
-
-impl EndedTurn {
-    fn of(turn: &TurnState, abandoned_calls: Vec<ToolCallState>) -> Self {
-        Self {
-            event_context: turn.event_context.clone(),
-            security_context: turn.security_context.clone(),
-            abandoned_calls,
-        }
-    }
-
-    /// The tool calls that had no result when the turn ended, answered as
-    /// not executed (`Turn::abandon_tool_calls`, issue 148).
-    pub(crate) fn abandoned_calls(&self) -> &[ToolCallState] {
-        &self.abandoned_calls
-    }
-
-    /// Sends `event` as the ended turn would have: see [`Turn::send_event`].
-    pub(crate) async fn send_event(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        send(&self.event_context, &self.security_context, event, output).await
-    }
-}
-
 /// What is still needed of a turn once it is taken over (`commit`).
 #[derive(Debug)]
-pub struct CommittedTurn {
+pub(crate) struct CommittedTurn {
     /// The messages that are not internal: the turn's answer, for
     /// `FullResponseGenerated`.
-    pub final_messages: Vec<Message>,
+    pub(crate) final_messages: Vec<Message>,
     /// Whether the agent's state in the channel changed, to be announced
     /// once stored.
-    pub channel_state_changed: bool,
-    /// The turn itself, to send its answer with.
-    pub ended: EndedTurn,
+    pub(crate) channel_state_changed: bool,
+    /// What its answer is sent with: the contexts the turn had (issue 85).
+    pub(crate) answering: Answering,
+    /// The tool calls that had no result when it ended, answered as not
+    /// executed (`Turn::abandon_tool_calls`, issue 148): their approval
+    /// requests are to be withdrawn.
+    pub(crate) abandoned_calls: Vec<ToolCallState>,
 }
 
 /// Why a turn was given up, as the agent is told: "… because it failed".
@@ -116,8 +86,8 @@ impl Turn<'_> {
     /// with the channel state. What is still needed is returned.
     pub(crate) async fn commit(mut self, cancelled: bool) -> CommittedTurn {
         let abandoned_calls = self.abandon_tool_calls(if cancelled { "it was cancelled" } else { "it ended" });
+        let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(&turn, abandoned_calls);
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let TurnState { entries, memory, notes, private_notes, .. } = turn;
@@ -125,7 +95,7 @@ impl Turn<'_> {
         if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
-        CommittedTurn { final_messages, channel_state_changed, ended }
+        CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls }
     }
 
     /// Gives the turn up after it failed or was stopped, for `reason`
@@ -141,10 +111,13 @@ impl Turn<'_> {
     /// with `names_only`, only which tools ran, classified so. A step whose
     /// calls do not all have their result yet is ended first
     /// (`abandon_tool_calls`), so that those that ran are told too.
-    pub(crate) fn give_up(mut self, reason: GivenUpReason, names_only: Option<Classification>) -> EndedTurn {
+    ///
+    /// Returns what its last events are sent with, and the calls it
+    /// abandoned.
+    pub(crate) fn give_up(mut self, reason: GivenUpReason, names_only: Option<Classification>) -> (Answering, Vec<ToolCallState>) {
         let abandoned_calls = self.abandon_tool_calls(because(&reason));
+        let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        let ended = EndedTurn::of(&turn, abandoned_calls);
         let label = turn.label();
         let TurnState { entries, .. } = turn;
         let messages: Vec<&Message> = entries.iter().filter_map(|e| e.node.entry.message()).collect();
@@ -160,7 +133,7 @@ impl Turn<'_> {
         if let Some(message) = told {
             self.agent_channel_state.transcript.push(message);
         }
-        ended
+        (answering, abandoned_calls)
     }
 
     /// Abandons the tool calls of the current step as the turn ends,
@@ -284,7 +257,7 @@ mod tests {
         assert_eq!(results, [("send_mail", ToolResultStatus::Ok), ("delete", ToolResultStatus::NotExecuted)], "what ran is kept");
         assert!(messages[2].tool_results[1].content.contains("cancelled"), "the model is told why: {}", messages[2].tool_results[1].content);
         assert!(committed.final_messages.iter().any(|m| m.role == MessageRole::Tool), "observers learn of it too");
-        let abandoned: Vec<_> = committed.ended.abandoned_calls().iter().map(|c| (c.tool_call.function_name.as_str(), c.status)).collect();
+        let abandoned: Vec<_> = committed.abandoned_calls.iter().map(|c| (c.tool_call.function_name.as_str(), c.status)).collect();
         assert_eq!(abandoned, [("delete", caelumora_model::approval::ApprovalStatus::Pending)], "only the call without a result, as it stood");
     }
 

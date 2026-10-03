@@ -14,15 +14,15 @@
 //! ties it to the remote side (`RemoteState`, issue 206). It reads nothing
 //! of the channel itself.
 
-use super::perceive;
-use crate::actor::Actor;
+use super::{catch_up, failure_message, perceive};
+use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::controller::AgentController;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::{AgentId, Personality};
@@ -76,31 +76,6 @@ enum Ending {
     Failed(String),
     /// The actor was stopped meanwhile: nothing is published.
     Stopped,
-}
-
-/// The contexts an answer is published in: those of the request, continued
-/// in the agent's name.
-struct Answering {
-    event_context: EventContext,
-    security_context: SecurityContext,
-}
-
-impl Answering {
-    async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        let Some(event) = event.published() else { return Ok(()) };
-        output.send(Envelope::new(self.security_context.clone(), self.event_context.clone(), event)).await
-            .context(format!("external agent {} failed to send an event", self.event_context.sender_id))
-    }
-
-    /// Sends `events` in turn: one that cannot be sent is logged, and the
-    /// rest are sent still.
-    async fn send_all(&self, events: Vec<ActorEvent>, output: &dyn EventSender) {
-        for event in events {
-            if let Err(e) = self.send(event, output).await {
-                warn!("{:#}", e);
-            }
-        }
-    }
 }
 
 impl ExternalAgentActor {
@@ -193,10 +168,7 @@ impl ExternalAgentActor {
     /// not at all; and the state is stored. An error ends the answer, never
     /// the actor.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
-        let answering = Answering {
-            event_context: request.context.next(self.id(), self.name()),
-            security_context: request.security.next(self.id()),
-        };
+        let answering = Answering::to(request, self.id(), self.name());
         let token = self.begin();
         let ending = self.exchange(state, &answering, &token, output).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
@@ -212,9 +184,7 @@ impl ExternalAgentActor {
             Ok(Ending::Stopped) => Vec::new(),
             Err(e) => {
                 tracing::error!("External agent {} {} could not answer: {:#}", self.id(), self.name(), e);
-                let message = crate::error::user_message(&e)
-                    .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
-                vec![ActorEvent::TurnFailed { message }]
+                vec![ActorEvent::TurnFailed { message: failure_message(&e) }]
             }
         };
         answering.send_all(events, output).await;
@@ -594,12 +564,8 @@ impl Actor for ExternalAgentActor {
     /// remote agent is given it when it is next asked.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        let missed = state.history.missing_from(visible);
-        if missed.is_empty() {
-            return Ok(());
-        }
-        self.perceive(&mut state, missed).await;
-        self.actor_runtime.store_channel_state(&mut state).await
+        let own = self.id();
+        catch_up(&mut state, visible, |m| worth_giving(m, own), &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, output: Box<dyn EventSender>) -> Result<()> {

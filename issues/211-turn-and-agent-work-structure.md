@@ -431,4 +431,13 @@ Each step is a commit of its own.
   turn that finds none fails as a turn's step, where it worked on an empty turn before. Tests that
   used a `Turn` without a turn under way (calculator, sleep, `create_plan`, the MCP integration)
   begin one now.
+- **2026-10-03** — Step 4 done: `Answering` is in `crate::actor` (`to`, `send`, `send_all`) and
+  publishes for both actors - the external agent's answers, the turn's events (`Turn::answering`,
+  `Turn::send_event`) and what is sent once a turn ended; the free `send` of `agent_turn` and
+  `EndedTurn` are gone. `CommittedTurn` (now `pub(crate)`) carries the `Answering` and the
+  abandoned calls; `Turn::give_up` returns the pair, as a tuple. `withdraw_approval_requests` is a
+  free function of the two. `catch_up` and `failure_message` are in `actor_impl` and used by both
+  actors; the `AgentActor` takes the request envelope to begin a turn (`Answering::to`), as the
+  external one does. Changed with it: a failed send names the actor in the same words for both
+  ("actor … failed to send an event").
 

@@ -1,7 +1,7 @@
-use super::{apply_stage_processors, event_for, perceive};
-use crate::actor::Actor;
+use super::{apply_stage_processors, catch_up, event_for, failure_message, perceive};
+use crate::actor::{Actor, Answering};
 use crate::agent_run_control::{Interrupt, RunControl};
-use crate::agent_turn::{CommittedTurn, EndedTurn, Turn, MAX_MODEL_CALLS};
+use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
@@ -12,7 +12,7 @@ use crate::tool::{GuardedToolExecutor, ToolExecutor};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use crate::agent_state::AgentStateHandle;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::turn::TurnState;
@@ -24,7 +24,7 @@ use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::transcript::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::{AccessQuestions, SecurityContext};
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus};
+use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -170,23 +170,23 @@ impl AgentActor {
         self.turn(state).ok_or_else(|| anyhow!("Agent {} has no turn under way in {:?}", self.id(), self.control.state()))
     }
 
-    /// Starts a new turn in answer to a `ResponseRequested` - whose envelope
-    /// has `event_context` and `security_context` - with the channel as it
+    /// Starts a new turn in answer to the `ResponseRequested` in `request`,
+    /// in its contexts continued in the agent's name, with the channel as it
     /// is now: begins it on `state`, announces `ResponseStarted` and builds
     /// the context. The run loop then goes on in `Planning`. Fails without a
     /// channel, which happens only while it is being torn down.
     async fn request_response(
         &self,
         state: &mut AgentChannelState,
-        event_context: &EventContext,
-        security_context: &SecurityContext,
+        request: &Envelope,
         output: &dyn EventSender,
     ) -> Result<()> {
         let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
+        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name());
         state.begin_turn(
-            event_context.next(self.id(), self.agent_controller.name()),
-            security_context.next(self.id()),
+            event_context,
+            security_context,
             classification,
             self.tool_executor.tools(),
             self.llm_client.profile(),
@@ -244,13 +244,13 @@ impl AgentActor {
         let turn = self.turn_under_way(state)?;
         // Read before the turn is taken over, which ends it.
         let next = if cancelled { ActorState::Idle } else { turn.requested_state().unwrap_or(ActorState::Idle) };
-        let CommittedTurn { final_messages, channel_state_changed, ended } = turn.commit(cancelled).await;
+        let CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls } = turn.commit(cancelled).await;
         self.store_channel_state(state).await;
         if channel_state_changed {
             self.actor_runtime.announce_channel_state_changed();
         }
-        self.withdraw_approval_requests(&ended, output).await?;
-        ended.send_event(ActorEvent::FullResponseGenerated(final_messages), output).await?;
+        withdraw_approval_requests(&answering, &abandoned_calls, output).await?;
+        answering.send(ActorEvent::FullResponseGenerated(final_messages), output).await?;
         debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
     }
@@ -278,7 +278,7 @@ impl AgentActor {
                     false
                 }
                 ActorEvent::ResponseRequested if !asleep => {
-                    match self.request_response(state, &event.context, &event.security, output).await {
+                    match self.request_response(state, &event, output).await {
                         Ok(()) => true,
                         // E.g. a fail-closed context provider: the turn never starts.
                         Err(e) => {
@@ -304,9 +304,7 @@ impl AgentActor {
         let agent_name = self.agent_controller.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);
 
-        let message = crate::error::user_message(error)
-            .unwrap_or_else(|| "internal error - the details are in the server log".to_string());
-        self.give_up(state, GivenUpReason::Failed { message }, output).await;
+        self.give_up(state, GivenUpReason::Failed { message: failure_message(error) }, output).await;
     }
 
     /// Gives the turn under way in `state` up for `reason` (issue 145) -
@@ -333,12 +331,12 @@ impl AgentActor {
             GivenUpReason::Stopped => None,
         };
         let Some(turn) = self.turn(state) else { return };
-        let ended = turn.give_up(reason, names_only);
+        let (answering, abandoned_calls) = turn.give_up(reason, names_only);
         let Some(message) = told else { return };
-        if let Err(e) = self.withdraw_approval_requests(&ended, output).await {
+        if let Err(e) = withdraw_approval_requests(&answering, &abandoned_calls, output).await {
             warn!("Agent {} {} cannot withdraw the approval requests of its given-up turn: {:#}", self.id(), agent_name, e);
         }
-        if let Err(e) = ended.send_event(ActorEvent::TurnFailed { message }, output).await {
+        if let Err(e) = answering.send(ActorEvent::TurnFailed { message }, output).await {
             warn!("Agent {} {} cannot report its given-up turn: {:#}", self.id(), agent_name, e);
         }
     }
@@ -434,18 +432,6 @@ impl AgentActor {
     async fn request_pending_approvals(&self, turn: &mut Turn<'_>, output: &dyn EventSender) -> Result<()> {
         for request in turn.tool_calls().pending_approvals() {
             turn.send_event(ActorEvent::ApprovalRequested(request), output).await?;
-        }
-        Ok(())
-    }
-
-    /// Withdraws the approval requests of the calls the `ended` turn
-    /// abandoned, so that nobody is asked any longer to decide on a call
-    /// that will not run (issue 148) - the counterpart of
-    /// `request_approvals`. Every abandoned call: the approver ignores what
-    /// it does not hold - decided already, or never asked for.
-    async fn withdraw_approval_requests(&self, ended: &EndedTurn, output: &dyn EventSender) -> Result<()> {
-        for call in ended.abandoned_calls() {
-            ended.send_event(ActorEvent::ApprovalRequestWithdrawn { id: call.id }, output).await?;
         }
         Ok(())
     }
@@ -592,6 +578,18 @@ impl AgentActor {
     }
 }
 
+/// Withdraws the approval requests of the calls a turn `abandoned` as it
+/// ended, in its contexts (`answering`), so that nobody is asked any longer
+/// to decide on a call that will not run (issue 148) - the counterpart of
+/// `AgentActor::request_approvals`. Every abandoned call: the approver
+/// ignores what it does not hold - decided already, or never asked for.
+async fn withdraw_approval_requests(answering: &Answering, abandoned: &[ToolCallState], output: &dyn EventSender) -> Result<()> {
+    for call in abandoned {
+        answering.send(ActorEvent::ApprovalRequestWithdrawn { id: call.id }, output).await?;
+    }
+    Ok(())
+}
+
 /// Whether a turn may still flow into its channel (`AgentActor::turn_flow`).
 enum TurnFlow {
     Flows,
@@ -717,12 +715,7 @@ impl Actor for AgentActor {
     /// transcript.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        let missed = state.history.missing_from(visible);
-        if missed.is_empty() {
-            return Ok(());
-        }
-        perceive(&mut state, missed, |_| true, &self.perceive_in_processors, &self.security_context).await;
-        self.actor_runtime.store_channel_state(&mut state).await
+        catch_up(&mut state, visible, |_| true, &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
     }
 
     async fn run(

@@ -1,11 +1,13 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::any::Any;
 use std::fmt::Debug;
+use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
-use caelumora_model::actor::{ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::message::Message;
+use caelumora_model::security::SecurityContext;
 
 #[async_trait]
 pub trait Actor: Any + Debug + Send + Sync {
@@ -59,4 +61,41 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// that and aborts the task only if it does not end by itself in time
     /// (issue 187) - which is why there is no default that does nothing.
     fn stop(&self);
+}
+
+/// The contexts an actor publishes in when it answers: those of the
+/// request, continued in its name - for an agent's turn those it began with
+/// (`TurnState`), for an external agent's answer those of the request it
+/// answers or of the task it speaks of.
+#[derive(Debug, Clone)]
+pub(crate) struct Answering {
+    pub(crate) event_context: EventContext,
+    pub(crate) security_context: SecurityContext,
+}
+
+impl Answering {
+    /// The contexts of `request`, continued in the name of the actor `id`,
+    /// called `name`.
+    pub(crate) fn to(request: &Envelope, id: ActorId, name: String) -> Self {
+        Self { event_context: request.context.next(id, name), security_context: request.security.next(id) }
+    }
+
+    /// Sends `event` as the actor publishes it: without what only its
+    /// owner sees (issues 54, 133); an event with nothing left to show is
+    /// not sent.
+    pub(crate) async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
+        let Some(event) = event.published() else { return Ok(()) };
+        output.send(Envelope::new(self.security_context.clone(), self.event_context.clone(), event)).await
+            .context(format!("actor {} failed to send an event", self.event_context.sender_id))
+    }
+
+    /// Sends `events` in turn: one that cannot be sent is logged, and the
+    /// rest are sent still.
+    pub(crate) async fn send_all(&self, events: Vec<ActorEvent>, output: &dyn EventSender) {
+        for event in events {
+            if let Err(e) = self.send(event, output).await {
+                warn!("{:#}", e);
+            }
+        }
+    }
 }

@@ -5,6 +5,7 @@ pub mod external_agent;
 
 use crate::component::ComponentImpl;
 use crate::message::{MessageProcessor, PerceiveInProcessor};
+use crate::runtime::ActorRuntime;
 use anyhow::Result;
 use caelumora_model::actor::ActorEvent;
 use caelumora_model::agent::AgentChannelState;
@@ -65,6 +66,34 @@ async fn perceive(
         }
     };
     state.perceive(heard, perceived);
+}
+
+/// Takes in what an actor of an agent missed of its channel as what it
+/// hears (issues 190, 196, 206): of `visible`, what its history does not
+/// have yet, through `perceive` - what of it the agent `takes`, as it passes
+/// its perceive `processors` - and stores its `state` with it in `runtime`.
+async fn catch_up(
+    state: &mut AgentChannelState,
+    visible: Vec<Message>,
+    takes: impl Fn(&Message) -> bool,
+    processors: &[ComponentImpl<dyn PerceiveInProcessor>],
+    security: &SecurityContext,
+    runtime: &ActorRuntime,
+) -> Result<()> {
+    let missed = state.history.missing_from(visible);
+    if missed.is_empty() {
+        return Ok(());
+    }
+    perceive(state, missed, takes, processors, security).await;
+    runtime.store_channel_state(state).await
+}
+
+/// What the channel's users are told of `error`, which ended an answer: its
+/// message where it is one for them (`crate::error::user_message`), else
+/// that the details are in the server log - which has them, and nothing
+/// else about the server.
+fn failure_message(error: &anyhow::Error) -> String {
+    crate::error::user_message(error).unwrap_or_else(|| "internal error - the details are in the server log".to_string())
 }
 
 /// The event that publishes `message`: internal messages (plan steps)

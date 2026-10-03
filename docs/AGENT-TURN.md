@@ -120,7 +120,8 @@ reads nothing.
     *   it clears the working state, so that none of it is stored with the channel state.
 
     It returns a `CommittedTurn`: the final messages for `FullResponseGenerated`, whether the
-    channel state changed, and the ended turn.
+    channel state changed, the contexts the turn's last events are sent in, and the tool calls it
+    abandoned.
 *   **`Turn::give_up`** gives up a turn that failed or was stopped (issue 145). No end of a
     turn loses its messages:
     *   its messages are appended to the transcript and the history as by `commit`, each with
@@ -154,8 +155,10 @@ lowered below it, the turn is given up as `Lowered`, whatever it was about to do
 the turn over after a cancel - and the users are told with `TurnFailed` (issue 141, see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
-Both end the turn as an `EndedTurn`, which sends the turn's last event - `FullResponseGenerated` or
-`TurnFailed` - with the contexts and the publication the turn had.
+Both use the turn up and hand back the contexts it had as an `Answering` (`crate::actor`), which
+sends the turn's last event - `FullResponseGenerated` or `TurnFailed` - with the publication the
+turn had, and withdraws the approval requests of the calls it abandoned. An external agent publishes
+its answers through the same `Answering`.
 
 ### Storing and resuming
 
