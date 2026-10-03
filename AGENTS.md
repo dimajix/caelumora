@@ -104,7 +104,9 @@ feature in somehow. Proposing such refactorings is part of the work, not an extr
     One that only bundles parameters, wraps a single call, or serves a single call site is a sign
     that the responsibility belongs to an existing type. Before adding a trait, check whether an
     existing one can be generalized to cover the case; before adding a family of near-identical
-    types, check whether one generic type would do.
+    types, check whether one generic type would do. Two values returned to a few callers close by
+    are a tuple, not a new type
+    ([CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#small-return-values)).
 *   **One owner per concern.** Every crate, module and type can be described in one sentence; if
     the description of a change needs an "and also", something is on the wrong object. Logic that
     belongs together by subject lives together - its data, rules and checks in one place - and is

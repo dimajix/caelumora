@@ -23,6 +23,15 @@ tests. Rules that belong to one subject live with it - where permission checks g
 *   **Components.** A new component kind is registered in the `ComponentRegistry`; where it goes and
     how it is named is described in [COMPONENTS.md](COMPONENTS.md).
 
+### Small return values
+
+A function that returns two values, called from a few places close to it - inside its module or
+crate, not a public API - returns a tuple, not a type made for it: `Turn::full_context` returns
+`(messages, tools)`, and the caller names the parts where it destructures them. A type that only
+bundles a return value is one more name to read and keep. A type is worth it once the value has a
+meaning of its own: it gets methods, travels further than its caller, is stored or serialized, has
+more than two parts, or its parts have the same type and could be swapped unnoticed.
+
 ### Runtimes and their entities
 
 A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored entity it holds

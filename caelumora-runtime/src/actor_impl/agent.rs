@@ -198,9 +198,9 @@ impl AgentActor {
         &self,
         turn: &mut Turn<'_>,
     ) -> Result<BoxStream<'static, crate::llm::LLMResult<MessageEvent>>> {
-        let context = turn.full_context()?;
+        let (messages, tools) = turn.full_context()?;
         Ok(self.llm_client
-            .chat_completion(&context.messages, &context.tools)
+            .chat_completion(&messages, &tools)
             .await)
     }
 

@@ -158,7 +158,7 @@ mod tests {
 
         let open = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
         open.current_context(&mut turn).await.expect("a part that fails open is left out");
-        assert_eq!(turn.full_context().unwrap().messages[0].content.as_deref(), Some("Be brief."), "the others are given");
+        assert_eq!(turn.full_context().unwrap().0[0].content.as_deref(), Some("Be brief."), "the others are given");
 
         let closed = StateContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailClosed), brief()] };
         let error = closed.current_context(&mut turn).await.expect_err("a part that fails closed fails the turn");
@@ -175,7 +175,7 @@ mod tests {
                 part(Arc::new(StaticSystemPromptProvider { prompt: "Notes: none.".to_string(), position: PromptPosition::BeforeTurnInput, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed),
             ],
         };
-        let contents = |turn: &Turn| turn.full_context().unwrap().messages.iter()
+        let contents = |turn: &Turn| turn.full_context().unwrap().0.iter()
             .map(|m| format!("{:?}:{}", m.role, m.content.clone().unwrap_or_default()))
             .collect::<Vec<_>>();
 

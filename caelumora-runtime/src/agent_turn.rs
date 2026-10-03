@@ -131,14 +131,6 @@ fn told_of_executed(reason: &GivenUpReason, executed: &[(Option<&ToolCall>, &Too
         calls.join("\n"))
 }
 
-/// What the model is given for a step of the turn (`Turn::full_context`):
-/// the messages of its context and the tools it is offered.
-#[derive(Debug)]
-pub(crate) struct FullContext {
-    pub messages: Vec<Message>,
-    pub tools: Vec<ToolDefinition>,
-}
-
 #[derive(Debug)]
 pub struct Turn<'a> {
     agent_id: AgentId,
@@ -418,14 +410,15 @@ impl<'a> Turn<'a> {
         &self.current().event_context
     }
 
-    /// What the model is given for the next step: the transcript, continued
+    /// What the model is given for the next step - its messages and the
+    /// tools it is offered: the transcript, continued
     /// by the messages the turn produced so far, with the prompt parts where
     /// they were placed - each as the model's profile gives it (issue 63),
     /// every prompt part as a message of the agent in its role - and the
     /// tools the turn offers (issue 137). Resolved from the turn's context the
     /// way a recorded message's context is (`ContextResolver`, issue 136),
     /// so the two cannot diverge.
-    pub(crate) fn full_context(&self) -> Result<FullContext> {
+    pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<ToolDefinition>)> {
         let resolved = ContextResolver::of(self.agent_channel_state)
             .resolve(&self.current().context, ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
@@ -441,7 +434,7 @@ impl<'a> Turn<'a> {
                 },
             })
             .collect();
-        Ok(FullContext { messages, tools: resolved.tools })
+        Ok((messages, resolved.tools))
     }
 
     /// Sets the prompt parts the model of the turn is given besides the
@@ -772,7 +765,7 @@ mod tests {
 
     /// What the model of `turn` is given, as role and text.
     fn given(turn: &Turn) -> Vec<(MessageRole, String)> {
-        turn.full_context().unwrap().messages.into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
+        turn.full_context().unwrap().0.into_iter().map(|m| (m.role, m.content.unwrap_or_default())).collect()
     }
 
     /// A turn begun on `state`, whose model called `tool` with `arguments`;
@@ -1096,7 +1089,7 @@ mod tests {
             turn.begin();
             turn.set_context(Vec::new());
             turn.push_message(first.clone());
-            assert_eq!(reasoning_of(&turn.full_context().unwrap().messages), [false, false, true], "only the turn's own reasoning");
+            assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
             turn.push_message(second.clone());
             turn.commit_turn(false).await;
         }
@@ -1118,7 +1111,7 @@ mod tests {
         turn.begin();
         turn.set_context(Vec::new());
         turn.push_message(third);
-        assert_eq!(reasoning_of(&turn.full_context().unwrap().messages), [true, false, true, true, true]);
+        assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [true, false, true, true, true]);
     }
 
     #[tokio::test]
@@ -1139,7 +1132,7 @@ mod tests {
             let mut turn = Turn::new(agent, "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.begin();
             turn.set_context(vec![system()]);
-            let given = turn.full_context().unwrap().messages;
+            let (given, _) = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
             turn.push_message(first.clone());
@@ -1201,7 +1194,7 @@ mod tests {
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let mut turn = Turn::new(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached(), Default::default());
             turn.next_turn(Default::default(), Default::default(), Default::default(), tools.clone());
-            let offered = turn.full_context().unwrap().tools;
+            let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools.iter().map(Tool::definition).collect::<Vec<_>>(), "the model is offered what the turn began with");
             for message in messages {
                 turn.push_message((*message).clone());
