@@ -318,7 +318,13 @@ async fn append_changes<C: Serialize>(journal: &Path, len_before: u64, changes: 
     let mut line = serde_json::to_vec(changes).map_err(to_backend_error)?;
     line.push(b'\n');
     let mut file = tokio::fs::OpenOptions::new().append(true).create(true).open(journal).await.map_err(to_backend_error)?;
-    if let Err(err) = file.write_all(&line).await {
+    // A tokio file hands the write to a blocking task: flushed, it is done
+    // before the put returns, and the next put sees the journal's size.
+    let written = match file.write_all(&line).await {
+        Ok(()) => file.flush().await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = written {
         let _ = file.set_len(len_before).await;
         return Err(to_backend_error(err));
     }
