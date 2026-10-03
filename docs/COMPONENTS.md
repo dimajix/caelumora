@@ -142,7 +142,7 @@ purpose:
 | `tool_impl/` | tool providers and the `ToolExecutor` (`calculator_tool`, `mcp_tool`, `default_tool_executor`, ...) |
 | `command_impl/` | command providers (`help_command`, `wakeup_command`) |
 | `llm_impl/` | language models (`ollama_client`) |
-| `external_impl/` | the ways to reach an external agent (`a2a_agent`, issue 179) |
+| `external_impl/` | the ways to reach an external agent (`a2a_agent`, issue 179) - a module per kind: `a2a_agent/` holds the component (`mod.rs`), the protocol's types (`wire.rs`), their translation to and from `crate::external` (`translation.rs`) and the transport (`client.rs`, issue 210) |
 | `moderator_impl/` | the moderator and its responder policies |
 | `component_impl/` | everything else, and every component that offers several facets |
 

@@ -92,12 +92,21 @@ pub(super) struct RpcError {
 }
 
 impl<T> RpcResponse<T> {
-    pub(super) fn into_result(self, endpoint: &str) -> ExternalAgentResult<T> {
+    /// The result, or the error the agent answered with; the agent at
+    /// `endpoint` is named if it answered with neither.
+    pub(super) fn into_result(self, endpoint: &str) -> ExternalAgentResult<Result<T, RpcError>> {
         match (self.result, self.error) {
-            (_, Some(error)) => Err(ExternalAgentError::Rejected { endpoint: endpoint.to_string(), message: format!("{} ({})", error.message, error.code) }),
-            (Some(result), None) => Ok(result),
+            (_, Some(error)) => Ok(Err(error)),
+            (Some(result), None) => Ok(Ok(result)),
             (None, None) => Err(ExternalAgentError::InvalidResponse { endpoint: endpoint.to_string(), reason: "neither a result nor an error".to_string() }),
         }
+    }
+}
+
+impl RpcError {
+    /// The error of a request the agent at `endpoint` refused so.
+    pub(super) fn rejected(self, endpoint: &str) -> ExternalAgentError {
+        ExternalAgentError::Rejected { endpoint: endpoint.to_string(), message: format!("{} ({})", self.message, self.code) }
     }
 }
 

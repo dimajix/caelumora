@@ -8,30 +8,32 @@
 //! Only A2A 1.x over JSON-RPC: a card that offers nothing else is refused
 //! when the agent is asked, not when the component is built.
 //!
-//! The protocol's types are in `wire`, what they tell as `ExternalEvent`s
-//! in `translation` (issue 210).
+//! The protocol's types are in `wire`; between them and `crate::external`
+//! translates `translation`; `client` reaches the agent and hands back
+//! what it answered, as wire types. What is left here is the component:
+//! which method the agent is asked with, and what of its answers is
+//! translated how (issue 210).
 
+mod client;
 mod translation;
 mod wire;
 
+use self::client::{A2aClient, Responses};
 use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
-use self::wire::{is_version_1, method, AgentCard, RpcRequest, RpcResponse, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, A2A_VERSION, CARD_PATH, JSONRPC_BINDING, TASK_NOT_CANCELABLE};
+use self::wire::{method, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, TASK_NOT_CANCELABLE};
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::external::{ExternalAgent, ExternalAgentError, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use crate::remote::{describe_chain, describe_request_error, redact_endpoint, RemoteEndpoint};
-use arc_swap::ArcSwapOption;
+use crate::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
+use crate::remote::RemoteEndpoint;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use futures::StreamExt;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use sse_stream::SseStream;
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, trace, warn};
+use tracing::warn;
 
 pub const A2A_AGENT_KIND: &str = "a2a_agent";
 
@@ -59,39 +61,17 @@ struct A2aAgentConfig {
 }
 
 impl A2aAgentConfig {
-    fn card_url(&self) -> String {
-        let url = &self.endpoint.url;
-        if url.ends_with(".json") {
-            url.clone()
-        } else {
-            format!("{}/{CARD_PATH}", url.trim_end_matches('/'))
-        }
-    }
-
     fn timeout(&self) -> Duration {
         self.endpoint.timeout_or(DEFAULT_TIMEOUT)
     }
 }
 
-/// What of the agent card is used: where to send requests, and whether
-/// they are streamed.
-#[derive(Debug, Clone)]
-struct Endpoint {
-    url: String,
-    streaming: bool,
-}
-
 /// An agent reached over A2A, as the `ExternalAgent` of an external
-/// personality.
-#[derive(Debug, Clone)]
+/// personality: which method it is asked with, and what its answers tell.
+#[derive(Debug)]
 pub struct A2aAgentComponent {
-    id: String,
-    config: A2aAgentConfig,
-    /// Read from the card when the component is built, or when the agent is
-    /// first asked if that failed.
-    endpoint: Arc<ArcSwapOption<Endpoint>>,
-    http: reqwest::Client,
-    secret_manager: Arc<SecretManager>,
+    client: Arc<A2aClient>,
+    classification: Option<Classification>,
 }
 
 impl A2aAgentComponent {
@@ -99,127 +79,21 @@ impl A2aAgentComponent {
     /// `security`: an agent that cannot be reached yet does not keep its
     /// personality from being built.
     async fn build(id: String, config: A2aAgentConfig, secret_manager: Arc<SecretManager>, security: &SecurityContext) -> Result<Self, ComponentError> {
-        let http = reqwest::Client::builder()
-            .connect_timeout(config.timeout())
-            .build()
-            .map_err(|e| ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", config.endpoint.shown())))?;
-        let component = Self { id, config, endpoint: Arc::new(ArcSwapOption::empty()), http, secret_manager };
-        if let Err(e) = component.endpoint(security).await {
-            warn!("A2A agent component '{}' cannot read its agent card yet: {}", component.id, e);
+        let timeout = config.timeout();
+        let client = A2aClient::new(id.clone(), config.endpoint, timeout, secret_manager)?;
+        if let Err(e) = client.streaming(security).await {
+            warn!("A2A agent component '{}' cannot read its agent card yet: {}", id, e);
         }
-        Ok(component)
-    }
-
-    /// The URL of the agent, for messages: without credentials.
-    fn shown(&self) -> String {
-        self.config.endpoint.shown()
-    }
-
-    /// Where to reach the agent, read from its card the first time.
-    async fn endpoint(&self, security: &SecurityContext) -> ExternalAgentResult<Endpoint> {
-        if let Some(endpoint) = self.endpoint.load_full() {
-            return Ok((*endpoint).clone());
-        }
-        let endpoint = self.discover(security).await?;
-        self.endpoint.store(Some(Arc::new(endpoint.clone())));
-        Ok(endpoint)
-    }
-
-    /// Reads the agent card and chooses its JSON-RPC interface of A2A 1.x.
-    async fn discover(&self, security: &SecurityContext) -> ExternalAgentResult<Endpoint> {
-        let mut request = self.http.get(self.config.card_url()).timeout(self.config.timeout());
-        if let Some(token) = self.token(security).await? {
-            request = request.bearer_auth(token);
-        }
-        let response = request.send().await.map_err(|e| self.connection(e))?;
-        let card: AgentCard = self.json_of(response).await?;
-        let interface = card.supported_interfaces.iter()
-            .find(|i| i.protocol_binding == JSONRPC_BINDING && is_version_1(&i.protocol_version))
-            .ok_or_else(|| ExternalAgentError::Rejected {
-                endpoint: self.shown(),
-                message: format!("its agent card offers no JSON-RPC interface of A2A 1.x, only {}", card.offered()),
-            })?;
-        debug!("A2A agent component '{}' reaches its agent at {}", self.id, redact_endpoint(&interface.url));
-        Ok(Endpoint { url: interface.url.clone(), streaming: card.capabilities.streaming.unwrap_or(false) })
-    }
-
-    async fn token(&self, security: &SecurityContext) -> ExternalAgentResult<Option<String>> {
-        self.config.endpoint.bearer_token(&self.secret_manager, security).await
-            .map_err(|source| ExternalAgentError::Credential { endpoint: self.shown(), source })
-    }
-
-    fn connection(&self, e: reqwest::Error) -> ExternalAgentError {
-        ExternalAgentError::Connection { endpoint: self.shown(), reason: describe_request_error(e) }
-    }
-
-    /// The body of `response` as `T`, if it answered successfully.
-    async fn json_of<T: DeserializeOwned>(&self, response: reqwest::Response) -> ExternalAgentResult<T> {
-        self.require_success(&response)?;
-        let text = response.text().await.map_err(|e| self.connection(e))?;
-        serde_json::from_str(&text).map_err(|e| ExternalAgentError::InvalidResponse { endpoint: self.shown(), reason: e.to_string() })
-    }
-
-    /// Refuses `response` unless it answered successfully.
-    fn require_success(&self, response: &reqwest::Response) -> ExternalAgentResult<()> {
-        let status = response.status();
-        if status.is_success() {
-            Ok(())
-        } else {
-            Err(ExternalAgentError::Rejected { endpoint: self.shown(), message: format!("HTTP {status}") })
-        }
-    }
-
-    /// Posts the JSON-RPC request `method` with `params`, streamed or not:
-    /// either is answered within the timeout, a streamed one with the
-    /// beginning of its stream (issue 186).
-    async fn post(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: impl Serialize, streamed: bool) -> ExternalAgentResult<reqwest::Response> {
-        let body = RpcRequest::new(method, params);
-        trace!("A2A agent component '{}' sends {}: {}", self.id, method, serde_json::to_string(&body).unwrap_or_default());
-        let mut request = self.http.post(&endpoint.url).header("A2A-Version", A2A_VERSION).json(&body);
-        request = if streamed {
-            request.header(reqwest::header::ACCEPT, "text/event-stream")
-        } else {
-            request.timeout(self.config.timeout())
-        };
-        if let Some(token) = self.token(security).await? {
-            request = request.bearer_auth(token);
-        }
-        let timeout = self.config.timeout();
-        match tokio::time::timeout(timeout, request.send()).await {
-            Ok(response) => response.map_err(|e| self.connection(e)),
-            Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", timeout.as_secs()) }),
-        }
-    }
-
-    /// The result of the JSON-RPC request `method`.
-    async fn call<T: DeserializeOwned>(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: impl Serialize) -> ExternalAgentResult<T> {
-        let response = self.post(security, endpoint, method, params, false).await?;
-        let answer: RpcResponse<T> = self.json_of(response).await?;
-        answer.into_result(&self.shown())
-    }
-
-    /// The events of the streamed JSON-RPC request `method`.
-    async fn stream(&self, security: &SecurityContext, endpoint: &Endpoint, method: &str, params: impl Serialize) -> ExternalAgentResult<ExternalStream> {
-        let response = self.post(security, endpoint, method, params, true).await?;
-        self.require_success(&response)?;
-        let is_stream = response.headers().get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.starts_with("text/event-stream"));
-        if !is_stream {
-            // Refused before it began: a JSON-RPC error, not a stream.
-            let answer: RpcResponse<StreamResponse> = self.json_of(response).await?;
-            return Ok(answered(answer.into_result(&self.shown())?));
-        }
-        let bytes = response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url));
-        Ok(Box::pin(events_of(bytes, self.shown())))
+        Ok(Self { client: Arc::new(client), classification: config.classification })
     }
 
     /// The events of `task` on an agent without streaming, asked for with
     /// `GetTask` - after `first`, where it stands already - until it ends or
     /// asks back (issue 186): while it works, only that it was started is
-    /// told, and it is asked again a little later each time.
-    fn polled(&self, security: &SecurityContext, endpoint: Endpoint, mut first: Option<WireTask>, task: TaskId) -> ExternalStream {
-        let agent = self.clone();
+    /// told, and it is asked again a little later each time. Its own
+    /// translation: every answer repeats what the task produced so far.
+    fn polled(&self, security: &SecurityContext, mut first: Option<WireTask>, task: TaskId) -> ExternalStream {
+        let client = self.client.clone();
         let security = security.clone();
         Box::pin(async_stream::stream! {
             let mut translation = Translation::default();
@@ -228,8 +102,12 @@ impl A2aAgentComponent {
             loop {
                 let found = match first.take() {
                     Some(found) => found,
-                    None => match agent.call::<WireTask>(&security, &endpoint, method::GET_TASK, TaskParams { id: task.0.clone() }).await {
-                        Ok(found) => found,
+                    None => match client.call::<WireTask>(&security, method::GET_TASK, TaskParams { id: task.0.clone() }).await {
+                        Ok(Ok(found)) => found,
+                        Ok(Err(error)) => {
+                            yield Err(client.rejected(error));
+                            return;
+                        }
                         Err(e) => {
                             yield Err(e);
                             return;
@@ -255,43 +133,13 @@ impl A2aAgentComponent {
     }
 }
 
-/// The events of a single `response`, as a stream.
-fn answered(response: StreamResponse) -> ExternalStream {
-    Box::pin(futures::stream::iter(Translation::default().events(response).into_iter().map(Ok)))
-}
-
-/// The events of a stream of server-sent events, each a JSON-RPC response
-/// carrying a `StreamResponse`. Ends with the stream, or after an error.
-/// The events are framed in bytes, so a character or a line end the
-/// network splits arrives whole (issue 185).
-fn events_of<S, D, E>(bytes: S, endpoint: String) -> impl futures::Stream<Item = ExternalAgentResult<ExternalEvent>> + Send + 'static
-where
-    S: futures::Stream<Item = Result<D, E>> + Send + 'static,
-    D: bytes::Buf + Send + 'static,
-    E: std::error::Error + Send + Sync + 'static,
-{
-    async_stream::stream! {
-        let mut sse = std::pin::pin!(SseStream::from_bytes_stream(bytes));
+/// The events of `responses`, through one translation: what the agent
+/// streamed, or the one answer it gave. Ends with them, or after an error.
+fn translated(mut responses: Responses) -> ExternalStream {
+    Box::pin(async_stream::stream! {
         let mut translation = Translation::default();
-        while let Some(event) = sse.next().await {
-            let data = match event {
-                Ok(event) => event.data.unwrap_or_default(),
-                Err(sse_stream::Error::Body(e)) => {
-                    yield Err(ExternalAgentError::Connection { endpoint: endpoint.clone(), reason: describe_chain(e.as_ref()) });
-                    return;
-                }
-                Err(e) => {
-                    yield Err(ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() });
-                    return;
-                }
-            };
-            if data.is_empty() {
-                continue;
-            }
-            let answer = serde_json::from_str::<RpcResponse<StreamResponse>>(&data)
-                .map_err(|e| ExternalAgentError::InvalidResponse { endpoint: endpoint.clone(), reason: e.to_string() })
-                .and_then(|answer| answer.into_result(&endpoint));
-            match answer {
+        while let Some(response) = responses.next().await {
+            match response {
                 Ok(response) => {
                     for event in translation.events(response) {
                         yield Ok(event);
@@ -303,13 +151,13 @@ where
                 }
             }
         }
-    }
+    })
 }
 
 #[async_trait]
 impl ExternalAgent for A2aAgentComponent {
     async fn send(&self, security: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
-        let endpoint = self.endpoint(security).await?;
+        let streaming = self.client.streaming(security).await?;
         let params = SendMessageParams {
             message: wire_message(&message, conversation),
             configuration: SendConfiguration {
@@ -317,45 +165,42 @@ impl ExternalAgent for A2aAgentComponent {
                 // Without streaming answered at once with the task, which is
                 // followed until it ends: its id is known however long it
                 // runs (issue 186).
-                return_immediately: !endpoint.streaming,
+                return_immediately: !streaming,
             },
         };
-        if endpoint.streaming {
-            self.stream(security, &endpoint, method::SEND_STREAMING_MESSAGE, params).await
-        } else {
-            let mut response: StreamResponse = self.call(security, &endpoint, method::SEND_MESSAGE, params).await?;
-            match response.task.take_if(|task| task.status.state.works()) {
-                Some(task) => {
-                    let id = TaskId(task.id.clone());
-                    Ok(self.polled(security, endpoint, Some(task), id))
-                }
-                None => Ok(answered(response)),
+        if streaming {
+            return Ok(translated(self.client.stream(security, method::SEND_STREAMING_MESSAGE, params).await?));
+        }
+        let mut response: StreamResponse = self.client.call(security, method::SEND_MESSAGE, params).await?
+            .map_err(|error| self.client.rejected(error))?;
+        match response.task.take_if(|task| task.status.state.works()) {
+            Some(task) => {
+                let id = TaskId(task.id.clone());
+                Ok(self.polled(security, Some(task), id))
             }
+            None => Ok(translated(Box::pin(futures::stream::once(async move { Ok(response) })))),
         }
     }
 
     async fn resume(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<ExternalStream> {
-        let endpoint = self.endpoint(security).await?;
-        if endpoint.streaming {
-            self.stream(security, &endpoint, method::SUBSCRIBE_TO_TASK, TaskParams { id: task.0.clone() }).await
+        if self.client.streaming(security).await? {
+            Ok(translated(self.client.stream(security, method::SUBSCRIBE_TO_TASK, TaskParams { id: task.0.clone() }).await?))
         } else {
-            Ok(self.polled(security, endpoint, None, task.clone()))
+            Ok(self.polled(security, None, task.clone()))
         }
     }
 
     async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
-        let endpoint = self.endpoint(security).await?;
-        let response = self.post(security, &endpoint, method::CANCEL_TASK, TaskParams { id: task.0.clone() }, false).await?;
-        let answer: RpcResponse<serde::de::IgnoredAny> = self.json_of(response).await?;
-        match answer.error {
-            Some(error) if error.code == TASK_NOT_CANCELABLE => Ok(()),
-            Some(error) => Err(ExternalAgentError::Rejected { endpoint: self.shown(), message: error.message }),
-            None => Ok(()),
+        let answer = self.client.call::<serde::de::IgnoredAny>(security, method::CANCEL_TASK, TaskParams { id: task.0.clone() }).await?;
+        match answer {
+            Err(error) if error.code == TASK_NOT_CANCELABLE => Ok(()),
+            Err(error) => Err(self.client.rejected(error)),
+            Ok(_) => Ok(()),
         }
     }
 
     fn classification(&self) -> Option<Classification> {
-        self.config.classification.clone()
+        self.classification.clone()
     }
 }
 
@@ -376,7 +221,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::external::Said;
+    use crate::external::{ExternalEvent, Said};
     use axum::extract::State;
     use axum::http::HeaderMap;
     use axum::routing::{get, post};
@@ -480,10 +325,7 @@ mod tests {
     #[test]
     fn the_parameters_name_the_agent_and_how_to_reach_it() {
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/" } })).unwrap();
-        assert_eq!(config.card_url(), "https://hermes.example/.well-known/agent-card.json");
         assert_eq!(config.timeout(), Duration::from_secs(30));
-        let own: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/card.json" } })).unwrap();
-        assert_eq!(own.card_url(), "https://hermes.example/card.json", "a card's own URL");
         assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x" }, "roles": [] })).is_err(), "nothing unknown");
         assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x", "timeout": 3 } })).is_err(), "nothing unknown in the endpoint");
     }
@@ -515,27 +357,6 @@ mod tests {
         assert_eq!(params["message"]["role"], "ROLE_USER");
         assert_eq!(params["message"]["parts"][0]["text"], "alice: hello");
         assert!(params["message"].get("contextId").is_none(), "the remote agent opens the conversation");
-    }
-
-    #[tokio::test]
-    async fn events_split_anywhere_by_the_network_arrive_whole() {
-        let result = |r: Value| format!("data: {}\r\n\r\n", json!({ "jsonrpc": "2.0", "id": "1", "result": r }));
-        let body = [
-            result(json!({ "task": { "id": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_WORKING" } } })),
-            result(json!({ "artifactUpdate": { "taskId": "t-1", "contextId": "c-1", "artifact": { "artifactId": "a", "parts": [{ "text": "Grüße" }] }, "lastChunk": true } })),
-            result(json!({ "statusUpdate": { "taskId": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_COMPLETED" } } })),
-        ].concat();
-        // Each byte a chunk of its own: an "ü" and every "\r\n" split.
-        let bytes = futures::stream::iter(body.into_bytes().into_iter().map(|b| Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b]))));
-
-        let events: Vec<_> = events_of(bytes, "agent".to_string()).collect().await;
-        let events: Vec<_> = events.into_iter().map(Result::unwrap).collect();
-        assert_eq!(events, vec![
-            ExternalEvent::Conversation(ConversationId("c-1".to_string())),
-            ExternalEvent::Started(task("t-1")),
-            ExternalEvent::Message("Grüße".to_string()),
-            ExternalEvent::Completed,
-        ]);
     }
 
     #[tokio::test]

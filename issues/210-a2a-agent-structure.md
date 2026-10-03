@@ -1,6 +1,6 @@
 # 210 — The A2A agent is one file holding protocol, translation, transport and component
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -249,3 +249,16 @@ is the restructuring and is reviewed on its own.
   literals, on purpose - they assert the protocol, which a constant written wrong would not catch.
   Four tests are new: the request envelope, a message and its parameters as written by hand before,
   a role not known, and the message built for what is said.
+- **2026-10-03** — Step 3 done, and with it the issue. `client.rs` holds `A2aClient`: the card
+  (read once, `Interface`, formerly `Endpoint`), JSON-RPC over HTTP and server-sent events
+  (`responses_of`, formerly the framing half of `events_of`), handing back wire types. `call`
+  returns the JSON-RPC error as a value (`Result<T, RpcError>`), `stream` the responses
+  (`Responses`); `RpcError::rejected` makes a refusal an `ExternalAgentError`. The component is
+  `client` and `classification`, not `Clone`; `translated` turns the responses of a stream or of
+  one answer into events through one `Translation`, `polled` keeps its own and holds the client.
+  `cancel` uses `call`. One change of what users read: a refused cancel names the JSON-RPC code
+  too, like every other refused request (`boom (-32603)`), where it gave the message alone. The
+  stream test moved to the client and asserts responses; new are tests of where the card is
+  found and of a stream that breaks off or is answered with an error, which ends after it. Files:
+  `mod.rs` 453 lines (about 250 of them tests), `wire.rs` 326, `translation.rs` 229, `client.rs`
+  312.
