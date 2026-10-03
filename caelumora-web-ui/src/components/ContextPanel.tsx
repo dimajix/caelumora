@@ -1,9 +1,11 @@
-// What an agent's model saw when it produced a message (issue 41): the
+// What an agent was given when it produced a message (issue 41): the
 // messages of its context and the prompt parts of that turn, in the order the
 // model was given them (issue 47) - including internal steps and tool
 // results the chat hides - and the tools it was offered (issue 137). Every
 // part shows how it was classified, and those that set the message's label
-// are marked (issue 170).
+// are marked (issue 170). For an external agent, which keeps its
+// conversation itself, it is what the remote agent was given in the one call
+// that produced the message (issue 205): worded so that it holds for both.
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
@@ -239,7 +241,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
         <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
           <ScrollText size={18} />
-          <h3 className="font-semibold text-sm flex-1">What {message.sender_name || 'the agent'} saw</h3>
+          <h3 className="font-semibold text-sm flex-1">What {message.sender_name || 'the agent'} was given</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
             <X size={16} />
           </button>
@@ -247,7 +249,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
         {message.classification && (
           <div className="text-xs text-gray-500 dark:text-gray-400">
             Labelled <span className="text-gray-700 dark:text-gray-300">{classificationLabel(message.classification)}</span> by
-            what it saw; marked is what set the label.
+            what it had seen; marked is what of this set the label.
           </div>
         )}
         {context && (

@@ -284,13 +284,15 @@ An **actor** is anything that sends and receives events in a channel.
     agent does (issues 196, 206): all of it into its history, with its own answers; what can be
     given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
     of its personality, into its transcript. It reads nothing of the channel itself. When it is
-    asked to respond, it gives the remote agent what its transcript gained since it was last sent
-    (`RemoteState::sent_up_to`, a mark in the transcript: what a failed send did not give is given
-    with the next one, and a restart gives nothing twice), and publishes what comes back: pieces as
-    `PartialMessageGenerated`, the answer as `FullResponseGenerated`, a task the remote agent failed
-    as `TurnFailed`. A question back from the remote agent is its answer; the next request continues
-    that task. A cancel cancels the remote task and publishes what came so far - unless the cancel
-    came from lowering the channel, which gives the answer up (issue 212, see
+    asked to respond, it gives the remote agent its transcript, which then starts anew
+    (`Transcript::start_anew`, issue 205): the transcript's active path is what the remote agent has
+    not heard yet - what a failed send did not give is given with the next one, and a restart gives
+    nothing twice - and what each call gave stays as a branch from its root. It publishes what
+    comes back: pieces as `PartialMessageGenerated`, the answer as `FullResponseGenerated`, a task
+    the remote agent failed as `TurnFailed`. A question back from the remote agent is its answer;
+    the next request continues that task. A cancel cancels the remote task and publishes what came
+    so far - unless the cancel came from lowering the channel, which gives the answer up (issue
+    212, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md)); a stop cancels it - and every other open task of the
     agent - and publishes nothing. Each request is a piece of work (`Work`), as a turn is: bound by
     the channel's classification as it is when it begins, and classified as what it has seen - all

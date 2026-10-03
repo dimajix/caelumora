@@ -76,12 +76,15 @@ impl Chain<TranscriptEntry> {
         self.entries().filter_map(|e| e.entry.message()).cloned().collect()
     }
 
-    /// The messages of the active path after the entry `digest` names -
-    /// all of them if `digest` is `None` or not on it.
-    pub fn messages_after(&self, digest: Option<&Digest>) -> Vec<Message> {
-        let entries: Vec<_> = self.entries().collect();
-        let after = digest.and_then(|digest| entries.iter().position(|e| &e.digest == digest)).map_or(0, |at| at + 1);
-        entries[after..].iter().filter_map(|e| e.entry.message()).cloned().collect()
+    /// Starts the active path anew, and returns the digest of what it held
+    /// (issue 205): for a receiver that keeps what it was given - a remote
+    /// agent - once the active path was given to it. What was given stays
+    /// as a branch from the root, which the digest names, and what comes
+    /// after is what the receiver is given next.
+    pub fn start_anew(&mut self) -> Option<Digest> {
+        let given = self.digest();
+        self.move_head(None);
+        given
     }
 
     /// Appends `msgs`.
@@ -139,16 +142,18 @@ mod tests {
     use crate::message::tests::{id, make_message};
 
     #[test]
-    fn the_messages_after_an_entry_are_those_that_came_after_it() {
+    fn a_transcript_started_anew_holds_what_comes_after_and_keeps_what_it_held_as_a_branch() {
         let mut transcript = Transcript::default();
+        let ids = |entries: Vec<&crate::chain::Node<TranscriptEntry>>| entries.into_iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(transcript.start_anew(), None, "it held nothing");
         transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let mark = transcript.digest();
+        let first = transcript.start_anew().expect("what it held");
+        assert!(transcript.messages().is_empty(), "nothing new yet");
         transcript.extend(vec![make_message(id(3))]);
-        let ids = |messages: Vec<crate::message::Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
-        assert_eq!(ids(transcript.messages_after(mark.as_ref())), vec![id(3)]);
-        assert_eq!(ids(transcript.messages_after(None)), vec![id(1), id(2), id(3)], "all, from the start");
-        assert_eq!(ids(transcript.messages_after(Some(&crate::digest::prompt("elsewhere")))), vec![id(1), id(2), id(3)], "all, for an entry not on it");
-        assert!(transcript.messages_after(transcript.digest().as_ref()).is_empty());
+        let second = transcript.start_anew().expect("what it held since");
+        assert_eq!(ids(transcript.prefix(&first).unwrap()), vec![id(1), id(2)]);
+        assert_eq!(ids(transcript.prefix(&second).unwrap()), vec![id(3)], "only what came after the first");
+        assert_eq!(ids(transcript.all_entries().collect()), vec![id(1), id(2), id(3)], "all it ever held, in order");
     }
 
     #[test]

@@ -545,3 +545,9 @@ Each compiles, passes and can be committed on its own.
   fork point of a turn and as what tells the channel a late answer's branch (taken only if `after`
   is on the active path). The invariant: every agent's active path holds the channel's messages it
   was given, in its own order, plus its internal entries.
+- **2026-10-03** — To be considered in the steps that follow: since
+  [205](205-external-agent-message-context.md) the transcript of an external agent starts anew
+  with every call. Its inactive branches are not alternatives given up but the calls that were
+  made, each from the root, and its active path holds only what the remote agent has not been
+  given yet - so the invariant above does not hold for it, and a switch cannot take back what a
+  remote agent was given. What a switch means for an external agent is open.

@@ -7,8 +7,8 @@
 
 use crate::actor::EventContext;
 use crate::confidentiality::Classification;
+use crate::context::ContextRef;
 use crate::security::SecurityContext;
-use crate::digest::Digest;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -88,13 +88,19 @@ pub struct Work {
     /// what it brings in itself - within `classification` (`see`). As
     /// `TurnState::seen`.
     pub seen: Classification,
+    /// What the remote agent was given in the call it began with (issue
+    /// 205): the context of what comes of it - as `TurnState::context`, but
+    /// of the one call only, since the remote agent keeps what it was given
+    /// before. `None` until it was sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextRef>,
 }
 
 impl Work {
     /// Work begun in the contexts given, in a channel classified
     /// `classification`, which has seen nothing yet.
     pub fn new(event_context: EventContext, security_context: SecurityContext, classification: Classification) -> Self {
-        Self { event_context, security_context, classification, seen: Classification::PUBLIC }
+        Self { event_context, security_context, classification, seen: Classification::PUBLIC, context: None }
     }
 
     /// What it writes as: what it has seen so far (issue 168).
@@ -110,15 +116,11 @@ impl Work {
 }
 
 /// What an external agent keeps of the remote side in one channel, as part
-/// of its `AgentChannelState` (issue 206): how far its transcript was sent,
-/// the remote conversation and the tasks that have not ended.
+/// of its `AgentChannelState` (issue 206): the remote conversation and the
+/// tasks that have not ended. How far it was given what was said needs no
+/// mark: its transcript starts anew with every call (issue 205).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteState {
-    /// How far the remote agent was given its transcript: the digest of
-    /// the transcript as it stood when it was last sent. What came after it
-    /// is what the remote agent has not heard yet, sent with the next call
-    /// (issue 206); `None` if nothing was sent yet.
-    pub sent_up_to: Option<Digest>,
     /// The remote agent's conversation with this channel, once it opened
     /// one.
     pub conversation: Option<ConversationId>,
@@ -130,7 +132,7 @@ impl RemoteState {
     /// Whether nothing is kept: so for an agent run here, and an external
     /// one before it was first asked.
     pub fn is_empty(&self) -> bool {
-        self.sent_up_to.is_none() && self.conversation.is_none() && self.open_tasks.is_empty()
+        self.conversation.is_none() && self.open_tasks.is_empty()
     }
 
     /// The task that asked back, if any: the next message to the remote

@@ -1,9 +1,10 @@
 //! What an agent saw in a channel (issue 41): its state there, as stored,
 //! for a viewer who may read its context (`ReadAgentContext`). Agents run
 //! here and external agents (issue 179) keep the same state (issue 206) and
-//! are read by the same view; what an external agent cannot have - notes, a
-//! context recorded with its answers, given-up turns - its state holds
-//! nothing of.
+//! are read by the same view; what an external agent cannot have - notes,
+//! given-up turns - its state holds nothing of, and the context of one of
+//! its answers is what the remote agent was given in the call that produced
+//! it (issue 205).
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
@@ -33,9 +34,10 @@ impl AgentContextView {
         self.actor
     }
 
-    /// What the agent was given of the conversation: what its model is
+    /// What the agent is given of the conversation: what its model is
     /// given (issue 50), with the turns it gave up as branches (issue 145);
-    /// of an external agent, what the remote agent was given (issue 179).
+    /// of an external agent, what the remote agent is given with the next
+    /// call, with what each call before gave it as a branch (issue 205).
     pub fn transcript(&self) -> &Transcript {
         &self.state.transcript
     }
@@ -47,12 +49,14 @@ impl AgentContextView {
     }
 
     /// What the agent's model saw when it produced the message `message`:
-    /// its context and system prompt (issue 06).
+    /// its context and system prompt (issue 06). Of an external agent, the
+    /// messages the remote agent was given in the call that produced it,
+    /// and nothing else: it keeps what it was given before itself, and its
+    /// prompts and tools are its own (issue 205).
     ///
     /// # Errors
     /// `NotRecorded` if the agent did not produce the message, or what it
-    /// saw is not known here - as for every answer of an external agent so
-    /// far (issue 205); `Unavailable` if what was recorded cannot be
+    /// saw is not known here; `Unavailable` if what was recorded cannot be
     /// resolved any more.
     pub fn context_of(&self, message: MessageId) -> Result<ResolvedContext, ContextError> {
         let reference = self.state.recorded_context_of(message)

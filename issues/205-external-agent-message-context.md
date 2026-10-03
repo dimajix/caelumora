@@ -1,6 +1,6 @@
 # 205 — What an external agent was given for a message cannot be shown
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -112,3 +112,33 @@ there are none. Which task the call answered may be shown too.
   after it. What is left here is to record that as a `ContextRef` with each answer (and with an
   `OpenTask`, for what a task says unasked), to tell its resolution apart from that of an agent run
   here, and to show it in the web UI.
+- **2026-10-03** — Decided otherwise, and implemented: no reference of its own kind and no rule
+  of resolution, but the transcript branches, with the infrastructure of
+  [08](08-retry-and-edit-past-answers.md). The transcript is what the receiver is given per call;
+  who wants the conversation reads the history. So after every call that was sent, the transcript
+  of an external agent starts anew (`Transcript::start_anew`: the head goes back to the root): its
+  active path is what the remote agent is given next, and what each call gave stays as a branch
+  from the root, named by its digest. The `ContextRef` of an answer names that branch, with no
+  prompts and no tools, and `ContextResolver::resolve` resolves it as any other - nothing in it
+  knows the kind of agent.
+  - `RemoteState::sent_up_to` and `Transcript::messages_after` are gone: what was not sent is the
+    active path.
+  - `Work::context` keeps the reference of its call, as `TurnState::context` does for a turn; with
+    an `OpenTask` it reaches what the task says unasked. A task stored without work says it
+    without a context (`NotRecorded`).
+  - What an exchange has seen is every entry of the transcript, on every branch
+    (`all_entries`), not the active path.
+  - Stored states of before are not migrated; a transcript stored linear is sent once more.
+  - Not recorded: which task a call answered. `ContextRef` has no place for it, and it was
+    optional.
+  - Left open: the web UI shows the context in the panel it has, which omits what is empty. That
+    it is the messages of one call - not all the agent saw - and that the label may have been set
+    by an earlier call or by what the remote agent brings in, it does not say: nothing in the
+    REST API tells an external agent from one run here (CHANNELS.md), and whether the panel
+    should is to be decided.
+- **2026-10-03** — Decided for the web UI: the panel is worded so that it holds for both kinds of
+  agent ("What … was given"; labelled by what it had seen, marked what of the shown set the label),
+  rather than the REST API telling an external agent from one run here, which CHANNELS.md rules
+  out. Done. Noticed meanwhile: a task taken up again keeps the work of the call that began it
+  unless the remote agent tells it as begun again - issue
+  [213](213-external-task-taken-up-keeps-old-work.md).

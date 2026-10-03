@@ -2726,7 +2726,7 @@ mod tests {
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(contents(state.history.messages()), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
-        assert_eq!(contents(state.transcript.messages()), vec!["hello"], "its transcript what it was given");
+        assert_eq!(contents(state.transcript.all_entries().filter_map(|e| e.entry.message().cloned()).collect()), vec!["hello"], "its transcript what it was given");
         assert_eq!(remote.sent.lock().unwrap().len(), 1, "the secret was not given to the remote agent");
 
         alice.send_message("and now?".to_string(), None).await.unwrap();
@@ -2770,6 +2770,18 @@ mod tests {
         caelumora_model::external_agent::TaskId(id.to_string())
     }
 
+    /// What the remote agent was given in the call `answer` came of: the
+    /// context recorded with it in the `state` of `agent` (issue 205).
+    fn given_for(state: &caelumora_model::agent::AgentChannelState, agent: caelumora_model::agent::AgentId, answer: &Message) -> Vec<String> {
+        let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), state.clone());
+        seen.context_of(answer.id).expect("recorded with the answer").items.into_iter()
+            .filter_map(|item| match item {
+                caelumora_model::context::ContextItem::Conversation { message } => message.content,
+                caelumora_model::context::ContextItem::Prompt { .. } => None,
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_answers_in_the_channel() {
         use crate::external::{ExternalEvent, Said};
@@ -2811,8 +2823,12 @@ mod tests {
         assert!(state.remote.open_tasks.is_empty(), "both tasks ended");
         let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
         assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
-        let given: Vec<_> = state.transcript.messages().into_iter().filter_map(|m| m.content).collect();
+        let given: Vec<_> = state.transcript.all_entries().filter_map(|e| e.entry.message()?.content.clone()).collect();
         assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given");
+        assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
+        // The context of each answer is what was given in its call (issue 205).
+        assert_eq!(given_for(&state, agent, &first[0]), ["hello"]);
+        assert_eq!(given_for(&state, agent, &second[0]), ["How are you?"], "not what it was given before");
         running.abort();
     }
 
@@ -2867,7 +2883,7 @@ mod tests {
         let said = |text: &str| Message { role: MessageRole::User, sender_name: "bob".to_string(), content: Some(text.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
         let mut stored = AgentChannelState::default();
         stored.perceive(vec![said("sent before")], vec![said("sent before")]);
-        stored.remote.sent_up_to = stored.transcript.digest();
+        stored.transcript.start_anew();
         stored.perceive(vec![said("heard, then the crash")], vec![said("heard, then the crash")]);
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Message("Noted.".to_string())), Ok(ExternalEvent::Completed)],
@@ -2970,10 +2986,13 @@ mod tests {
 
         let alice = channel.user_actor(alice_of(&context)).unwrap();
         alice.send_message("Bonn".to_string(), None).await.unwrap();
-        assert_eq!(answered(&mut events, agent).await[0].content.as_deref(), Some("Sunny in Bonn."));
+        let answer = answered(&mut events, agent).await;
+        assert_eq!(answer[0].content.as_deref(), Some("Sunny in Bonn."));
         assert_eq!(remote.sent.lock().unwrap()[1].1.answers, Some(task("t-1")), "the reply continues the task that asked");
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert!(state.remote.open_tasks.is_empty(), "and it ended");
+        assert_eq!(given_for(&state, agent, &question[0]), ["hello"], "the question back came of the first call");
+        assert_eq!(given_for(&state, agent, &answer[0]), ["Bonn"], "the answer of the call that answered it (issue 205)");
         running.abort();
     }
 
@@ -3015,6 +3034,7 @@ mod tests {
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert!(state.remote.open_tasks.is_empty(), "the task ended");
         assert_eq!(state.history.messages().last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
+        assert_eq!(given_for(&state, agent, &said[0]), ["hello"], "with what the call that began the task was given (issue 205)");
         running.abort();
     }
 
@@ -3122,9 +3142,10 @@ mod tests {
             }
         }).await.expect("stored before the task ends, as a crash would find it");
         assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
-        assert_eq!(state.transcript.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["hello"], "with what it was given for it");
-        assert_eq!(state.remote.sent_up_to, state.transcript.digest(), "and how far it was sent: a restart gives nothing twice");
+        assert!(state.transcript.messages().is_empty(), "what it was given for it is sent: a restart gives nothing twice");
         let work = state.remote.work_of(&task("t-1")).expect("with the work it is");
+        let given = state.transcript.prefix(&work.context.as_ref().expect("with what it was given for it").transcript.expect("a message")).unwrap();
+        assert_eq!(given.iter().filter_map(|e| e.entry.message()?.content.clone()).collect::<Vec<_>>(), ["hello"]);
         let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
         assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
         assert_eq!(work.event_context.sender_id, ActorId::Agent(agent), "the request's envelope, continued in the agent's name");

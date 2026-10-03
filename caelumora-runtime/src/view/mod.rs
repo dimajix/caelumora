@@ -458,18 +458,28 @@ mod tests {
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (question, answer) = (said("question"), said("answer"));
         let mut state = AgentChannelState::default();
-        state.history.extend(vec![question.clone(), answer.clone()]);
+        // One call: the question was given, the transcript started anew,
+        // and the answer came of it.
         state.transcript.extend(vec![question.clone()]);
+        let given = caelumora_model::context::ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
+        let later = said("later");
+        state.transcript.extend(vec![later.clone()]);
+        state.history.extend(vec![question.clone()]);
+        state.history.push(answer.clone(), Some(given));
+        state.history.extend(vec![later]);
         store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let member = for_alice.member(ActorId::Agent(remote.id)).await.unwrap();
         let seen = member.context().await.expect("alice made the agent");
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-        assert_eq!(texts(seen.transcript().messages()), ["question"], "what it was given, not what it answered");
+        assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
         assert!(seen.given_up_turns().is_empty());
-        assert!(matches!(seen.context_of(answer.id), Err(ContextError::NotRecorded { .. })), "what it made of it is the remote agent's");
+        let context = seen.context_of(answer.id).expect("what the call was given (issue 205)");
+        assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
+        assert!(matches!(&context.items[0], caelumora_model::context::ContextItem::Conversation { message } if message.id == question.id));
+        assert!(context.tools.is_empty(), "and no tools: those are the remote agent's");
         assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
         assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");

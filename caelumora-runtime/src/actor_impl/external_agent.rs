@@ -8,9 +8,11 @@
 //! as an agent run here does (issue 206): all of it into its history, with
 //! its own answers; what can be given on - text others said - as it passes
 //! its perceive processors, into its transcript (issue 196). When it is
-//! asked, it gives the remote agent what its transcript gained since it was
-//! last sent, and publishes what comes back. That is all that is known of it, and all
-//! that is kept: in its `AgentChannelState`, as every agent's, with what
+//! asked, it gives the remote agent its transcript - which then starts anew,
+//! so that it holds what the remote agent has not heard yet, and what was
+//! given in each call stays as a branch of it, the context of that call's
+//! answer (issue 205) - and publishes what comes back. That is all that is
+//! known of it, and all that is kept: in its `AgentChannelState`, as every agent's, with what
 //! ties it to the remote side (`RemoteState`, issue 206). It reads nothing
 //! of the channel itself.
 //!
@@ -33,6 +35,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::ContextRef;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId, Work};
 use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -225,8 +228,10 @@ impl ExternalAgentActor {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
         }
         work.see(&brought);
-        state.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| work.see(&m.classification));
-        let given = state.transcript.messages_after(state.remote.sent_up_to.as_ref());
+        // All it was ever given: the calls before, each a branch of the
+        // transcript, and what it is given now.
+        state.transcript.all_entries().filter_map(|e| e.entry.message()).for_each(|m| work.see(&m.classification));
+        let given = state.transcript.messages();
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {
@@ -248,8 +253,10 @@ impl ExternalAgentActor {
         trace!("External agent {} is given {:?}", self.id(), said);
         let mut stream = self.remote.send(&answering.security_context, state.remote.conversation.as_ref(), OutboundMessage { said, answers: answers.clone() }).await?;
         // Sent: from now on the remote agent has heard it, whatever comes
-        // back. A send that failed sends it again with the next call.
-        state.remote.sent_up_to = state.transcript.digest();
+        // back - the transcript starts anew, and what was given is the
+        // context of what comes of this call (issue 205). A send that failed
+        // sends it again with the next call.
+        work.context = Some(ContextRef { transcript: state.transcript.start_anew(), ..ContextRef::default() });
 
         let mut task = answers;
         let mut answer = Answer::default();
@@ -319,7 +326,7 @@ impl ExternalAgentActor {
             }
         }
 
-        Ok(Ending::Answered(self.record(state, answer, work.label()).map(Box::new)))
+        Ok(Ending::Answered(self.record(state, answer, work.label(), work.context).map(Box::new)))
     }
 
     /// Re-attaches to every task left working that is not followed yet
@@ -409,7 +416,9 @@ impl ExternalAgentActor {
     /// authority of the request that began it, in the event context of the
     /// answer to it, continued - in its span, and as many hops between
     /// agents away from the last user's message as that answer (issue 45) -
-    /// and classified as the work has seen (issue 212). A task without it
+    /// and classified as the work has seen (issue 212), with the context of
+    /// the call that began the task or last took it up (issue 205). A task
+    /// without it
     /// speaks afresh, as the agent itself, classified as its remote agent
     /// declares, else as the channel is now.
     async fn speak(&self, state: &mut AgentChannelState, work: Option<Work>, outcome: Result<Answer, String>, output: &dyn EventSender) {
@@ -417,20 +426,21 @@ impl ExternalAgentActor {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
-        let (speaking, label) = match work {
-            Some(work) => (self.speaking_for(&work), work.label()),
+        let (speaking, label, context) = match work {
+            Some(work) => (self.speaking_for(&work), work.label(), work.context),
             None => (
                 Answering {
                     event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
                     security_context: self.security_context.clone(),
                 },
                 self.remote.classification().unwrap_or_else(|| channel.classification()),
+                None,
             ),
         };
         let events = match outcome {
             Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
             // Nobody asked: it says nothing if it has nothing to say.
-            Ok(answer) => match self.record(state, answer, label) {
+            Ok(answer) => match self.record(state, answer, label, context) {
                 Some(message) => answered(Some(message)),
                 None => Vec::new(),
             },
@@ -490,11 +500,12 @@ impl ExternalAgentActor {
     }
 
     /// The message `answer` comes to - `None` if nothing came - kept in its
-    /// history.
-    fn record(&self, state: &mut AgentChannelState, answer: Answer, classification: Classification) -> Option<Message> {
+    /// history with its `context`: what the remote agent was given in the
+    /// call it came of (`Work::context`), if that is known.
+    fn record(&self, state: &mut AgentChannelState, answer: Answer, classification: Classification, context: Option<ContextRef>) -> Option<Message> {
         let message = self.message(Some(answer.finish()?), classification);
         trace!("External agent {} answers {:?}", self.id(), message.content);
-        state.history.extend(vec![message.clone()]);
+        state.history.push(message.clone(), context);
         Some(message)
     }
 
@@ -750,7 +761,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_it_hears_is_kept_and_what_others_said_with_text_is_given_from_where_it_was_last_sent() {
+    async fn all_it_hears_is_kept_and_what_others_said_with_text_is_given_once() {
         let own = ActorId::Agent(AgentId::new());
         let alice = ActorId::User(caelumora_model::user::UserId::new());
         let first = said(alice, "alice", "hello");
@@ -764,13 +775,13 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         perceive(&mut state, vec![first.clone(), mine.clone()], takes, &[], &security).await;
-        assert_eq!(ids(state.transcript.messages_after(state.remote.sent_up_to.as_ref())), vec![first.id], "never sent anything: what others said");
-        state.remote.sent_up_to = state.transcript.digest();
+        assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
+        state.transcript.start_anew();
         perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()], takes, &[], &security).await;
         assert_eq!(ids(state.history.messages()), vec![first.id, mine.id, empty.id, step.id, second.id], "all it heard is kept");
-        assert_eq!(ids(state.transcript.messages_after(state.remote.sent_up_to.as_ref())), vec![second.id], "after what was sent, with text");
-        state.remote.sent_up_to = state.transcript.digest();
-        assert!(state.transcript.messages_after(state.remote.sent_up_to.as_ref()).is_empty(), "nothing new");
+        assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
+        state.transcript.start_anew();
+        assert!(state.transcript.messages().is_empty(), "nothing new");
     }
 
     #[test]

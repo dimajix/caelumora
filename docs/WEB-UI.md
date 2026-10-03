@@ -176,6 +176,10 @@ where they were given, a leading system prompt on top (issue 47), the knowledge 
 description and parameters (issue 137). Every prompt part, message and knowledge read shows how it
 was classified - "counts as the channel" where that is not known - and what set the message's label,
 which the panel's head names, is marked in amber (issue 170). The panel shows internal messages and
-tool results, which the chat hides; `MessageView` renders a message the same way in both. A context
-never changes, so what was fetched once is kept. See
+tool results, which the chat hides; `MessageView` renders a message the same way in both. For an
+answer of an external agent the panel shows the messages the remote agent was given in the call that
+produced it, and nothing else (issue 205): no prompt parts, tools or knowledge, and not what it was
+given in earlier calls. The panel's head words it so that it holds for both kinds of agent ("What
+… was given"; the label set by what it had seen, marked what of this set it): the REST API does not
+tell them apart. A context never changes, so what was fetched once is kept. See
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).

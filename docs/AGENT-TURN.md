@@ -246,6 +246,10 @@ A chain is a tree with a head ([08](../issues/08-retry-and-edit-past-answers.md)
     stand with every reclassification recorded since, the next number of a note.
 *   `prefix` finds an entry on any branch, so a `ContextRef` into a branch no longer active still
     resolves.
+*   A branch no longer active is not always one given up. The transcript of an external agent
+    starts anew with every call (`Transcript::start_anew`, issue 205): the remote agent keeps what
+    it was given, so the active path holds only what it is given next, and every call before is a
+    branch from the root - what did happen, one call each.
 *   `children` are the siblings among which a branch is chosen, and `leaf_from` finds where a
     switch to a branch goes on: at the newest child, unless the entry remembers another as last on
     the active path - which it does only once the head went back to an older one, so that an entry
@@ -514,7 +518,11 @@ only one of them produced it.
     transcript, the private notes, and
 *   `context_of(message_id)`, the context and the prompt parts the message was produced from
     (`ContextError::NotRecorded` if the agent did not produce it, `Unavailable` if what was recorded
-    cannot be resolved any more), and
+    cannot be resolved any more). For an answer of an external agent it is not all its model was
+    given, but the messages the remote agent was given in the one call that produced it (issue
+    205) - also for a question back, the answer to it, and what a task says unasked, which has
+    the context of the call that began the task - without prompt parts or tools, which are the
+    remote agent's own. The whole conversation is in its history. And
 *   `given_up_turns()`, the turns the agent gave up in the channel (issue 145): each with its
     reason, time and messages. The context of each of those messages is asked for like that of any
     other.
