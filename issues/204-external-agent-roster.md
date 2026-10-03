@@ -114,3 +114,15 @@ per external personality, as the prompt part is per personality.
   `channel_id`, `session_id`, `security_context`) answer through it. No change of behaviour. An
   `ExternalAgentActor` can load the agent's `AgentStateHandle` as an `AgentActor` does
   (`ActorRuntime::agent_state`, which only reads), so it can build one too - step 3.
+- **2026-10-03** — Step 3: an `ExternalAgentActor` asks the `PromptProvider`s of its personality
+  (`crate::context::prompt_parts`, which `state_context_provider` uses too, each by its fail
+  policy) with every request, and gives the remote agent their parts first
+  (`OutboundMessage::prompts`; `a2a_agent` sends each as a text part ahead of what was said).
+  Beyond what was decided: a part is given again only when its text changed since it was given -
+  without that, a fixed part such as `static_system_prompt_provider`'s would be repeated with every
+  request. What a failed send did not give stays pending and goes with the next request; all of
+  this is kept in memory, so after a restart every part is given again. The parts are kept by
+  digest and recorded in the context of the call (`AgentChannelState::keep_prompt`, which `Turn`
+  uses too), and the work has seen them and the knowledge they hold. Not tested yet end to end:
+  the roster of an external agent in a running session - the channel tests run without one, so the
+  mechanics are tested with a fixed and a changing part; to follow with step 4.

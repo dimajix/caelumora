@@ -8,13 +8,16 @@
 //! as an agent run here does (issue 206): all of it into its history, with
 //! its own answers; what can be given on - text others said - as it passes
 //! its perceive processors, into its transcript (issue 196). When it is
-//! asked, it gives the remote agent its transcript - which then starts anew,
-//! so that it holds what the remote agent has not heard yet, and what was
+//! asked, it gives the remote agent the parts of its prompt providers that
+//! it was not given yet - the frame of what was said, such as who is in the
+//! channel (issue 204) - and its transcript - which then starts anew, so
+//! that it holds what the remote agent has not heard yet, and what was
 //! given in each call stays as a branch of it, the context of that call's
 //! answer (issue 205) - and publishes what comes back. That is all that is
-//! known of it, and all that is kept: in its `AgentChannelState`, as every agent's, with what
-//! ties it to the remote side (`RemoteState`, issue 206). It reads nothing
-//! of the channel itself.
+//! known of it, and all that is kept: in its `AgentChannelState`, as every
+//! agent's, with what ties it to the remote side (`RemoteState`, issue
+//! 206). What it reads beyond that, its prompt providers read, as for a
+//! turn (`AgentWork`).
 //!
 //! Every request is a piece of work (`Work`), as a turn is (issues 211,
 //! 212): done in the request's contexts, bound by the channel as it was
@@ -24,11 +27,15 @@
 use super::{catch_up, failure_message, lowered_message, perceive};
 use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
+use crate::agent_state::AgentStateHandle;
+use crate::context::{prompt_parts, Prompt, PromptProvider};
 use crate::controller::AgentController;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
+use crate::view::ViewsFactory;
+use crate::work::AgentWork;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
@@ -63,6 +70,18 @@ pub struct ExternalAgentActor {
     remote: ComponentImpl<dyn ExternalAgent>,
     /// What filters what reaches it, as an agent's do (issue 196).
     perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
+    /// What gives the remote agent the frame of what was said - such as who
+    /// is in the channel - in the order of its configuration (issue 204).
+    prompt_providers: Vec<ComponentImpl<dyn PromptProvider>>,
+    /// What became of the part of each of `prompt_providers`, in their
+    /// order. Kept while the actor runs: after a restart every part is
+    /// given again. A plain lock, never held across an await.
+    prompts: std::sync::Mutex<Vec<PromptDelivery>>,
+    /// The agent's own state (issue 62), which its prompt providers read,
+    /// as an agent's run here do.
+    agent_state: Arc<AgentStateHandle>,
+    /// What its prompt providers navigate, as a turn does (issue 163).
+    views: ViewsFactory,
     /// Its state in this channel, held by the run loop for as long as it
     /// runs.
     state: Mutex<AgentChannelState>,
@@ -74,6 +93,40 @@ pub struct ExternalAgentActor {
     current: std::sync::Mutex<CancellationToken>,
     /// Cancelled when the actor ends: it left the channel.
     ended: CancellationToken,
+}
+
+/// What the remote agent was given of the part of one prompt provider
+/// (issue 204): the text it was given last - an unchanged part is not given
+/// again, since the remote agent keeps its conversation - and a part not
+/// given yet, which goes with the next request that reaches it. A provider
+/// that tells only what changed has nothing new the next time; what it told
+/// is not lost by a send that failed.
+#[derive(Debug, Default)]
+struct PromptDelivery {
+    given: Option<String>,
+    pending: Option<Prompt>,
+}
+
+impl PromptDelivery {
+    /// Takes `fresh`, the provider's part now: a text other than the one
+    /// given last is pending - in place of an older pending one, which it
+    /// is newer than - the one given last is not, and none leaves pending
+    /// what is.
+    fn offer(&mut self, fresh: Option<Prompt>) {
+        let Some(fresh) = fresh else { return };
+        if self.given.as_deref() == Some(fresh.text.as_str()) {
+            self.pending = None;
+        } else {
+            self.pending = Some(fresh);
+        }
+    }
+
+    /// Records the pending part as given.
+    fn delivered(&mut self) {
+        if let Some(given) = self.pending.take() {
+            self.given = Some(given.text);
+        }
+    }
 }
 
 /// How an exchange with the remote agent ended.
@@ -106,6 +159,7 @@ impl ExternalAgentActor {
         // here does (issue 87).
         let security_context = agent.security_context(channel.session_id, channel.id);
         let agent_id = agent.id;
+        let attributes = agent.security_attributes.clone();
         drop(agent);
 
         let components = ComponentContainer::from_config(
@@ -115,6 +169,7 @@ impl ExternalAgentActor {
         ).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
+        let prompt_providers = components.get_all::<dyn PromptProvider>(None);
 
         // Answers that may never enter the channel would each be dropped
         // there in silence: refused here instead, once - and once more with
@@ -128,6 +183,9 @@ impl ExternalAgentActor {
         }
 
         let state = actor_runtime.load_channel_state().await?;
+        let agent_state = actor_runtime.agent_state(attributes).await?;
+        let views = actor_runtime.views(security_context.clone());
+        let prompts = std::sync::Mutex::new(prompt_providers.iter().map(|_| PromptDelivery::default()).collect());
         Ok(Self {
             agent_id,
             agent_controller,
@@ -135,11 +193,36 @@ impl ExternalAgentActor {
             security_context,
             remote,
             perceive_in_processors,
+            prompt_providers,
+            prompts,
+            agent_state,
+            views,
             state: Mutex::new(state),
             processing: std::sync::Mutex::new(ActorState::Idle),
             current: std::sync::Mutex::new(CancellationToken::new()),
             ended: CancellationToken::new(),
         })
+    }
+
+    /// The parts of its prompt providers for `work` the remote agent was not
+    /// given yet (issue 204), in the order of its configuration: each that
+    /// changed since it was given, and what a send that failed did not
+    /// deliver. Positions mean nothing here: every part goes first.
+    ///
+    /// # Errors
+    /// That of a prompt provider that fails closed.
+    async fn pending_prompts(&self, state: &AgentChannelState, work: &Work) -> Result<Vec<Prompt>> {
+        let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, Some(&self.views));
+        let fresh = prompt_parts(&self.prompt_providers, &reading).await?;
+        let mut prompts = self.prompts();
+        for (delivery, fresh) in prompts.iter_mut().zip(fresh) {
+            delivery.offer(fresh);
+        }
+        Ok(prompts.iter().filter_map(|d| d.pending.clone()).collect())
+    }
+
+    fn prompts(&self) -> std::sync::MutexGuard<'_, Vec<PromptDelivery>> {
+        self.prompts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn set_processing(&self, state: ActorState) {
@@ -248,16 +331,30 @@ impl ExternalAgentActor {
             debug!("External agent {} has nothing new to give; nothing to ask", self.id());
             return Ok(Ending::Answered(None));
         }
+        let prompts = self.pending_prompts(state, &work).await?;
+        let mut parts = Vec::with_capacity(prompts.len());
+        for prompt in prompts {
+            // Given to the remote agent: it has seen it, and it is part of
+            // the context of what comes of this call.
+            work.see_classified(prompt.classification.as_ref());
+            for reference in prompt.knowledge {
+                work.record_knowledge(reference);
+            }
+            let reference = state.keep_prompt(MessageRole::User, prompt.text.clone(), None, prompt.classification);
+            work.context.prompts.push(reference);
+            parts.push(prompt.text);
+        }
         let said = given.iter()
             .map(|m| Said { sender: m.sender_name.clone(), text: m.content.clone().unwrap_or_default() })
             .collect();
-        trace!("External agent {} is given {:?}", self.id(), said);
-        let mut stream = self.remote.send(&answering.security_context, state.remote.conversation.as_ref(), OutboundMessage { said, answers: answers.clone() }).await?;
+        trace!("External agent {} is given {:?} after {:?}", self.id(), said, parts);
+        let mut stream = self.remote.send(&answering.security_context, state.remote.conversation.as_ref(), OutboundMessage { prompts: parts, said, answers: answers.clone() }).await?;
         // Sent: from now on the remote agent has heard it, whatever comes
-        // back - the transcript starts anew, and what was given is the
-        // context of what comes of this call (issue 205). A send that failed
-        // sends it again with the next call.
-        work.context = ContextRef { transcript: state.transcript.start_anew(), ..ContextRef::default() };
+        // back - its prompt parts are given, the transcript starts anew, and
+        // what was given is the context of what comes of this call (issue
+        // 205). A send that failed sends it again with the next call.
+        self.prompts().iter_mut().for_each(PromptDelivery::delivered);
+        work.context.transcript = state.transcript.start_anew();
         // The task that asked back is taken up by this call, whether or not
         // the remote agent tells it as begun again (issue 213).
         if let Some(asked) = &answers {

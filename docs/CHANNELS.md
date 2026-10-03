@@ -283,8 +283,14 @@ An **actor** is anything that sends and receives events in a channel.
     participant does - and, when it joins, what it may see of the channel's - and takes it in as an
     agent does (issues 196, 206): all of it into its history, with its own answers; what can be
     given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
-    of its personality, into its transcript. It reads nothing of the channel itself. When it is
-    asked to respond, it gives the remote agent its transcript, which then starts anew
+    of its personality, into its transcript. What it reads of the channel, its prompt providers
+    read. When it is asked to respond, it gives the remote agent the parts of its personality's
+    `PromptProvider`s first, such as who is in the channel (issue 204) - each read as for a turn,
+    from an `AgentWork`, in the order of the configuration, positions ignored, and each only when
+    it changed since it was given, since the remote agent keeps its conversation; a part a failed
+    send did not give is given with the next one, and after a restart every part is given again.
+    A2A has no system message: the parts are text of the user's message too, ahead of what was
+    said. Then it gives the remote agent its transcript, which then starts anew
     (`Transcript::start_anew`, issue 205): the transcript's active path is what the remote agent has
     not heard yet - what a failed send did not give is given with the next one, and a restart gives
     nothing twice - and what each call gave stays as a branch from its root. It publishes what

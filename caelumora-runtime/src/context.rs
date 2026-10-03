@@ -6,12 +6,15 @@
 //! (issue 98).
 
 use crate::agent_turn::Turn;
+use crate::component::ComponentImpl;
 use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::KnowledgeRef;
+use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
+use tracing::warn;
 
 /// Where a prompt part goes in the context (issue 47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -118,6 +121,35 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     /// The part for `work` - a turn about to start, or a request to an
     /// external agent about to be sent (issue 204); empty text for none.
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt>;
+}
+
+/// The parts of `providers` for `work`, one for each, in their order (issue
+/// 204): each as its component's fail policy says - a part that fails open
+/// is left out with a warning, `None`, as is one with no text; one that
+/// fails closed fails all.
+///
+/// # Errors
+/// The error of a provider that fails closed, naming its component.
+pub(crate) async fn prompt_parts(providers: &[ComponentImpl<dyn PromptProvider>], work: &AgentWork<'_>) -> Result<Vec<Option<Prompt>>> {
+    let mut parts = Vec::with_capacity(providers.len());
+    for provider in providers {
+        let mut prompt = match provider.get_prompt(work).await {
+            Ok(prompt) => prompt,
+            Err(e) => match provider.fail_policy {
+                ComponentFailPolicy::FailOpen => {
+                    warn!("Prompt part of component '{}' left out: {:#}", provider.id, e);
+                    parts.push(None);
+                    continue;
+                }
+                ComponentFailPolicy::FailClosed => {
+                    return Err(e.context(format!("the prompt part of component '{}' failed", provider.id)));
+                }
+            },
+        };
+        prompt.text = prompt.text.trim().to_string();
+        parts.push((!prompt.text.is_empty()).then_some(prompt));
+    }
+    Ok(parts)
 }
 
 /// Assembles what the model is given in a turn (`Turn::set_context`), once,

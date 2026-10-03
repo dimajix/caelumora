@@ -3,11 +3,11 @@ use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
-use crate::context::{ContextRef, ModelProfile};
+use crate::context::{ContextRef, ModelProfile, PromptRef};
 use crate::chain::Stored;
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
-use crate::message::{Message, MessageId};
+use crate::message::{Message, MessageId, MessageRole};
 use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{GivenUp, GivenUpReason, Transcript, TranscriptEntry};
@@ -219,6 +219,16 @@ impl AgentChannelState {
             perceived.iter().for_each(|m| turn.work.see_message(m));
         }
         self.transcript.extend(perceived);
+    }
+
+    /// Keeps the text of a prompt part the agent was given once by digest
+    /// (issue 47), and returns the reference to it: given in `role` after
+    /// the entry `after` - `None`: before everything - its text classified
+    /// `classification`.
+    pub fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<Digest>, classification: Option<Classification>) -> PromptRef {
+        let digest = crate::digest::prompt(&text);
+        self.prompts.keep(digest, || text);
+        PromptRef { text: digest, role, after, classification }
     }
 
     /// Begins a turn (issue 85): fixes what it is - the envelope it answers,

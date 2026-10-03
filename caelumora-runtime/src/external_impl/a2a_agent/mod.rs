@@ -311,7 +311,7 @@ mod tests {
     }
 
     fn hello() -> OutboundMessage {
-        OutboundMessage { said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
+        OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
     }
 
     async fn all(stream: ExternalStream) -> Vec<ExternalEvent> {

@@ -57,9 +57,7 @@ impl Turn<'_> {
     /// seen it (issue 168).
     fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
         self.current_mut().work.see_classified(classification.as_ref());
-        let digest = caelumora_model::digest::prompt(&text);
-        self.agent_channel_state.prompts.keep(digest, || text);
-        PromptRef { text: digest, role, after, classification }
+        self.agent_channel_state.keep_prompt(role, text, after, classification)
     }
 
     /// Places `text`, given in `role`, after the messages the turn has

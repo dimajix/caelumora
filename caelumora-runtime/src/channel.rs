@@ -2596,6 +2596,7 @@ mod tests {
             },
         );
         register_no_secrets(&mut registry);
+        register_heard(&mut registry);
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
@@ -2628,6 +2629,30 @@ mod tests {
     }
 
     impl crate::message::PerceiveInProcessor for NoSecrets {}
+
+    /// A prompt part that changes with every message the agent hears: how
+    /// many its history holds.
+    #[derive(Debug)]
+    struct Heard;
+
+    #[async_trait::async_trait]
+    impl crate::context::PromptProvider for Heard {
+        async fn get_prompt(&self, work: &crate::work::AgentWork<'_>) -> Result<crate::context::Prompt> {
+            Ok(crate::context::Prompt::from(format!("[Heard]\n{}", work.agent_channel_state().history.messages().len())))
+        }
+    }
+
+    /// Registers `Heard` as the kind `test_heard`.
+    fn register_heard(registry: &mut crate::component::ComponentRegistry) {
+        registry.register(
+            crate::component::ComponentKind::new("test_heard").provides::<dyn crate::context::PromptProvider>(),
+            |_descriptor, _context| {
+                let mut facets = crate::component::ComponentFacets::empty();
+                facets.insert::<dyn crate::context::PromptProvider>(Arc::new(Heard));
+                Ok(facets)
+            },
+        );
+    }
 
     /// Registers `NoSecrets` as the kind `test_no_secrets`.
     fn register_no_secrets(registry: &mut crate::component::ComponentRegistry) {
@@ -2871,6 +2896,67 @@ mod tests {
         let sent = remote.sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].1.said.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["hello", "Still there?"], "nothing lost, nothing twice");
+        running.abort();
+    }
+
+    /// The components of an external personality with prompt parts (issue
+    /// 204): a fixed one, and one that changes with what it hears.
+    fn external_components_with_prompts() -> caelumora_model::component::ComponentConfig {
+        let mut components = external_components();
+        let mut frame = caelumora_model::component::ComponentDescriptor::new("frame", "static_system_prompt_provider");
+        frame.params = serde_json::json!({ "prompt": "[Frame]\nBe brief.", "position": "before_turn_input" });
+        components.component_nodes.push(frame);
+        components.component_nodes.push(caelumora_model::component::ComponentDescriptor::new("heard", "test_heard"));
+        components
+    }
+
+    #[tokio::test]
+    async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_they_change() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
+            vec![Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
+        ]));
+        let built = external_channel(remote.clone(), external_components_with_prompts(), None).await.expect("the external agent can be run");
+        let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
+        let first = answered(&mut events, agent).await;
+        channel.user_actor(alice_of(&context)).unwrap().send_message("How are you?".to_string(), None).await.unwrap();
+        answered(&mut events, agent).await;
+
+        let sent = remote.sent.lock().unwrap().clone();
+        let prompts = &sent[0].1.prompts;
+        assert_eq!(prompts, &["[Frame]\nBe brief.", "[Heard]\n1"], "first, in the order of the configuration, whatever their position");
+        assert_eq!(sent[1].1.prompts, ["[Heard]\n3"], "again only what changed");
+
+        // What it was given is the context of its answer (issue 205).
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), state);
+        let items = seen.context_of(first[0].id).expect("recorded with the answer").items;
+        let given_prompts: Vec<_> = items.iter().filter_map(|item| match item {
+            caelumora_model::context::ContextItem::Prompt { text, .. } => Some(text.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(given_prompts, [prompts[0].as_str(), prompts[1].as_str()]);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_next_call() {
+        use crate::external::ExternalEvent;
+
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
+        ]).unreachable_for(1));
+        let built = external_channel(remote.clone(), external_components_with_prompts(), None).await.expect("the external agent can be run");
+        let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
+        turn_failed(&mut events, agent).await;
+
+        channel.user_actor(alice_of(&context)).unwrap().send_message("Still there?".to_string(), None).await.unwrap();
+        answered(&mut events, agent).await;
+        let sent = remote.sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].1.prompts.len(), 2, "not lost with the send that failed");
         running.abort();
     }
 

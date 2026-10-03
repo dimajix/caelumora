@@ -13,15 +13,20 @@ use uuid::Uuid;
 pub(super) const ACCEPTED_OUTPUT_MODES: [&str; 1] = ["text/plain"];
 
 /// The message that gives the remote agent `message`, in `conversation` if
-/// it opened one: what each said, as the remote agent's user - by name,
-/// one part each - and the task it answers, if it asked back.
+/// it opened one: its prompt parts first, as they are, then what each said,
+/// as the remote agent's user - by name, one part each - and the task it
+/// answers, if it asked back. A2A has no system message (issue 204): the
+/// prompt parts are text of the user's message too, set apart by the
+/// heading each has.
 pub(super) fn wire_message(message: &OutboundMessage, conversation: Option<&ConversationId>) -> WireMessage {
     WireMessage {
         message_id: Some(Uuid::new_v4().to_string()),
         role: Some(WireRole::User),
         context_id: conversation.map(|c| c.0.clone()),
         task_id: message.answers.as_ref().map(|t| t.0.clone()),
-        parts: message.said.iter().map(|s| WirePart { text: Some(format!("{}: {}", s.sender, s.text)) }).collect(),
+        parts: message.prompts.iter().map(|p| WirePart { text: Some(p.clone()) })
+            .chain(message.said.iter().map(|s| WirePart { text: Some(format!("{}: {}", s.sender, s.text)) }))
+            .collect(),
     }
 }
 
@@ -141,16 +146,28 @@ mod tests {
     fn what_is_said_is_sent_as_the_users_message_one_part_each_by_name() {
         use crate::external::Said;
         let said = |sender: &str, text: &str| Said { sender: sender.to_string(), text: text.to_string() };
-        let first = OutboundMessage { said: vec![said("alice", "hello"), said("bob", "hi")], answers: None };
+        let first = OutboundMessage { prompts: Vec::new(), said: vec![said("alice", "hello"), said("bob", "hi")], answers: None };
         let sent = serde_json::to_value(wire_message(&first, None)).expect("json");
         assert!(sent["messageId"].as_str().is_some_and(|id| !id.is_empty()));
         assert_eq!(sent["role"], "ROLE_USER");
         assert_eq!(sent["parts"], json!([{ "text": "alice: hello" }, { "text": "bob: hi" }]));
         assert!(sent.get("contextId").is_none() && sent.get("taskId").is_none(), "no conversation yet, no task answered");
 
-        let reply = OutboundMessage { said: vec![said("alice", "Berlin")], answers: Some(task("t-1")) };
+        let reply = OutboundMessage { prompts: Vec::new(), said: vec![said("alice", "Berlin")], answers: Some(task("t-1")) };
         let sent = serde_json::to_value(wire_message(&reply, Some(&conversation("c-1")))).expect("json");
         assert_eq!((sent["contextId"].as_str(), sent["taskId"].as_str()), (Some("c-1"), Some("t-1")));
+    }
+
+    #[test]
+    fn the_prompt_parts_come_first_as_they_are() {
+        use crate::external::Said;
+        let message = OutboundMessage {
+            prompts: vec!["[Who is in this channel]\nYou are Hermes (@hermes).".to_string()],
+            said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }],
+            answers: None,
+        };
+        let sent = serde_json::to_value(wire_message(&message, None)).expect("json");
+        assert_eq!(sent["parts"], json!([{ "text": "[Who is in this channel]\nYou are Hermes (@hermes)." }, { "text": "alice: hello" }]));
     }
 
     fn response(value: Value) -> StreamResponse {

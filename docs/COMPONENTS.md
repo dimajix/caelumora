@@ -38,7 +38,7 @@ A component offers one or more *facets*: traits it implements to take part in th
 | `ToolProvider` | tools the model may call | `crate::tool` |
 | `ToolExecutor` | how the agent runs its tool calls | `crate::tool` |
 | `CommandProvider` | user commands | `crate::command` |
-| `PromptProvider` | prompt parts | `crate::context` |
+| `PromptProvider` | prompt parts, of agents and external agents alike (issue 204) | `crate::context` |
 | `ContextProvider` | what the model is given | `crate::context` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
 | `ExternalAgent` | the remote agent an external personality's agents are (issue 179) | `crate::external` |

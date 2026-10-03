@@ -4,9 +4,7 @@
 use crate::agent_turn::Turn;
 use caelumora_model::context::PromptPart;
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use caelumora_model::component::ComponentFailPolicy;
-use tracing::warn;
-use crate::context::{ContextProvider, PromptPosition, PromptProvider};
+use crate::context::{prompt_parts, ContextProvider, PromptPosition, PromptProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -30,30 +28,13 @@ impl ContextProvider for StateContextProvider {
     async fn current_context(&self, state: &mut Turn) -> Result<()> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
-        for provider in &self.prompt_providers {
-            // Each part as its component's fail policy says: a part that
-            // fails open is left out of this turn, one that fails closed
-            // fails the turn.
-            let contribution = match provider.get_prompt(&state.work()).await {
-                Ok(contribution) => contribution,
-                Err(e) => match provider.fail_policy {
-                    ComponentFailPolicy::FailOpen => {
-                        warn!("Prompt part of component '{}' left out: {:#}", provider.id, e);
-                        continue;
-                    }
-                    ComponentFailPolicy::FailClosed => {
-                        return Err(e.context(format!("the prompt part of component '{}' failed", provider.id)));
-                    }
-                },
-            };
-            let prompt = contribution.text.trim().to_string();
-            if prompt.is_empty() {
-                continue;
-            }
+        let parts = prompt_parts(&self.prompt_providers, &state.work()).await?;
+        for (provider, contribution) in self.prompt_providers.iter().zip(parts) {
+            let Some(contribution) = contribution else { continue };
             for reference in contribution.knowledge {
                 state.record_knowledge(reference);
             }
-            let part = (prompt, contribution.classification);
+            let part = (contribution.text, contribution.classification);
             match provider.position() {
                 PromptPosition::Start => start.push(part),
                 PromptPosition::BeforeTurnInput => before_input.push(part),
@@ -119,6 +100,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::agent_state::AgentStateHandle;
+    use caelumora_model::component::ComponentFailPolicy;
     use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::Classification;

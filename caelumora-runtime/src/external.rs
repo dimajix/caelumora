@@ -27,6 +27,10 @@ pub struct Said {
 /// One request to the remote agent: what was said since it was last asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundMessage {
+    /// The prompt parts of the agent's personality the remote agent was not
+    /// given yet, such as who is in the channel (issue 204): the frame of
+    /// what was said, given before it.
+    pub prompts: Vec<String>,
     pub said: Vec<Said>,
     /// The task that asked for input and is answered by this message, if
     /// any; otherwise the message begins a task of its own.
@@ -221,7 +225,7 @@ mod tests {
     use futures::StreamExt;
 
     fn hello() -> OutboundMessage {
-        OutboundMessage { said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
+        OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
     }
 
     #[test]
