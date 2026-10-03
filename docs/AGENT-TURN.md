@@ -71,6 +71,12 @@ module holds the handle and what components work with in `mod.rs`, and the rest 
 in a file per subject: `ending.rs` takes a turn over or gives it up, `context.rs` builds what the
 model is given, `plan.rs` moves the plan on.
 
+What a turn does to the agent's state when it begins and ends is a rule of that state, kept with
+it in the model: `AgentChannelState::begin_turn`, `record_turn` - its messages into transcript and
+history, its notes - and `give_up_turn`, which keeps its messages as a branch no longer active. The
+working state itself, `TurnState`, is in `caelumora_model::turn`. `Turn` calls these and does what
+runs around them: abandoning tool calls, applying the agent's memory, telling the agent what ran.
+
 The working state of a turn is one value, `AgentChannelState::turn: Option<TurnState>`, which is
 `None` between turns (issue 85). It holds what the turn is and what it has done so far:
 
@@ -278,11 +284,11 @@ in `actor_impl/agent.rs`) and puts its calls up for approval (`GuardedToolExecut
 same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the next turn
 on; a call of one that is gone fails as unknown.
 
-`Turn::next_turn` keeps the set in `AgentChannelState::tool_sets`, once per digest (`digest::tools`,
-in the order offered), and puts its digest into the turn's context, so that every message of the
-turn records it; no tools are recorded as `None`. `LLMClient::chat_completion` gets the tools from
-the resolved context, like the messages, so what the model was offered and what is recorded as
-offered are the same.
+Beginning a turn (`AgentChannelState::begin_turn`) keeps the set in `AgentChannelState::tool_sets`,
+once per digest (`digest::tools`, in the order offered), and puts its digest into the turn's
+context, so that every message of the turn records it; no tools are recorded as `None`.
+`LLMClient::chat_completion` gets the tools from the resolved context, like the messages, so what
+the model was offered and what is recorded as offered are the same.
 
 ### Reasoning given back
 

@@ -653,7 +653,8 @@ mod tests {
     #[tokio::test]
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
         use caelumora_model::actor::ActorState;
-        use caelumora_model::agent::{AgentChannelState, TurnState};
+        use caelumora_model::agent::AgentChannelState;
+use caelumora_model::turn::TurnState;
         use caelumora_model::store::StateStore;
         use caelumora_model::tool::{ToolCall, ToolCallState};
 

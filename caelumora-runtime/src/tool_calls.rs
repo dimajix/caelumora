@@ -9,7 +9,7 @@
 //! running a call needs the whole turn, which a longer-lived view would hold.
 //! Running is the actor's - it owns the executor.
 
-use caelumora_model::agent::TurnState;
+use caelumora_model::turn::TurnState;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalStatus};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolResultStatus};

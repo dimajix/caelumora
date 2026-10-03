@@ -3,7 +3,8 @@
 //! drift apart again. What is specific to one store - files on disk,
 //! concurrent writers - stays in that store's own tests.
 
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId, TurnState};
+use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
+use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
 use crate::confidentiality::{Classification, Visibility};

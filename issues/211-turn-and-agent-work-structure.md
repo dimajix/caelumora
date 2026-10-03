@@ -412,4 +412,11 @@ Each step is a commit of its own.
   tests used by several files (`message`, `seen`) are in `mod.rs`. No signature changed. Deviating
   from the plan: `set_plan`, `plan` and `take_plan` are in `plan.rs` with the rest of the plan, not
   in `mod.rs`, so that the subject stays in one file.
+- **2026-10-03** — Step 2 done: `TurnState` and `TurnEntry` are in `caelumora-model/src/turn.rs`;
+  `AgentChannelState` has `begin_turn` (with what `keep_tools` did), `record_turn` and
+  `give_up_turn`, each with a test in the model. `Turn::next_turn` is a line that calls
+  `begin_turn` until step 3; `Turn::record_turn` and `keep_tools` are gone, and `give_up_turn`
+  builds only what the agent is told before the state keeps the branch. Changed with it: the
+  warning that a transcript changed during a turn no longer names the agent - the model does not
+  know it; the agent's span, which every step of a turn runs in, does.
 

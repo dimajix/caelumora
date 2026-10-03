@@ -20,7 +20,8 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::agent::{AgentChannelState, TurnEntry};
+use crate::agent::AgentChannelState;
+use crate::turn::TurnEntry;
 use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
@@ -362,7 +363,8 @@ impl<'a> ContextResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{AgentId, TurnState};
+    use crate::agent::AgentId;
+    use crate::turn::TurnState;
     use crate::digest::prompt;
     use crate::message::MessageId;
 

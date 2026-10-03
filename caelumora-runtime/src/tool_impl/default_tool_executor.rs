@@ -118,7 +118,7 @@ mod tests {
 
     fn agent_state() -> AgentChannelState {
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.turn = Some(caelumora_model::agent::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() });
+        agent_channel_state.turn = Some(caelumora_model::turn::TurnState { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() });
         agent_channel_state
     }
 

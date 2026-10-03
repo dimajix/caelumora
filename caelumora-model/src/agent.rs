@@ -1,23 +1,22 @@
 use crate::actor::{ActorId, ActorState, EventContext};
-use crate::approval::{ApprovalRequest, ApprovalStatus};
 use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
-use crate::context::{ContextRef, KnowledgeRef};
-use crate::chain::{Node, Stored};
+use crate::context::{ContextRef, ModelProfile};
+use crate::chain::Stored;
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::message::{Message, MessageId};
-use crate::memory::{Memories, MemoryChain, MemoryChange, MemoryOrigin};
+use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
-use crate::transcript::{Transcript, TranscriptEntry};
-use crate::note::{NoteChain, NoteChange, Notes};
+use crate::transcript::{GivenUp, GivenUpReason, Transcript, TranscriptEntry};
+use crate::turn::{TurnEntry, TurnState};
+use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::name::{Name, ScopedName};
-use crate::plan::PlanState;
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::Journaled;
-use crate::tool::{Tool, ToolCallState, ToolDefinition};
+use crate::tool::{Tool, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -208,163 +207,6 @@ pub struct AgentChannelState {
     pub remote: RemoteState,
 }
 
-/// The working state of one turn (issue 85): what the turn is - fixed when
-/// it begins - and what it has produced and staged so far, none of it taken
-/// over yet. Taking the turn over (`commit_turn`) or giving it up
-/// (`give_up_turn`, issue 145) ends it as a whole; a branch switch (issue
-/// 08) will give it up the same way.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TurnState {
-    /// The envelope the turn answers, continued in the agent's name - its
-    /// sender is the agent: carries the ids (`span_id`, `correlation_id`)
-    /// that tie the turn to what started it.
-    pub event_context: EventContext,
-    /// Whose authority the turn acts with.
-    pub security_context: SecurityContext,
-    /// The channel's classification as it was when the turn began (issues
-    /// 61, 133): the turn is consistent in itself should the channel be
-    /// reclassified (issue 67).
-    pub classification: Classification,
-    /// The join of the classifications of everything the turn has seen so
-    /// far (issue 168) - its transcript, its prompt parts, the knowledge it
-    /// read, its tool results - never above `classification`: what it
-    /// writes is classified so (`label`). `None` for a turn stored before
-    /// it was kept, which counts as having seen its channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seen: Option<Classification>,
-    /// The agent's tools as they were when the turn began (issue 137): what
-    /// its model is offered for every call of the turn, and what its calls
-    /// are labelled and put up for approval by - one set for the whole turn,
-    /// a resumed one included.
-    pub tools: Vec<Tool>,
-    /// What the next message of the turn is produced from, as references
-    /// (issues 47, 49, 136, 137): the transcript so far - the agent's,
-    /// continued by the turn's own messages - the prompt parts placed in it,
-    /// the tools offered, the knowledge read, the rules of the model. Resolved by
-    /// `crate::context::ContextResolver`; what is recorded with each
-    /// message.
-    pub context: ContextRef,
-    /// The messages the turn produced so far, each with the digest it will
-    /// have in the transcript and what it was produced from.
-    pub entries: Vec<TurnEntry>,
-    /// Changes to the agent's memory, each with where it was made, applied
-    /// to the agent's `AgentState` as it is when the turn completes (issue
-    /// 62).
-    pub memory: Vec<(MemoryChange, MemoryOrigin)>,
-    /// Changes to the agent's notes in this channel, applied when the turn
-    /// completes (issue 65).
-    pub notes: Vec<NoteChange>,
-    /// Changes to its private notes in this channel, likewise (issue 51).
-    pub private_notes: Vec<NoteChange>,
-    /// The tool calls of the current step, with their approvals and results.
-    pub tool_calls: Vec<ToolCallState>,
-    /// The plan in progress, if any.
-    pub plan: Option<PlanState>,
-    /// Set by a tool (the stop tool): the turn ends with this tool step, and
-    /// the agent lands in this state instead of `Idle`.
-    pub requested_state: Option<ActorState>,
-    /// How many times the turn asked its model so far - kept with the turn,
-    /// so that its limit holds for a turn resumed after a restart too
-    /// (issue 157).
-    #[serde(default)]
-    pub model_calls: u32,
-}
-
-impl TurnState {
-    /// The approval requests of the calls of the current step that still
-    /// wait for a decision, as the turn asks for them - the same ids every
-    /// time, in the name of the agent the turn's context is sent by. The
-    /// turn is their record (issue 172): the approver is asked again from
-    /// it when the turn resumes, and a client is shown them from it. None
-    /// for a turn whose context is sent by no agent.
-    pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
-        let ActorId::Agent(agent) = self.event_context.sender_id else { return Vec::new() };
-        self.tool_calls.iter()
-            .filter(|c| c.status == ApprovalStatus::Pending)
-            .map(|c| ApprovalRequest {
-                id: c.id,
-                session_id: self.event_context.session_id,
-                channel_id: self.event_context.channel_id,
-                agent_id: agent,
-                tool_call: c.tool_call.clone(),
-                description: c.description.clone(),
-            })
-            .collect()
-    }
-
-    /// Appends `message`, produced by the turn from its context as it
-    /// stands, and moves the context on past it (issue 136). The message
-    /// gets the digest it will have in the transcript, computed as the
-    /// transcript's chain would: the turn's messages continue the agent's
-    /// transcript, which does not change while a turn runs.
-    pub fn push(&mut self, message: Message) {
-        let context = self.context.clone();
-        let digest = crate::digest::message_chain(context.transcript.as_ref(), &message);
-        self.context.transcript = Some(digest);
-        self.context.turn_entries += 1;
-        self.entries.push(TurnEntry { node: Node::new(digest, context.transcript, TranscriptEntry::Message(message)), context });
-    }
-
-    /// The messages the turn produced so far.
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
-        self.entries.iter().filter_map(|e| e.node.entry.message())
-    }
-
-    /// Records that the turn read `reference` (issue 17): it counts for the
-    /// messages produced from now on, and the turn has seen what it is
-    /// classified (`see`). Recorded once.
-    pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
-        self.see_classified(reference.classification.as_ref());
-        if !self.context.knowledge.contains(&reference) {
-            self.context.knowledge.push(reference);
-        }
-    }
-
-    /// The classification of what the turn writes - its messages, its
-    /// notes, what it remembers (issue 168): what it has seen so far, at
-    /// most its channel's classification when it began.
-    pub fn label(&self) -> Classification {
-        self.seen.clone().unwrap_or_else(|| self.classification.clone())
-    }
-
-    /// Records that the turn has seen what is classified `classification`:
-    /// its label rises to the join of both (`Classification::join`). Where
-    /// the join is not known to flow into the channel - no compartment in
-    /// common, or only by which compartments read which - the label is the
-    /// channel's classification, which everything the turn sees flows into.
-    pub fn see(&mut self, classification: &Classification) {
-        let channel = &self.classification;
-        let label = self.label().join(classification).filter(|joined| joined.surely_flows_to(channel));
-        self.seen = Some(label.unwrap_or_else(|| channel.clone()));
-    }
-
-    /// Records that the turn has seen what came with `classification`, if
-    /// it came with one (`see`): what is not classified counts as the
-    /// channel.
-    pub fn see_classified(&mut self, classification: Option<&Classification>) {
-        let channel = self.classification.clone();
-        self.see(classification.unwrap_or(&channel));
-    }
-
-    /// Records that the turn has seen `message`: its classification and
-    /// that of every tool result in it.
-    pub fn see_message(&mut self, message: &Message) {
-        self.see(&message.classification);
-        for result in &message.tool_results {
-            self.see(&result.classification);
-        }
-    }
-}
-
-/// A message a turn produced, not yet taken over (issue 136): as it will be
-/// in the transcript, and what it was produced from - what is recorded with
-/// it in the history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnEntry {
-    pub node: Node<TranscriptEntry>,
-    pub context: ContextRef,
-}
-
 impl AgentChannelState {
     /// Takes in what others said (issues 196, 206), the same for both kinds
     /// of agent: all that was offered to it, `heard`, into its history; what
@@ -376,6 +218,100 @@ impl AgentChannelState {
             perceived.iter().for_each(|m| turn.see_message(m));
         }
         self.transcript.extend(perceived);
+    }
+
+    /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
+    /// whose authority it acts with, the channel's classification now, how
+    /// the agent's model is given its context (the `profile`, issues 49, 63),
+    /// and the agent's `tools` (issue 137), whose set is kept once by digest.
+    /// All but the first two hold for the whole turn - also one resumed after
+    /// the model's configuration or the agent's tools changed - so that what
+    /// it reads, publishes and remembers is judged alike, and what its model
+    /// is given and offered too. The turn has seen the transcript, which is
+    /// what the model is given first (issue 168). Whatever a previous turn
+    /// left behind is gone.
+    pub fn begin_turn(
+        &mut self,
+        event_context: EventContext,
+        security_context: SecurityContext,
+        classification: Classification,
+        tools: Vec<Tool>,
+        profile: ModelProfile,
+    ) {
+        let offered = (!tools.is_empty()).then(|| {
+            let definitions: Vec<ToolDefinition> = tools.iter().map(Tool::definition).collect();
+            let digest = crate::digest::tools(&definitions);
+            self.tool_sets.keep(digest, || definitions);
+            digest
+        });
+        let mut turn = TurnState {
+            event_context,
+            security_context,
+            classification,
+            tools,
+            context: ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() },
+            seen: Some(Classification::PUBLIC),
+            ..TurnState::default()
+        };
+        self.transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| turn.see_message(m));
+        self.turn = Some(turn);
+    }
+
+    /// Takes over what a turn produced (issues 06, 17, 136): its `entries`
+    /// into the transcript - and those not internal into the history, each
+    /// with what it was produced from - and its changes to the agent's
+    /// `notes` and `private_notes` here, anchored at its last message in the
+    /// history. Returns whether there were changes to the notes.
+    pub fn record_turn(&mut self, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
+        let expected = entries.last().map(|e| e.node.digest);
+        for TurnEntry { node, context } in entries {
+            let TranscriptEntry::Message(message) = node.entry else { continue };
+            self.transcript.push(message.clone());
+            if !message.internal {
+                self.history.push(message, Some(context));
+            }
+        }
+        // The turn's messages got their digests continuing the transcript
+        // as it was when the turn began (issue 136); had it changed
+        // meanwhile, what they were produced from could not be told.
+        if expected.is_some() && self.transcript.digest() != expected {
+            tracing::warn!("An agent's transcript changed during a turn; the contexts recorded for the turn's messages cannot be resolved");
+        }
+
+        // A message of the history, not an internal step of the transcript:
+        // what branching (issue 08) will find the changes by.
+        let after = self.history.last_message_id();
+        let origin = NoteOrigin { transcript: self.transcript.digest() };
+        let changed = !notes.is_empty() || !private_notes.is_empty();
+        for change in notes {
+            self.notes.push(change, origin.clone(), after);
+        }
+        for change in private_notes {
+            self.private_notes.push(change, origin.clone(), after);
+        }
+        changed
+    }
+
+    /// Keeps what a turn given up for `reason` produced, its `entries`, as a
+    /// branch that is no longer active (issue 145): recorded as when taken
+    /// over (`record_turn`), each with what it was produced from, then both
+    /// heads moved back to where the turn began, and the transcript records
+    /// the turn as given up, naming the branch. A turn that produced
+    /// nothing leaves nothing.
+    pub fn give_up_turn(&mut self, entries: Vec<TurnEntry>, reason: GivenUpReason) {
+        let turn_entries = entries.len();
+        if turn_entries == 0 {
+            return;
+        }
+        let transcript = self.transcript.digest();
+        let history = self.history.digest();
+        self.record_turn(entries, Vec::new(), Vec::new());
+        let end = self.transcript.digest();
+        self.transcript.move_head(transcript.as_ref());
+        self.history.move_head(history.as_ref());
+        if let Some(end) = end {
+            self.transcript.give_up(end, GivenUp { reason, at: chrono::Utc::now(), turn_entries });
+        }
     }
 
     /// What the history recorded the message `id` - on whichever branch -
@@ -493,7 +429,8 @@ impl Journaled for AgentState {
 pub(crate) mod tests {
     use super::*;
     use crate::actor::ActorState;
-    use crate::confidentiality::{Compartment, Confidentiality};
+    use crate::confidentiality::Confidentiality;
+    use crate::tool::{ToolParameters, ToolVisibility};
 
     #[test]
     fn a_personality_is_internal_unless_named_external() {
@@ -519,29 +456,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_turn_writes_as_what_it_has_seen_never_above_its_channel() {
-        let classified = |level, compartments: &[&str]| Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap();
-        let channel = classified(Confidentiality::Confidential, &["hr"]);
-        let mut turn = TurnState { classification: channel.clone(), seen: Some(Classification::PUBLIC), ..TurnState::default() };
-        assert_eq!(turn.label(), Classification::PUBLIC, "nothing seen");
-
-        turn.see(&Classification::general(Confidentiality::Internal));
-        assert_eq!(turn.label(), Classification::general(Confidentiality::Internal));
-        turn.see(&classified(Confidentiality::Internal, &["hr", "sales"]));
-        assert_eq!(turn.label(), classified(Confidentiality::Internal, &["hr", "sales"]), "a wider audience than the channel's");
-        turn.see(&classified(Confidentiality::Internal, &["sales"]));
-        assert_eq!(turn.label(), channel, "not known to flow into the channel: the channel");
-        turn.see(&Classification::PUBLIC);
-        assert_eq!(turn.label(), channel, "it never falls");
-
-        let mut unknown = TurnState { classification: channel.clone(), seen: Some(Classification::PUBLIC), ..TurnState::default() };
-        unknown.see_classified(None);
-        assert_eq!(unknown.label(), channel, "what is not known counts as the channel");
-        let stored_before = TurnState { classification: channel.clone(), ..TurnState::default() };
-        assert_eq!(stored_before.label(), channel, "a turn stored before it was kept has seen its channel");
-    }
-
-    #[test]
     fn a_turn_under_way_is_stored_with_the_state_and_none_between_turns() {
         let idle = AgentChannelState::default();
         let json = serde_json::to_string(&idle).unwrap();
@@ -562,6 +476,85 @@ pub(crate) mod tests {
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.processing_state, ActorState::WaitingForApproval);
         assert_eq!(decoded.turn.map(|t| t.messages().count()), Some(1), "the turn is resumed from what was stored");
+    }
+
+    fn said(content: &str, classification: Classification) -> Message {
+        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(classification) }
+    }
+
+    fn a_state_that_heard(content: &str, classification: Classification) -> AgentChannelState {
+        let mut state = AgentChannelState::default();
+        let message = said(content, classification);
+        state.perceive(vec![message.clone()], vec![message]);
+        state
+    }
+
+    fn begin(state: &mut AgentChannelState, tools: Vec<Tool>) {
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, tools, ModelProfile::default());
+    }
+
+    #[test]
+    fn a_turn_begun_has_seen_the_transcript_and_offers_its_tools_kept_once() {
+        let internal = Classification::general(Confidentiality::Internal);
+        let mut state = a_state_that_heard("hello", internal.clone());
+        let tool = Tool {
+            name: "calc".to_string(),
+            description: "calculates".to_string(),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval: false,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+        };
+        begin(&mut state, vec![tool.clone()]);
+        begin(&mut state, vec![tool]);
+        let turn = state.turn.as_ref().expect("a turn was begun");
+        assert_eq!(turn.label(), internal, "it has seen the transcript");
+        assert_eq!(turn.context.transcript, state.transcript.digest(), "it continues the transcript");
+        assert!(turn.context.tools.is_some() && state.tool_sets.len() == 1, "the set offered is kept once");
+
+        begin(&mut state, Vec::new());
+        assert!(state.turn.as_ref().is_some_and(|t| t.context.tools.is_none()), "no tools, no set");
+    }
+
+    #[test]
+    fn a_turn_recorded_continues_the_transcript_and_keeps_in_the_history_what_is_not_internal() {
+        let mut state = a_state_that_heard("add 1 and 2", Classification::CHANNEL_DEFAULT);
+        begin(&mut state, Vec::new());
+        let mut turn = state.turn.take().expect("a turn was begun");
+        turn.push(Message { internal: true, ..said("thinking", Classification::CHANNEL_DEFAULT) });
+        let answer = said("3", Classification::CHANNEL_DEFAULT);
+        turn.push(answer.clone());
+        let produced_from = turn.entries[1].context.clone();
+        let expected = turn.entries.last().map(|e| e.node.digest);
+        let note = NoteChange::Add { id: crate::note::NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
+
+        assert!(state.record_turn(turn.entries, vec![note], Vec::new()), "a note changed");
+        assert_eq!(state.transcript.digest(), expected, "the turn's messages have the digests they were given");
+        assert_eq!(state.transcript.entries().count(), 3);
+        assert_eq!(state.history.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "3"]);
+        assert_eq!(state.recorded_context_of(answer.id), Some(produced_from), "with what it was produced from");
+        assert_eq!(state.notes.current().len(), 1);
+    }
+
+    #[test]
+    fn a_turn_given_up_is_a_branch_no_longer_active_and_names_it() {
+        let mut state = a_state_that_heard("mail bob", Classification::CHANNEL_DEFAULT);
+        let history = state.history.digest();
+        begin(&mut state, Vec::new());
+        let mut turn = state.turn.take().expect("a turn was begun");
+        turn.push(said("mailing", Classification::CHANNEL_DEFAULT));
+
+        state.give_up_turn(turn.entries, GivenUpReason::Stopped);
+        assert_eq!(state.history.digest(), history, "the history is back where it began");
+        let active: Vec<String> = state.transcript.entries().filter_map(|e| e.entry.message()).map(|m| m.content.clone().unwrap_or_default()).collect();
+        assert_eq!(active, ["mail bob"], "and so is the transcript, followed by the record");
+        let given_up = state.transcript.given_up_turns();
+        assert_eq!(given_up.len(), 1);
+        assert_eq!(given_up[0].given_up.turn_entries, 1);
+        assert_eq!(given_up[0].messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["mailing"]);
+
+        state.give_up_turn(Vec::new(), GivenUpReason::Stopped);
+        assert_eq!(state.transcript.given_up_turns().len(), 1, "a turn that produced nothing leaves nothing");
     }
 
     /// `state` as a store holds it, and the live state marked stored.

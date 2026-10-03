@@ -41,15 +41,16 @@ use crate::transport::EventSender;
 use crate::view::{SessionView, ViewsFactory};
 use anyhow::{Context, Result};
 use caelumora_model::actor::{ActorEvent, ActorState, Envelope, EventContext};
-use caelumora_model::agent::{AgentChannelState, AgentId, TurnState};
+use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{ContextRef, KnowledgeRef, ModelProfile};
+use caelumora_model::context::{KnowledgeRef, ModelProfile};
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
 use caelumora_model::message::Message;
 use caelumora_model::note::NoteChange;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::tool::{Tool, ToolDefinition};
+use caelumora_model::tool::Tool;
 use std::sync::{Arc, LazyLock};
 
 /// What a turn reads as when none runs.
@@ -176,14 +177,8 @@ impl<'a> Turn<'a> {
         &self.current().memory
     }
 
-    /// Begins a turn: fixes what it is - the envelope it answers, whose
-    /// authority it acts with, the channel and its classification now,
-    /// how the agent's model is given its context (the profile, issues 49,
-    /// 63), and the agent's `tools` (issue 137). All but the first two hold
-    /// for the whole turn - also one resumed after the model's configuration
-    /// or the agent's tools changed - so that what it reads, publishes and
-    /// remembers is judged alike, and what its model is given and offered
-    /// too. Whatever a previous turn left behind is gone.
+    /// Begins a turn on the agent's state (`AgentChannelState::begin_turn`),
+    /// its model given its context as the turn's profile says.
     pub(crate) fn next_turn(
         &mut self,
         event_context: EventContext,
@@ -191,38 +186,7 @@ impl<'a> Turn<'a> {
         classification: Classification,
         tools: Vec<Tool>,
     ) {
-        let offered = self.keep_tools(&tools);
-        self.agent_channel_state.turn = Some(TurnState {
-            event_context,
-            security_context,
-            classification,
-            tools,
-            context: ContextRef {
-                transcript: self.agent_channel_state.transcript.digest(),
-                tools: offered,
-                profile: self.profile,
-                ..ContextRef::default()
-            },
-            seen: Some(Classification::PUBLIC),
-            ..TurnState::default()
-        });
-        // The transcript is what the model is given first (issue 168).
-        let transcript = &self.agent_channel_state.transcript;
-        if let Some(turn) = self.agent_channel_state.turn.as_mut() {
-            transcript.entries().filter_map(|e| e.entry.message()).for_each(|m| turn.see_message(m));
-        }
-    }
-
-    /// Keeps the set of `tools` as the model is offered them once by digest
-    /// (issue 137), and returns the digest - `None` for no tools.
-    fn keep_tools(&mut self, tools: &[Tool]) -> Option<caelumora_model::digest::Digest> {
-        if tools.is_empty() {
-            return None;
-        }
-        let definitions: Vec<ToolDefinition> = tools.iter().map(Tool::definition).collect();
-        let digest = caelumora_model::digest::tools(&definitions);
-        self.agent_channel_state.tool_sets.keep(digest, || definitions);
-        Some(digest)
+        self.agent_channel_state.begin_turn(event_context, security_context, classification, tools, self.profile);
     }
 
     /// Begins a turn with default contexts and no tools - what a test needs

@@ -950,7 +950,7 @@ mod tests {
         };
         let state_in = |actor_state: ActorState| AgentChannelState {
             processing_state: actor_state,
-            turn: Some(caelumora_model::agent::TurnState {
+            turn: Some(caelumora_model::turn::TurnState {
                 tool_calls: vec![call(ApprovalStatus::Approved, None), call(ApprovalStatus::Approved, Some("done")), call(ApprovalStatus::Pending, None)],
                 ..Default::default()
             }),

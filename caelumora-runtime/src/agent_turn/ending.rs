@@ -9,13 +9,12 @@ use crate::tool_calls::ToolCalls;
 use crate::transport::EventSender;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, EventContext};
-use caelumora_model::agent::{TurnEntry, TurnState};
+use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{executed_calls, Message};
-use caelumora_model::note::{NoteChange, NoteOrigin};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState};
-use caelumora_model::transcript::{GivenUp, GivenUpReason, TranscriptEntry};
+use caelumora_model::transcript::GivenUpReason;
 use tracing::warn;
 
 /// What is left of a turn once it ended - taken over or given up: what its
@@ -122,7 +121,7 @@ impl Turn<'_> {
         // Every part is used up exactly once.
         let final_messages = turn.messages().filter(|m| !m.internal).cloned().collect();
         let TurnState { entries, memory, notes, private_notes, .. } = turn;
-        let channel_state_changed = self.record_turn(entries, notes, private_notes);
+        let channel_state_changed = self.agent_channel_state.record_turn(entries, notes, private_notes);
         if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
@@ -148,7 +147,6 @@ impl Turn<'_> {
         let ended = EndedTurn::of(&turn, abandoned_calls);
         let label = turn.label();
         let TurnState { entries, .. } = turn;
-        let Some(count) = std::num::NonZeroUsize::new(entries.len()) else { return ended };
         let messages: Vec<&Message> = entries.iter().filter_map(|e| e.node.entry.message()).collect();
         let executed = executed_calls(&messages);
         let told = (!executed.is_empty()).then(|| Message {
@@ -157,17 +155,7 @@ impl Turn<'_> {
             internal: true,
             ..Message::new(names_only.unwrap_or(label))
         });
-
-        let transcript = self.agent_channel_state.transcript.digest();
-        let history = self.agent_channel_state.history.digest();
-        self.record_turn(entries, Vec::new(), Vec::new());
-        let end = self.agent_channel_state.transcript.digest();
-        self.agent_channel_state.transcript.move_head(transcript.as_ref());
-        self.agent_channel_state.history.move_head(history.as_ref());
-        if let Some(end) = end {
-            let given_up = GivenUp { reason: reason.clone(), at: chrono::Utc::now(), turn_entries: count.get() };
-            self.agent_channel_state.transcript.give_up(end, given_up);
-        }
+        self.agent_channel_state.give_up_turn(entries, reason);
 
         if let Some(message) = told {
             self.agent_channel_state.transcript.push(message);
@@ -187,40 +175,6 @@ impl Turn<'_> {
             Some(turn) => ToolCalls::new(turn, &self.agent_name).abandon(because, internal),
             None => Vec::new(),
         }
-    }
-
-    /// The part of `commit_turn` that concerns the agent's state in this
-    /// channel: the turn's `entries` - its messages, each with what it was
-    /// produced from - and its changes to the agent's `notes` and
-    /// `private_notes` there. Returns whether there were changes.
-    fn record_turn(&mut self, entries: Vec<TurnEntry>, notes: Vec<NoteChange>, private_notes: Vec<NoteChange>) -> bool {
-        let expected = entries.last().map(|e| e.node.digest);
-        for TurnEntry { node, context } in entries {
-            let TranscriptEntry::Message(message) = node.entry else { continue };
-            self.agent_channel_state.transcript.push(message.clone());
-            if !message.internal {
-                self.agent_channel_state.history.push(message, Some(context));
-            }
-        }
-        // The turn's messages got their digests continuing the transcript
-        // as it was when the turn began (issue 136); had it changed
-        // meanwhile, what they were produced from could not be told.
-        if expected.is_some() && self.agent_channel_state.transcript.digest() != expected {
-            warn!("Agent {}: its transcript changed during a turn; the contexts recorded for the turn's messages cannot be resolved", self.agent_id);
-        }
-
-        // A message of the history, not an internal step of the transcript:
-        // what branching (issue 08) will find the changes by.
-        let after = self.agent_channel_state.history.last_message_id();
-        let origin = NoteOrigin { transcript: self.agent_channel_state.transcript.digest() };
-        let changed = !notes.is_empty() || !private_notes.is_empty();
-        for change in notes {
-            self.agent_channel_state.notes.push(change, origin.clone(), after);
-        }
-        for change in private_notes {
-            self.agent_channel_state.private_notes.push(change, origin.clone(), after);
-        }
-        changed
     }
 }
 

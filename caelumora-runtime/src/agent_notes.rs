@@ -13,7 +13,8 @@
 use crate::agent_turn::Turn;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, TurnState};
+use caelumora_model::agent::AgentChannelState;
+use caelumora_model::turn::TurnState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
 use caelumora_model::digest::Digest;
