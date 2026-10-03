@@ -211,6 +211,16 @@ impl Classification {
         classifications.into_iter().try_fold(Classification::PUBLIC, |joined, c| joined.join(c))
     }
 
+    /// `self` joined with `other` (`join`) where the join is known to flow
+    /// into `bound` (`surely_flows_to`); else `bound` - no compartment in
+    /// common, or only by which compartments read which. What a piece of
+    /// work writes as once it has seen `other` (issues 168, 212): it has
+    /// seen nothing that does not flow into its bound, so the bound holds
+    /// all of it.
+    pub fn join_within(&self, other: &Classification, bound: &Classification) -> Classification {
+        self.join(other).filter(|joined| joined.surely_flows_to(bound)).unwrap_or_else(|| bound.clone())
+    }
+
     /// Whether what is classified `self` flows into `destination` whatever
     /// compartments read which (issue 168): `flows_to` as if none read
     /// another. What does flows under every read relation.
@@ -623,6 +633,17 @@ mod tests {
         assert_eq!(joined(classified(Internal, &["hr"]), classified(Internal, &["sales"])), None, "no audience in common");
         assert_eq!(Classification::join_all([]), Some(Classification::PUBLIC));
         assert_eq!(Classification::join_all(&[Classification::general(Internal), classified(Confidential, &["hr", "sales"]), classified(Internal, &["sales"])]), Some(classified(Confidential, &["sales"])));
+    }
+
+    #[test]
+    fn a_join_within_a_bound_is_the_join_where_it_surely_flows_and_else_the_bound() {
+        let bound = classified(Confidential, &["hr"]);
+        assert_eq!(Classification::PUBLIC.join_within(&Classification::general(Internal), &bound), Classification::general(Internal), "within it: the join");
+        assert_eq!(Classification::general(Internal).join_within(&classified(Internal, &["hr", "sales"]), &bound), classified(Internal, &["hr", "sales"]), "a wider audience than the bound's");
+        assert_eq!(classified(Internal, &["hr"]).join_within(&classified(Internal, &["sales"]), &bound), bound, "no audience in common: the bound");
+        assert_eq!(classified(Internal, &["hr", "sales"]).join_within(&classified(Internal, &["sales"]), &bound), bound, "not known to flow into the bound: the bound");
+        let hr_management = classified(Internal, &["hr_management"]);
+        assert_eq!(Classification::PUBLIC.join_within(&classified(Internal, &["hr"]), &hr_management), hr_management, "only by the read relation: the bound");
     }
 
     #[test]

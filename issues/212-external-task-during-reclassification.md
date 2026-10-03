@@ -1,6 +1,6 @@
 # 212 — An external agent's task that began before its channel was lowered is answered into the lowered channel
 
-**Status:** open
+**Status:** in progress
 **Area:** Confidentiality, integrations
 
 ## The problem
@@ -263,4 +263,7 @@ About 20 lines in the model (method, two fields, `Work` if decided), 120 in the 
   work is given up as a turn when its channel is lowered; finding 3 is fixed here; the four values
   a piece of work is done in become one struct `Work` in the model, and `OpenTask` holds an
   `Option<Work>`.
+- **2026-10-03** — Step 1 done: `Classification::join_within(other, bound)` holds the rule
+  `TurnState::see` had - the join where it surely flows into the bound, else the bound - and
+  `TurnState::see` uses it. No change of behaviour.
 

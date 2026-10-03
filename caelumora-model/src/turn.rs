@@ -138,14 +138,11 @@ impl TurnState {
     }
 
     /// Records that the turn has seen what is classified `classification`:
-    /// its label rises to the join of both (`Classification::join`). Where
-    /// the join is not known to flow into the channel - no compartment in
-    /// common, or only by which compartments read which - the label is the
-    /// channel's classification, which everything the turn sees flows into.
+    /// its label rises to the join of both, within the channel's
+    /// classification, which everything the turn sees flows into
+    /// (`Classification::join_within`).
     pub fn see(&mut self, classification: &Classification) {
-        let channel = &self.classification;
-        let label = self.label().join(classification).filter(|joined| joined.surely_flows_to(channel));
-        self.seen = Some(label.unwrap_or_else(|| channel.clone()));
+        self.seen = Some(self.label().join_within(classification, &self.classification));
     }
 
     /// Records that the turn has seen what came with `classification`, if
