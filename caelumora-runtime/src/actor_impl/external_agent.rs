@@ -260,13 +260,13 @@ impl ExternalAgentActor {
             };
             match answer.take(state, task.as_ref(), event) {
                 Step::Continue => {}
-                // The task it began - or the one it answers, taken up again.
-                // Stored at once, with what was given for it: a crash while
-                // the task works leaves it to be followed after the restart,
-                // not forgotten while the remote agent goes on with it.
+                // The task it began - or the one it answers, taken up again -
+                // done in the request's contexts from now on. Stored at once,
+                // with what was given for it: a crash while the task works
+                // leaves it to be followed after the restart, not forgotten
+                // while the remote agent goes on with it.
                 Step::Started(started) => {
-                    state.remote.open(&started, OpenTaskState::Working);
-                    state.remote.set_requested(&started, &answering.event_context);
+                    state.remote.begin(&started, &answering.event_context, &answering.security_context);
                     task = Some(started);
                     if let Err(e) = self.actor_runtime.store_channel_state(state).await {
                         warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
@@ -286,8 +286,9 @@ impl ExternalAgentActor {
     }
 
     /// Re-attaches to every task left working that is not followed yet
-    /// (`ExternalAgent::resume`): after a restart, or when the answer to a
-    /// request ended before its task did. A task is re-attached once per
+    /// (`ExternalAgent::resume`), in the authority it is done with
+    /// (`acting_for`): after a restart, or when the answer to a request
+    /// ended before its task did. A task is re-attached once per
     /// run of the actor, so that a remote side that keeps breaking off does
     /// not keep it busy; the next run tries again. A task that asked back
     /// waits for the next request instead.
@@ -297,7 +298,7 @@ impl ExternalAgentActor {
             if !attempted.insert(task.clone()) {
                 continue;
             }
-            match self.remote.resume(&self.security_context, &task).await {
+            match self.remote.resume(&self.acting_for(state, &task), &task).await {
                 Ok(stream) => {
                     debug!("External agent {} follows its open task again", self.id());
                     let tag = task.clone();
@@ -315,7 +316,7 @@ impl ExternalAgentActor {
     /// in the channel (`speak`); `pending` holds what came so far of each.
     async fn on_followed(&self, state: &mut AgentChannelState, task: TaskId, event: Option<ExternalAgentResult<ExternalEvent>>, pending: &mut HashMap<TaskId, Answer>, output: &dyn EventSender) {
         // Read before the task may be closed by what comes of it.
-        let requested = state.remote.requested_in(&task);
+        let contexts = state.remote.contexts_of(&task);
         let answer = pending.entry(task.clone()).or_insert_with(|| Answer::after(state.remote.unsaid_of(&task)));
         let outcome = match event {
             // It is known to be open and working, and nobody waits for its
@@ -344,7 +345,7 @@ impl ExternalAgentActor {
         let answer = pending.remove(&task).unwrap_or_default();
         // Said now, if it asks back and stays open.
         state.remote.set_unsaid(&task, None);
-        self.speak(state, requested, outcome.map(|()| answer), output).await;
+        self.speak(state, contexts, outcome.map(|()| answer), output).await;
     }
 
     /// Says in the channel, on the agent's own account, what came of an
@@ -352,22 +353,23 @@ impl ExternalAgentActor {
     /// failed. It wakes nobody: sleeping agents hear it all the same, and
     /// only one it mentions is woken, to answer it (issue 199). What it
     /// says is kept in its history and stored first; a failure, as when it
-    /// answers a request, keeps nothing of what came before it. It speaks in the
-    /// context `requested` of the answer to the request that began the
-    /// task, continued: in its span, and as many hops between agents away
-    /// from the last user's message as that answer (issue 45). A task
-    /// stored before that context was kept starts afresh.
-    async fn speak(&self, state: &mut AgentChannelState, requested: Option<EventContext>, outcome: Result<Answer, String>, output: &dyn EventSender) {
+    /// answers a request, keeps nothing of what came before it. It speaks in
+    /// the task's `contexts` (`RemoteState::contexts_of`): with the
+    /// authority of the request that began it, and in the event context of
+    /// the answer to it, continued - in its span, and as many hops between
+    /// agents away from the last user's message as that answer (issue 45).
+    /// A task without them speaks afresh, as the agent itself.
+    async fn speak(&self, state: &mut AgentChannelState, contexts: Option<(EventContext, SecurityContext)>, outcome: Result<Answer, String>, output: &dyn EventSender) {
         let Some(channel) = self.actor_runtime.channel_loop() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
-        let speaking = Answering {
-            event_context: match requested {
-                Some(requested) => requested.next(self.id(), self.name()),
-                None => EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
+        let speaking = match contexts {
+            Some((event_context, security_context)) => Answering { event_context: event_context.next(self.id(), self.name()), security_context },
+            None => Answering {
+                event_context: EventContext::new(self.security_context.session_id, self.security_context.channel_id, self.id(), self.name()),
+                security_context: self.security_context.clone(),
             },
-            security_context: self.security_context.clone(),
         };
         let events = match outcome {
             Err(reason) => vec![ActorEvent::TurnFailed { message: format!("{} could not finish: {reason}", self.name()) }],
@@ -381,6 +383,13 @@ impl ExternalAgentActor {
             warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
         }
         speaking.send_all(events, output).await;
+    }
+
+    /// The authority the open `task` is done with: that of the request that
+    /// began it, as a turn acts with its request's (issue 211) - else, for a
+    /// task stored before it was kept, the agent's own.
+    fn acting_for(&self, state: &AgentChannelState, task: &TaskId) -> SecurityContext {
+        state.remote.contexts_of(task).map(|(_, security)| security).unwrap_or_else(|| self.security_context.clone())
     }
 
     /// Asks the remote agent to cancel `task`, and forgets it: a cancel that
@@ -605,7 +614,8 @@ impl Actor for ExternalAgentActor {
         if self.ended.is_cancelled() {
             let working: Vec<TaskId> = state.remote.open_tasks.iter().map(|t| t.task.clone()).collect();
             for task in working {
-                self.cancel_remote(&mut state, &self.security_context, &task).await;
+                let acting = self.acting_for(&state, &task);
+                self.cancel_remote(&mut state, &acting, &task).await;
             }
             if let Err(e) = self.actor_runtime.store_channel_state(&mut state).await {
                 warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);

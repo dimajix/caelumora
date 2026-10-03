@@ -1,6 +1,6 @@
 # 211 — `Turn` is the agent's handle between turns, the components' API and the turn's logic at once
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -440,4 +440,16 @@ Each step is a commit of its own.
   actors; the `AgentActor` takes the request envelope to begin a turn (`Answering::to`), as the
   external one does. Changed with it: a failed send names the actor in the same words for both
   ("actor … failed to send an event").
-
+- **2026-10-03** — Step 5 done: an `OpenTask` keeps `event_context` and `security_context`, set
+  by `RemoteState::begin` when a task begins or is taken up again in answer to a request;
+  `RemoteState::contexts_of` replaces `requested_in`, and `set_requested` is gone. The external
+  agent follows (`resume`), cancels and tells of an open task in its contexts (`acting_for`,
+  `speak`); a task without them acts as the agent itself, as before. Changed with it, as decided:
+  the remote agent is called with the authority of whoever asked for as long as the task is open,
+  also after a restart - tested in the security suite
+  (`an_external_agents_task_is_followed_in_the_name_of_whoever_asked`, which fails with the old
+  behaviour) and in `channel.rs`. Deviating from the plan: the old field `requested` is not read
+  under the new name - a task needs both contexts, and one stored with only the event context
+  would have acted in its request's span but in the agent's own name; it starts afresh instead.
+  `SecurityContext` is `PartialEq` and `Eq` now, since `RemoteState` is. CHANNELS.md says what an
+  open task keeps. All five steps are done, and every point of *Done when* is met.

@@ -3081,7 +3081,7 @@ mod tests {
 
         // The remote agent takes the request on, and is still at work.
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![Ok(ExternalEvent::Started(task("t-1")))]]));
-        let Stuck { channel, agent, running, .. } = with_an_external_agent(remote).await;
+        let Stuck { channel, agent, running, .. } = with_an_external_agent(remote.clone()).await;
 
         let state = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -3093,6 +3093,10 @@ mod tests {
         assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)]);
         assert_eq!(state.transcript.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["hello"], "with what it was given for it");
         assert_eq!(state.remote.sent_up_to, state.transcript.digest(), "and how far it was sent: a restart gives nothing twice");
+        let (event_context, security_context) = state.remote.contexts_of(&task("t-1")).expect("with the contexts it is done in");
+        let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
+        assert_eq!(security_context, sent_as, "the authority of the request it was sent with");
+        assert_eq!(event_context.sender_id, ActorId::Agent(agent), "the request's envelope, continued in the agent's name");
         running.abort();
     }
 
@@ -3105,8 +3109,8 @@ mod tests {
         let stored = AgentChannelState {
             remote: RemoteState {
                 open_tasks: vec![
-                    OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, requested: None },
-                    OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, requested: None },
+                    OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, event_context: None, security_context: None },
+                    OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, event_context: None, security_context: None },
                 ],
                 ..RemoteState::default()
             },
@@ -3114,7 +3118,7 @@ mod tests {
         };
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Finished while you were away.".to_string())), Ok(ExternalEvent::Completed)]]));
-        let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let (channel, _, agent, owner) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
         let mut events = channel.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
@@ -3123,6 +3127,53 @@ mod tests {
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert_eq!(state.remote.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), vec![task("t-asking")], "the one that asked back waits for the next request");
         assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
+        let called_as: Vec<_> = remote.called_as.lock().unwrap().iter().map(|(call, security)| (*call, security.initiator_id)).collect();
+        assert_eq!(called_as, [("resume", ActorId::User(owner))], "a task stored without its contexts is followed as the agent itself, on its owner's behalf");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_that_began_it() {
+        use crate::external::ExternalEvent;
+        use caelumora_model::agent::AgentChannelState;
+        use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
+
+        let bob = ActorId::User(UserId::new());
+        // Bob's request, answered by the agent - continued in its name.
+        let hermes = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let request = EventContext::new(SessionId::default(), ChannelId::default(), bob, "bob".to_string());
+        let stored = AgentChannelState {
+            remote: RemoteState {
+                open_tasks: vec![OpenTask {
+                    task: task("t-1"),
+                    since: chrono::Utc::now(),
+                    state: OpenTaskState::Working,
+                    unsaid: None,
+                    event_context: Some(request.next(hermes, "hermes".to_string())),
+                    security_context: Some(SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes)),
+                }],
+                ..RemoteState::default()
+            },
+            ..AgentChannelState::default()
+        };
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+            .resuming(vec![vec![Ok(ExternalEvent::Message("Done for bob.".to_string())), Ok(ExternalEvent::Completed)]]));
+        let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let mut events = channel.subscribe();
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let told = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel runs");
+                if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_)) {
+                    return envelope;
+                }
+            }
+        }).await.expect("what came of the task is said");
+        assert_eq!(told.security.initiator_id, bob, "said with the authority of bob's request");
+        assert_eq!(told.context.span_id, request.span_id, "in its span");
+        let called_as: Vec<_> = remote.called_as.lock().unwrap().iter().map(|(call, security)| (*call, security.initiator_id)).collect();
+        assert_eq!(called_as, [("resume", bob)], "followed in bob's name, as it was begun");
         running.abort();
     }
 
@@ -3133,7 +3184,7 @@ mod tests {
         use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
         AgentChannelState {
             remote: RemoteState {
-                open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, requested: None }],
+                open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, event_context: None, security_context: None }],
                 ..RemoteState::default()
             },
             ..AgentChannelState::default()

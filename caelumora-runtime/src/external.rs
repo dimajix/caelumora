@@ -140,6 +140,9 @@ pub(crate) mod testing {
         pub(crate) sent: Mutex<Vec<(Option<ConversationId>, OutboundMessage)>>,
         /// Every task it was asked to cancel.
         pub(crate) cancelled: Mutex<Vec<TaskId>>,
+        /// In whose name it was called, for every call: the call and its
+        /// security context.
+        pub(crate) called_as: Mutex<Vec<(&'static str, SecurityContext)>>,
         /// How many requests to come cannot reach it.
         unreachable: Mutex<usize>,
     }
@@ -161,6 +164,10 @@ pub(crate) mod testing {
             Self { unreachable: Mutex::new(requests), ..self }
         }
 
+        fn called(&self, call: &'static str, security: &SecurityContext) {
+            self.called_as.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((call, security.clone()));
+        }
+
         fn next(script: &Mutex<VecDeque<Vec<ExternalAgentResult<ExternalEvent>>>>) -> ExternalStream {
             let next = script.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).pop_front();
             Box::pin(futures::stream::iter(next.unwrap_or_default()).chain(futures::stream::pending()))
@@ -169,7 +176,8 @@ pub(crate) mod testing {
 
     #[async_trait]
     impl ExternalAgent for ScriptedExternalAgent {
-        async fn send(&self, _: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
+        async fn send(&self, security: &SecurityContext, conversation: Option<&ConversationId>, message: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
+            self.called("send", security);
             let mut unreachable = self.unreachable.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if *unreachable > 0 {
                 *unreachable -= 1;
@@ -180,11 +188,13 @@ pub(crate) mod testing {
             Ok(Self::next(&self.answers))
         }
 
-        async fn resume(&self, _: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {
+        async fn resume(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {
+            self.called("resume", security);
             Ok(Self::next(&self.resumed))
         }
 
-        async fn cancel(&self, _: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
+        async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
+            self.called("cancel", security);
             self.cancelled.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(task.clone());
             Ok(())
         }

@@ -1,6 +1,6 @@
 # 206 — Agents run here and external agents keep their channel state in two types
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -327,3 +327,7 @@ without changing behaviour; step 4 changes behaviour.
   own, [211](211-turn-and-agent-work-structure.md): `Turn` only while a turn runs, the state's
   rules in the model, one `Answering` for both actors, and the `OpenTask` aligned with `TurnState`.
   This issue is `done` once that one is.
+- **2026-10-03** — The refactoring this issue was kept open for is done with
+  [211](211-turn-and-agent-work-structure.md): `Turn` only while a turn runs, a turn's rules on
+  `AgentChannelState`, one `Answering` for both actors, and the `OpenTask` keeping its contexts as
+  a `TurnState` does.

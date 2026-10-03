@@ -292,24 +292,28 @@ An **actor** is anything that sends and receives events in a channel.
     the remote agent is its answer; the next request continues that task. A cancel cancels the
     remote task and publishes what came so far; a stop cancels it - and every other open task of the
     agent - and publishes nothing.
-*   **An external agent speaks on its own** when a task outlives the request it was given for: the
+*   An external agent speaks on its own** when a task outlives the request it was given for: the
     answer broke off before the task ended, or the channel was restarted meanwhile - also by a
-    crash: a task is stored as soon as the remote agent took it on, with what it was given for it.
-    A remote agent that ends a task when its client goes away - Hermes Agent does, as failed with
-    "[client disconnected]" - has it told as failed after the restart. A request whose
-    answer broke off - its stream ended or failed - before its task ended is answered with nothing
-    rather than cut off: what came so far is kept with the open task (`OpenTask::unsaid`) and said
-    once, with the rest, when the task ends - not twice if the remote agent gives its whole result
-    again (issue 195). Its actor follows every task left working (`ExternalAgent::resume`) beside
-    the channel's events, once per run, and says what came of it on its own account, in the
-    context of its answer to the request that began the task (issue 45). It wakes nobody and does
-    not end a quiet channel: sleeping agents hear it all the same, and only an agent it mentions is
-    woken, to answer it (issue 199). Only the end of a task is said: a failed task as
-    `TurnFailed`, keeping nothing of what came before, and a stream that breaks before the task
-    ends says nothing - the task stays open and is followed again on the
-    next run. While it answers a request, what its other tasks send waits. What it heard and said is
-    all that is known of it, kept in its `AgentChannelState` as every agent's, with what ties it to
-    the remote side (`RemoteState`, issue 206; see [STORAGE.md](STORAGE.md)).
+    crash: a task is stored as soon as the remote agent took it on, with what it was given for it. A
+    remote agent that ends a task when its client goes away - Hermes Agent does, as failed with
+    "[client disconnected]" - has it told as failed after the restart. A request whose answer broke
+    off - its stream ended or failed - before its task ended is answered with nothing rather than
+    cut off: what came so far is kept with the open task (`OpenTask::unsaid`) and said once, with
+    the rest, when the task ends - not twice if the remote agent gives its whole result again (issue
+    195). Its actor follows every task left working (`ExternalAgent::resume`) beside the channel's
+    events, once per run, and says what came of it on its own account. An open task is the external
+    agent's counterpart of a turn (issue 211): it keeps the contexts of the request that began it,
+    or took it up again (`OpenTask::event_context`, `OpenTask::security_context`), and is followed,
+    cancelled and told of in them - with the authority of whoever asked, as a turn acts with its
+    request's, and in the context of the answer to that request (issue 45). A task stored before
+    they were kept acts as the agent itself. It wakes nobody and does not end a quiet channel:
+    sleeping agents hear it all the same, and only an agent it mentions is woken, to answer it
+    (issue 199). Only the end of a task is said: a failed task as `TurnFailed`, keeping nothing of
+    what came before, and a stream that breaks before the task ends says nothing - the task stays
+    open and is followed again on the next run. While it answers a request, what its other tasks
+    send waits. What it heard and said is all that is known of it, kept in its `AgentChannelState`
+    as every agent's, with what ties it to the remote side (`RemoteState`, issue 206; see
+    [STORAGE.md](STORAGE.md)).
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately through `SecurityContext::system()`.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
@@ -405,8 +409,8 @@ its policy, so a rotation is left as it is. The message is still delivered. Noth
 yet that the chain was cut off. With `max_agent_hops: 0`, agents answer only users.
 
 A user's message starts a new chain. What an external agent says unasked when a long task ends
-continues the context of its answer to the request that began the task (`OpenTask::requested`), so
-it is as many hops away as that answer was.
+continues the context of its answer to the request that began the task (`OpenTask::event_context`),
+so it is as many hops away as that answer was.
 
 `max_route_decisions` in the `ChannelLoop` is a different thing: a safety net against faulty
 routing, counted in routing steps (`span_depth`), not a rule for users.

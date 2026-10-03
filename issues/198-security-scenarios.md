@@ -171,3 +171,10 @@ be given.
   the rule - the actor's own permission first - and a section on the suite, and AGENTS.md the rule
   that every new action, and every change to what one asks, comes with its test in the suite. The
   scenarios under *Not covered yet* are left for when their actions change.
+- **2026-10-03** — A first test of an external agent, from issue
+  [211](211-turn-and-agent-work-structure.md):
+  `an_external_agents_task_is_followed_in_the_name_of_whoever_asked`. Bob asks alice's external
+  agent; the remote agent is sent his request, and after the session was stopped and opened again by
+  alice, the task is followed, in his name (`bob as hermes: ReadSecret`), not in that of the agent's
+  owner. The suite's `World` takes component kinds of a test (`World::with_kinds`). The rest of *Not
+  covered yet* stays open.

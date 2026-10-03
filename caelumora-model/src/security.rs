@@ -242,7 +242,7 @@ pub trait Secured {
     fn security_attributes(&self) -> &SecurityAttributes;
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityContext {
     pub initiator_id: ActorId,
     pub caller_id: ActorId,

@@ -15,10 +15,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
 use async_trait::async_trait;
+use futures::StreamExt;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::channel::{moderation_components, Channel, HistoryAccess, Participant};
 use caelumora_model::command::default_commands;
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityRules, Confidentiality, Roles};
 use caelumora_model::name::{Name, ScopedName};
 use caelumora_model::privacy::PrivacyConfig;
@@ -26,12 +29,13 @@ use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{ActionType, OwnershipSecurityManager, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{EntityStore, StoreError};
+use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::store_impl::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_runtime::channel::ChannelError;
-use caelumora_runtime::component::ComponentRegistry;
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
 use caelumora_runtime::view::{ViewError, Viewer};
@@ -112,13 +116,21 @@ struct World {
 
 impl World {
     async fn new() -> Self {
+        Self::with_kinds(|_| {}).await
+    }
+
+    /// The world, with the component kinds `register` adds besides the
+    /// built-in ones.
+    async fn with_kinds(register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([("staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
         let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_rules(rules), asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = recorder.clone();
         let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), ComponentRegistry::built_in(store.clone())).unwrap());
+        let mut registry = ComponentRegistry::built_in(store.clone());
+        register(&mut registry);
+        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(runtime));
         let mut world = Self { policy: recorder, store, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new() };
         world.alice = world.user("alice").await;
@@ -510,6 +522,109 @@ async fn what_an_agent_saw_is_its_owners_alone() {
     assert!(!his.may_read_context().await, "not offered to bob");
     assert!(matches!(his.context().await, Err(ViewError::Forbidden { .. })), "nor read by him");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+// --- External agents ---------------------------------------------------------
+
+/// A remote agent that takes every request on as a task and works on it
+/// for ever. Every call reads its credential, as an A2A agent does - in the
+/// name it is called in - and is recorded.
+#[derive(Debug)]
+struct RemoteAtWork {
+    secrets: Arc<SecretManager>,
+    calls: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl RemoteAtWork {
+    async fn called(&self, call: &'static str, security: &SecurityContext) {
+        // Whether there is such a secret does not matter: who is asked does.
+        let _ = self.secrets.resolve(security, "REMOTE_TOKEN").await;
+        self.calls.lock().unwrap().push(call);
+    }
+}
+
+#[async_trait]
+impl ExternalAgent for RemoteAtWork {
+    async fn send(&self, security: &SecurityContext, _: Option<&ConversationId>, _: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
+        self.called("send", security).await;
+        let started = futures::stream::iter([Ok(ExternalEvent::Started(TaskId("t-1".to_string())))]);
+        Ok(Box::pin(started.chain(futures::stream::pending())))
+    }
+
+    async fn resume(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {
+        self.called("resume", security).await;
+        Ok(Box::pin(futures::stream::pending()))
+    }
+
+    async fn cancel(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<()> {
+        self.called("cancel", security).await;
+        Ok(())
+    }
+
+    fn classification(&self) -> Option<Classification> {
+        None
+    }
+}
+
+/// Waits until `calls` holds `count` calls.
+async fn calls_made(calls: &Mutex<Vec<&'static str>>, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while calls.lock().unwrap().len() < count {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the remote agent is called");
+}
+
+/// An external agent's task acts with the authority of the request that
+/// began it, as an agent's turn does (issue 211): asked by bob, the remote
+/// agent is sent his request in his name - and followed in his name after
+/// a restart, not in the name of the agent's owner.
+#[tokio::test]
+async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = World::with_kinds({
+        let calls = calls.clone();
+        |registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: context.secret_manager.clone(), calls: calls.clone() }));
+            Ok(facets)
+        })
+    }).await;
+    let remote = Personality {
+        kind: PersonalityKind::External,
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "remote_at_work")] },
+        ..world.personality("remote", None, &[]).await
+    };
+    world.store.update_personality(&World::system(), &remote).await.unwrap();
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = session.channels()[0].clone();
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+        calls_made(&calls, 1).await;
+    }).await;
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "sent in the name of who asked");
+
+    // The task is stored as begun; the session stops with it still open.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while world.store.get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the task is stored");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+
+    let (reopened, asked) = world.asked(async {
+        let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("alice opens it again");
+        calls_made(&calls, 2).await;
+        reopened
+    }).await;
+    assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "followed in his name too, whoever opened the session");
+    world.manager.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
 // --- Users and their profiles -------------------------------------------------

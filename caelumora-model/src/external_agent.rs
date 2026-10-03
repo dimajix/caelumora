@@ -6,6 +6,7 @@
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
 use crate::actor::EventContext;
+use crate::security::SecurityContext;
 use crate::digest::Digest;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -45,7 +46,10 @@ pub enum OpenTaskState {
 }
 
 /// A task given to the remote agent that has not ended: after a restart the
-/// actor re-attaches to it, since it may have ended meanwhile.
+/// actor re-attaches to it, since it may have ended meanwhile. The external
+/// agent's counterpart of a `TurnState` (issue 211): one piece of work, with
+/// the contexts it is done in - those of the request that began it, or took
+/// it up again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenTask {
     pub task: TaskId,
@@ -56,12 +60,17 @@ pub struct OpenTask {
     /// the task ended: not said yet, but said - once - with the rest when
     /// the task ends (issue 195).
     pub unsaid: Option<String>,
-    /// The context of the answer to the request that began it, or took it
-    /// up again: what comes of it later is said in that context continued,
-    /// so that it stays in the span and the chain between agents of the
-    /// request (issue 45). `None` for a task stored before it was kept.
-    #[serde(default)]
-    pub requested: Option<EventContext>,
+    /// The envelope it answers, continued in the agent's name - as
+    /// `TurnState::event_context`: what comes of it later is said in it,
+    /// continued, so that it stays in the span and the chain between agents
+    /// of the request (issue 45).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_context: Option<EventContext>,
+    /// Whose authority it acts with - as `TurnState::security_context`: the
+    /// remote agent is called in it for as long as the task is open, to
+    /// follow it, to cancel it, and what comes of it is said in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_context: Option<SecurityContext>,
 }
 
 /// What an external agent keeps of the remote side in one channel, as part
@@ -99,11 +108,21 @@ impl RemoteState {
         self.open_tasks.iter().filter(|t| t.state == OpenTaskState::Working).map(|t| &t.task)
     }
 
+    /// Records `task` as begun - or, asked back before, taken up again - in
+    /// answer to a request, done in its contexts from now on: working.
+    pub fn begin(&mut self, task: &TaskId, event_context: &EventContext, security_context: &SecurityContext) {
+        self.open(task, OpenTaskState::Working);
+        if let Some(open) = self.find_mut(task) {
+            open.event_context = Some(event_context.clone());
+            open.security_context = Some(security_context.clone());
+        }
+    }
+
     /// Records `task` as open, standing at `state`.
     pub fn open(&mut self, task: &TaskId, state: OpenTaskState) {
         match self.find_mut(task) {
             Some(open) => open.state = state,
-            None => self.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, requested: None }),
+            None => self.open_tasks.push(OpenTask { task: task.clone(), since: Utc::now(), state, unsaid: None, event_context: None, security_context: None }),
         }
     }
 
@@ -124,18 +143,12 @@ impl RemoteState {
         }
     }
 
-    /// The context of the answer to the request that began the open
-    /// `task`, if it is kept.
-    pub fn requested_in(&self, task: &TaskId) -> Option<EventContext> {
-        self.find(task).and_then(|t| t.requested.clone())
-    }
-
-    /// Keeps `requested`, the context of the answer to the request that
-    /// began or took up the open `task`, with it.
-    pub fn set_requested(&mut self, task: &TaskId, requested: &EventContext) {
-        if let Some(open) = self.find_mut(task) {
-            open.requested = Some(requested.clone());
-        }
+    /// The contexts the open `task` is done in (`begin`), if they are kept:
+    /// a task stored before they were, or not begun in answer to a request,
+    /// has none.
+    pub fn contexts_of(&self, task: &TaskId) -> Option<(EventContext, SecurityContext)> {
+        let open = self.find(task)?;
+        Some((open.event_context.clone()?, open.security_context.clone()?))
     }
 
     fn find(&self, task: &TaskId) -> Option<&OpenTask> {
@@ -165,9 +178,12 @@ mod tests {
         remote.set_unsaid(&two, Some("so far".to_string()));
         assert_eq!(remote.unsaid_of(&two).as_deref(), Some("so far"));
         assert_eq!(remote.unsaid_of(&one), None);
-        let requested = EventContext::default();
-        remote.set_requested(&one, &requested);
-        assert!(remote.requested_in(&one).is_some() && remote.requested_in(&two).is_none());
+        let bob = SecurityContext::new(crate::actor::ActorId::User(crate::user::UserId::new()), Default::default(), Default::default());
+        remote.begin(&one, &EventContext::default(), &bob);
+        assert_eq!(remote.working().collect::<Vec<_>>(), [&one, &two], "taken up again, it works");
+        assert_eq!(remote.contexts_of(&one).map(|(_, s)| s.initiator_id), Some(bob.initiator_id), "in the contexts of the request");
+        assert!(remote.contexts_of(&two).is_none(), "none kept");
+        remote.open(&one, OpenTaskState::InputRequired);
 
         remote.close(&one);
         assert_eq!(remote.asking(), None);
