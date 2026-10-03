@@ -9,9 +9,9 @@
 //! joins and leaves. It goes into the system prompt by default: it changes
 //! rarely, and every change ought to reach the model at once.
 
-use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
+use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -40,11 +40,11 @@ impl PromptProvider for ChannelMembersPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        // A turn outside of a channel, in tests, has nobody to name.
-        let Some(session) = turn.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let channel = session.channel(turn.channel_id()).await?;
-        let own = ActorId::Agent(turn.agent_id());
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+        // Work outside of a channel, in tests, has nobody to name.
+        let Some(session) = work.session() else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let channel = session.channel(work.channel_id()).await?;
+        let own = ActorId::Agent(work.agent_id());
         let mut me = None;
         let mut others = Vec::new();
         for member in channel.members().await {
@@ -135,6 +135,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_turn::Turn;
     use caelumora_model::name::{Name, ScopedName};
     use crate::agent_state::AgentStateHandle;
     use crate::runtime::RuntimeManager;
@@ -239,7 +240,7 @@ mod tests {
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun")
             .with_views(ViewsFactory::in_session(session_loop, runtime, context.clone()));
 
-        let prompt = ChannelMembersPromptProvider { position: PromptPosition::Start }.get_prompt(&turn).await.unwrap();
+        let prompt = ChannelMembersPromptProvider { position: PromptPosition::Start }.get_prompt(&turn.work()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\

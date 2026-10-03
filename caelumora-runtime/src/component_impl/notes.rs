@@ -14,6 +14,7 @@ use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::work::AgentWork;
 use crate::view::PublishedNotes;
 use crate::tool::{arguments, classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
@@ -191,31 +192,31 @@ impl PromptProvider for NotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        let own = ActorId::Agent(turn.agent_id());
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+        let own = ActorId::Agent(work.agent_id());
         let mut others = Vec::new();
-        if let Some(session) = turn.session() {
-            let published = match session.channel(turn.channel_id()).await {
+        if let Some(session) = work.session() {
+            let published = match session.channel(work.channel_id()).await {
                 Ok(channel) => channel.notes().await,
                 Err(e) => Err(e),
             };
             match published {
                 Ok(published) => others = published,
                 // The agent can still answer without the others' notes.
-                Err(e) => warn!("Reading the notes of channel {} failed: {}", turn.channel_id(), e),
+                Err(e) => warn!("Reading the notes of channel {} failed: {}", work.channel_id(), e),
             }
         }
         others.retain(|p| p.agent != own && !p.notes.is_empty());
         others.sort_by(|l, r| l.name.cmp(&r.name));
-        let own_notes = AgentNotes::current(turn, NoteKind::Public);
+        let own_notes = AgentNotes::current(work, NoteKind::Public);
         let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
 
         // What the part shows, as knowledge read (issue 17).
-        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(turn.channel_id(), turn.session_id(), p)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(work.channel_id(), work.session_id(), p)).collect();
         if !own_notes.is_empty() {
-            let own_digest = AgentNotes::digest(turn, NoteKind::Public);
+            let own_digest = AgentNotes::digest(work, NoteKind::Public);
             let classification = Classification::join_all(own_notes.iter().map(|n| &n.classification));
-            knowledge.push(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::Notes { agent: turn.agent_id(), digest: own_digest }, classification });
+            knowledge.push(KnowledgeRef { channel: work.channel_id(), session: work.session_id(), source: KnowledgeSource::Notes { agent: work.agent_id(), digest: own_digest }, classification });
         }
         Ok(Prompt::of_knowledge(text, knowledge))
     }
@@ -304,7 +305,7 @@ mod tests {
             let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent_state::AgentStateHandle::detached());
             let noted = tools.execute(NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), &mut turn).await.unwrap();
             assert_eq!(noted.value["id"], 1);
-            assert!(AgentNotes::current(&turn, NoteKind::Public).is_empty(), "not before the turn completes");
+            assert!(AgentNotes::current(&turn.work(), NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), &mut turn).await;
             assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");
             assert!(turn.commit(false).await.channel_state_changed, "the turn changed notes");

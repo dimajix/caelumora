@@ -14,6 +14,7 @@
 //! 163).
 
 use crate::agent_turn::Turn;
+use crate::work::AgentWork;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::digest::Digest;
@@ -42,10 +43,10 @@ impl AgentMemory {
     /// now permit it - looked up through the turn's views. Of a session
     /// that is gone, the one it had decides; one that cannot be looked up
     /// recalls nothing. A turn in no session recalls nothing.
-    pub async fn recalled(turn: &Turn<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
-        let Some(own) = turn.session() else { return Vec::new() };
+    pub async fn recalled(work: &AgentWork<'_>, security: &dyn SecurityManager, context: &SecurityContext) -> Vec<Memory> {
+        let Some(own) = work.session() else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
-        let memory = turn.agent_state().current().memory.current();
+        let memory = work.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
         let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
@@ -110,8 +111,8 @@ impl AgentMemory {
 
     /// The digest of the memory as it is now: the state of knowledge a turn
     /// that recalls from it records.
-    pub fn digest(turn: &Turn) -> Option<Digest> {
-        turn.agent_state().current().memory.digest()
+    pub fn digest(work: &AgentWork) -> Option<Digest> {
+        work.agent_state().current().memory.digest()
     }
 
     /// Remembers `text`, as written in the turn's channel, with the privacy

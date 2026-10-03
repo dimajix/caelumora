@@ -11,6 +11,7 @@
 //! turn uses it too.
 
 use crate::agent_turn::Turn;
+use crate::work::AgentWork;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
@@ -62,14 +63,14 @@ pub struct AgentNotes;
 impl AgentNotes {
     /// The notes as they stand - without the changes of the current turn,
     /// which count only once it completes.
-    pub fn current(turn: &Turn, kind: NoteKind) -> Vec<Note> {
-        kind.chain(turn.agent_channel_state()).current()
+    pub fn current(work: &AgentWork, kind: NoteKind) -> Vec<Note> {
+        kind.chain(work.agent_channel_state()).current()
     }
 
     /// The digest of the chain, `None` while it is empty: the state of
     /// knowledge a reader of the notes records.
-    pub fn digest(turn: &Turn, kind: NoteKind) -> Option<Digest> {
-        kind.chain(turn.agent_channel_state()).digest()
+    pub fn digest(work: &AgentWork, kind: NoteKind) -> Option<Digest> {
+        kind.chain(work.agent_channel_state()).digest()
     }
 
     /// The notes as they stand with the changes of the current turn in

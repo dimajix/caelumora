@@ -6,6 +6,7 @@
 //! (issue 98).
 
 use crate::agent_turn::Turn;
+use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::KnowledgeRef;
@@ -114,8 +115,9 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     fn position(&self) -> PromptPosition {
         PromptPosition::Start
     }
-    /// The part for `turn`, which is about to start; empty text for none.
-    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt>;
+    /// The part for `work` - a turn about to start, or a request to an
+    /// external agent about to be sent (issue 204); empty text for none.
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt>;
 }
 
 /// Assembles what the model is given in a turn (`Turn::set_context`), once,

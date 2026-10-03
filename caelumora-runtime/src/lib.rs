@@ -33,4 +33,5 @@ pub mod transport;
 pub mod moderator_impl;
 pub mod seed;
 pub mod view;
+pub mod work;
 mod template;

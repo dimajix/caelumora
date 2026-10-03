@@ -391,6 +391,14 @@ are joined into, as the join of theirs; the turn has seen it (issue 168).
 The parts may be left out, each by the fail policy of its own component: a part that fails open is
 left out of that turn with a warning; one that fails closed fails the turn.
 
+A `PromptProvider` is not given the `Turn` but what it reads of it, an `AgentWork` (`Turn::work`,
+issue 204): the agent, the contexts the turn is done in, the classification it began with and its
+label, the agent's state in the channel and its own state, and the session to navigate. That is the
+part of a turn that every piece of work of an agent has - an external agent's exchange with its
+remote agent as well (`caelumora_model::work::Work`) - so that the same providers can serve both.
+What only reads an agent's notes or memory (`AgentNotes::current`, `AgentMemory::recalled`) takes
+an `AgentWork` too; what stages changes takes the `Turn`.
+
 ### Who is in the channel
 
 An agent is told who it is and who else is in its channel by the component

@@ -41,6 +41,7 @@ use crate::agent_state::AgentStateHandle;
 use crate::tool_calls::ToolCalls;
 use crate::transport::EventSender;
 use crate::view::{SessionView, ViewsFactory};
+use crate::work::AgentWork;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -105,13 +106,17 @@ impl<'a> Turn<'a> {
         self
     }
 
-    /// The agent's session as the turn reads it from its channel (issue
-    /// 163): the root of what it may read elsewhere - the other channels'
-    /// notes and histories, its own private notes there - at the
-    /// classification the turn began with (issue 67). `None` for a turn
-    /// outside of a channel, which reads nothing elsewhere.
+    /// The turn as a piece of work of the agent, to read (issue 204): what
+    /// components that only read are given, as an external agent's work
+    /// gives it too.
+    pub fn work(&self) -> AgentWork<'_> {
+        AgentWork::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, self.views.as_ref())
+    }
+
+    /// The agent's session as the turn reads it from its channel
+    /// (`AgentWork::session`).
     pub fn session(&self) -> Option<SessionView> {
-        self.views.as_ref()?.session(self.channel_id(), self.classification())
+        self.work().session()
     }
 
     /// The agent whose turn this is.
@@ -145,16 +150,14 @@ impl<'a> Turn<'a> {
     }
 
     /// The classification of the agent's channel as it was when the turn
-    /// began (`AgentChannelState::begin_turn`): the most the turn may read, and the most it
-    /// writes as.
+    /// began (`AgentChannelState::begin_turn`, `AgentWork::classification`).
     pub fn classification(&self) -> Classification {
-        self.current().work.classification.clone()
+        self.work().classification()
     }
 
-    /// The classification of what the turn writes (issue 168): the join of
-    /// everything it has seen so far, at most `classification`.
+    /// The classification of what the turn writes (`AgentWork::label`).
     pub fn label(&self) -> Classification {
-        self.current().work.label()
+        self.work().label()
     }
 
     /// Records that the turn has seen what is classified `classification`:
@@ -163,15 +166,14 @@ impl<'a> Turn<'a> {
         self.current_mut().work.see(classification);
     }
 
-    /// The agent's channel: where the envelope the turn answers was routed
-    /// - the `ChannelLoop` stamps it on every envelope it routes.
+    /// The agent's channel (`AgentWork::channel_id`).
     pub fn channel_id(&self) -> ChannelId {
-        self.current().work.event_context.channel_id
+        self.work().channel_id()
     }
 
-    /// The session of the agent's channel, as `channel_id`.
+    /// The session of the agent's channel (`AgentWork::session_id`).
     pub fn session_id(&self) -> SessionId {
-        self.current().work.event_context.session_id
+        self.work().session_id()
     }
 
     /// Stages `change` to the agent's memory, made at `origin`, applied when
@@ -223,8 +225,9 @@ impl<'a> Turn<'a> {
         ToolCalls::new(turn, &self.agent_name)
     }
 
+    /// Whose authority the turn acts with (`AgentWork::security_context`).
     pub fn security_context(&self) -> &SecurityContext {
-        &self.current().work.security_context
+        self.work().security_context()
     }
 
     /// Whether the turn was given or read private knowledge of the agent -

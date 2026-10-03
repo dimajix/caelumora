@@ -2,9 +2,9 @@
 //! system prompt by default (parameters `prompt`, `position` and
 //! `classification`).
 
-use crate::agent_turn::Turn;
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{Prompt, PromptPosition, PromptProvider};
+use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -27,7 +27,7 @@ impl PromptProvider for StaticSystemPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self, _turn: &Turn) -> Result<Prompt> {
+    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt> {
         Ok(Prompt::classified(self.prompt.clone(), self.classification.clone()))
     }
 }

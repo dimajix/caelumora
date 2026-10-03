@@ -106,3 +106,11 @@ per external personality, as the prompt part is per personality.
   `label`, `see`, `see_classified`, `see_message`, `record_knowledge`. No change of behaviour, but
   one: an external agent's task stored with a `Work` but before issue 205 recorded its answer with
   no context, and now with an empty one.
+- **2026-10-03** — Step 2: `AgentWork` (`caelumora-runtime/src/work.rs`) is the read-only part of
+  a piece of work - the agent, its `Work`, its `AgentChannelState`, its `AgentStateHandle` and its
+  views - and what a `PromptProvider` is given instead of the `Turn` (`Turn::work`). The reading
+  helpers `AgentNotes::current`/`digest` and `AgentMemory::recalled`/`digest` take it; what stages
+  changes keeps the `Turn`. `Turn`'s reading accessors (`session`, `classification`, `label`,
+  `channel_id`, `session_id`, `security_context`) answer through it. No change of behaviour. An
+  `ExternalAgentActor` can load the agent's `AgentStateHandle` as an `AgentActor` does
+  (`ActorRuntime::agent_state`, which only reads), so it can build one too - step 3.

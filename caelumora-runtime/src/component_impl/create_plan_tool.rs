@@ -4,6 +4,7 @@
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{Prompt, PromptProvider};
+use crate::work::AgentWork;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -46,7 +47,7 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self, _turn: &Turn) -> Result<Prompt> {
+    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt> {
         // A fixed text of the runtime's: nothing confidential (issue 168).
         Ok(Prompt::classified(PLANNING_SYSTEM_PROMPT.to_string(), Classification::PUBLIC))
     }
@@ -292,7 +293,7 @@ mod tests {
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = caelumora_model::agent::AgentChannelState::default();
         let turn = Turn::begun(Default::default(), String::new(), &mut state, crate::agent_state::AgentStateHandle::detached());
-        let prompt = CreatePlanToolProvider.get_prompt(&turn).await.expect("prompt should be available");
+        let prompt = CreatePlanToolProvider.get_prompt(&turn.work()).await.expect("prompt should be available");
         assert_eq!(prompt.text, PLANNING_SYSTEM_PROMPT);
     }
 

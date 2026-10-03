@@ -22,6 +22,7 @@ use crate::agent_notes::{AgentNotes, NoteKind};
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -145,21 +146,21 @@ impl PromptProvider for PrivateNotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        let own = AgentNotes::current(turn, NoteKind::Private);
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+        let own = AgentNotes::current(work, NoteKind::Private);
         let mut elsewhere = Vec::new();
-        if let Some(session) = turn.session() {
+        if let Some(session) = work.session() {
             for channel in session.all_channels().await {
-                if channel.id() == turn.channel_id() {
+                if channel.id() == work.channel_id() {
                     continue;
                 }
                 // Not a member there: nothing noted there.
-                let Ok(me) = channel.member(ActorId::Agent(turn.agent_id())).await else { continue };
+                let Ok(me) = channel.member(ActorId::Agent(work.agent_id())).await else { continue };
                 match me.private_notes().await {
                     Ok((notes, digest)) if !notes.is_empty() => elsewhere.push(Elsewhere { channel: channel.id(), name: channel.name().to_string(), notes, digest }),
                     Ok(_) => {}
                     // The agent can still answer without them.
-                    Err(e) => warn!("Reading the private notes of agent {} in channel {} failed: {}", turn.agent_id(), channel.id(), e),
+                    Err(e) => warn!("Reading the private notes of agent {} in channel {} failed: {}", work.agent_id(), channel.id(), e),
                 }
             }
         }
@@ -168,13 +169,13 @@ impl PromptProvider for PrivateNotesComponent {
         let private = |channel, digest, notes: &[Note]| KnowledgeRef {
             channel,
             // Its own session's channels only.
-            session: turn.session_id(),
-            source: KnowledgeSource::PrivateNotes { agent: turn.agent_id(), digest },
+            session: work.session_id(),
+            source: KnowledgeSource::PrivateNotes { agent: work.agent_id(), digest },
             classification: Classification::join_all(notes.iter().map(|n| &n.classification)),
         };
         let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel, c.digest, &c.notes)).collect();
         if !own.is_empty() {
-            knowledge.push(private(turn.channel_id(), AgentNotes::digest(turn, NoteKind::Private), &own));
+            knowledge.push(private(work.channel_id(), AgentNotes::digest(work, NoteKind::Private), &own));
         }
         Ok(Prompt::of_knowledge(render(&own, &elsewhere), knowledge))
     }
@@ -257,7 +258,7 @@ mod tests {
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(NOTE_PRIVATE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
-        assert!(AgentNotes::current(&turn, NoteKind::Private).is_empty(), "not before the turn completes");
+        assert!(AgentNotes::current(&turn.work(), NoteKind::Private).is_empty(), "not before the turn completes");
         assert!(turn.commit(false).await.channel_state_changed, "the channel state changed");
         assert_eq!(state.private_notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
         assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");

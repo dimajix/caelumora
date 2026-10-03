@@ -23,6 +23,7 @@ use crate::agent_memory::AgentMemory;
 use crate::agent_turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -145,14 +146,14 @@ impl PromptProvider for AgentMemoryComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, turn: &Turn) -> Result<Prompt> {
-        let recalled = AgentMemory::recalled(turn, self.security_manager.as_ref(), &self.security_context).await;
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+        let recalled = AgentMemory::recalled(work, self.security_manager.as_ref(), &self.security_context).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
         // Once for every channel the entries come from, so that knowledge
         // from another session can be told (issue 134).
-        let source = KnowledgeSource::Memory { agent: turn.agent_id(), digest: AgentMemory::digest(turn) };
+        let source = KnowledgeSource::Memory { agent: work.agent_id(), digest: AgentMemory::digest(work) };
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
         for memory in &recalled {
             if !knowledge.iter().any(|k| k.channel == memory.origin.channel) {
@@ -327,7 +328,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
         let turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
-        memory.get_prompt(&turn).await.unwrap()
+        memory.get_prompt(&turn.work()).await.unwrap()
     }
 
     #[tokio::test]
@@ -411,7 +412,7 @@ mod tests {
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
         let turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun");
-        assert!(memory.get_prompt(&turn).await.unwrap().text.is_empty(), "no session to recall in");
+        assert!(memory.get_prompt(&turn.work()).await.unwrap().text.is_empty(), "no session to recall in");
     }
 
     /// Lets channels read each other only in the name of `owner`.

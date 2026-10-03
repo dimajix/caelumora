@@ -34,7 +34,7 @@ impl ContextProvider for StateContextProvider {
             // Each part as its component's fail policy says: a part that
             // fails open is left out of this turn, one that fails closed
             // fails the turn.
-            let contribution = match provider.get_prompt(state).await {
+            let contribution = match provider.get_prompt(&state.work()).await {
                 Ok(contribution) => contribution,
                 Err(e) => match provider.fail_policy {
                     ComponentFailPolicy::FailOpen => {
@@ -144,7 +144,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptProvider for Unavailable {
-        async fn get_prompt(&self, _turn: &Turn) -> anyhow::Result<crate::context::Prompt> {
+        async fn get_prompt(&self, _work: &crate::work::AgentWork<'_>) -> anyhow::Result<crate::context::Prompt> {
             Err(anyhow::anyhow!("unavailable"))
         }
     }
