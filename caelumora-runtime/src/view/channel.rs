@@ -335,7 +335,7 @@ impl MemberView {
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
-        let Some(agent) = self.state.agent().await? else { return Ok(None) };
+        let Some(agent) = self.state.agent() else { return Ok(None) };
         let (notes, digest) = agent.notes().await?;
         let notes = self.channel.released(notes).await;
         Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest }))
@@ -350,7 +350,7 @@ impl MemberView {
         if self.former {
             return Ok(Vec::new());
         }
-        match self.state.agent().await? {
+        match self.state.agent() {
             Some(agent) => agent.pending_approvals().await,
             None => Ok(Vec::new()),
         }
@@ -380,7 +380,7 @@ impl MemberView {
     /// `NoContext` if the member is no agent, `Forbidden` if the viewer may
     /// not read what it saw or reads the channel entry by entry only,
     /// `Failed` if its state cannot be read.
-    pub async fn context(&self) -> ViewResult<Box<dyn AgentContextView>> {
+    pub async fn context(&self) -> ViewResult<AgentContextView> {
         let agent = self.readable_agent().await?;
         if self.channel.readable == Readable::Released {
             return Err(ViewError::Forbidden { actor: self.id() });
@@ -389,7 +389,7 @@ impl MemberView {
     }
 
     /// The member as an agent whose context the viewer may read.
-    async fn readable_agent(&self) -> ViewResult<&dyn AgentMember> {
+    async fn readable_agent(&self) -> ViewResult<&AgentMember> {
         let no_context = || ViewError::NoContext { actor: self.id() };
         let attributes = self.state.attributes().ok_or_else(no_context)?;
         let views = self.channel.views();
@@ -397,7 +397,7 @@ impl MemberView {
         views.runtime().security_manager()
             .require(views.viewer().context(), ActionType::ReadAgentContext(attributes), forbidden).await
             .map_err(|_| forbidden())?;
-        self.state.agent().await?.ok_or_else(no_context)
+        self.state.agent().ok_or_else(no_context)
     }
 
     /// The member as the viewer sees it at this moment (issue 80).

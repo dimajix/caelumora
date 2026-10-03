@@ -7,15 +7,16 @@
 //! Only agents have a state in the channel worth reading - notes, approvals
 //! waited for, what they saw. That is the `AgentMember` a member state
 //! hands out if it is an agent, so that no other kind has to answer for
-//! what it does not have. Which kind of agent it is, its personality says;
-//! it is read when it is first needed, not for every member looked at
-//! (issue 189).
+//! what it does not have. Both kinds of agent keep the same state (issue
+//! 206): which kind it is does not matter here. Its personality is read
+//! for its introduction alone, when that is first asked for, not for every
+//! member looked at (issue 189).
 
-use super::context::{AgentContextView, ExternalContext, InternalContext};
+use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId, PersonalityKind};
+use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
@@ -56,31 +57,10 @@ pub(super) trait MemberState: Send + Sync + Debug {
         None
     }
 
-    /// The member as an agent, if it is one that exists and whose kind is
-    /// known: an agent whose personality is gone has none.
-    ///
-    /// # Errors
-    /// `Failed` if its personality cannot be read.
-    async fn agent(&self) -> ViewResult<Option<&dyn AgentMember>> {
-        Ok(None)
+    /// The member as an agent, if it is one that exists.
+    fn agent(&self) -> Option<&AgentMember> {
+        None
     }
-}
-
-/// An agent member's state in the channel, as its kind keeps it (issue
-/// 179).
-#[async_trait]
-pub(super) trait AgentMember: Send + Sync + Debug {
-    /// The notes it published (issue 17), with the digest of their chain.
-    async fn notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)>;
-
-    /// The notes only it reads (issue 51), with the digest of their chain.
-    async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)>;
-
-    /// The approvals its turn waits for (issue 172).
-    async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>>;
-
-    /// What it saw (issue 41).
-    async fn context(&self) -> ViewResult<Box<dyn AgentContextView>>;
 }
 
 /// The member `participant` of channel `channel`, as `views` read it: its
@@ -103,10 +83,10 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentMemberState {
-                place: StateRef { agent: agent.id, channel, store: runtime.state_store() },
+                member: AgentMember(StateRef { agent: agent.id, channel, store: runtime.state_store() }),
                 agent,
                 store: runtime.entity_store(),
-                personal: OnceCell::new(),
+                introduction: OnceCell::new(),
             }),
             None => Arc::new(GoneMember),
         },
@@ -184,42 +164,15 @@ impl StateRef {
 }
 
 /// An agent, of either kind: its name and attributes from its document at
-/// once; its personality, which decides its kind and how it is introduced,
-/// read once, when it is first needed (issue 189).
+/// once, its state in the channel when it is asked for; its personality,
+/// which says how it is introduced, read once, when that is first needed
+/// (issue 189).
 #[derive(Debug)]
 struct AgentMemberState {
     agent: Agent,
-    place: StateRef,
+    member: AgentMember,
     store: Arc<dyn EntityStore>,
-    /// What its personality makes of it; `None` if the personality is gone.
-    personal: OnceCell<Option<Personal>>,
-}
-
-/// What an agent's personality makes of it: how it is introduced, and its
-/// state as its kind keeps it.
-type Personal = (Option<String>, Box<dyn AgentMember>);
-
-impl AgentMemberState {
-    /// What the agent's personality makes of it, read the first time. An
-    /// agent whose personality is gone cannot run, and its kind is unknown:
-    /// it has no state to read - as in the channel, where it is not run.
-    async fn personal(&self) -> ViewResult<Option<&Personal>> {
-        let personal = self.personal.get_or_try_init(|| async {
-            let found = self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
-                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))?;
-            let Some(personality) = found else {
-                warn!("The personality of agent {} is gone: its state is not read", self.agent.id);
-                return Ok(None);
-            };
-            let place = self.place.clone();
-            let state: Box<dyn AgentMember> = match personality.kind {
-                PersonalityKind::Internal => Box::new(InternalAgentMember(place)),
-                PersonalityKind::External => Box::new(ExternalAgentMember(place)),
-            };
-            Ok(Some((personality.introduction, state)))
-        }).await?;
-        Ok(personal.as_ref())
-    }
+    introduction: OnceCell<Option<String>>,
 }
 
 #[async_trait]
@@ -228,73 +181,57 @@ impl MemberState for AgentMemberState {
         Some(self.agent.name.as_str())
     }
 
+    /// How its personality introduces it; nothing if the personality is
+    /// gone.
     async fn introduction(&self) -> ViewResult<Option<String>> {
-        Ok(self.personal().await?.and_then(|(introduction, _)| introduction.clone()))
+        let introduction = self.introduction.get_or_try_init(|| async {
+            let personality = self.store.get_personality(&SecurityContext::system(), self.agent.personality_id).await.optional()
+                .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading the personality of agent {}", self.agent.id))))?;
+            Ok::<_, ViewError>(personality.and_then(|personality| personality.introduction))
+        }).await?;
+        Ok(introduction.clone())
     }
 
     fn attributes(&self) -> Option<&SecurityAttributes> {
         Some(&self.agent.security_attributes)
     }
 
-    async fn agent(&self) -> ViewResult<Option<&dyn AgentMember>> {
-        Ok(self.personal().await?.map(|(_, state)| state.as_ref()))
+    fn agent(&self) -> Option<&AgentMember> {
+        Some(&self.member)
     }
 }
 
-/// An agent run here: its turns, its notes, what its model was given.
+/// An agent member's state in the channel, of either kind (issues 179,
+/// 206): its notes, its turn, what it saw. Of an external agent, which
+/// writes no notes and has no turn, those parts are empty.
 #[derive(Debug)]
-struct InternalAgentMember(StateRef);
+pub(super) struct AgentMember(StateRef);
 
-impl InternalAgentMember {
+impl AgentMember {
     async fn stored(&self) -> ViewResult<AgentChannelState> {
         let place = &self.0;
         place.store.get_agent_channel_state(place.agent, place.channel).await.map_err(|e| place.failed(e))
     }
-}
 
-#[async_trait]
-impl AgentMember for InternalAgentMember {
-    async fn notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
+    /// The notes it published (issue 17), with the digest of their chain.
+    pub(super) async fn notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
         let state = self.stored().await?;
         Ok((state.notes.current(), state.notes.digest()))
     }
 
-    async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
+    /// The notes only it reads (issue 51), with the digest of their chain.
+    pub(super) async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
         let state = self.stored().await?;
         Ok((state.private_notes.current(), state.private_notes.digest()))
     }
 
-    async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
+    /// The approvals its turn waits for (issue 172).
+    pub(super) async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
         Ok(self.stored().await?.turn.map(|turn| turn.pending_approvals()).unwrap_or_default())
     }
 
-    async fn context(&self) -> ViewResult<Box<dyn AgentContextView>> {
-        Ok(Box::new(InternalContext::of(ActorId::Agent(self.0.agent), self.stored().await?)))
-    }
-}
-
-/// An external agent (issue 179): what it heard and was given. It writes no
-/// notes and has no turn that could wait for an approval.
-#[derive(Debug)]
-struct ExternalAgentMember(StateRef);
-
-#[async_trait]
-impl AgentMember for ExternalAgentMember {
-    async fn notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
-        Ok((Vec::new(), None))
-    }
-
-    async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
-        Ok((Vec::new(), None))
-    }
-
-    async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
-        Ok(Vec::new())
-    }
-
-    async fn context(&self) -> ViewResult<Box<dyn AgentContextView>> {
-        let place = &self.0;
-        let state = place.store.get_agent_channel_state(place.agent, place.channel).await.map_err(|e| place.failed(e))?;
-        Ok(Box::new(ExternalContext::of(ActorId::Agent(place.agent), state)))
+    /// What it saw (issue 41).
+    pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
+        Ok(AgentContextView::of(ActorId::Agent(self.0.agent), self.stored().await?))
     }
 }

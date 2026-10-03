@@ -488,13 +488,12 @@ only one of them produced it.
     context holds more than the conversation: the system prompt, internal steps, tool results.
 *   It reads the agent's state from the `StateStore`, where it is written after every step; the
     running loop holds the in-memory state. Every kind of member is a `MemberState`
-    (`view::member`: a user, an agent, an approver, one that is gone). An agent's reads its
-    personality when it is first needed, not for every member looked at, and hands out an
-    `AgentMember` with its state in the channel as its kind keeps it - one run here, an external
-    one. An agent whose personality is gone has no state to read, as it is not run in the channel
-    (issue 189). What the viewer may see of it, the member view decides for all of them alike, from
-    the agent's document. The
-    `AgentContextView` it answers with - a trait, with a view per kind - holds that state: the
+    (`view::member`: a user, an agent, an approver, one that is gone). An agent's hands out an
+    `AgentMember` with its state in the channel - the same for both kinds of agent (issue 206),
+    so that its kind is not asked; its personality is read for its introduction alone, when
+    that is first needed. An agent whose personality is gone keeps its state, read as any
+    other. What the viewer may see of it, the member view decides for all of them alike, from
+    the agent's document. The `AgentContextView` it answers with holds that state: the
     transcript, the private notes, and
 *   `context_of(message_id)`, the context and the prompt parts the message was produced from
     (`ContextError::NotRecorded` if the agent did not produce it, `Unavailable` if what was recorded
@@ -503,10 +502,11 @@ only one of them produced it.
     reason, time and messages. The context of each of those messages is asked for like that of any
     other.
 
-Of an external agent (issue 179) the view reads the same `AgentChannelState` (issue 206): its
-transcript is what the remote agent was given, it has no notes, no private notes, no given-up turns
-and no pending approvals, and `context_of` answers `NotRecorded` for every message - what the remote
-agent made of what it was given is its own.
+Of an external agent (issue 179) the view is the same, over the same `AgentChannelState` (issue
+206): its transcript is what the remote agent was given; its notes, private notes, given-up turns
+and pending approvals are empty, since it keeps none; and `context_of` answers `NotRecorded` for
+every message, since no context is recorded with its answers yet (issue
+[205](../issues/205-external-agent-message-context.md)).
 
 REST exposes it as `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
 answers `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor) or `404

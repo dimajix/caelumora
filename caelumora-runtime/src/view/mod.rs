@@ -32,8 +32,6 @@ mod session;
 
 pub use channel::{ChannelView, MemberView, PublishedNotes};
 pub use context::{AgentContextView, ContextError};
-#[cfg(test)]
-pub(crate) use context::InternalContext;
 pub use session::SessionView;
 
 use crate::runtime::{ActorRuntime, RuntimeManager};
@@ -443,9 +441,7 @@ mod tests {
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
         use caelumora_model::agent::PersonalityKind;
         use caelumora_model::agent::AgentChannelState;
-        use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
-        use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime();
@@ -464,10 +460,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.history.extend(vec![question.clone(), answer.clone()]);
         state.transcript.extend(vec![question.clone()]);
-        // What only an agent run here keeps: not read of an external agent.
-        let stray = &mut state;
-        stray.notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
-        stray.private_notes.push(Change::Add { id: NoteId(1), text: "stray".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
@@ -480,7 +472,7 @@ mod tests {
         assert!(matches!(seen.context_of(answer.id), Err(ContextError::NotRecorded { .. })), "what it made of it is the remote agent's");
         assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
-        assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "none, though an agent run here kept some");
+        assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");
         assert!(for_alice.notes().await.unwrap().iter().all(|published| published.notes.is_empty()));
     }
 
@@ -624,7 +616,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_agent_whose_personality_is_gone_keeps_its_name_but_has_no_state_to_read() {
+    async fn an_agent_whose_personality_is_gone_keeps_its_name_and_its_state() {
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::MessageId;
@@ -640,7 +632,8 @@ mod tests {
         let system = SecurityContext::system();
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();
-        // What it kept while it ran: unknown now whether it is its kind's.
+        // What it kept while it ran: the same state, whatever its kind was
+        // (issue 206).
         let mut kept = caelumora_model::agent::AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
@@ -650,10 +643,11 @@ mod tests {
         let member = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
         assert_eq!((member.name(), member.handle().as_deref()), (Some("Helper"), Some("helper")));
         assert!(member.may_read_context().await, "a question of its document, not of its kind");
-        assert_eq!(member.introduction().await.unwrap(), None);
-        assert!(member.notes().await.unwrap().is_none(), "not read as an agent run here");
-        assert!(for_alice.notes().await.unwrap().is_empty(), "nor does it keep the channel's notes from being read");
-        assert!(matches!(member.context().await, Err(ViewError::NoContext { .. })));
+        assert_eq!(member.introduction().await.unwrap(), None, "its personality introduced it");
+        let notes = member.notes().await.unwrap().expect("still an agent");
+        assert_eq!(notes.notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["kept"], "what it kept is read");
+        assert_eq!(for_alice.notes().await.unwrap().len(), 1, "and counts among the channel's notes");
+        assert!(member.context().await.is_ok(), "as what it saw");
     }
 
     #[tokio::test]

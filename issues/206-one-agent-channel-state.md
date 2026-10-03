@@ -300,3 +300,10 @@ without changing behaviour; step 4 changes behaviour.
   not in the chain of the request that began the task, though its `EventContext` is kept
   (`requested`, issue 45) - nor the channel's classification when it began. Its `ContextRef` is
   [205](205-external-agent-message-context.md)'s.
+- **2026-10-03** — Step 3 done: `AgentContextView` is one struct instead of a trait with
+  `InternalContext` and `ExternalContext`, and `AgentMember` one struct instead of a trait with a
+  member per kind; `MemberState::agent` no longer reads the personality and cannot fail. The
+  personality is read for the introduction alone, so the views no longer decide an agent's kind
+  (issue [189](189-agent-kind-decided-twice.md)). Changed with it: an agent whose personality is
+  gone keeps its state in the views - its notes, its context - where it had none, since which kind
+  of state it kept was unknown.

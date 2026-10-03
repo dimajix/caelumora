@@ -2024,8 +2024,7 @@ mod tests {
 
         // The turn's messages are a branch no longer active, marked as given
         // up; what the model saw for them can still be told.
-        let seen = crate::view::InternalContext::of(ActorId::Agent(agent), stored.clone());
-        use crate::view::AgentContextView;
+        let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), stored.clone());
         let turns = seen.given_up_turns();
         assert_eq!(turns.len(), 1);
         assert!(matches!(turns[0].given_up.reason, GivenUpReason::Failed { .. }));
