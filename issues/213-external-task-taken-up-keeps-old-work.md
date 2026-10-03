@@ -1,6 +1,6 @@
 # 213 — An external agent's task taken up again keeps the work of the call that began it
 
-**Status:** open
+**Status:** done
 **Area:** Integrations
 
 ## The problem
@@ -59,3 +59,10 @@ to be checked against the protocol.
 ## History
 
 - **2026-10-03** — Issue created, noticed while doing [205](205-external-agent-message-context.md).
+- **2026-10-03** — Done with option 1: `exchange` takes the task it answers up right after the
+  send (`ExternalAgentActor::begin_task`, which `Step::Started` uses as well: `RemoteState::begin`
+  and the state stored at once). The test (`channel::tests::a_task_taken_up_again_…`) showed the
+  problem to be worse than described: without the fix, the task was not even marked working
+  again, but stayed `input-required` - so it was never followed after the answer broke off, and
+  its end never said. Option 2, the A2A translation telling a task from updates as well, was not
+  done; whether a task can begin without a `Task` object in A2A is unchecked.

@@ -257,6 +257,11 @@ impl ExternalAgentActor {
         // context of what comes of this call (issue 205). A send that failed
         // sends it again with the next call.
         work.context = Some(ContextRef { transcript: state.transcript.start_anew(), ..ContextRef::default() });
+        // The task that asked back is taken up by this call, whether or not
+        // the remote agent tells it as begun again (issue 213).
+        if let Some(asked) = &answers {
+            self.begin_task(state, asked, &work).await;
+        }
 
         let mut task = answers;
         let mut answer = Answer::default();
@@ -304,17 +309,10 @@ impl ExternalAgentActor {
             };
             match answer.take(state, task.as_ref(), event) {
                 Step::Continue => {}
-                // The task it began - or the one it answers, taken up again -
-                // done in the request's contexts from now on. Stored at once,
-                // with what was given for it: a crash while the task works
-                // leaves it to be followed after the restart, not forgotten
-                // while the remote agent goes on with it.
+                // The task it began, done as this work from now on.
                 Step::Started(started) => {
-                    state.remote.begin(&started, &work);
+                    self.begin_task(state, &started, &work).await;
                     task = Some(started);
-                    if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-                        warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
-                    }
                 }
                 // Shown as it is written, to whoever waits for the answer.
                 Step::Partial(piece) => {
@@ -327,6 +325,18 @@ impl ExternalAgentActor {
         }
 
         Ok(Ending::Answered(self.record(state, answer, work.label(), work.context).map(Box::new)))
+    }
+
+    /// Records `task` as begun - or, asked back before, taken up again - by
+    /// `work` (`RemoteState::begin`): done in the request's contexts from now
+    /// on. Stored at once, with what was given for it: a crash while the
+    /// task works leaves it to be followed after the restart, not forgotten
+    /// while the remote agent goes on with it.
+    async fn begin_task(&self, state: &mut AgentChannelState, task: &TaskId, work: &Work) {
+        state.remote.begin(task, work);
+        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
+            warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
+        }
     }
 
     /// Re-attaches to every task left working that is not followed yet

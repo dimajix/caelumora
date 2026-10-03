@@ -290,13 +290,14 @@ An **actor** is anything that sends and receives events in a channel.
     nothing twice - and what each call gave stays as a branch from its root. It publishes what
     comes back: pieces as `PartialMessageGenerated`, the answer as `FullResponseGenerated`, a task
     the remote agent failed as `TurnFailed`. A question back from the remote agent is its answer;
-    the next request continues that task. A cancel cancels the remote task and publishes what came
-    so far - unless the cancel came from lowering the channel, which gives the answer up (issue
-    212, see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md)); a stop cancels it - and every other open task of the
-    agent - and publishes nothing. Each request is a piece of work (`Work`), as a turn is: bound by
-    the channel's classification as it is when it begins, and classified as what it has seen - all
-    that was given and what the remote agent declares to bring in.
+    the next request continues that task, which is done as that request's work from then on,
+    whatever the remote agent tells of it (issue 213). A cancel cancels the remote task and
+    publishes what came so far - unless the cancel came from lowering the channel, which gives the
+    answer up (issue 212, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)); a stop cancels it - and
+    every other open task of the agent - and publishes nothing. Each request is a piece of work
+    (`Work`), as a turn is: bound by the channel's classification as it is when it begins, and
+    classified as what it has seen - all that was given and what the remote agent declares to bring
+    in.
 *   **An external agent speaks on its own** when a task outlives the request it was given for: the
     answer broke off before the task ended, or the channel was restarted meanwhile - also by a
     crash: a task is stored as soon as the remote agent took it on, with what it was given for it. A

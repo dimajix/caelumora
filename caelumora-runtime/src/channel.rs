@@ -2997,6 +2997,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_remote_agent_does_not_tell_it() {
+        use crate::external::{ExternalAgentError, ExternalEvent};
+
+        // The answer to the question comes without the task told again,
+        // and breaks off; re-attached, the task finishes (issue 213).
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
+            vec![Ok(ExternalEvent::Partial("Sun".to_string())), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
+        ]).resuming(vec![vec![Ok(ExternalEvent::Message("Sunny in Bonn.".to_string())), Ok(ExternalEvent::Completed)]]));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        answered(&mut events, agent).await;
+
+        let alice = channel.user_actor(alice_of(&context)).unwrap();
+        alice.send_message("Bonn".to_string(), None).await.unwrap();
+        let (request, said) = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut answers = Vec::new();
+            while answers.len() < 2 {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+                if let ActorEvent::FullResponseGenerated(messages) = envelope.event {
+                    answers.push((envelope.context, messages));
+                }
+            }
+            (answers.remove(0), answers.remove(0))
+        }).await.expect("answered with nothing, and said unasked");
+        assert!(request.1.is_empty(), "the answer broke off: the task goes on");
+        assert_eq!(said.1[0].content.as_deref(), Some("Sunny in Bonn."));
+        assert_eq!(said.0.span_id, request.0.span_id, "in the span of the request that took it up, not the first one");
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        assert_eq!(given_for(&state, agent, &said.1[0]), ["Bonn"], "with what the call that took it up was given");
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn an_external_personality_that_names_no_remote_agent_cannot_be_run() {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
         let refused = external_channel(remote, Default::default(), None).await.expect_err("nothing to reach");
