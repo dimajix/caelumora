@@ -65,6 +65,32 @@ type Suggestion =
   | {kind: 'mention'; member: MentionableMember}
   | {kind: 'command'; command: Command};
 
+/**
+ * An agent's answer under way (issue 203): what of it has streamed in since
+ * its last complete message, and the plan step it is at. Several agents can
+ * answer at once, each with an answer of its own.
+ */
+interface Answer {
+  /** Its sender, as `actorKey`. */
+  sender: string;
+  name: string | null;
+  reasoning: string;
+  content: string;
+  step: PlanStepEvent | null;
+}
+
+/**
+ * `answers` with the answer of `sender` changed by `change` - added at the
+ * end if it has none, so that answers keep the order they began in.
+ */
+function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
+  const index = answers.findIndex(a => a.sender === sender);
+  if (index < 0) {
+    return [...answers, change({sender, name, reasoning: '', content: '', step: null})];
+  }
+  return answers.map((a, i) => i === index ? change({...a, name: name ?? a.name}) : a);
+}
+
 interface ChatViewProps {
   sessionId: string;
   channelId: string;
@@ -87,16 +113,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const setRelease = (classification: Classification | null) =>
     setChosenRelease(classification && {channelId, classification});
   const [compartments, setCompartments] = useState<Compartment[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
-  // The answer under way as it streams in: its reasoning and its content.
-  const [streamingMessage, setStreamingMessage] = useState<{reasoning: string; content: string} | null>(null);
-  const [streamingSender, setStreamingSender] = useState<string | null>(null);
-  // Who is generating (`actorKey`), so that their removal can end it (issue 162).
-  const generatingActor = useRef<string | null>(null);
+  // The answers under way, in the order they began (issue 203). Shown below
+  // every complete message: a message joins the history when it is complete,
+  // so an answer that ends first is shown first, as a reload shows it.
+  const [answers, setAnswers] = useState<Answer[]>([]);
+  const isGenerating = answers.length > 0;
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   // The pending approvals this user answered, still waiting for the decision.
   const [answeredApprovals, setAnsweredApprovals] = useState<string[]>([]);
-  const [currentStep, setCurrentStep] = useState<PlanStepEvent | null>(null);
   // The snapshot holds the end of the history; older messages on request.
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -235,9 +259,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setHasMore(snapshot.has_more);
-        setStreamingMessage(null);
-        setStreamingSender(null);
-        setIsGenerating(false);
+        setAnswers([]);
       } catch (e) {
         reportError('Failed to read the channel state', e);
       }
@@ -247,22 +269,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       try {
         const envelope: Envelope = JSON.parse(data);
         const actorEvent = envelope.event;
+        const answerer = actorKey(envelope.context.sender_id);
+        const answererName = envelope.context.sender_name || null;
+        // The answer of the envelope's sender, if it has one, has ended.
+        const answerEnded = () => setAnswers(prev => prev.filter(a => a.sender !== answerer));
         if (actorEvent === 'ResponseStarted') {
-          generatingActor.current = actorKey(envelope.context.sender_id);
-          setIsGenerating(true);
-          setStreamingMessage({reasoning: '', content: ''});
-          setStreamingSender(envelope.context.sender_name || null);
+          // A new answer begins after those under way.
+          setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
         } else if (typeof actorEvent === 'string') {
           // The other payload-less events have nothing to show.
         } else if (actorEvent.PartialMessageGenerated) {
-          generatingActor.current = actorKey(envelope.context.sender_id);
-          setIsGenerating(true);
           const partial = actorEvent.PartialMessageGenerated;
-          setStreamingMessage(prev => ({
-            reasoning: (prev?.reasoning ?? '') + (partial.reasoning ?? ''),
-            content: (prev?.content ?? '') + (partial.content ?? ''),
-          }));
-          setStreamingSender(envelope.context.sender_name || null);
+          setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({
+            ...a,
+            reasoning: a.reasoning + (partial.reasoning ?? ''),
+            content: a.content + (partial.content ?? ''),
+          })));
         } else if (actorEvent.CompleteMessageGenerated) {
           setMessages(prev => {
             const newMsg = actorEvent.CompleteMessageGenerated!;
@@ -280,8 +302,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             }
             return [...prev, newMsg];
           });
-          setStreamingMessage(null);
-          setStreamingSender(null);
+          // Its sender may go on: what streams in next is its next message.
+          setAnswers(prev => prev.map(a => a.sender === answerer ? {...a, reasoning: '', content: ''} : a));
         } else if (actorEvent.ApprovalRequested) {
           // Asked again by an agent that resumed its turn (issue 172), or
           // already in the snapshot: shown once.
@@ -298,10 +320,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           }
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
-          setStreamingMessage(null);
-          setStreamingSender(null);
-          setIsGenerating(false);
-          setCurrentStep(null);
+          answerEnded();
         } else if (actorEvent.TurnFailed) {
           // Shown in the chat, but not part of the history: gone on reload.
           const failed: Message = {
@@ -313,10 +332,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             timestamp: envelope.timestamp,
           };
           setMessages(prev => [...prev, failed]);
-          setStreamingMessage(null);
-          setStreamingSender(null);
-          setIsGenerating(false);
-          setCurrentStep(null);
+          answerEnded();
         } else if (actorEvent.CommandExecuted) {
           // Like a failed turn: shown, but not part of the history.
           const notice: Message = {
@@ -336,19 +352,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               ? {...m, abandoned: true}
               : m
           ));
-          if (generatingActor.current === removed) {
-            generatingActor.current = null;
-            setStreamingMessage(null);
-            setStreamingSender(null);
-            setIsGenerating(false);
-            setCurrentStep(null);
-          }
+          setAnswers(prev => prev.filter(a => a.sender !== removed));
         } else if (actorEvent.PlanStepStarted) {
-          setCurrentStep(actorEvent.PlanStepStarted);
+          const step = actorEvent.PlanStepStarted;
+          setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({...a, step})));
         } else if (actorEvent.PlanStepFinished) {
-          setCurrentStep(prev =>
-            prev && prev.step_index === actorEvent.PlanStepFinished!.step_index ? null : prev
-          );
+          const finished = actorEvent.PlanStepFinished.step_index;
+          setAnswers(prev => prev.map(a =>
+            a.sender === answerer && a.step?.step_index === finished ? {...a, step: null} : a
+          ));
         }
       } catch (e) {
         console.error('Failed to parse SSE event', e);
@@ -384,7 +396,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage, isGenerating]);
+  }, [messages, answers]);
 
   useEffect(() => {
     saveDraft(channelId, inputText);
@@ -533,17 +545,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
-        {currentStep && (
-          <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-900/50 flex items-center gap-2">
+        {answers.map(answer => answer.step && (
+          <div key={answer.sender} className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-900/50 flex items-center gap-2">
             <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shrink-0" />
             <span className="text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300 shrink-0">
-              Step {currentStep.step_index + 1} of {currentStep.total_steps}
+              {answer.name || 'Assistant'} · Step {answer.step.step_index + 1} of {answer.step.total_steps}
             </span>
             <span className="text-xs text-blue-700 dark:text-blue-300 truncate">
-              {currentStep.description}
+              {answer.step.description}
             </span>
           </div>
-        )}
+        ))}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {hasMore && (
             <div className="text-center">
@@ -620,25 +632,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               ) : undefined}
             />
           ))}
-          {(isGenerating || streamingMessage?.reasoning || streamingMessage?.content) && (
-            <div className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
+          {answers.map(answer => (
+            <div key={answer.sender} className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
               <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
-                <span>{streamingSender || 'Assistant'}</span>
-                {isGenerating ? (
-                  <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
-                    <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                    generating…
-                  </span>
-                ) : (
-                  <span className="normal-case font-normal text-red-500 dark:text-red-400">stopped</span>
-                )}
+                <span>{answer.name || 'Assistant'}</span>
+                <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
+                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                  generating…
+                </span>
               </div>
-              {streamingMessage?.reasoning && (
-                <Reasoning text={streamingMessage.reasoning} thinking={isGenerating && !streamingMessage.content} />
-              )}
-              {streamingMessage?.content && <MarkdownMessage content={streamingMessage.content} />}
+              {answer.reasoning && <Reasoning text={answer.reasoning} thinking={!answer.content} />}
+              {answer.content && <MarkdownMessage content={answer.content} />}
             </div>
-          )}
+          ))}
           <div ref={messagesEndRef} />
         </div>
 

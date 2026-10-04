@@ -119,7 +119,12 @@ else who may read it - the session's owner, say - is shown its history and no in
     100). A message's reasoning, where the server hands it out, is folded above its content under
     "Thought" and opened by the user (issue 216).
 *   **While an agent answers**, its partial message is shown as it streams, its reasoning
-    included: folded under "Thinking" until the answer begins (issue 216). Reasoning that is the
+    included: folded under "Thinking" until the answer begins (issue 216). Several agents answering
+    at once each have an answer of their own, in the order they began, and a plan step of their own
+    above the chat (issue 203). Answers under way are shown below every complete message: a
+    message joins the history when it is complete, so an answer that ends first moves up past those
+    still under way - as a reload shows the history. The stop button stays while any agent
+    answers. Reasoning that is the
     owner's never reaches the chat, and reasoning held back while the agent could still make a call
     whose content is the owner's arrives only with the complete message
     (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)). A failed turn and the channel-wide

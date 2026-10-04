@@ -1,6 +1,6 @@
 # 203 — The chat view shows only one answer under way per channel
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -50,3 +50,18 @@ What then happens, as far as the code shows (not yet seen in the browser):
 - **2026-10-03** — Issue created, after [202](202-send-while-generating.md) let users send while
   an agent answers, which makes simultaneous answers more frequent. The problem already existed
   under `broadcast_policy`.
+- **2026-10-04** — Decided with the maintainer: complete messages are shown above every answer
+  under way, so an answer that ends first moves up past one that began before it. The channel's
+  history holds messages in the order they were completed, and the event stream delivers them in
+  that order; showing them so keeps the view as a reload shows it. Answers under way keep the order
+  they began in, and an agent that goes on after a complete message - a tool call - keeps its place
+  below.
+- **2026-10-04** — Done. `ChatView` keeps the answers under way as a list of `Answer` (sender,
+  name, streamed reasoning and content, plan step), changed by `withAnswer`: `ResponseStarted`
+  begins an answer at the end, `PartialMessageGenerated` adds to its sender's,
+  `CompleteMessageGenerated` empties it, and `FullResponseGenerated`, `TurnFailed` and
+  `ParticipantRemoved` end it; the snapshot ends all. One bubble per answer, keyed by its sender,
+  and one plan-step bar per answer that has a step, naming the agent. `isGenerating` - the stop
+  button - is whether any answer is under way. The "stopped" bubble is gone: since every turn ends
+  with `FullResponseGenerated` or `TurnFailed`, both of which clear what was under way, it could no
+  longer be reached. Not verified in the browser with two agents answering at once.
