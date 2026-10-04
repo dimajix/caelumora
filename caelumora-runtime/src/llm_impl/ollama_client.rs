@@ -573,7 +573,7 @@ impl OllamaClient {
             endpoint: config.endpoint,
             model: config.model,
             think: config.think,
-            profile: ModelProfile { reasoning_history: config.reasoning_history, system_messages: config.system_messages },
+            profile: ModelProfile { reasoning_history: config.reasoning_history, system_messages: config.system_messages, ..ModelProfile::default() },
             context_size: config.context_size,
             control_tokens,
             running_context_sizes,

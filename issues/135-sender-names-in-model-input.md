@@ -1,6 +1,6 @@
 # 135 — The model is not told who said what
 
-**Status:** open
+**Status:** in progress
 **Area:** Context & knowledge
 
 ## The problem
@@ -163,3 +163,10 @@ measured.
   `name: text` by itself today; A2A knows only the roles `user` and `agent`, no sender. Then
   experiments on faked markers for [150](150-impersonation-towards-the-agent.md), before anything
   against them is built.
+- **2026-10-04** — Step 1.1: the rule. `ModelProfile` gains `sender_format` (`SenderFormat`: `none`,
+  `prefix`, `xml`) and `sender_style` (`SenderStyle`: `handle`, `name`) as fields of their own, beside
+  `reasoning_history` and `system_messages`, rather than a type bundling the two as planned.
+  `ModelProfile::given` marks a message a user or another agent said to the agent (role `user`),
+  never the agent's own, a tool's or the system's; in `xml` only what would open or end an element
+  is escaped. A record without the fields reads as `none`, as it was given. Every profile is `none`
+  so far: nothing changes yet.
