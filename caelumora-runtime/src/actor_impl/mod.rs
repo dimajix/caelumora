@@ -6,13 +6,14 @@ pub mod external_agent;
 use crate::component::ComponentImpl;
 use crate::message::{MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
+use crate::transport::EventReceiver;
 use anyhow::Result;
-use caelumora_model::actor::ActorEvent;
+use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
-use tracing::warn;
+use tracing::{debug, warn, Instrument};
 
 /// Passes `input` through `processors` in turn, each given what the one
 /// before returned, for the actor whose context is `security`. A failing
@@ -62,6 +63,43 @@ async fn perceive(
         }
     };
     state.perceive(heard, perceived);
+}
+
+/// Takes in what an agent was told while it could not listen (issue 222),
+/// the same for both kinds of agent: `received`, and everything `rx` holds
+/// already behind it, in order. What others said is perceived as it comes
+/// (`perceive`, with `takes` and `processors`); of the requests to respond
+/// the last is returned - one answer to the conversation as it stands, in
+/// the authority of the last who asked - and the others are dropped, as is
+/// every other event. Neither commits nor stores: when that happens is the
+/// actor's.
+async fn take_in(
+    state: &mut AgentChannelState,
+    received: Envelope,
+    rx: &mut Box<dyn EventReceiver>,
+    takes: impl Fn(&Message) -> bool,
+    processors: &[ComponentImpl<dyn PerceiveInProcessor>],
+    security: &SecurityContext,
+) -> Option<Envelope> {
+    let mut request = None;
+    let mut next = Some(received);
+    while let Some(event) = next {
+        let span = crate::logging::envelope_span(&event.context, event.event.kind());
+        let asked = async {
+            debug!("Received {}", event.describe());
+            match event.event {
+                ActorEvent::FullResponseGenerated(messages) => {
+                    perceive(state, messages, &takes, processors, security).await;
+                    None
+                }
+                ActorEvent::ResponseRequested => Some(event),
+                _ => None,
+            }
+        }.instrument(span).await;
+        request = asked.or(request);
+        next = rx.try_recv();
+    }
+    request
 }
 
 /// Takes in what an actor of an agent missed of its channel as what it
@@ -140,6 +178,34 @@ mod tests {
 
     fn texts(messages: &[Message]) -> Vec<&str> {
         messages.iter().filter_map(|m| m.content.as_deref()).collect()
+    }
+
+    fn envelope(event: ActorEvent) -> Envelope {
+        Envelope::new(SecurityContext::default(), caelumora_model::actor::EventContext::default(), event)
+    }
+
+    #[tokio::test]
+    async fn everything_queued_is_heard_in_order_and_only_the_last_request_is_answered() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(crate::transport_impl::memory::InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        let security = SecurityContext::default();
+
+        let heard = |text: &str| envelope(ActorEvent::FullResponseGenerated(vec![said(text)]));
+        let mut last = envelope(ActorEvent::ResponseRequested);
+        last.security.caller_id = caelumora_model::actor::ActorId::System;
+        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted), last, heard("three")] {
+            tx.try_send(event).expect("room");
+        }
+
+        let request = take_in(&mut state, heard("one"), &mut rx, |_| true, &[], &security).await;
+        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
+        assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
+        assert!(rx.try_recv().is_none(), "nothing left behind");
+
+        let request = take_in(&mut state, heard("four"), &mut rx, |_| true, &[], &security).await;
+        assert!(request.is_none(), "heard, but nobody asked");
+        assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
     }
 
     #[tokio::test]

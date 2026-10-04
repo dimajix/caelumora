@@ -1927,6 +1927,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
+        let model = Arc::new(Gated {
+            answers: std::sync::Mutex::new(["first", "second", "third"].into()),
+            gate: Arc::new(tokio::sync::Semaphore::new(0)),
+            seen: Default::default(),
+        });
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(model.clone(), Default::default()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.seen.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the agent asks its model about hello");
+
+        // Three messages, each asking the agent, while its turn waits.
+        let alice = alice_of(&context);
+        let queued = ["one", "two", "three"];
+        for text in queued {
+            channel.user_actor(alice).unwrap().send_message(text.to_string(), None).await.expect("taken during a turn");
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut said = 0;
+            while said < queued.len() {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) {
+                    said += 1;
+                }
+            }
+        }).await.expect("the messages are said in the channel");
+        model.gate.add_permits(3);
+
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["first"], "the running turn ends as it began");
+        assert_eq!(said(answered(&mut events, agent).await), ["second"], "one turn answers what was queued");
+        let seen = model.seen.lock().unwrap().clone();
+        assert!(queued.iter().all(|text| seen[1].iter().any(|c| c.contains(text))), "having heard all of it: {:?}", seen[1]);
+
+        // Nothing is left to answer: told something new, the agent answers
+        // it with the next call of its model, not with a stale one.
+        channel.user_actor(alice).unwrap().send_message("four".to_string(), None).await.expect("sent");
+        assert_eq!(said(answered(&mut events, agent).await), ["third"]);
+        let seen = model.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 3, "one call per turn, one turn per batch");
+        assert!(seen[2].iter().any(|c| c.contains("four")), "the third call answers the new message");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
+        use caelumora_model::approval::ApprovalResponse;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_model::message::MessageRole;
+        use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+        let answer = |text: &str, tool_calls| Message {
+            role: MessageRole::Assistant,
+            content: Some(text.to_string()),
+            tool_calls,
+            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        };
+        let stop = vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN }];
+        let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            id: "stop".to_string(),
+            kind: crate::tool_impl::stop_tool::STOP_TOOL_KIND.to_string(),
+            params: serde_json::Value::Null,
+            tags: vec![],
+            fail_policy: ComponentFailPolicy::FailClosed,
+            security_attributes: Default::default(),
+        }] };
+        let model = Scripted(std::sync::Mutex::new([answer("Good bye.", stop), answer("I am back.", Vec::new())].into()));
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
+        let request = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::ApprovalRequested(request) = events.recv().await.expect("the channel is running").event {
+                    break request;
+                }
+            }
+        }).await.expect("the call is put up for approval");
+        let alice = alice_of(&context);
+        channel.user_actor(alice).unwrap().send_approval(ApprovalResponse { id: request.id, agent_id: agent }, true).await.unwrap();
+        settled(&helper, ActorState::Sleeping).await;
+
+        // The message and the request reach it together, and it was woken
+        // before either: it answers (issue 222).
+        channel.user_actor(alice).unwrap().send_message("@helper, are you there?".to_string(), None).await.expect("sent");
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        loop {
+            if said(answered(&mut events, agent).await) == ["I am back."] {
+                break;
+            }
+        }
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
         use caelumora_model::approval::ApprovalResponse;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};

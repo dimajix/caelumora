@@ -1,4 +1,4 @@
-use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, perceive};
+use super::{apply_stage_processors, catch_up, event_for, failure_message, lowered_message, take_in};
 use crate::actor::{Actor, Answering};
 use crate::agent_run_control::{Interrupt, RunControl};
 use crate::agent_turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
@@ -260,41 +260,38 @@ impl AgentActor {
         Ok(next)
     }
 
-    /// Idle and Sleeping wait for the next event alike: a
-    /// `FullResponseGenerated` is perceived, a `ResponseRequested` starts a
-    /// turn - unless `asleep`, where only `wakeup()` ends the sleep. `None`
-    /// once the actor's input is closed.
+    /// Idle and Sleeping wait for the next event alike, and take it in with
+    /// everything queued behind it (`take_in`, issue 222): what others said
+    /// is perceived - no turn, nothing asked of the policy (issues 85, 90) -
+    /// and one turn starts on the last request, unless the agent sleeps,
+    /// where only `wakeup()` ends the sleep. `None` once the actor's input
+    /// is closed.
     async fn handle_waiting(
         &self,
-        asleep: bool,
         state: &mut AgentChannelState,
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
-        let Some(event) = rx.recv().await else { return Ok(None) };
-        let span = crate::logging::envelope_span(&event.context, event.event.kind());
-        let started = async {
-            debug!("Received {}", event.describe());
-            Ok::<_, anyhow::Error>(match event.event {
-                // No turn: nothing here is a turn's work, and nothing is
-                // asked of the policy (issues 85, 90).
-                ActorEvent::FullResponseGenerated(messages) => {
-                    perceive(state, messages, |_| true, &self.perceive_in_processors, &self.security_context).await;
-                    false
-                }
-                ActorEvent::ResponseRequested if !asleep => {
-                    match self.request_response(state, &event, output).await {
-                        Ok(()) => true,
-                        // E.g. a fail-closed context provider: the turn never starts.
-                        Err(e) => {
-                            self.fail_turn(state, &e, output).await;
-                            false
-                        }
+        let Some(received) = rx.recv().await else { return Ok(None) };
+        let request = take_in(state, received, rx, |_| true, &self.perceive_in_processors, &self.security_context).await;
+        // Read once taken in, not before waiting: the channel wakes an agent
+        // before it delivers the message that asks it, and the request comes
+        // in the same batch.
+        let asleep = self.control.state() == ActorState::Sleeping;
+        let started = match request.filter(|_| !asleep) {
+            Some(request) => {
+                let span = crate::logging::envelope_span(&request.context, request.event.kind());
+                match self.request_response(state, &request, output).instrument(span.clone()).await {
+                    Ok(()) => true,
+                    // E.g. a fail-closed context provider: the turn never starts.
+                    Err(e) => {
+                        self.fail_turn(state, &e, output).instrument(span).await;
+                        false
                     }
                 }
-                _ => false,
-            })
-        }.instrument(span).await?;
+            }
+            None => false,
+        };
         rx.commit().await?;
         Ok(Some(if started { ActorState::Planning } else { self.control.state() }))
     }
@@ -770,8 +767,7 @@ impl Actor for AgentActor {
             // Between turns the actor works on its state; a step of a turn
             // on the turn under way.
             let result = async { Ok::<_, anyhow::Error>(match current_state {
-                ActorState::Idle => self.handle_waiting(false, &mut state, &mut rx, &*output).await?,
-                ActorState::Sleeping => self.handle_waiting(true, &mut state, &mut rx, &*output).await?,
+                ActorState::Idle | ActorState::Sleeping => self.handle_waiting(&mut state, &mut rx, &*output).await?,
                 ActorState::WaitingForApproval => {
                     self.handle_waiting_for_approval(&mut self.turn_under_way(&mut state)?, &mut rx).await?
                 }
