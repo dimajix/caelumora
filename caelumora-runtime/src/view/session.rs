@@ -10,7 +10,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::snapshot::{ParticipantSnapshot, SessionSnapshot};
+use caelumora_model::snapshot::{Detail, ParticipantSnapshot, SessionSnapshot};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -188,11 +188,14 @@ impl SessionView {
     }
 
     /// The session as the viewer sees it at this moment (issue 80): with
-    /// its participants and the channels they may read.
-    pub async fn snapshot(&self) -> SessionSnapshot {
+    /// its participants, and the details `detail` asks for - the channels
+    /// the viewer may read, and theirs.
+    pub async fn snapshot(&self, detail: Detail) -> SessionSnapshot {
         let mut channels = Vec::new();
-        for channel in self.channels().await {
-            channels.push(channel.snapshot().await);
+        if detail.contains(Detail::CHANNELS) {
+            for channel in self.channels().await {
+                channels.push(channel.snapshot(detail).await);
+            }
         }
         let mut participants = Vec::with_capacity(self.session.participants.len());
         for participant in &self.session.participants {

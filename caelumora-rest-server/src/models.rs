@@ -1,6 +1,6 @@
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, Compartment};
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, TokenUsage};
 use caelumora_model::name::Name;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -142,8 +142,8 @@ pub struct PublishedNotesResponse {
     pub notes: Vec<caelumora_model::note::Note>,
 }
 
-impl From<caelumora_runtime::view::PublishedNotes> for PublishedNotesResponse {
-    fn from(published: caelumora_runtime::view::PublishedNotes) -> Self {
+impl From<snapshot::PublishedNotes> for PublishedNotesResponse {
+    fn from(published: snapshot::PublishedNotes) -> Self {
         Self { agent_id: published.agent, name: published.name, notes: published.notes }
     }
 }
@@ -291,17 +291,23 @@ pub struct ChannelMemberResponse {
     /// produced a message (issue 41) - only ever for agents, and only as the
     /// policy decides for this user.
     pub can_read_context: bool,
+    /// What the participant's model calls in the channel used (issue 209):
+    /// given by the snapshot of the channel's stream and for a participant
+    /// asked for alone, not where channels are listed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl ChannelMemberResponse {
     /// `view` as the API shows it; `None` for an id that is no participant.
-    fn of(view: snapshot::MemberSnapshot) -> Option<Self> {
+    pub(crate) fn of(view: snapshot::MemberSnapshot) -> Option<Self> {
         Some(Self {
             id: view.id,
             kind: ParticipantKind::of(view.id)?,
             name: view.name.unwrap_or_else(|| UNKNOWN.to_string()),
             handle: view.handle,
             can_read_context: view.can_read_context,
+            usage: view.usage,
         })
     }
 }
@@ -560,7 +566,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -569,6 +575,8 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
+            notes: Vec::new(),
+            pending_approvals: Vec::new(),
         };
 
         let response = ChannelResponse::from(view);
@@ -576,5 +584,16 @@ mod tests {
         assert!(response.can_change);
         let kinds: Vec<_> = response.members.iter().map(|m| (m.kind, m.name.as_str())).collect();
         assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
+    }
+
+    #[test]
+    fn what_a_participant_used_is_answered_only_where_it_was_read() {
+        let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage };
+
+        let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
+        assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
+        let json = serde_json::to_value(ChannelMemberResponse::of(member(None)).unwrap()).unwrap();
+        assert!(json.get("usage").is_none());
     }
 }

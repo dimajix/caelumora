@@ -1,11 +1,12 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
 use crate::error::{ApiError, Subject};
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
+use caelumora_model::snapshot::Detail;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
@@ -37,7 +38,7 @@ pub async fn list_channels(
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("listing the channels of session {session_id}")))?;
     let mut channels = Vec::new();
     for channel in session.channels().await {
-        channels.push(channel.snapshot().await.into());
+        channels.push(channel.snapshot(Detail::MEMBERS).await.into());
     }
     Ok(Json(channels))
 }
@@ -139,18 +140,12 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
         }
     };
     let (messages, has_more) = recent_messages(history.messages);
-    let notes = view.notes().await.unwrap_or_else(|e| {
-        // The conversation can be shown without them.
-        tracing::warn!("Reading the notes of channel {} failed: {:#}", channel.id(), e);
-        Vec::new()
-    });
-    let pending_approvals = view.pending_approvals().await.unwrap_or_else(|e| {
-        // The conversation can be shown without them.
-        tracing::warn!("Reading the pending approvals of channel {} failed: {:#}", channel.id(), e);
-        Vec::new()
-    });
+    // The conversation can be shown without what of it cannot be read.
+    let mut channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
+    let notes = std::mem::take(&mut channel.notes);
+    let pending_approvals = std::mem::take(&mut channel.pending_approvals);
     Some(ChannelSnapshot {
-        channel: view.snapshot().await.into(),
+        channel: channel.into(),
         messages,
         has_more,
         notes: notes.into_iter().map(Into::into).collect(),
@@ -207,6 +202,20 @@ pub async fn add_participant(
 
 /// Removes a participant from the channel (issue 46); `aid` is the id of the
 /// user or agent. Only who may change the channel may do it.
+/// One participant of the channel, with what its model calls used (issue
+/// 209) - what a client fetches again when an agent's turn ends, instead
+/// of the whole channel.
+pub async fn get_participant(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<ChannelMemberResponse>, ApiError> {
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let member = member_of(&channel, aid).await?.snapshot(Detail::USAGE).await;
+    ChannelMemberResponse::of(member).map(Json)
+        .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))
+}
+
 pub async fn remove_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,

@@ -123,3 +123,22 @@ anew).
   the one read from `/api/ps` after the call (`RunningContextSizes`, shared by the clients of a
   registry like the control tokens, kept for `RUNNING_CONTEXT_SIZE_KEPT`). A model name without a
   tag is matched as its `latest`. CONFIGURATION.md and COMPONENTS.md say so.
+- **2026-10-04** — Changed with the maintainer while building step 2: the session snapshot is built
+  from every channel's snapshot, so usage in `MemberSnapshot` would have read every agent's state
+  for every session listed. A first answer, a second method `snapshot_with_usage` beside `snapshot`,
+  was rejected by the maintainer: two kinds of snapshot. Instead every `snapshot` of the views takes
+  the details it is to hold as `bitflags` (`snapshot::Detail`: `CHANNELS`, `MEMBERS`, `USAGE`,
+  `NOTES`, `APPROVALS`), combined freely and without one implying another - `USAGE` without
+  `MEMBERS` simply gives no usage. A list not asked for, or that could not be read, is empty - first
+  made `Option`s, which the maintainer did not want: what was not asked for is empty. The notes and
+  pending approvals moved into the channel snapshot with it (`PublishedNotes` into
+  `caelumora_model::snapshot`), so that the channel's stream asks for one snapshot instead of
+  reading them beside it; `GET /sessions`, which answers only id, name and privacy, now asks for no
+  detail and no longer reads every channel's members.
+- **2026-10-04** — Step 2 done: `TokenUsage` (`caelumora_model::message`) is summed by
+  `TranscriptView::usage` over the agent's own messages - the others' in its transcript carry their
+  senders' tokens - on every branch and in the turn under way. `MemberView::usage` hands it out,
+  and a member's snapshot with `Detail::USAGE`; `ChannelMemberResponse` carries it as `usage`. The
+  channel's stream asks for `MEMBERS | USAGE | NOTES | APPROVALS`, `GET .../participants/{aid}` -
+  new - answers one participant with `USAGE`, the lists of sessions and channels ask for no usage.
+  AGENT-TURN.md, REST-SERVER.md and SECURITY.md say so.

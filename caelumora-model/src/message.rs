@@ -140,6 +140,46 @@ impl Message {
     }
 }
 
+/// What an agent's model calls used (issue 209), summed from the messages
+/// they produced, each of which carries the tokens of its call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TokenUsage {
+    /// How many calls reported their tokens.
+    pub calls: u64,
+    /// The prompt tokens of all calls: every call is given the whole
+    /// context again, so this is what was consumed, not what is held.
+    pub prompt_tokens: u64,
+    /// The answer tokens of all calls.
+    pub completion_tokens: u64,
+    /// The prompt and answer tokens of the last call: how full its context
+    /// was.
+    pub last_call_tokens: u64,
+    /// How many tokens the context of the last call held; `None` if not
+    /// known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_size: Option<u64>,
+}
+
+impl TokenUsage {
+    /// The usage of the calls that produced `messages`, in the order they
+    /// were produced; `None` if none of them reported its tokens.
+    pub fn of<'a>(messages: impl IntoIterator<Item = &'a Message>) -> Option<Self> {
+        messages.into_iter()
+            .filter(|m| m.prompt_tokens.is_some() || m.completion_tokens.is_some())
+            .fold(None, |usage: Option<Self>, m| {
+                let (prompt, completion) = (m.prompt_tokens.unwrap_or(0), m.completion_tokens.unwrap_or(0));
+                let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, last_call_tokens: 0, context_size: None });
+                Some(Self {
+                    calls: usage.calls + 1,
+                    prompt_tokens: usage.prompt_tokens + prompt,
+                    completion_tokens: usage.completion_tokens + completion,
+                    last_call_tokens: prompt + completion,
+                    context_size: m.context_size,
+                })
+            })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MessageEvent {
     /// A partial piece of a message (e.g., a single sentence or a chunk of tokens)

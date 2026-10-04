@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use caelumora_model::snapshot::Detail;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
@@ -48,7 +49,7 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 /// 80) - what a handler answers with a channel. Described by the runtime,
 /// which decides what the user may read and do; does not start the session.
 pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
-    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot().await.into())
+    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::MEMBERS).await.into())
 }
 
 /// Channel `channel_id` of session `session_id` as `user` reaches it
@@ -92,7 +93,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))
         .route("/sessions/{id}/channels/{cid}/notes", get(channels::get_notes))
         .route("/sessions/{id}/channels/{cid}/participants", post(channels::add_participant))
-        .route("/sessions/{id}/channels/{cid}/participants/{aid}", axum::routing::delete(channels::remove_participant))
+        .route("/sessions/{id}/channels/{cid}/participants/{aid}", get(channels::get_participant).delete(channels::remove_participant))
         .route(
             "/sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context",
             get(channels::message_context),

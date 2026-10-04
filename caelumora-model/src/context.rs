@@ -25,7 +25,7 @@ use crate::turn::TurnEntry;
 use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
-use crate::message::{Message, MessageRole};
+use crate::message::{Message, MessageRole, TokenUsage};
 use crate::transcript::{Transcript, TranscriptEntry};
 use crate::tool::ToolDefinition;
 use serde::{Deserialize, Serialize};
@@ -275,6 +275,16 @@ impl<'a> TranscriptView<'a> {
         Self { stored: &state.transcript, pending }
     }
 
+    /// What the model calls of `agent` used (issue 209): summed over its
+    /// own messages - the others' in the transcript carry their senders'
+    /// tokens - on every branch, those of turns given up included, since
+    /// their calls were made, and in the turn under way.
+    pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
+        let stored = self.stored.all_entries().map(|node| &node.entry);
+        let pending = self.pending.iter().map(|entry| &entry.node.entry);
+        TokenUsage::of(stored.chain(pending).filter_map(TranscriptEntry::message).filter(|m| m.sender_id == agent))
+    }
+
     /// The entries of the transcript `digest` names - `None`: the empty
     /// one - or `None` if it is not a prefix of this one.
     pub fn prefix(&self, digest: Option<&Digest>) -> Option<Vec<&'a Node<TranscriptEntry>>> {
@@ -483,6 +493,39 @@ mod tests {
         assert_eq!(state.transcript.digest(), turn.work.context.transcript, "the turn's digests are those of the transcript");
         assert_eq!(seen(&state, 0), ["earlier", "question", "prompt:step 1"]);
         assert_eq!(seen(&state, 1), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
+    }
+
+    #[test]
+    fn usage_sums_the_agent_s_own_calls_on_every_branch_and_in_its_turn() {
+        use crate::transcript::{GivenUp, GivenUpReason};
+        let agent = ActorId::Agent(AgentId::new());
+        let call = |sender: ActorId, prompt: u64, completion: u64, size: Option<u64>| Message {
+            sender_id: sender,
+            prompt_tokens: Some(prompt),
+            completion_tokens: Some(completion),
+            context_size: size,
+            ..text("answer")
+        };
+        let mut state = AgentChannelState::default();
+        assert_eq!(TranscriptView::of(&state).usage(agent), None, "no call yet");
+
+        state.transcript.push(call(agent, 100, 10, Some(4096)));
+        state.transcript.push(call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192)));
+        let before_lost = state.transcript.digest();
+        state.transcript.push(call(agent, 200, 20, Some(4096)));
+        let lost = state.transcript.digest().unwrap();
+        state.transcript.move_head(before_lost.as_ref());
+        state.transcript.give_up(lost, GivenUp { reason: GivenUpReason::Stopped, at: chrono::Utc::now(), turn_entries: 1 });
+        begin(&mut state, ModelProfile::default());
+        state.turn.as_mut().unwrap().push(call(agent, 300, 30, None));
+
+        assert_eq!(TranscriptView::of(&state).usage(agent), Some(TokenUsage {
+            calls: 3,
+            prompt_tokens: 600,
+            completion_tokens: 60,
+            last_call_tokens: 330,
+            context_size: None,
+        }), "not the other agent's call; the turn given up and the one under way count");
     }
 
     #[test]

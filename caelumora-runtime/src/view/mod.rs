@@ -30,7 +30,7 @@ mod context;
 mod member;
 mod session;
 
-pub use channel::{ChannelView, MemberView, PublishedNotes};
+pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, ContextError};
 pub use session::SessionView;
 
@@ -345,6 +345,7 @@ impl std::fmt::Debug for ViewsFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::snapshot::Detail;
     use caelumora_model::name::{Name, ScopedName};
     use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
@@ -507,7 +508,7 @@ mod tests {
                 let names = |channels: &[ChannelView]| channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>();
                 let for_alice = manager.views(as_user(alice.id)).session(id).await.unwrap();
                 assert_eq!(names(&for_alice.channels().await), ["main", "private"], "{state}: the owner reads every channel");
-                assert_eq!(for_alice.snapshot().await.participants.iter().filter_map(|p| p.name.as_deref()).collect::<Vec<_>>(), ["alice", "bob", "Helper"], "{state}");
+                assert_eq!(for_alice.snapshot(Detail::empty()).await.participants.iter().filter_map(|p| p.name.as_deref()).collect::<Vec<_>>(), ["alice", "bob", "Helper"], "{state}");
                 let for_bob = manager.views(as_user(bob.id)).session(id).await.unwrap();
                 assert_eq!(names(&for_bob.channels().await), ["main"], "{state}: bob is not in the private channel");
                 assert!(for_alice.may_change().await && !for_bob.may_change().await, "{state}: the owner changes the session, a participant does not");
@@ -531,7 +532,8 @@ mod tests {
                 assert!(manager.views(as_user(carol.id)).sessions().await.unwrap().is_empty(), "{state}: nor is it listed for her");
                 let listed = manager.views(as_user(bob.id)).sessions().await.unwrap();
                 assert_eq!(listed.len(), 1, "{state}");
-                assert_eq!(listed[0].snapshot().await, for_bob.snapshot().await, "{state}: listed as it is reached");
+                let all = Detail::all();
+                assert_eq!(listed[0].snapshot(all).await, for_bob.snapshot(all).await, "{state}: listed as it is reached");
             }
         };
         check("running").await;
@@ -555,8 +557,7 @@ mod tests {
         store.create_session(&SecurityContext::system(), &session).await.unwrap();
         store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
 
-        let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot().await;
-
+        let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::MEMBERS).await;
         let [alice, gone, approver] = view.members.as_slice() else { panic!("three members, in order: {view:?}") };
         assert_eq!((alice.name.as_deref(), alice.handle.as_deref()), (Some("Alice Example"), Some("alice-example")));
         assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
@@ -694,6 +695,44 @@ use caelumora_model::turn::TurnState;
         assert_eq!(pending.len(), 1, "only the call that waits");
         assert_eq!((pending[0].id, pending[0].agent_id, pending[0].channel_id, pending[0].description.as_str()), (waiting.id, helper.id, channel.id, "Delete it?"));
         assert!(manager.running(session.id).is_none(), "read without starting the session");
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_holds_the_details_asked_for_and_no_others() {
+        use caelumora_model::agent::AgentChannelState;
+        use caelumora_model::message::{Message, TokenUsage};
+        use caelumora_model::store::StateStore;
+
+        let (store, manager) = owned_runtime();
+        let alice = user("alice");
+        let helper = an_agent_of(&store, ActorId::User(alice.id)).await;
+        let mut session = make_session("hers", ActorId::User(alice.id), vec![ActorId::Agent(helper.id)]);
+        session.participants = record_users(&store, &[&alice]).await;
+        session.participants.push(Participant::Agent(helper.id));
+        let channel = main_channel(&session);
+        store.create_session(&SecurityContext::system(), &session).await.unwrap();
+        store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        let answer = Message {
+            sender_id: ActorId::Agent(helper.id),
+            prompt_tokens: Some(1000),
+            completion_tokens: Some(50),
+            context_size: Some(8192),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let mut state = AgentChannelState::default();
+        state.transcript.push(answer);
+        store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
+
+        let views = manager.views(as_user(alice.id));
+        let main = views.session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+        let used = |channel: caelumora_model::snapshot::ChannelSnapshot| channel.members.iter().map(|m| m.usage).collect::<Vec<_>>();
+        let expected = TokenUsage { calls: 1, prompt_tokens: 1000, completion_tokens: 50, last_call_tokens: 1050, context_size: Some(8192) };
+        assert_eq!(used(main.snapshot(Detail::MEMBERS | Detail::USAGE).await), [None, Some(expected)], "the user's calls report nothing");
+        assert_eq!(main.member(ActorId::Agent(helper.id)).await.unwrap().snapshot(Detail::USAGE).await.usage, Some(expected));
+        assert_eq!(used(main.snapshot(Detail::MEMBERS).await), [None, None], "not asked for");
+        assert!(used(main.snapshot(Detail::USAGE).await).is_empty(), "no members to carry it");
+        let listed = views.session(session.id).await.unwrap().snapshot(Detail::CHANNELS).await;
+        assert!(!listed.channels.is_empty() && listed.channels.iter().all(|c| c.members.is_empty() && c.notes.is_empty() && c.pending_approvals.is_empty()), "only what was asked for");
     }
 
     #[tokio::test]

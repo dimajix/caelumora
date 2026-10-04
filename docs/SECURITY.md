@@ -192,11 +192,16 @@ sessions alike, and reaching a session does not start it. Names are read in the 
 (issue 120).
 
 A node answers with a **snapshot** (`caelumora_model::snapshot`, issue 80) for a client that lists
-and offers: `SessionView::snapshot()` with the participants, the channels the viewer may read and
-`can_change`; `ChannelView::snapshot()` with the members, their handles, `can_read_context` and
-`can_change`. The REST server only maps snapshots to responses (`From<snapshot::ChannelSnapshot> for
-ChannelResponse` and the like, in `models.rs`) and asks the `SecurityManager` nothing. A frontend
-never asks the access questions itself.
+and offers: `SessionView::snapshot` with the participants and `can_change`; `ChannelView::snapshot`
+with `can_change`; `MemberView::snapshot` with the handle and `can_read_context`. What else a
+snapshot holds the caller chooses as `Detail` flags (issue 209) - a session's channels, a channel's
+members, notes and pending approvals, a member's token usage - so that what reads every agent's
+state is paid only where it is shown. The flags are combined freely, none implies another: a detail
+whose part is not asked for is not there (`USAGE` without `MEMBERS` gives no usage), a list not
+asked for is empty. A detail that cannot be read is left out, and the rest is answered. The REST
+server only maps snapshots to responses (`From<snapshot::ChannelSnapshot> for ChannelResponse` and
+the like, in `models.rs`) and asks the `SecurityManager` nothing. A frontend never asks the access
+questions itself.
 
 A node is data the viewer was allowed to reach; it decides nothing. An operation never relies on it:
 it checks its own permission when it acts.

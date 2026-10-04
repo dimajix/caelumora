@@ -4,6 +4,7 @@ use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionPrivacyRe
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode};
 use crate::error::{Json, Path};
+use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
 use caelumora_model::template::SessionTemplateId;
 use std::sync::Arc;
@@ -27,7 +28,7 @@ pub async fn list_sessions(State(state): State<Arc<AppState>>, user: Authenticat
         .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
     let mut listed = Vec::with_capacity(sessions.len());
     for session in sessions {
-        listed.push(SessionResponse::from(session.snapshot().await));
+        listed.push(SessionResponse::from(session.snapshot(Detail::empty()).await));
     }
     Ok(Json(listed))
 }
@@ -43,7 +44,7 @@ pub async fn get_session(
     let session_id = SessionId(id);
     let session = crate::routes::views(&state, &user).session(session_id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.snapshot().await.into()))
+    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
 }
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
@@ -87,5 +88,5 @@ pub async fn update_session_privacy(
 
     let session = crate::routes::views(&state, &user).session(session_id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
-    Ok(Json(session.snapshot().await.into()))
+    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
 }

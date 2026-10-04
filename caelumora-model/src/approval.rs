@@ -22,7 +22,7 @@ pub enum ApprovalStrategy {
     DenyOnFirst,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub id: ApprovalId,
     pub session_id: SessionId,

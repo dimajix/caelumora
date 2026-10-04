@@ -140,7 +140,7 @@ pub struct ToolDefinition {
     pub parameters: ToolParameters,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: Option<String>,
     pub function_name: String,

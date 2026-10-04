@@ -20,7 +20,9 @@ use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
+use caelumora_model::context::TranscriptView;
 use caelumora_model::mention::handle_of;
+use caelumora_model::message::TokenUsage;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
@@ -228,6 +230,12 @@ impl AgentMember {
     /// The approvals its turn waits for (issue 172).
     pub(super) async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
         Ok(self.stored().await?.turn.map(|turn| turn.pending_approvals()).unwrap_or_default())
+    }
+
+    /// What its model calls used (issue 209).
+    pub(super) async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
+        let state = self.stored().await?;
+        Ok(TranscriptView::of(&state).usage(ActorId::Agent(self.0.agent)))
     }
 
     /// What it saw (issue 41).

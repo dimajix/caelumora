@@ -73,6 +73,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `GET …/notes` | The notes the channel's agents published |
 | `POST …/participants`, `DELETE …/participants/{aid}` | Add a participant (with `history`), remove one; `not_cleared` if they are not cleared for the channel (issue 133) |
+| `GET …/participants/{aid}` | One participant, with what its model calls used (`usage`, issue 209) - fetched again when an agent's turn ends, instead of the whole channel |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
 | `GET …/actors/{aid}/given-up-turns` | The turns an agent gave up - failed or stopped - with their reason and messages (issue 145) |
 | `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
@@ -183,7 +184,11 @@ state they start from (issue 34):
 *   for a channel, its members and the last 20 messages, with `has_more`; older ones come over `GET
     .../messages`; the notes its agents published; and, for a user who takes part in it, the
     approvals its agents wait for (`pending_approvals`, issue 172), read from their stored turns -
-    an approval asked for before the client connected, or before a restart, is shown too;
+    an approval asked for before the client connected, or before a restart, is shown too. Its
+    members carry what their model calls used (`usage`, issue 209), as `GET …/participants/{aid}`
+    does; where channels are listed - the global stream, `GET /sessions/{id}` - they do not, since
+    it reads every agent's state (the `Detail` a handler asks the views for, see
+    [SECURITY.md](SECURITY.md#views));
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

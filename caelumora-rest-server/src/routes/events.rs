@@ -1,3 +1,4 @@
+use caelumora_model::snapshot::Detail;
 use crate::auth::AuthenticatedUser;
 use crate::models::{GlobalSnapshot, StreamOptions};
 use crate::state::AppState;
@@ -40,7 +41,7 @@ async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Opt
     };
     let mut described = Vec::with_capacity(sessions.len());
     for session in sessions {
-        described.push(session.snapshot().await.into());
+        described.push(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into());
     }
     Some(GlobalSnapshot { sessions: described })
 }

@@ -304,6 +304,7 @@ dependencies = [
  "any_ascii",
  "anyhow",
  "async-trait",
+ "bitflags",
  "chrono",
  "derive_more",
  "serde",

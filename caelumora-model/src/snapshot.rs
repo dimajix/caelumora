@@ -7,11 +7,42 @@
 //! offer - may the viewer change the channel, read an agent's context - at
 //! the time it is taken. It is data for listing and offering: an operation
 //! still checks its own permission when it acts, never by a snapshot.
+//!
+//! How much a snapshot holds is the caller's choice (`Detail`): what a
+//! detail costs - reading every agent's state, say - is paid only where it
+//! is shown. A detail is taken where it is asked for and its part is
+//! there, and nothing else: `USAGE` without `MEMBERS` gives no usage, since
+//! there are no members to carry it. A list not asked for is empty.
 
 use crate::actor::ActorId;
+use crate::approval::ApprovalRequest;
 use crate::confidentiality::Classification;
+use crate::digest::Digest;
+use crate::message::TokenUsage;
+use crate::note::Note;
 use crate::privacy::PrivacyConfig;
 use crate::session::{ChannelId, SessionId};
+
+bitflags::bitflags! {
+    /// What a snapshot holds beyond what it always does, each detail in the
+    /// part it belongs to; combined freely, without one implying another.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Detail: u8 {
+        /// Of a session: the channels the viewer may read.
+        const CHANNELS = 1 << 0;
+        /// Of a channel: its members.
+        const MEMBERS = 1 << 1;
+        /// Of a member: what its model calls used (issue 209) - read from
+        /// its agent's state.
+        const USAGE = 1 << 2;
+        /// Of a channel: the notes its agents published (issue 17) - read
+        /// from their states.
+        const NOTES = 1 << 3;
+        /// Of a channel: the approvals its agents wait for (issue 172) -
+        /// read from their states.
+        const APPROVALS = 1 << 4;
+    }
+}
 
 /// A session with its participants and the channels the viewer may read.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,7 +58,8 @@ pub struct SessionSnapshot {
     /// Everyone who takes part in the session - whom a new channel can be
     /// made of (issue 09).
     pub participants: Vec<ParticipantSnapshot>,
-    /// The channels the viewer may read, in the order of the session.
+    /// The channels the viewer may read, in the order of the session -
+    /// with `Detail::CHANNELS`.
     pub channels: Vec<ChannelSnapshot>,
 }
 
@@ -57,8 +89,26 @@ pub struct ChannelSnapshot {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
-    /// Its participants, in the order of the channel.
+    /// Its participants, in the order of the channel - with
+    /// `Detail::MEMBERS`.
     pub members: Vec<MemberSnapshot>,
+    /// The notes every agent of the channel published - with
+    /// `Detail::NOTES`, empty if they could not be read.
+    pub notes: Vec<PublishedNotes>,
+    /// The approvals the channel's agents wait for, for a viewer who takes
+    /// part in it as a user (none for any other) - with
+    /// `Detail::APPROVALS`, empty if they could not be read.
+    pub pending_approvals: Vec<ApprovalRequest>,
+}
+
+/// The notes one agent published in a channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PublishedNotes {
+    pub agent: ActorId,
+    pub name: String,
+    pub notes: Vec<Note>,
+    /// The digest of the agent's note chain: the state of knowledge read.
+    pub digest: Option<Digest>,
 }
 
 /// A participant of a channel as the viewer sees it.
@@ -74,4 +124,9 @@ pub struct MemberSnapshot {
     /// Whether the viewer may see what this participant saw when it produced
     /// a message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub can_read_context: bool,
+    /// What the member's model calls in the channel used (issue 209) -
+    /// with `Detail::USAGE`; `None` also for a member whose calls report no
+    /// tokens (an external agent, a user), before its first call, and if
+    /// the agent's state could not be read.
+    pub usage: Option<TokenUsage>,
 }

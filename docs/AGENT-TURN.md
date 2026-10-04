@@ -331,6 +331,25 @@ Since what the model was given is less than the transcript holds, the `ContextRe
 profile and the turn's share of the transcript, and resolving it applies the same rule again. The
 digests are unchanged: they name the stored transcript, not a filtered copy of it.
 
+### Tokens used
+
+Every message the model produces carries the tokens of the call that produced it - of its prompt
+and its answer - and the size of the context the call had (`Message::context_size`, issue 209, see
+[CONFIGURATION.md](CONFIGURATION.md#the-model)). What an agent's calls in a channel used is summed
+from its transcript when it is read (`TranscriptView::usage`, a `TokenUsage`), not kept as a
+counter: over the agent's own messages only - the others' in its transcript carry their senders'
+tokens - on every branch, so that turns given up count, since their calls were made, and in the
+turn under way. Two numbers come out of it and mean different things:
+
+*   **consumption** - the prompt and answer tokens of all calls; every call sends the whole context
+    again, so this is what was used, not what is held;
+*   **fill level** - the prompt and answer tokens of the last call (`last_call_tokens`) against its
+    context size: how full the agent's context is.
+
+An external agent's calls report no tokens, so its usage is unknown, not zero. The views hand it out
+per member (`MemberView::usage`, and in a snapshot with `Detail::USAGE`), to whoever reads the
+channel - who sees the tokens of every published message anyway.
+
 ### Digests are stored, not recomputed
 
 A digest is a record of what was sent to the model, not a value to derive again. It is stored with
