@@ -1,6 +1,6 @@
 # 200 — Users are not told when a chain between agents is cut off
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -47,3 +47,15 @@ understands.
 
 - **2026-10-03** — Issue created, split off from [45](45-agent-mentions.md), which decided to cut
   chains off silently at first.
+- **2026-10-04** — Decided with the maintainer and done. An explicit event, not a general notice:
+  that a chain is cut off is an event of its own, and not only for the web UI -
+  `ActorEvent::ChainCutOff { message, max_agent_hops, not_asked }`. The `policy_moderator` sends it
+  itself, among the forwards of the response, in the name of `ActorId::System`; `RouteDecision` is
+  unchanged. Unlike this issue first said, it reaches not only the users but also the agents
+  involved - the sender of the response and the agents it mentioned - so that the one whose chain
+  ended and the ones not asked learn of it; the other agents and the approvers do not. The channel
+  therefore holds back from a sender only what it sent itself, no longer everything routed to it.
+  An agent takes no note of it yet: taking it into its history and transcript, so that its model
+  sees it, is left for later, and no issue was opened for it. It is sent at every cut-off, naming
+  the agents mentioned if there were any. The web UI shows it as a notice "Chain cut off", gone on
+  reload.

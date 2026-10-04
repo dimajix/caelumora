@@ -12,11 +12,13 @@ import {
   Send,
   Square,
   UserMinus,
+  Unlink,
   UserPlus,
   Users,
   Wrench,
 } from 'lucide-react';
 import type {
+  ActorId,
   ApprovalRequest,
   ChannelMember,
   ChannelResponse,
@@ -382,6 +384,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               : m
           ));
           setAnswers(prev => prev.filter(a => a.sender !== removed));
+        } else if (actorEvent.ChainCutOff) {
+          // Like a failed turn: shown, but not part of the history.
+          const notice: Message = {
+            role: 'System',
+            content: null,
+            chainCutOff: {maxAgentHops: actorEvent.ChainCutOff.max_agent_hops, notAsked: actorEvent.ChainCutOff.not_asked},
+            timestamp: envelope.timestamp,
+          };
+          setMessages(prev => [...prev, notice]);
         } else if (actorEvent.PlanStepStarted) {
           const step = actorEvent.PlanStepStarted;
           setAnswers(prev => withAnswer(prev, answerer, answererName, a => ({...a, step})));
@@ -547,6 +558,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     }
   };
 
+  /** What a chain cut off at its limit says (issue 200), naming the agents mentioned as they are known now. */
+  const chainCutOffText = ({maxAgentHops, notAsked}: {maxAgentHops: number; notAsked: ActorId[]}): string => {
+    const names = notAsked.map(id => {
+      const member = members.find(m => actorKey(m.id) === actorKey(id));
+      return member?.handle ? `@${member.handle}` : (member?.name ?? 'an agent');
+    });
+    const whom = names.length > 0 ? `${names.join(', ')} ${names.length === 1 ? 'was' : 'were'} not asked` : 'no agent was asked';
+    return `The chain between agents reached its limit of ${maxAgentHops} ${maxAgentHops === 1 ? 'hop' : 'hops'}, so ${whom} to respond. A message from a user starts a new chain.`;
+  };
+
   /** Whether the user may see the context of `msg`: a stored message of an agent they may read (issue 41). */
   const mayShowContext = (msg: Message): boolean => {
     if (!msg.id || !msg.sender_id) return false;
@@ -609,6 +630,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   : <span>{msg.sender_name} ran <span className="font-mono normal-case">/{msg.commandOutput.command}</span></span>}
               </div>
               <MarkdownMessage content={msg.content ?? ''} />
+              <MessageFooter message={msg} />
+            </div>
+          ) : msg.chainCutOff ? (
+            <div
+              key={idx}
+              className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+                <Unlink size={14} />
+                <span>Chain cut off</span>
+              </div>
+              <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
               <MessageFooter message={msg} />
             </div>
           ) : msg.turnFailed ? (

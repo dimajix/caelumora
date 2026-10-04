@@ -218,6 +218,9 @@ export interface Message {
   // UI only: its sender was removed from the channel before its tool calls
   // were answered (issue 162) - those without a result never will be.
   abandoned?: boolean;
+  // UI only: a chain between agents was cut off at its limit (issue 200),
+  // a notice that is gone on reload; `notAsked` are the agents mentioned.
+  chainCutOff?: {maxAgentHops: number; notAsked: ActorId[]};
   // Usage statistics
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -268,6 +271,12 @@ export interface ActorEvent {
    * ended.
    */
   ParticipantRemoved?: { participant: ActorId };
+  /**
+   * A chain between agents reached its limit (issue 200): the response ending
+   * in `message` was delivered, but nobody was asked to respond to it -
+   * `not_asked` are the agents it mentioned. Sent in the name of the system.
+   */
+  ChainCutOff?: { message: string; max_agent_hops: number; not_asked: ActorId[] };
 }
 
 /** A user command, as `/help` and completion show it (issue 28). */

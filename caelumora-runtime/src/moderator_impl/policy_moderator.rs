@@ -50,9 +50,9 @@ impl PolicyModerator {
     }
 
     async fn route_full_response(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
-        let (mut routes, mentioned, candidates) = {
+        let (mut routes, mentioned, candidates, users) = {
             let actors = self.actors();
-            (actors.forward_routes(event, messages), actors.mentioned_responders(messages), actors.actor_candidates(messages))
+            (actors.forward_routes(event, messages), actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
         };
         if routes.is_empty() {
             // Nothing anyone could answer, e.g. only tool calls.
@@ -68,6 +68,7 @@ impl PolicyModerator {
         };
         if agent_hops > self.max_agent_hops {
             debug!(agent_hops, "Asking nobody to respond: the chain between agents has reached its limit");
+            routes.extend(self.cut_off(event, messages, mentioned.unwrap_or_default(), users));
             return routes;
         }
 
@@ -83,6 +84,23 @@ impl PolicyModerator {
             routes.push((id, request.clone()));
         }
         routes
+    }
+
+    /// Tells that the response `messages` of `event` made nobody respond,
+    /// since its chain reached the limit (issue 200): a `ChainCutOff` in the
+    /// name of the system, to the `users` and to the agents involved - its
+    /// sender and the agents it mentioned, `not_asked`.
+    fn cut_off(&self, event: &Envelope, messages: &[Message], not_asked: Vec<ActorId>, users: Vec<ActorId>) -> Vec<(ActorId, Envelope)> {
+        let Some(last) = messages.last() else {
+            return Vec::new();
+        };
+        let mut notice = event.forward(ActorEvent::ChainCutOff { message: last.id, max_agent_hops: self.max_agent_hops, not_asked: not_asked.clone() });
+        notice.context.sender_id = ActorId::System;
+        notice.context.sender_name = "system".to_string();
+        let mut recipients = users;
+        recipients.push(event.context.sender_id);
+        recipients.extend(not_asked);
+        recipients.into_iter().map(|id| (id, notice.clone())).collect()
     }
 }
 
@@ -196,6 +214,11 @@ impl ModeratorActors {
         }
 
         if responders.is_empty() { None } else { Some(responders) }
+    }
+
+    /// The users in the channel.
+    fn user_ids(&self) -> Vec<ActorId> {
+        self.user_actors.keys().copied().collect()
     }
 
     /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`,
@@ -485,6 +508,37 @@ mod tests {
         let user = ActorId::User(UserId::new());
         let decision = moderator.route(&hops_from(user, 2, Vec::new())).await;
         assert_eq!(hops_asked(&decision), vec![0, 0], "a user's message starts a new chain");
+    }
+
+    #[tokio::test]
+    async fn a_chain_cut_off_is_told_to_the_users_and_the_agents_involved() {
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2);
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+        moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+        let cut_off = |decision: &RouteDecision| decision.forwards.iter()
+            .filter_map(|(id, e)| match &e.event {
+                ActorEvent::ChainCutOff { max_agent_hops, not_asked, .. } => Some((*id, e.context.sender_id, *max_agent_hops, not_asked.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let decision = moderator.route(&hops_from(agents[0], 1, vec![agents[2]])).await;
+        assert!(cut_off(&decision).is_empty(), "below the limit, nothing is cut off");
+
+        let event = hops_from(agents[0], 2, vec![agents[2]]);
+        let decision = moderator.route(&event).await;
+        let told = cut_off(&decision);
+        let recipients: HashSet<ActorId> = told.iter().map(|(id, ..)| *id).collect();
+        assert_eq!(recipients, HashSet::from([user, agents[0], agents[2]]), "the users, the sender and whom it mentioned - not agents[1]");
+        assert!(told.iter().all(|(_, sender, hops, not_asked)| *sender == ActorId::System && *hops == 2 && *not_asked == vec![agents[2]]));
+        let ActorEvent::FullResponseGenerated(messages) = &event.event else { unreachable!() };
+        assert!(decision.forwards.iter().any(|(_, e)| matches!(&e.event, ActorEvent::ChainCutOff { message, .. } if *message == messages[0].id)), "it names the message cut off");
+
+        let decision = moderator.route(&hops_from(agents[0], 2, Vec::new())).await;
+        let told = cut_off(&decision);
+        assert_eq!(told.iter().map(|(id, ..)| *id).collect::<HashSet<_>>(), HashSet::from([user, agents[0]]));
+        assert!(told.iter().all(|(.., not_asked)| not_asked.is_empty()), "told even when nobody was mentioned");
     }
 
     #[tokio::test]

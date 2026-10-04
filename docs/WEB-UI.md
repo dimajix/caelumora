@@ -131,6 +131,9 @@ else who may read it - the session's owner, say - is shown its history and no in
     answer of a command are shown in the chat but never stored. When a participant is removed, the
     channel says so with `ParticipantRemoved`, and nothing of it follows: its partial answer and the
     stop button go, and its calls still without a result are shown as abandoned (issue 162).
+    When a chain between agents is cut off at its limit (`ChainCutOff`), a notice "Chain cut off"
+    says so, naming the agents mentioned that were not asked, and that a message of a user starts a
+    new chain; like a failed turn, it is gone on reload (issue 200).
 *   **Approvals.** A tool call that needs approval is shown with approve and deny. Once this user
     answered, it waits for the decision; it disappears only when the approver ends it - decided,
     timed out, or withdrawn by an agent whose turn ended (issue 148). The pending approvals come

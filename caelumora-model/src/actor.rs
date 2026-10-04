@@ -1,7 +1,7 @@
 use crate::agent::AgentId;
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
-use crate::message::Message;
+use crate::message::{Message, MessageId};
 use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
@@ -139,6 +139,21 @@ pub enum ActorEvent {
     ParticipantRemoved {
         participant: ActorId,
     },
+    /// A chain between agents reached its limit (issue 200): the response
+    /// ending in `message` was delivered, but it made nobody respond, since
+    /// that would have been more than `max_agent_hops` hops since the last
+    /// user's message. `not_asked` are the agents it mentioned, empty if it
+    /// mentioned none. Sent by the moderator in the name of
+    /// `ActorId::System`, to the users of the channel and to the agents
+    /// involved: the sender of the response and those it mentioned.
+    ///
+    /// Like `TurnFailed`, never written to the history; an agent takes no
+    /// note of it.
+    ChainCutOff {
+        message: MessageId,
+        max_agent_hops: u32,
+        not_asked: Vec<ActorId>,
+    },
 }
 
 impl ActorEvent {
@@ -183,6 +198,7 @@ impl ActorEvent {
             ActorEvent::TurnFailed { .. } => "TurnFailed",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
+            ActorEvent::ChainCutOff { .. } => "ChainCutOff",
         }
     }
 }
@@ -303,6 +319,9 @@ impl Envelope {
             }
             ActorEvent::ParticipantRemoved { participant } => {
                 format!("ParticipantRemoved(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
+            }
+            ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
+                format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())
             }
             _ => {
                 format!("{:?}", self.event)

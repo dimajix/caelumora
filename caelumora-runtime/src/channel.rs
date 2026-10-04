@@ -1035,8 +1035,10 @@ impl ChannelLoop {
         for route in decision.forwards {
             let target_id = route.0;
 
-            // Do not propagate message to sender again
-            if target_id == event.context.sender_id {
+            // Do not propagate message to sender again - unless the
+            // moderator sends something of its own in another name, e.g. a
+            // `ChainCutOff` to the agent whose chain it cut off (issue 200).
+            if target_id == event.context.sender_id && route.1.context.sender_id == event.context.sender_id {
                 continue;
             }
             // A cancelled channel stays quiet until it is woken: what was said
@@ -1501,6 +1503,43 @@ mod tests {
         delivered(&mut rx); // this test's moderator forwards the request, too
         channel.route_event(&actors, said()).await;
         assert_eq!(delivered(&mut rx), ["FullResponseGenerated", "ResponseRequested"], "woken, the channel asks again");
+    }
+
+    /// Sends every event back to its sender, once as it is and once as a
+    /// `ChainCutOff` of its own, in the name of the system.
+    #[derive(Debug)]
+    struct TellsTheSender;
+
+    #[async_trait::async_trait]
+    impl crate::moderator::Moderator for TellsTheSender {
+        async fn route(&self, event: &Envelope) -> crate::moderator::RouteDecision {
+            let mut notice = event.forward(ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 0, not_asked: Vec::new() });
+            notice.context.sender_id = ActorId::System;
+            vec![(event.context.sender_id, event.clone()), (event.context.sender_id, notice)].into()
+        }
+        fn add_actor(&self, _: Arc<dyn Actor>) {}
+        fn remove_actor(&self, _: ActorId) {}
+    }
+
+    #[tokio::test]
+    async fn the_sender_gets_back_only_what_the_moderator_sends_in_another_name() {
+        use caelumora_model::actor::EventContext;
+        let alice = user("alice");
+        let bob = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let channel = channel_moderated_by(&[&alice], Arc::new(TellsTheSender)).await;
+        let (tx, mut rx) = mpsc::channel(8);
+        let abort_handle = tokio::spawn(async {}).abort_handle();
+        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Box::new(InMemoryEventSender::new(tx)) })]);
+        let said = Envelope::new(
+            SecurityContext::default(),
+            EventContext { sender_id: bob, ..EventContext::default() },
+            ActorEvent::FullResponseGenerated(vec![Message::new(Classification::CHANNEL_DEFAULT)]),
+        );
+
+        channel.route_event(&actors, said).await;
+        let mut kinds = Vec::new();
+        while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
+        assert_eq!(kinds, ["ChainCutOff"], "its own message is not sent back, but what the system tells it is (issue 200)");
     }
 
     /// An agent asleep that only tells whether it was woken.

@@ -422,8 +422,14 @@ the hops since the last message of a user: a user's actor starts every envelope 
 the count, so an agent's answer carries the count of the request it answers, and the
 `policy_moderator` sets it one higher on the `ResponseRequested` it sends for an agent's message.
 Once that would exceed the moderator's parameter `max_agent_hops` (default 3), it asks nobody - nor
-its policy, so a rotation is left as it is. The message is still delivered. Nothing tells the users
-yet that the chain was cut off. With `max_agent_hops: 0`, agents answer only users.
+its policy, so a rotation is left as it is. The message is still delivered, and the moderator says
+that the chain was cut off (issue 200): an `ActorEvent::ChainCutOff` in the name of
+`ActorId::System`, with the last message of the response, the limit and the agents it mentioned
+(`not_asked`, empty if none). It goes to the users of the channel and to the agents involved - the
+sender of the response and those it mentioned - but not to the other agents or the approvers. It is
+never written to the history, and an agent takes no note of it. Since it is sent in another name,
+the channel delivers it to the sender, too: what it holds back from the sender is only what the
+sender sent itself. With `max_agent_hops: 0`, agents answer only users.
 
 A user's message starts a new chain. What an external agent says unasked when a long task ends
 continues the context of its answer to the request that began the task (`Work::event_context` of
