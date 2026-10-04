@@ -56,6 +56,12 @@ pub trait EventReceiver: Send {
     /// subsequent `recv()` calls.
     async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope>;
 
+    /// The next event that is there already, without waiting (checks the
+    /// internal buffer first) - the counterpart of `EventSender::try_send`.
+    /// `None` says that nothing is queued now, not that the input is
+    /// closed: that is `recv`'s to tell.
+    fn try_recv(&mut self) -> Option<Envelope>;
+
     /// Commit all events delivered since the last commit.
     /// In-memory transport: no-op. Persistent transports: advance offset / send ack.
     async fn commit(&mut self) -> TransportResult<()>;

@@ -49,6 +49,12 @@ impl EventReceiver for InMemoryEventReceiver {
         }
     }
 
+    fn try_recv(&mut self) -> Option<Envelope> {
+        let event = self.buffer.pop_front().or_else(|| self.rx.try_recv().ok())?;
+        self.uncommitted.push(event.clone());
+        Some(event)
+    }
+
     async fn commit(&mut self) -> TransportResult<()> {
         self.uncommitted.clear();
         Ok(())
@@ -121,6 +127,28 @@ mod tests {
 
     fn envelope(event: ActorEvent) -> Envelope {
         Envelope::new(SecurityContext::default(), EventContext::default(), event)
+    }
+
+    #[tokio::test]
+    async fn try_recv_takes_what_was_put_aside_before_what_is_queued_and_never_waits() {
+        let (tx, rx) = mpsc::channel(4);
+        let mut receiver = InMemoryEventReceiver::new(rx);
+        assert!(receiver.try_recv().is_none(), "nothing queued, nothing waited for");
+
+        tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
+        tx.try_send(envelope(ActorEvent::FullResponseGenerated(Vec::new()))).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseStarted)).expect("room");
+        // Puts the request aside while it takes what it waits for.
+        receiver.recv_matching(|e| matches!(e.event, ActorEvent::FullResponseGenerated(_))).await.expect("queued");
+
+        let kinds: Vec<_> = std::iter::from_fn(|| receiver.try_recv()).map(|e| e.event.kind()).collect();
+        assert_eq!(kinds, ["ResponseRequested", "ResponseStarted"], "what was put aside first, then what is queued");
+        assert_eq!(receiver.uncommitted.len(), 3, "uncommitted like what recv delivers");
+        receiver.commit().await.expect("in memory");
+        assert!(receiver.uncommitted.is_empty(), "committed with the next commit");
+
+        drop(tx);
+        assert!(receiver.try_recv().is_none(), "nothing either once the input is closed");
     }
 
     #[tokio::test]
