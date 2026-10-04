@@ -1583,7 +1583,7 @@ mod tests {
             use caelumora_model::actor::EventContext;
             let mut context = EventContext { sender_id: self.0, ..EventContext::default() };
             context.agent_hops = 1;
-            let said = Message { sender_id: self.0, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+            let said = Message { sender_id: self.0, role: caelumora_model::message::MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
             let _ = tx.send(Envelope::new(SecurityContext::default(), context, ActorEvent::FullResponseGenerated(vec![said]))).await;
             while rx.recv().await.is_some() {}
             Ok(())
@@ -2686,6 +2686,27 @@ mod tests {
         }).await.expect("the cancelled turn ends without the model");
         assert!(matches!(ended.event, ActorEvent::FullResponseGenerated(ref messages) if messages.is_empty()));
         settled(&helper, ActorState::Idle).await;
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
+        let Stuck { channel, context, agent, running, .. } = stuck_in_a_model_call().await;
+        let mut followed = channel.user_actor(alice_of(&context)).unwrap().watch().events;
+
+        channel.cancel(&context).await.expect("permitted");
+
+        // Nothing to hear of it - but the end, for whoever shows the answer
+        // as under way (issue 224).
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = followed.recv().await.expect("the user's actor runs");
+                if envelope.context.sender_id == ActorId::Agent(agent) {
+                    if let ActorEvent::FullResponseGenerated(messages) = envelope.event { break messages }
+                }
+            }
+        }).await.expect("the user learns that the answer ended");
+        assert!(ended.is_empty(), "with nothing said: {ended:?}");
         running.abort();
     }
 

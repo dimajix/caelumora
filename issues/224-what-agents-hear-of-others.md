@@ -125,3 +125,13 @@ Steps 1 and 2 are one commit (the rule in one place, the bug fixed), step 3 anot
   answer with its tool call, and its tool message, into its transcript as they are. Implementation
   plan added, agreed with the maintainer: the rule as `Message::as_heard`, applied in `perceive`
   for both kinds of agent; the moderator delivers as said.
+- **2026-10-04** — Steps 1 and 2 done (`e64e1ca`): `Message::as_heard`, applied in `perceive` for
+  both kinds of agent and every way in; `takes` and `worth_giving` are gone.
+- **2026-10-04** — Step 3: the moderator forwards a response as it was said; `as_user_messages` is
+  gone. Found on the way, and part of the step: a response with nothing to hear reached nobody, the
+  users included, since 220 - after a cancel, the web UI kept the answer as under way
+  ([225](225-cancel-leaves-answer-generating.md)). The users now always get it, the agents only if
+  there is something to hear, and only then is anyone asked. Whether there is, the maintainer
+  proposed to ask without building what is heard: `Message::is_heard`, which `as_heard` uses too. A
+  test's agent that answered with a `system` message now answers as an `assistant`: nothing is heard
+  of a `system` message, and nothing in the code says anything into a channel as one.

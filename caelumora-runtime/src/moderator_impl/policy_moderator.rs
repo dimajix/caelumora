@@ -17,7 +17,7 @@ use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::message::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, warn};
@@ -50,12 +50,17 @@ impl PolicyModerator {
     }
 
     async fn route_full_response(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
+        // What there is to hear of it, by the rule every agent hears by
+        // (issue 224): nothing, e.g. of a response of tool calls only or of
+        // a turn cancelled before it said anything.
+        let heard = messages.iter().any(Message::is_heard);
         let (mut routes, mentioned, candidates, users) = {
             let actors = self.actors();
-            (actors.forward_routes(event, messages), actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
+            (actors.forward_routes(event, messages, heard), actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
         };
-        if routes.is_empty() {
-            // Nothing anyone could answer, e.g. only tool calls.
+        if !heard {
+            // Nothing anyone could answer: the users learn that the answer
+            // ended, and nobody is asked.
             return routes;
         }
 
@@ -178,19 +183,18 @@ impl ModeratorActors {
         self.approval_actors.remove(&id);
     }
 
-    fn forward_routes(&self, event: &Envelope, messages: &Vec<Message>) -> Vec<(ActorId, Envelope)> {
+    /// Forwards the response `event`, of `messages`, as it was said, to
+    /// everyone but its senders: to every user, who learns that the answer
+    /// ended even when there is nothing to hear of it (issue 224), and to
+    /// every agent if there is something to hear - `heard` - which each
+    /// takes in by the rule all agents hear by (`Message::as_heard`).
+    fn forward_routes(&self, event: &Envelope, messages: &[Message], heard: bool) -> Vec<(ActorId, Envelope)> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
-        let user_messages = as_user_messages(messages);
-
-        if user_messages.is_empty() {
-            return Vec::new();
-        }
-
-        let forward_event = event.forward(ActorEvent::FullResponseGenerated(user_messages));
-        self.agent_actors.keys()
-            .chain(self.user_actors.keys())
+        let agents = heard.then(|| self.agent_actors.keys()).into_iter().flatten();
+        self.user_actors.keys()
+            .chain(agents)
             .filter(|id| !sender_ids.contains(id))
-            .map(|id| (*id, forward_event.clone()))
+            .map(|id| (*id, event.clone()))
             .collect()
     }
 
@@ -278,17 +282,6 @@ impl ModeratorActors {
 }
 
 
-/// What `messages` are to the other participants, in one pass: the text of
-/// each, as said by a user - without tool calls and tool results, which are
-/// the sender's own business. Tool messages are left out entirely.
-fn as_user_messages(messages: &[Message]) -> Vec<Message> {
-    messages.iter()
-        .filter(|m| m.content.is_some() && m.role != MessageRole::Tool)
-        .map(|m| Message { role: MessageRole::User, tool_calls: Vec::new(), tool_results: Vec::new(), ..m.clone() })
-        .collect()
-}
-
-
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(POLICY_MODERATOR_KIND).provides::<dyn Moderator>(),
@@ -314,6 +307,7 @@ mod tests {
     use crate::moderator_impl::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
+    use caelumora_model::message::MessageRole;
     use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
@@ -694,23 +688,35 @@ mod tests {
         }
     }
 
-    #[test]
-    fn others_hear_what_was_said_as_a_user_without_the_tool_traffic() {
-        use caelumora_model::tool::{ToolCallResult, ToolVisibility};
+    #[tokio::test]
+    async fn a_response_is_forwarded_as_said_and_one_with_nothing_to_hear_only_to_the_users() {
+        use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
+        let classified = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;
         let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
-        let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
-        let said = vec![
-            Message { role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
-            Message { role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
-            Message { role: MessageRole::Assistant, content: None, ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
-            Message { role: MessageRole::Assistant, content: Some("All done.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) },
-        ];
+        let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let (sender, user) = (agents[0], ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+            let said = |messages: Vec<Message>| envelope(sender, ActorEvent::FullResponseGenerated(messages));
+            let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call.clone()], ..Message::new(classified.clone()) };
+            let tool = Message { sender_id: sender, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result.clone()], ..Message::new(classified.clone()) };
+            let silent = Message { content: None, ..calling.clone() };
 
-        let heard = as_user_messages(&said);
+            let decision = moderator.route(&said(vec![calling.clone(), tool.clone()])).await;
+            assert_eq!(receivers(&decision), HashSet::from([agents[1], agents[2], user]), "{:?}: to everyone but its sender", moderator);
+            let forwarded = decision.iter().find_map(|(_, e)| match &e.event { ActorEvent::FullResponseGenerated(m) => Some(m.clone()), _ => None }).unwrap();
+            assert!(forwarded[0].role == MessageRole::Assistant && forwarded[0].tool_calls.len() == 1 && forwarded[1].role == MessageRole::Tool, "{:?}: as it was said", moderator);
 
-        let texts: Vec<_> = heard.iter().map(|m| m.content.as_deref().unwrap()).collect();
-        assert_eq!(texts, ["Let me check.", "All done."], "neither the tool message nor an empty one");
-        assert!(heard.iter().all(|m| m.role == MessageRole::User && m.tool_calls.is_empty() && m.tool_results.is_empty()));
+            // A response of tool calls only, or a turn cancelled before it
+            // said anything: the users learn that it ended, nobody else
+            // hears anything, and nobody is asked.
+            for nothing in [vec![silent.clone(), tool.clone()], Vec::new()] {
+                let decision = moderator.route(&said(nothing)).await;
+                assert_eq!(receivers(&decision), HashSet::from([user]), "{:?}: the users alone", moderator);
+                assert!(responders(&decision).is_empty(), "{:?}: nobody is asked", moderator);
+            }
+        }
     }
 
     /// The actors of a channel with one agent, one user and one approver.

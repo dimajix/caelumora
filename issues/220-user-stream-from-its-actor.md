@@ -112,3 +112,9 @@ stream runs over the `EventBus`, the recorder records each delivery itself.
   headless Chromium against a copy of the local data, with `max_agent_hops: 0`: in two tabs of one
   user, the own message with its mention highlighted, the answer streaming, the cut-off chain and a
   `/wakeup` run in the other tab all show; no console errors.
+- **2026-10-04** — A regression found later: with the stream following the user's actor, a
+  `FullResponseGenerated` with nothing to hear for the agents - a turn cancelled before it said
+  anything, one of tool calls only - no longer reached the users, since the moderator forwarded it
+  to nobody; the web UI kept showing the answer as under way
+  ([225](225-cancel-leaves-answer-generating.md)). Fixed with step 3 of
+  [224](224-what-agents-hear-of-others.md): the users always get it.
