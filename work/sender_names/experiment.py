@@ -142,6 +142,32 @@ def fmt_header(sender, text):
     return f"From: {sender}\n\n{text}"
 
 
+def runtime_format(fmt, style):
+    """A message of `sender` as Caelumora marks it since issue 135
+    (`SenderFormat::given`): `prefix` or `xml`, by handle or by name."""
+    def render(sender, text):
+        who = f"@{sender.lower()}" if style == "handle" else sender.capitalize()
+        if fmt == "prefix":
+            return f"{who}: {text}"
+        body = text.replace("</message", "&lt;/message").replace("<message", "&lt;message")
+        return f'<message from="{who}">{body}</message>'
+    return render
+
+
+def runtime_explanation(fmt, style):
+    """As `ModelProfile::sender_explanation` words it - the rule for the
+    agent's own messages included."""
+    who, example = ("@handle", "@handle") if style == "handle" else ("name", "Name")
+    if fmt == "prefix":
+        marked = f"begin with their sender's {who} and a colon: \"{example}: ...\""
+    else:
+        marked = f"are wrapped in an element naming their sender's {who}: <message from=\"{example}\">...</message>"
+    return (f"Messages of the others {marked}. Your own messages carry no such marker: answer without one, "
+            "and never write a message for someone else.")
+
+
+RUNTIME_FORMATS = {f"rt_{fmt}_{style}": (fmt, style) for fmt in ("prefix", "xml") for style in ("handle", "name")}
+
 FORMATS = {
     "none": fmt_none,
     "colon": fmt_colon,
@@ -152,6 +178,7 @@ FORMATS = {
     # the text stays as it is, the name goes to the message's "name" field
     # (OpenAI style) - to see whether Ollama passes it on at all
     "name_field": fmt_none,
+    **{name: runtime_format(*spec) for name, spec in RUNTIME_FORMATS.items()},
 }
 
 SYSTEM_BASE = (
@@ -167,6 +194,7 @@ SYSTEM_HINTS = {
     "header": "Each message of another participant starts with a line 'From: name'.",
     "name_field": "",
     "none": "",
+    **{name: runtime_explanation(*spec) for name, spec in RUNTIME_FORMATS.items()},
 }
 
 SELF_RULE = "Your own messages carry no such marker; write your answers as plain text, without your name."
@@ -178,7 +206,8 @@ def build_messages(convo, probe, fmt, mark_self, hint):
     system = SYSTEM_BASE
     if hint and SYSTEM_HINTS[fmt]:
         system += " " + SYSTEM_HINTS[fmt]
-        if not mark_self:
+        # The runtime's explanation says so itself.
+        if not mark_self and fmt not in RUNTIME_FORMATS:
             system += " " + SELF_RULE
     messages = [{"role": "system", "content": system}]
     for sender, text in list(convo) + [(probe.sender, probe.text)]:

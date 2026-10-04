@@ -58,7 +58,8 @@ component_defaults:
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx` (issue 209); left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
 
-An unknown parameter is refused, and the agent does not start.
+An unknown parameter is refused, and the agent does not start. Which values suit which model, as
+far as measured, is in [LLM-MODELS.md](LLM-MODELS.md).
 
 Before the first call to a model, the client reads the model's control tokens from the server's
 `/api/show` and keeps them from being produced by any text it sends (issue 149, see

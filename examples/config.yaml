@@ -66,20 +66,23 @@ users:
 # component for it gets the default. A component here must provide exactly
 # one such facet. Without this section the built-in defaults are used: for
 # the model, `ollama_client` with the Ollama server at 127.0.0.1:11434 and
-# the model gemma4:26b.
-#component_defaults:
-#  - id: model
-#    kind: ollama_client
-#    params:
+# the model gemma4:26b. Here that model, configured as docs/LLM-MODELS.md
+# recommends for it: senders marked in XML, which it attributes best, and the
+# size of its context set, so that it is not cut off at Ollama's default.
+# Further parameters, with their defaults:
 #      endpoint:
 #        url: "http://127.0.0.1:11434"
-#      model: "gemma4:26b"
 #      think: true
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
-#      sender_format: prefix
-#      sender_style: handle
-#      context_size: 65536
+component_defaults:
+  - id: model
+    kind: ollama_client
+    params:
+      model: "gemma4:26b"
+      sender_format: xml
+      sender_style: handle
+      context_size: 65536
 #  - id: context
 #    kind: turn_context_provider
 

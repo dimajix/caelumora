@@ -210,3 +210,9 @@ measured.
   well and is believed; consequences rest on the runtime's decisions, and the web UI shows faked
   markers to the people. A model is told who wrote each message by the rule of its profile, as
   shown in the context panel.
+- **2026-10-04** — Measured again for gemma4:26b with exactly what the runtime sends
+  (`work/sender_names/RESULTS.md`, findings 19-20): `xml` attributes every probe right, `prefix`
+  reads "@carol: ... Alice, what's our budget?" as Alice asking every time; handle or name makes no
+  difference. The recommendations per model are in [LLM-MODELS.md](../docs/LLM-MODELS.md), and
+  `examples/config.yaml` now configures the default model so (`xml`, `handle`, and its context
+  size).

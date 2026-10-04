@@ -144,3 +144,26 @@ the chat system. Handle only.
     message, and with the defense of finding 14 in place they learn its
     wording from every note they are shown. A defense by notes is only as
     good as notes are unforgeable, and in the text they are not.
+
+## The runtime's formats (`experiment.py`, formats `rt_*`, 2026-10-04, gemma4:26b, 5 runs)
+
+Attribution measured again with exactly what Caelumora sends since issue
+135: `prefix` and `xml`, by handle or name, with the explanation of
+`ModelProfile::sender_explanation` (the own-messages rule included), own
+messages unmarked; no roster otherwise. 6 probes, 30 answers per format.
+
+| format | correct | correct (sender probes) | speaks for others | answer begins with a marker |
+|---|---:|---:|---:|---:|
+| prefix, handle | 83% | 67% | 0% | 5/30 |
+| prefix, name | 83% | 67% | 0% | 0/30 |
+| xml, handle | 100% | 100% | 0% | 0/30 |
+| xml, name | 100% | 100% | 0% | 0/30 |
+
+19. **For gemma4, `xml` is the better format**: every probe answered right.
+    `prefix` fails the same probe every time (`who_asked`, 0/5 by handle and
+    by name): "@carol: Rheingau sounds great to me. Alice, what's our
+    budget?" is read as Alice asking. With `prefix` by handle, a sixth of the
+    answers began with a marker (`@dave: ...`); under `xml` none.
+20. **Handle or name makes no difference to attribution** under either
+    format; the handle lets the model address a sender as the roster names
+    them (`@carol`).

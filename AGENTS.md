@@ -24,6 +24,7 @@ change something, read the document on its subject:
 | permissions, ownership, the views, users, authentication, secrets | [SECURITY.md](docs/SECURITY.md) |
 | confidentiality levels and labels | [CONFIDENTIALITY.md](docs/CONFIDENTIALITY.md) |
 | `AppConfig` and its sections | [CONFIGURATION.md](docs/CONFIGURATION.md) |
+| which settings suit which language model | [LLM-MODELS.md](docs/LLM-MODELS.md) |
 
 ## Issue Tracking
 
