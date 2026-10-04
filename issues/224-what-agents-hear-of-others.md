@@ -1,6 +1,6 @@
 # 224 — What an agent hears of others is shaped in two places, and on joining not at all
 
-**Status:** open
+**Status:** in progress
 **Area:** Context and knowledge
 
 ## The problem
@@ -51,9 +51,77 @@ possibly tool calls whose results it never saw. This follows from the code; no t
 - A test with an agent joining a channel in which another agent answered with a tool call shows the
   other's answer in its transcript as a marked `user` message without the call.
 
+## Implementation plan
+
+One rule, owned by the data it is about, and applied where an agent takes something in - not where
+a message is delivered.
+
+### What the code does today
+
+- A turn publishes all its messages that are not internal (`agent_turn/ending.rs`), its tool calls
+  and tool results included, and the channel keeps them in its history as they were said
+  (`ChannelLoop::append_history`).
+- Live, the moderator shapes what it delivers to everyone but the sender (`as_user_messages`):
+  every message with content that is not a tool message becomes a `user` message without tool
+  calls or results. Empty content (`Some("")`, common next to a tool call) is kept; a `system`
+  message becomes a `user` message.
+- On joining, `catch_up` takes what the agent missed from the channel's history unshaped. The
+  external agent filters with `worth_giving`; the agent run here takes everything (`|_| true`). A
+  probe confirmed it: another agent's `assistant` message with its tool call, and its `tool`
+  message, end up in the transcript as they are. Resolving the context changes nothing of it, and
+  `SenderFormat::given` marks only `user` messages.
+- The agent's history therefore holds what it heard live shaped, and what it caught up with as
+  said.
+- Users do not need the shaping: the web UI does not read the messages of a
+  `FullResponseGenerated` (the line is commented out, `ChatView.tsx`), no other client reads the
+  event, and what users read of the channel's history through REST is as said anyway. What travels
+  on the bus is published already (`Message::published`), so delivering it as said shows nobody
+  anything new.
+
+### Steps
+
+1. **`Message::as_heard(&self) -> Option<Message>`** (`caelumora-model/src/message.rs`): what a
+   participant hears of this message when someone else said it - `None` unless it is a `user` or
+   `assistant` message, not internal, with text that is not empty; otherwise a `user` message with
+   the same text and everything else of it, without tool calls and tool results. Whether the
+   listener said it itself is not the message's to know, and stays with the caller. Tests in the
+   model: an `assistant` message with a tool call is heard as its text; a tool message, an empty
+   one, a system message and an internal one are not heard.
+2. **`actor_impl::perceive` applies it** for both kinds of agent and every way in - live, `take_in`
+   and `catch_up`: what is offered to the perceive processors is what others said, as heard
+   (`m.sender_id != own`, `as_heard`). The parameter `takes` of `perceive`, `catch_up` and
+   `take_in` is replaced by the agent's own `ActorId`. `worth_giving` goes; the external agent's
+   tests that used it use `perceive` with its id. The history keeps everything as it was offered.
+   A channel test: an agent run here that joins a channel in which another agent answered with a
+   tool call has the other's text in its transcript as a `user` message without the call, and
+   nothing of the tool message; its history has both as said.
+3. **The moderator delivers what was said as it was said** (`PolicyModerator::forward_routes`):
+   `as_user_messages` goes. Whether anyone is told and asked at all - nothing is, if no message has
+   anything to hear, e.g. a response of tool calls only - it decides with `Message::as_heard`, as
+   today with its own rule. Its test of the shaping moves to step 1; a test that a response of tool
+   calls only is routed to nobody stays. A behaviour change of its own, in a commit of its own.
+4. **Documents.** AGENT-TURN.md, *Perceive*: what an agent hears of others, by which rule, the same
+   for both kinds and every way in. CHANNELS.md: the external agent's "what can be given on" names
+   the shared rule; the moderator delivers as said.
+5. **Record.** Status `done` here and in the index, a History entry.
+
+Steps 1 and 2 are one commit (the rule in one place, the bug fixed), step 3 another.
+
+### Not done
+
+- Transcripts stored before, which may hold other agents' messages as they were said, stay as they
+  are: they are branches of what the agent was given, and rewriting them would change what its
+  model saw.
+- Whether a response of tool calls only should still reach users as `FullResponseGenerated` - the
+  web UI ends a running answer by it - is not changed here: it is routed to nobody, as today.
+
 ## History
 
 - **2026-10-04** — Issue created at the maintainer's question, while resolving
   [222](222-queued-requests-answered-one-by-one.md), whether `worth_giving` should hold for the
   agent run here too. It should, and with the moderator's shaping it is one rule in two places; the
   gap is the way in on joining.
+- **2026-10-04** — Confirmed with a probe: an agent run here that joins takes another agent's
+  answer with its tool call, and its tool message, into its transcript as they are. Implementation
+  plan added, agreed with the maintainer: the rule as `Message::as_heard`, applied in `perceive`
+  for both kinds of agent; the moderator delivers as said.
