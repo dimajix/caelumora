@@ -39,6 +39,21 @@ export type ActorId = string | Record<string, string>;
 export type ParticipantKind = 'user' | 'agent' | 'approver';
 
 /** A participant of a channel. */
+/**
+ * What an agent's model calls in a channel used (issue 209): the tokens of
+ * all calls - every call is given the whole context again, so this is what
+ * was used, not what is held - and those of the last call against the size
+ * of its context, how full the context is.
+ */
+export interface TokenUsage {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  last_call_tokens: number;
+  /** Absent if not known. */
+  context_size?: number;
+}
+
 export interface ChannelMember {
   id: ActorId;
   name: string;
@@ -47,6 +62,12 @@ export interface ChannelMember {
   kind: ParticipantKind;
   /** Whether you may see what this participant saw when it wrote a message (issue 41). */
   can_read_context: boolean;
+  /**
+   * What its model calls used (issue 209): sent with the channel stream's
+   * snapshot and by `getParticipant`, not where channels are listed; absent
+   * for a member whose calls report no tokens.
+   */
+  usage?: TokenUsage;
 }
 
 export interface ChannelResponse {
@@ -203,6 +224,8 @@ export interface Message {
   prompt_duration?: number; // ns
   completion_duration?: number; // ns
   total_duration?: number; // ns
+  /** How many tokens the context of the call that produced it held (issue 209). */
+  context_size?: number;
   [key: string]: unknown;
 }
 

@@ -48,7 +48,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `TokenGauge`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -160,6 +160,14 @@ Reclassifications follow the global stream: a message takes its new classificati
 have changed.
 
 ### Members, moderator and notes
+
+Under each agent, a bar shows how full its context is (issue 209): the tokens of its last call
+against the size of its context, amber from three quarters on and red from nine tenths
+(`TokenGauge`); without a known size, the tokens alone. Its tooltip holds what all of the agent's
+calls in the channel used, and above the list "Tokens used" adds that up for the agents shown. The
+numbers come with the stream's snapshot, and an agent's are fetched again when its turn ends (`GET
+…/participants/{aid}`); an external agent reports none. A message's usage tooltip shows, beside its
+tokens, how full the context of its call was.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who

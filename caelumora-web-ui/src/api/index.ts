@@ -1,5 +1,6 @@
 import type {
   AddParticipantRequest,
+  ChannelMember,
   ChannelResponse,
   Command,
   CommandReply,
@@ -142,6 +143,13 @@ export const api = {
   },
 
   /** `actorUuid` is the id of the user or agent, without its kind. */
+  /** One participant, with what its model calls used (issue 209). */
+  async getParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<ChannelMember> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`);
+    await ensureOk(res, 'Failed to fetch the participant');
+    return res.json();
+  },
+
   async removeParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`, {
       method: 'DELETE',

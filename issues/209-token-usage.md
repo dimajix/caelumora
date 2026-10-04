@@ -1,6 +1,6 @@
 # 209 — Token usage is not summed up, nor set against the model's context size
 
-**Status:** in progress
+**Status:** done
 **Area:** Observability and operations
 
 ## The problem
@@ -154,3 +154,9 @@ anew).
   unchanged. `AgentMember` only reads the state now (`stored`), and `MemberView::usage`, which
   nobody called any more, is gone. The channel's rule for approvals - only for a user who takes
   part and reads all of it - is `ChannelView::shows_approvals`.
+- **2026-10-04** — Step 3 done: the web UI keeps every agent's `TokenUsage` by actor, from the
+  stream's snapshot, and fetches an agent's again (`getParticipant`) when its turn ends. The member
+  list shows a `TokenGauge` under each agent - its last call against its context size, amber from
+  75 %, red from 90 %, the consumption in its tooltip - and "Tokens used" above the list sums the
+  agents shown; a message's usage tooltip shows how full its call's context was. WEB-UI.md says so.
+  Not yet verified in the browser: the running server predates step 2.

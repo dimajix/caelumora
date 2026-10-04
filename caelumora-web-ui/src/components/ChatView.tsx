@@ -2,6 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
   ChevronRight,
+  Gauge,
   NotebookPen,
   Pencil,
   Scale,
@@ -25,6 +26,7 @@ import type {
   Message,
   PlanStepEvent,
   PublishedNotes,
+  TokenUsage,
   UserResponse,
 } from '../types';
 import {NotesList} from './NotesList';
@@ -46,7 +48,8 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {formatArguments, mergeToolResults} from '../messages';
+import {formatArguments, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
+import {TokenGauge} from './TokenGauge';
 import {ContextPanel} from './ContextPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
@@ -117,6 +120,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // every complete message: a message joins the history when it is complete,
   // so an answer that ends first is shown first, as a reload shows it.
   const [answers, setAnswers] = useState<Answer[]>([]);
+  // What each agent's model calls used (issue 209), by `actorKey`: from the
+  // snapshot, and fetched again for an agent whose turn ended. Kept apart
+  // from the channel, which is fetched again without it.
+  const [usage, setUsage] = useState<Record<string, TokenUsage>>({});
   const isGenerating = answers.length > 0;
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   // The pending approvals this user answered, still waiting for the decision.
@@ -143,6 +150,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
 
   // The server returns members in no particular order.
   const members: ChannelMember[] = [...(channel?.members ?? [])].sort((l, r) => l.name.localeCompare(r.name));
+  // What the channel's agents used, summed over those it shows (issue 209);
+  // null while none reported anything.
+  const channelUsage = members.reduce<{calls: number; prompt: number; completion: number} | null>((sum, member) => {
+    const used = usage[actorKey(member.id)];
+    if (!used) return sum;
+    const base = sum ?? {calls: 0, prompt: 0, completion: 0};
+    return {calls: base.calls + used.calls, prompt: base.prompt + used.prompt_tokens, completion: base.completion + used.completion_tokens};
+  }, null);
   const mentionQuery = mentionQueryAt(inputText, caret);
   const commandQuery = commandQueryAt(inputText, caret);
   // Where the completed token starts; a command always starts at 0.
@@ -256,6 +271,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         const snapshot: ChannelSnapshot = JSON.parse(data);
         setMessages(snapshot.messages);
         setChannel(snapshot.channel);
+        setUsage(Object.fromEntries(snapshot.channel.members.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setHasMore(snapshot.has_more);
@@ -321,6 +337,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
         } else if (actorEvent.FullResponseGenerated) {
           //setMessages(prev => [...prev, ...actorEvent.FullResponseGenerated!]);
           answerEnded();
+          // Its calls are recorded once its turn ended: what they used now.
+          const agent = envelope.context.sender_id;
+          const uuid = typeof agent === 'object' && 'Agent' in agent ? actorUuid(agent) : null;
+          if (uuid) {
+            api.getParticipant(sessionId, channelId, uuid)
+              .then(member => { if (member.usage) setUsage(prev => ({...prev, [answerer]: member.usage!})); })
+              .catch(error => reportError('Failed to read what the agent used', error));
+          }
         } else if (actorEvent.TurnFailed) {
           // Shown in the chat, but not part of the history: gone on reload.
           const failed: Message = {
@@ -881,17 +905,32 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               )}
             </div>
           )}
+          {channelUsage && (
+            <div
+              className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
+              title={`All model calls of the channel's agents: ${formatTokens(channelUsage.prompt)} prompt and ${formatTokens(channelUsage.completion)} completion tokens in ${formatTokens(channelUsage.calls)} calls`}
+            >
+              <Gauge size={14} />
+              <span>Tokens used:</span>
+              <span className="text-gray-700 dark:text-gray-300">{formatTokensShort(channelUsage.prompt + channelUsage.completion)}</span>
+            </div>
+          )}
           <div className="space-y-2">
             {members.map(member => (
               <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-                <div className="w-2 h-2 rounded-full bg-green-500" />
-                <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{member.name}</span>
-                {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{member.handle}</span>}
+                <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{member.name}</span>
+                    {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{member.handle}</span>}
+                  </div>
+                  {usage[actorKey(member.id)] && <TokenGauge usage={usage[actorKey(member.id)]} />}
+                </div>
                 {/* The approver belongs to every channel and cannot be removed. */}
                 {channel?.can_change && member.kind !== 'approver' && (
                   <button
                     onClick={() => void removeParticipant(member)}
-                    className="ml-auto p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
                     title={`Remove ${member.name} from the channel`}
                     aria-label={`Remove ${member.name} from the channel`}
                   >
