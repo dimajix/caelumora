@@ -527,14 +527,16 @@ async fn what_an_agent_saw_is_its_owners_alone() {
 // --- External agents ---------------------------------------------------------
 
 /// A remote agent that takes every request on as a task and works on it
-/// for ever. Every call reads its credential, as an A2A agent does - in the
-/// name it is called in - and is recorded. What it brings in itself is
+/// for ever - or, given a `gate`, until the gate lets it answer, one permit
+/// a request. Every call reads its credential, as an A2A agent does - in
+/// the name it is called in - and is recorded. What it brings in itself is
 /// classified as it `declared`.
 #[derive(Debug)]
 struct RemoteAtWork {
     secrets: Arc<SecretManager>,
     calls: Arc<Mutex<Vec<&'static str>>>,
     declared: Option<Classification>,
+    gate: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl RemoteAtWork {
@@ -550,7 +552,14 @@ impl ExternalAgent for RemoteAtWork {
     async fn send(&self, security: &SecurityContext, _: Option<&ConversationId>, _: OutboundMessage) -> ExternalAgentResult<ExternalStream> {
         self.called("send", security).await;
         let started = futures::stream::iter([Ok(ExternalEvent::Started(TaskId("t-1".to_string())))]);
-        Ok(Box::pin(started.chain(futures::stream::pending())))
+        let Some(gate) = self.gate.clone() else { return Ok(Box::pin(started.chain(futures::stream::pending()))) };
+        let opened = futures::stream::once(async move {
+            if let Ok(permit) = gate.acquire_owned().await {
+                permit.forget();
+            }
+        });
+        let answered = futures::stream::iter([Ok(ExternalEvent::Message("Found.".to_string())), Ok(ExternalEvent::Completed)]);
+        Ok(Box::pin(started.chain(opened.filter_map(|()| async { None })).chain(answered)))
     }
 
     async fn resume(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {
@@ -573,12 +582,18 @@ impl ExternalAgent for RemoteAtWork {
 }
 
 /// The world, with the kind `remote_at_work`: a `RemoteAtWork` declaring
-/// `declared`, recording its calls in `calls`.
+/// `declared`, recording its calls in `calls`, working for ever.
 async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>) -> World {
+    with_remote(calls, declared, None).await
+}
+
+/// `with_remote_at_work`, answering each request once `gate` lets it, if
+/// there is one.
+async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<tokio::sync::Semaphore>>) -> World {
     let calls = calls.clone();
     World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: context.secret_manager.clone(), calls: calls.clone(), declared: declared.clone() }));
+        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: context.secret_manager.clone(), calls: calls.clone(), declared: declared.clone(), gate: gate.clone() }));
         Ok(facets)
     })).await
 }
@@ -641,6 +656,49 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
     assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "followed in his name too, whoever opened the session");
     world.manager.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
+}
+
+/// Asked several times while it answers, an agent answers once afterwards
+/// (issue 222) - with the authority of the last who asked, not of the first
+/// nor of all of them: alice's request is dropped, and the remote agent is
+/// sent the conversation in bob's name alone.
+#[tokio::test]
+async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_the_last() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let world = with_remote(&calls, None, Some(gate.clone())).await;
+    let remote = remote_personality(&world).await;
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = session.channels()[0].clone();
+    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
+    main.user_actor(world.alice).expect("she takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+    calls_made(&calls, 1).await;
+
+    let (_, asked) = world.asked(async {
+        // Both ask while it works; both messages are said before it is free.
+        main.user_actor(world.alice).expect("she takes part").send_message("@hermes and this".to_string(), None).await.expect("she asks");
+        main.user_actor(world.bob).expect("he takes part").send_message("@hermes and that".to_string(), None).await.expect("he asks");
+        let said_by = |envelope: &caelumora_model::actor::Envelope, sender: ActorId| envelope.context.sender_id == sender
+            && matches!(envelope.event, caelumora_model::actor::ActorEvent::FullResponseGenerated(_));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !said_by(&events.recv().await.expect("the channel runs"), ActorId::User(world.bob)) {}
+        }).await.expect("his message is said");
+        gate.add_permits(3);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut answers = 0;
+            while answers < 2 {
+                answers += usize::from(said_by(&events.recv().await.expect("the channel runs"), ActorId::Agent(hermes)));
+            }
+        }).await.expect("it answers the first request and then the rest");
+        // A further answer would call the remote agent right away.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }).await;
+    assert_eq!(calls.lock().unwrap().as_slice(), ["send", "send"], "one call for all that was asked meanwhile");
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["bob as hermes: ReadSecret yes"], "in the name of the last who asked");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An external agent whose answers, as its component declares them, may no
