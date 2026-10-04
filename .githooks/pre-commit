@@ -1,0 +1,15 @@
+#!/bin/sh
+# Keeps issues/OPEN.md in step with issues/INDEX.md: whenever the index is
+# part of a commit, OPEN.md is generated from the index as it is staged and
+# added to the commit. Enabled per clone with `git config core.hooksPath .githooks`.
+set -eu
+
+if git diff --cached --quiet -- issues/INDEX.md; then
+    exit 0
+fi
+
+staged=$(mktemp)
+trap 'rm -f "$staged"' EXIT
+git show :issues/INDEX.md > "$staged"
+issues/open.sh "$staged"
+git add issues/OPEN.md

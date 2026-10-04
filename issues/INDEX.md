@@ -27,6 +27,11 @@ argues against it, and what came out of the last attempt.
   again from scratch six months later.
 - **The index line is one sentence.** It says what is wrong, not how it will be fixed. Everything
   longer belongs in the issue file.
+- **[OPEN.md](OPEN.md) is generated, never edited:** the lines of this index that are `open` or `in
+  progress`, under the same sections, written by `issues/open.sh`. The pre-commit hook
+  (`.githooks/pre-commit`) runs it whenever this index is committed and adds the result to the
+  commit; it is enabled once per clone with `git config core.hooksPath .githooks`. Without the hook,
+  run the script after changing a status.
 
 ### Creating a new issue
 

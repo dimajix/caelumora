@@ -38,6 +38,10 @@ maintained*. In short: an issue is a line in the index *and* a file, its status 
 description of a resolved issue is never rewritten (what happened goes under `## History`), and
 numbers are never reused.
 
+[issues/OPEN.md](issues/OPEN.md) lists only the issues that are open or in progress. It is generated
+from the index by `issues/open.sh` and never edited by hand; the pre-commit hook in `.githooks`
+keeps it up to date, once a clone has it enabled (`git config core.hooksPath .githooks`).
+
 ## Rules for every change
 
 The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md).
