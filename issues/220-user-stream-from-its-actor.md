@@ -94,3 +94,9 @@ stream runs over the `EventBus`, the recorder records each delivery itself.
   channel, which its issuer otherwise would not receive once the stream follows the actor, since
   the REST reply leaves it out. A user's actor sends no partial messages; were it to, they would be
   shown the same way. The TUI leaves out what its own user sent, which it shows as typed.
+- **2026-10-04** — Step 3: the `policy_moderator` routes how an answer comes about -
+  `ResponseStarted`, partial and complete messages, intermediate ones, plan steps - to every user
+  of the channel, and to no agent: the agents hear the answer. The channel still sends nothing to
+  the sender, so a user's own complete message comes only from their actor (step 2). The TUI,
+  which now receives complete messages too, prints each message as it is complete, as the web UI
+  shows it, and no longer the full response, which is what the agents hear.

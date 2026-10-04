@@ -121,6 +121,17 @@ impl Moderator for PolicyModerator {
             ActorEvent::TurnFailed { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::ParticipantRemoved { .. } => {
                 self.actors().route_to_users(event)
             }
+            // How an answer comes about - streamed, step by step - is for
+            // the users watching (issue 220); the agents hear the answer.
+            ActorEvent::ResponseStarted |
+            ActorEvent::PartialMessageGenerated(_) |
+            ActorEvent::CompleteMessageGenerated(_) |
+            ActorEvent::IntermediatePartialGenerated(_) |
+            ActorEvent::IntermediateMessageGenerated(_) |
+            ActorEvent::PlanStepStarted { .. } |
+            ActorEvent::PlanStepFinished { .. } => {
+                self.actors().route_to_users(event)
+            }
             _ => {
                 Vec::new().into()
             }
@@ -221,8 +232,9 @@ impl ModeratorActors {
         self.user_actors.keys().copied().collect()
     }
 
-    /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`,
-    /// which concerns the users watching and none of the other agents.
+    /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`
+    /// or a streamed part of an answer, which concern the users watching
+    /// and none of the other agents.
     fn route_to_users(&self, event: &Envelope) -> RouteDecision {
         self.user_actors.keys()
             .map(|id| (*id, event.clone()))
@@ -508,6 +520,31 @@ mod tests {
         let user = ActorId::User(UserId::new());
         let decision = moderator.route(&hops_from(user, 2, Vec::new())).await;
         assert_eq!(hops_asked(&decision), vec![0, 0], "a user's message starts a new chain");
+    }
+
+    #[tokio::test]
+    async fn how_an_answer_comes_about_reaches_the_users_only() {
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS);
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+        moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+        let message = || Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
+        let step = || (0, 2, "first".to_string());
+        let events = [
+            ActorEvent::ResponseStarted,
+            ActorEvent::PartialMessageGenerated(message()),
+            ActorEvent::CompleteMessageGenerated(message()),
+            ActorEvent::IntermediatePartialGenerated(message()),
+            ActorEvent::IntermediateMessageGenerated(message()),
+            ActorEvent::PlanStepStarted { step_index: step().0, total_steps: step().1, description: step().2 },
+            ActorEvent::PlanStepFinished { step_index: step().0, total_steps: step().1, description: step().2 },
+        ];
+        for event in events {
+            let kind = event.kind();
+            let decision = moderator.route(&envelope(agents[0], event)).await;
+            let to: Vec<ActorId> = decision.forwards.iter().map(|(id, _)| *id).collect();
+            assert_eq!(to, vec![user], "{kind} goes to the users, not to the agents (issue 220)");
+        }
     }
 
     #[tokio::test]

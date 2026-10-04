@@ -74,16 +74,12 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                 }
                 let sender = maybe_envelope.as_ref().map(|e| e.context.sender_name.clone()).unwrap_or_default();
                 match maybe_envelope.map(|envelope| envelope.event) {
+                    // Each message as soon as it is complete, as the web UI
+                    // shows it; the full response that ends an answer holds
+                    // them again (issue 220).
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {
                         if let Some(content) = &message.content {
                             println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
-                        }
-                    }
-                    Some(ActorEvent::FullResponseGenerated(messages)) => {
-                        for message in messages {
-                            if let Some(content) = &message.content {
-                                println!("\r{}> {}", message.sender_name, render_content(&message, content, &handles));
-                            }
                         }
                     }
                     Some(ActorEvent::IntermediateMessageGenerated(message)) => {
