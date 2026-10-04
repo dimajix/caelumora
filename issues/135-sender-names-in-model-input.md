@@ -185,3 +185,10 @@ measured.
   are marked and that the agent's own carry no marker; the roster part
   (`channel_members_prompt_provider`) tells it after the others, reading the profile of the work
   (`AgentWork::profile`), and nothing where nothing is marked or nobody else is there.
+- **2026-10-04** — Step 1.4, and with it step 1: documented in AGENT-TURN.md (*Who said what*, and
+  the roster telling the format), CONFIGURATION.md, COMPONENTS.md, CHANNELS.md (what an external
+  agent is given) and `examples/config.yaml`. Checked in headless Chromium against a copy of the
+  local data: asked "who wrote you this message?", the agent of a `simple-session` answered "Du
+  hast diese Nachricht geschrieben, @kaya." without a marker of its own; its context panel shows
+  the message as `@kaya: Hallo! ...` and the roster part with the explanation. Next: the
+  experiments of step 2.

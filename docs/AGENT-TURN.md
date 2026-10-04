@@ -331,6 +331,42 @@ Since what the model was given is less than the transcript holds, the `ContextRe
 profile and the turn's share of the transcript, and resolving it applies the same rule again. The
 digests are unchanged: they name the stored transcript, not a filtered copy of it.
 
+### Who said what
+
+What other participants say reaches an agent as `user` messages (`as_user_messages`), and a model's
+input has no place for their sender: Ollama drops a `name`, A2A knows only the roles `user` and
+`agent`. So the sender is marked in the content, as the profile says (issue 135,
+`ModelProfile::sender_format` and `sender_style`):
+
+| `sender_format` | A message of another participant is given as |
+|---|---|
+| `none` | its content alone |
+| `prefix` - the default | `@alice: text` |
+| `xml` | `<message from="@alice">text</message>` - only `<message` and `</message` in the content escaped |
+
+`sender_style` names the sender by `handle` - the default; derived from the name the message holds,
+so that a stored transcript reads the same after a renaming - or by `name`. Only messages a user or
+another agent said to the agent are marked, never the agent's own, a tool's or the system's: a model
+whose own messages carry the marker imitates it and continues the conversation as a transcript
+(`work/sender_names/RESULTS.md`). The rule is applied where reasoning is
+(`ModelProfile::given`, by the `ContextResolver`), so the context panel shows the markers, and the
+stored transcript keeps the message as received. A context recorded before the rule existed reads as
+`none`, as it was given.
+
+How the others' messages are marked is told with the roster
+([who is in the channel](#who-is-in-the-channel)): `ModelProfile::sender_explanation` words it -
+for `prefix` and `handle`: "Messages of the others begin with their sender's @handle and a colon:
+"@handle: ...". Your own messages carry no such marker: answer without one, and never write a
+message for someone else." Without such an explanation models imitate the marker.
+
+A marker is a claim like any text: a participant can write another's into their own message, and
+models believe it (issue [150](../issues/150-impersonation-towards-the-agent.md)). Nothing with
+consequences may rest on whom the model believes said something.
+
+An external agent is given what was said by the same rule (`ExternalAgent::profile`): its actor
+records the profile in the context of its call, so that the context of its answer shows what the
+remote agent was given (see [CHANNELS.md](CHANNELS.md)).
+
 ### Tokens used
 
 Every message the model produces carries the tokens of the call that produced it - of its prompt
@@ -449,8 +485,9 @@ of the system (issue 150). Each introduction is put on one line, so that it cann
 entry. Names and introductions are public, and so is the part.
 
 It goes into the system prompt by default (`position`): the roster changes rarely, and a change
-ought to reach the model at once, at the cost of the prompt cache from there on. How the senders of
-messages are marked in the conversation (issue 135) is to be explained beside it, once they are.
+ought to reach the model at once, at the cost of the prompt cache from there on. After the others it
+tells how their messages are marked ([who said what](#who-said-what)), as the profile of the work
+words it (`AgentWork::profile`) - nothing where nothing is marked or nobody else is there.
 
 An external agent is told the same roster (issue 204, see [CHANNELS.md](CHANNELS.md)), with the
 parameter `changes_only`: its remote agent keeps its conversation, so it is told the roster when it

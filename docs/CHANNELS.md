@@ -294,7 +294,10 @@ An **actor** is anything that sends and receives events in a channel.
     remote agent keeps its conversation; a part a failed send did not give is given with the next
     one, also when its provider has nothing new by then. After a restart only what changed is given;
     when the remote agent opens another conversation, all of it again. A2A has no system message:
-    the parts are text of the user's message too, ahead of what was said. Then it gives the remote agent its transcript, which then starts anew
+    the parts are text of the user's message too, ahead of what was said. Then it gives the remote
+    agent its transcript - each message a part of its own, marked with its sender as the
+    component's profile says (`sender_format`, issue 135; `Said` keeps the sender beside it, for a
+    protocol that can carry one) - which then starts anew
     (`Transcript::start_anew`, issue 205): the transcript's active path is what the remote agent has
     not heard yet - what a failed send did not give is given with the next one, and a restart gives
     nothing twice - and what each call gave stays as a branch from its root. It publishes what

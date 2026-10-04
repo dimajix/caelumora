@@ -77,6 +77,8 @@ users:
 #      think: true
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
+#      sender_format: prefix
+#      sender_style: handle
 #      context_size: 65536
 #  - id: context
 #    kind: turn_context_provider
