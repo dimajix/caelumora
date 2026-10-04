@@ -56,3 +56,8 @@ not verified by the model.
 
 - **2026-09-30** — Issue created, found while testing how models handle sender names for
   [135](135-sender-names-in-model-input.md) (`work/sender_names/RESULTS.md`, findings 8 and 10).
+- **2026-10-04** — Kept in view while planning [135](135-sender-names-in-model-input.md) (its
+  *Plan*, steps 2 and 3): once the sender format is in place, it is measured whether a note of the
+  runtime at the place of a faked marker, or giving the faked line as a quotation, makes models
+  disbelieve it; what is built follows from that. External agents are affected as well - A2A has no
+  sender, so the name is in the content there too - and their model cannot be tested.
