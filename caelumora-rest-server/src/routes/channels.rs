@@ -141,16 +141,8 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
     };
     let (messages, has_more) = recent_messages(history.messages);
     // The conversation can be shown without what of it cannot be read.
-    let mut channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
-    let notes = std::mem::take(&mut channel.notes);
-    let pending_approvals = std::mem::take(&mut channel.pending_approvals);
-    Some(ChannelSnapshot {
-        channel: channel.into(),
-        messages,
-        has_more,
-        notes: notes.into_iter().map(Into::into).collect(),
-        pending_approvals,
-    })
+    let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
+    Some(ChannelSnapshot::of(channel, messages, has_more))
 }
 
 /// The end of a history, and whether it was cut.

@@ -17,12 +17,9 @@ use super::{ViewError, ViewResult, Views};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId};
-use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
-use caelumora_model::context::TranscriptView;
 use caelumora_model::mention::handle_of;
-use caelumora_model::message::TokenUsage;
 use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
@@ -210,32 +207,17 @@ impl MemberState for AgentMemberState {
 pub(super) struct AgentMember(StateRef);
 
 impl AgentMember {
-    async fn stored(&self) -> ViewResult<AgentChannelState> {
+    /// Its state in the channel as stored, read anew on every call - what
+    /// a member's details are taken from, read once for all of them.
+    pub(super) async fn stored(&self) -> ViewResult<AgentChannelState> {
         let place = &self.0;
         place.store.get_agent_channel_state(place.agent, place.channel).await.map_err(|e| place.failed(e))
-    }
-
-    /// The notes it published (issue 17), with the digest of their chain.
-    pub(super) async fn notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
-        let state = self.stored().await?;
-        Ok((state.notes.current(), state.notes.digest()))
     }
 
     /// The notes only it reads (issue 51), with the digest of their chain.
     pub(super) async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
         let state = self.stored().await?;
         Ok((state.private_notes.current(), state.private_notes.digest()))
-    }
-
-    /// The approvals its turn waits for (issue 172).
-    pub(super) async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
-        Ok(self.stored().await?.turn.map(|turn| turn.pending_approvals()).unwrap_or_default())
-    }
-
-    /// What its model calls used (issue 209).
-    pub(super) async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
-        let state = self.stored().await?;
-        Ok(TranscriptView::of(&state).usage(ActorId::Agent(self.0.agent)))
     }
 
     /// What it saw (issue 41).

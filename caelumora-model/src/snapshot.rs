@@ -12,7 +12,9 @@
 //! detail costs - reading every agent's state, say - is paid only where it
 //! is shown. A detail is taken where it is asked for and its part is
 //! there, and nothing else: `USAGE` without `MEMBERS` gives no usage, since
-//! there are no members to carry it. A list not asked for is empty.
+//! there are no members to carry it. A list not asked for is empty. What
+//! a member's details read - its usage, notes and pending approvals - comes
+//! from its agent's state, read once for all of them.
 
 use crate::actor::ActorId;
 use crate::approval::ApprovalRequest;
@@ -32,14 +34,11 @@ bitflags::bitflags! {
         const CHANNELS = 1 << 0;
         /// Of a channel: its members.
         const MEMBERS = 1 << 1;
-        /// Of a member: what its model calls used (issue 209) - read from
-        /// its agent's state.
+        /// Of a member: what its model calls used (issue 209).
         const USAGE = 1 << 2;
-        /// Of a channel: the notes its agents published (issue 17) - read
-        /// from their states.
+        /// Of a member: the notes it published (issue 17).
         const NOTES = 1 << 3;
-        /// Of a channel: the approvals its agents wait for (issue 172) -
-        /// read from their states.
+        /// Of a member: the approvals its turn waits for (issue 172).
         const APPROVALS = 1 << 4;
     }
 }
@@ -92,13 +91,6 @@ pub struct ChannelSnapshot {
     /// Its participants, in the order of the channel - with
     /// `Detail::MEMBERS`.
     pub members: Vec<MemberSnapshot>,
-    /// The notes every agent of the channel published - with
-    /// `Detail::NOTES`, empty if they could not be read.
-    pub notes: Vec<PublishedNotes>,
-    /// The approvals the channel's agents wait for, for a viewer who takes
-    /// part in it as a user (none for any other) - with
-    /// `Detail::APPROVALS`, empty if they could not be read.
-    pub pending_approvals: Vec<ApprovalRequest>,
 }
 
 /// The notes one agent published in a channel.
@@ -124,9 +116,17 @@ pub struct MemberSnapshot {
     /// Whether the viewer may see what this participant saw when it produced
     /// a message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub can_read_context: bool,
-    /// What the member's model calls in the channel used (issue 209) -
-    /// with `Detail::USAGE`; `None` also for a member whose calls report no
-    /// tokens (an external agent, a user), before its first call, and if
+    /// What an agent member's model calls in the channel used (issue 209)
+    /// - with `Detail::USAGE`; `None` also for a member whose calls report
+    /// no tokens (an external agent, a user), before its first call, and if
     /// the agent's state could not be read.
     pub usage: Option<TokenUsage>,
+    /// The notes an agent member published in the channel (issue 17) - of
+    /// a channel read entry by entry, those released to where the viewer
+    /// reads from - with `Detail::NOTES`.
+    pub notes: Vec<Note>,
+    /// The approvals an agent member's turn waits for (issue 172), for a
+    /// viewer who takes part in the channel as a user and reads all of it -
+    /// with `Detail::APPROVALS`.
+    pub pending_approvals: Vec<ApprovalRequest>,
 }

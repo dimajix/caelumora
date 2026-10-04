@@ -700,8 +700,13 @@ use caelumora_model::turn::TurnState;
     #[tokio::test]
     async fn a_snapshot_holds_the_details_asked_for_and_no_others() {
         use caelumora_model::agent::AgentChannelState;
-        use caelumora_model::message::{Message, TokenUsage};
+        use caelumora_model::ledger::Change;
+        use caelumora_model::message::{Message, MessageId, TokenUsage};
+        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_model::snapshot::MemberSnapshot;
         use caelumora_model::store::StateStore;
+        use caelumora_model::tool::{ToolCall, ToolCallState};
+        use caelumora_model::turn::TurnState;
 
         let (store, manager) = owned_runtime();
         let alice = user("alice");
@@ -712,6 +717,8 @@ use caelumora_model::turn::TurnState;
         let channel = main_channel(&session);
         store.create_session(&SecurityContext::system(), &session).await.unwrap();
         store.create_channel(&SecurityContext::system(), &channel).await.unwrap();
+        // What the agent's call used, what it noted, and a call its turn
+        // waits to have approved.
         let answer = Message {
             sender_id: ActorId::Agent(helper.id),
             prompt_tokens: Some(1000),
@@ -721,18 +728,30 @@ use caelumora_model::turn::TurnState;
         };
         let mut state = AgentChannelState::default();
         state.transcript.push(answer);
+        state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
+        let mut turn = TurnState::default();
+        turn.work.event_context.sender_id = ActorId::Agent(helper.id);
+        let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default() };
+        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string())];
+        state.turn = Some(turn);
         store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
         let main = views.session(session.id).await.unwrap().channel(channel.id).await.unwrap();
-        let used = |channel: caelumora_model::snapshot::ChannelSnapshot| channel.members.iter().map(|m| m.usage).collect::<Vec<_>>();
         let expected = TokenUsage { calls: 1, prompt_tokens: 1000, completion_tokens: 50, last_call_tokens: 1050, context_size: Some(8192) };
-        assert_eq!(used(main.snapshot(Detail::MEMBERS | Detail::USAGE).await), [None, Some(expected)], "the user's calls report nothing");
-        assert_eq!(main.member(ActorId::Agent(helper.id)).await.unwrap().snapshot(Detail::USAGE).await.usage, Some(expected));
-        assert_eq!(used(main.snapshot(Detail::MEMBERS).await), [None, None], "not asked for");
-        assert!(used(main.snapshot(Detail::USAGE).await).is_empty(), "no members to carry it");
+        let details = |member: &MemberSnapshot| (member.usage, member.notes.len(), member.pending_approvals.len());
+
+        let all = main.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
+        let [user, agent] = all.members.as_slice() else { panic!("two members: {all:?}") };
+        assert_eq!(details(user), (None, 0, 0), "a user has none of them");
+        assert_eq!(details(agent), (Some(expected), 1, 1), "an agent's, from its state");
+        let alone = main.member(ActorId::Agent(helper.id)).await.unwrap().snapshot(Detail::USAGE).await;
+        assert_eq!(details(&alone), (Some(expected), 0, 0), "only what was asked for");
+        let plain = main.snapshot(Detail::MEMBERS).await;
+        assert!(plain.members.iter().all(|m| details(m) == (None, 0, 0)), "none asked for");
+        assert!(main.snapshot(Detail::USAGE).await.members.is_empty(), "no members to carry it");
         let listed = views.session(session.id).await.unwrap().snapshot(Detail::CHANNELS).await;
-        assert!(!listed.channels.is_empty() && listed.channels.iter().all(|c| c.members.is_empty() && c.notes.is_empty() && c.pending_approvals.is_empty()), "only what was asked for");
+        assert!(!listed.channels.is_empty() && listed.channels.iter().all(|c| c.members.is_empty()), "only what was asked for");
     }
 
     #[tokio::test]

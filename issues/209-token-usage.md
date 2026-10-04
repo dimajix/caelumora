@@ -142,3 +142,15 @@ anew).
   channel's stream asks for `MEMBERS | USAGE | NOTES | APPROVALS`, `GET .../participants/{aid}` -
   new - answers one participant with `USAGE`, the lists of sessions and channels ask for no usage.
   AGENT-TURN.md, REST-SERVER.md and SECURITY.md say so.
+- **2026-10-04** — The channel snapshot loaded every agent's state once per detail - usage, notes,
+  approvals - and reached its members once per detail as well. First, the snapshot reached its
+  members once (in the step 2 commit). Then, decided with the maintainer, without keeping a state
+  in the views: usage, notes and pending approvals are details of the member, as they are data of
+  one agent in the channel. `MemberSnapshot` carries `notes` and `pending_approvals` beside `usage`;
+  `MemberView::snapshot` reads the agent's state once for all three, taking them out by what the
+  state offers (`AgentChannelState::pending_approvals`, `AgentChannelState::usage`).
+  `ChannelSnapshot` lost its two lists; the REST server lists the members' notes and approvals
+  beside the channel in the stream's snapshot as before (`ChannelSnapshot::of`), so the API is
+  unchanged. `AgentMember` only reads the state now (`stored`), and `MemberView::usage`, which
+  nobody called any more, is gone. The channel's rule for approvals - only for a user who takes
+  part and reads all of it - is `ChannelView::shows_approvals`.

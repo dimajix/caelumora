@@ -3,11 +3,12 @@ use crate::component::ComponentConfig;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
-use crate::context::{ContextRef, ModelProfile, PromptRef};
+use crate::approval::ApprovalRequest;
+use crate::context::{ContextRef, ModelProfile, PromptRef, TranscriptView};
 use crate::chain::Stored;
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
-use crate::message::{Message, MessageId, MessageRole};
+use crate::message::{Message, MessageId, MessageRole, TokenUsage};
 use crate::memory::{Memories, MemoryChain};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{GivenUp, GivenUpReason, Transcript, TranscriptEntry};
@@ -324,6 +325,17 @@ impl AgentChannelState {
     /// was before references were recorded).
     pub fn recorded_context_of(&self, id: MessageId) -> Option<ContextRef> {
         self.history.all_entries().find_map(|e| e.entry.context_of(id)).cloned()
+    }
+
+    /// The approvals its turn waits for (issue 172); none without a turn.
+    pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
+        self.turn.as_ref().map(TurnState::pending_approvals).unwrap_or_default()
+    }
+
+    /// What the model calls of `agent` - whose state this is - used in the
+    /// channel (issue 209).
+    pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
+        TranscriptView::of(self).usage(agent)
     }
 }
 

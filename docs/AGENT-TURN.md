@@ -347,8 +347,8 @@ turn under way. Two numbers come out of it and mean different things:
     context size: how full the agent's context is.
 
 An external agent's calls report no tokens, so its usage is unknown, not zero. The views hand it out
-per member (`MemberView::usage`, and in a snapshot with `Detail::USAGE`), to whoever reads the
-channel - who sees the tokens of every published message anyway.
+per member, in its snapshot with `Detail::USAGE`, to whoever reads the channel - who sees the tokens
+of every published message anyway.
 
 ### Digests are stored, not recomputed
 

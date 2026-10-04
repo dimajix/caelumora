@@ -10,7 +10,7 @@ use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
-use caelumora_model::message::TokenUsage;
+use caelumora_model::agent::AgentChannelState;
 use caelumora_model::name::Name;
 use caelumora_model::note::Note;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, Place};
@@ -200,13 +200,8 @@ impl ChannelView {
     /// `Failed` if an agent's state cannot be read; `NoChannelNamed` if
     /// nothing of a channel read entry by entry can be.
     pub async fn notes(&self) -> ViewResult<Vec<PublishedNotes>> {
-        self.notes_of(&self.members().await).await
-    }
-
-    /// The notes `members` published, as `notes` gives them.
-    async fn notes_of(&self, members: &[MemberView]) -> ViewResult<Vec<PublishedNotes>> {
         let mut published = Vec::new();
-        for member in members {
+        for member in self.members().await {
             if let Some(notes) = member.notes().await? {
                 published.push(notes);
             }
@@ -226,56 +221,35 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if an agent's state cannot be read.
     pub async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
-        self.pending_approvals_of(&self.members().await).await
-    }
-
-    /// The approvals `members` wait for, as `pending_approvals` gives them.
-    async fn pending_approvals_of(&self, members: &[MemberView]) -> ViewResult<Vec<ApprovalRequest>> {
-        let viewer = self.views().viewer().context().initiator_id;
-        let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
-        if !takes_part || self.readable != Readable::Whole {
+        if !self.shows_approvals() {
             return Ok(Vec::new());
         }
         let mut pending = Vec::new();
-        for member in members {
+        for member in self.members().await {
             pending.extend(member.pending_approvals().await?);
         }
         Ok(pending)
+    }
+
+    /// Whether the viewer is shown the approvals the channel's agents wait
+    /// for: as a user who takes part in it - the users decide - and reads
+    /// all of it.
+    fn shows_approvals(&self) -> bool {
+        let viewer = self.views().viewer().context().initiator_id;
+        let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
+        takes_part && self.readable == Readable::Whole
     }
 
     /// The channel as the viewer sees it at this moment (issue 80), with
     /// the details `detail` asks for. A detail that cannot be read is left
     /// empty: the channel can be shown without it.
     pub async fn snapshot(&self, detail: Detail) -> ChannelSnapshot {
-        // Every detail of the channel is read through its members: reached
-        // once for all of them.
-        let reached = if detail.intersects(Detail::MEMBERS | Detail::NOTES | Detail::APPROVALS) {
-            self.members().await
-        } else {
-            Vec::new()
-        };
         let mut members = Vec::new();
         if detail.contains(Detail::MEMBERS) {
-            for member in &reached {
+            for member in self.members().await {
                 members.push(member.snapshot(detail).await);
             }
         }
-        let notes = if detail.contains(Detail::NOTES) {
-            self.notes_of(&reached).await.unwrap_or_else(|e| {
-                warn!("Reading the notes of channel {} failed: {:#}", self.channel.id, e);
-                Vec::new()
-            })
-        } else {
-            Vec::new()
-        };
-        let pending_approvals = if detail.contains(Detail::APPROVALS) {
-            self.pending_approvals_of(&reached).await.unwrap_or_else(|e| {
-                warn!("Reading the pending approvals of channel {} failed: {:#}", self.channel.id, e);
-                Vec::new()
-            })
-        } else {
-            Vec::new()
-        };
         ChannelSnapshot {
             id: self.channel.id,
             name: self.channel.name.to_string(),
@@ -284,8 +258,6 @@ impl ChannelView {
             classification: self.channel.classification.clone(),
             can_change: self.may_change().await,
             members,
-            notes,
-            pending_approvals,
         }
     }
 }
@@ -366,9 +338,15 @@ impl MemberView {
     /// `Failed` if the agent's state cannot be read.
     pub async fn notes(&self) -> ViewResult<Option<PublishedNotes>> {
         let Some(agent) = self.state.agent() else { return Ok(None) };
-        let (notes, digest) = agent.notes().await?;
-        let notes = self.channel.released(notes).await;
-        Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest }))
+        let state = agent.stored().await?;
+        let notes = self.notes_in(&state).await;
+        Ok(Some(PublishedNotes { agent: self.id(), name: self.name().unwrap_or_default().to_string(), notes, digest: state.notes.digest() }))
+    }
+
+    /// Of the notes the agent published, as its `state` holds them, those
+    /// the viewer may read.
+    async fn notes_in(&self, state: &AgentChannelState) -> Vec<Note> {
+        self.channel.released(state.notes.current()).await
     }
 
     /// The approvals the member's turn waits for (issue 172), as stored;
@@ -377,12 +355,9 @@ impl MemberView {
     /// # Errors
     /// `Failed` if the agent's state cannot be read.
     async fn pending_approvals(&self) -> ViewResult<Vec<ApprovalRequest>> {
-        if self.former {
-            return Ok(Vec::new());
-        }
         match self.state.agent() {
-            Some(agent) => agent.pending_approvals().await,
-            None => Ok(Vec::new()),
+            Some(agent) if !self.former => Ok(agent.stored().await?.pending_approvals()),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -431,31 +406,40 @@ impl MemberView {
     }
 
     /// The member as the viewer sees it at this moment (issue 80), with
-    /// the details `detail` asks for. A detail that cannot be read is left
-    /// out.
+    /// the details `detail` asks for - those of an agent taken from its
+    /// state, read once for all of them. If it cannot be read, they are
+    /// left out.
     pub async fn snapshot(&self, detail: Detail) -> MemberSnapshot {
-        let usage = if detail.contains(Detail::USAGE) {
-            self.usage().await
-                .inspect_err(|e| warn!("Reading what {} used failed: {:#}", self.id(), e))
-                .ok()
-                .flatten()
-        } else {
-            None
+        let mut wanted = detail & (Detail::USAGE | Detail::NOTES | Detail::APPROVALS);
+        if self.former || !self.channel.shows_approvals() {
+            wanted.remove(Detail::APPROVALS);
+        }
+        let state = match self.state.agent() {
+            Some(agent) if !wanted.is_empty() => agent.stored().await
+                .inspect_err(|e| warn!("Reading the state of {} failed: {:#}", self.id(), e))
+                .ok(),
+            _ => None,
         };
-        MemberSnapshot { id: self.id(), name: self.name().map(str::to_string), handle: self.handle(), can_read_context: self.may_read_context().await, usage }
-    }
-
-    /// What the member's model calls in the channel used (issue 209):
-    /// summed from its transcript. Whoever reads the channel may see it, as
-    /// they see the tokens of each message published. `None` for a member
-    /// that is no agent or whose calls report no tokens.
-    ///
-    /// # Errors
-    /// `Failed` if the agent's state cannot be read.
-    pub async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
-        match self.state.agent() {
-            Some(agent) => agent.usage().await,
-            None => Ok(None),
+        let (mut usage, mut notes, mut pending_approvals) = (None, Vec::new(), Vec::new());
+        if let Some(state) = &state {
+            if wanted.contains(Detail::USAGE) {
+                usage = state.usage(self.id());
+            }
+            if wanted.contains(Detail::NOTES) {
+                notes = self.notes_in(state).await;
+            }
+            if wanted.contains(Detail::APPROVALS) {
+                pending_approvals = state.pending_approvals();
+            }
+        }
+        MemberSnapshot {
+            id: self.id(),
+            name: self.name().map(str::to_string),
+            handle: self.handle(),
+            can_read_context: self.may_read_context().await,
+            usage,
+            notes,
+            pending_approvals,
         }
     }
 }

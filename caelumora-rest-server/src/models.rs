@@ -134,6 +134,24 @@ pub struct ChannelSnapshot {
     pub pending_approvals: Vec<caelumora_model::approval::ApprovalRequest>,
 }
 
+impl ChannelSnapshot {
+    /// The snapshot of a channel's stream: `channel`, whose agent members
+    /// carry their notes and pending approvals - listed beside the channel,
+    /// as the API has them - and the end of its history.
+    pub fn of(mut channel: snapshot::ChannelSnapshot, messages: Vec<Message>, has_more: bool) -> Self {
+        let mut notes = Vec::new();
+        let mut pending_approvals = Vec::new();
+        for member in &mut channel.members {
+            if matches!(member.id, ActorId::Agent(_)) {
+                let name = member.name.clone().unwrap_or_default();
+                notes.push(PublishedNotesResponse { agent_id: member.id, name, notes: std::mem::take(&mut member.notes) });
+            }
+            pending_approvals.append(&mut member.pending_approvals);
+        }
+        Self { channel: channel.into(), messages, has_more, notes, pending_approvals }
+    }
+}
+
 /// The notes one agent published in a channel.
 #[derive(Debug, Serialize)]
 pub struct PublishedNotesResponse {
@@ -566,7 +584,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None };
+        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new() };
         let view = snapshot::ChannelSnapshot {
             id: ChannelId::new(),
             name: "main".to_string(),
@@ -575,8 +593,6 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
-            notes: Vec::new(),
-            pending_approvals: Vec::new(),
         };
 
         let response = ChannelResponse::from(view);
@@ -587,9 +603,44 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_lists_its_agents_notes_and_approvals_beside_the_channel() {
+        use caelumora_model::agent::AgentId;
+        use caelumora_model::note::{Note, NoteId};
+        let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let note = Note {
+            id: NoteId(1),
+            text: "noted".to_string(),
+            classification: Classification::CHANNEL_DEFAULT,
+            origin: Default::default(),
+            after: Default::default(),
+            written_at: chrono::Utc::now(),
+        };
+        let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
+            id, name: Some(name.to_string()), handle: None, can_read_context: false, usage: None, notes, pending_approvals: Vec::new(),
+        };
+        let channel = snapshot::ChannelSnapshot {
+            id: ChannelId::new(),
+            name: "main".to_string(),
+            moderator: None,
+            responder_policy: None,
+            classification: Classification::CHANNEL_DEFAULT,
+            can_change: false,
+            members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
+        };
+
+        let json = serde_json::to_value(ChannelSnapshot::of(channel, Vec::new(), false)).unwrap();
+
+        assert_eq!(json["notes"].as_array().map(Vec::len), Some(1), "one entry per agent");
+        assert_eq!(json["notes"][0]["name"], "Helper");
+        assert_eq!(json["notes"][0]["notes"][0]["id"], 1);
+        assert_eq!(json["pending_approvals"], serde_json::json!([]));
+        assert!(json["channel"]["members"][1].get("notes").is_none(), "not repeated at the member");
+    }
+
+    #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage };
+        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, usage, notes: Vec::new(), pending_approvals: Vec::new() };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));

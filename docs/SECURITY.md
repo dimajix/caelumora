@@ -195,7 +195,8 @@ A node answers with a **snapshot** (`caelumora_model::snapshot`, issue 80) for a
 and offers: `SessionView::snapshot` with the participants and `can_change`; `ChannelView::snapshot`
 with `can_change`; `MemberView::snapshot` with the handle and `can_read_context`. What else a
 snapshot holds the caller chooses as `Detail` flags (issue 209) - a session's channels, a channel's
-members, notes and pending approvals, a member's token usage - so that what reads every agent's
+members, and of an agent member its token usage, its notes and the approvals its turn waits for -
+all three read from its state at once (`MemberView::snapshot`) - so that what reads every agent's
 state is paid only where it is shown. The flags are combined freely, none implies another: a detail
 whose part is not asked for is not there (`USAGE` without `MEMBERS` gives no usage), a list not
 asked for is empty. A detail that cannot be read is left out, and the rest is answered. The REST
