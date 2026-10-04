@@ -138,6 +138,20 @@ impl Message {
             && message.tool_results.is_empty();
         (!empty).then_some(message)
     }
+
+    /// What a participant hears of the message when someone else said it
+    /// (issue 224), the same live and on catching up, for every kind of
+    /// agent: what was said or answered in words - not a tool message, not
+    /// an inner step of a plan, not a message without text - as a `user`
+    /// message without its tool calls and results, which were the
+    /// sender's. `None` if there is nothing to hear. Whether the listener
+    /// said it itself is the listener's to tell.
+    pub fn as_heard(&self) -> Option<Message> {
+        let said = matches!(self.role, MessageRole::User | MessageRole::Assistant)
+            && !self.internal
+            && self.content.as_deref().is_some_and(|c| !c.is_empty());
+        said.then(|| Message { role: MessageRole::User, tool_calls: Vec::new(), tool_results: Vec::new(), ..self.clone() })
+    }
 }
 
 /// What an agent's model calls used (issue 209), summed from the messages
@@ -237,6 +251,23 @@ pub(crate) mod tests {
         ToolCallResult {
             id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
             started_at: Some(started_at), finished_at: Some(started_at + chrono::Duration::milliseconds(250)),
+        }
+    }
+
+    #[test]
+    fn a_message_is_heard_as_what_was_said_in_words_without_the_tool_traffic() {
+        let text = |role: MessageRole, content: Option<&str>| Message { role, content: content.map(str::to_string), ..make_message(MessageId::new()) };
+        let answer = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], ..text(MessageRole::Assistant, Some("Let me check.")) };
+
+        let heard = answer.as_heard().expect("an answer in words is heard");
+        assert_eq!((heard.role, heard.content.as_deref()), (MessageRole::User, Some("Let me check.")), "as a user's");
+        assert!(heard.tool_calls.is_empty(), "without the sender's call");
+        assert_eq!((heard.id, heard.sender_id), (answer.id, answer.sender_id), "the same message, of the same sender");
+
+        let tool = Message { tool_results: vec![result("1", ToolVisibility::SHOWN)], ..text(MessageRole::Tool, Some("done")) };
+        let internal = Message { internal: true, ..text(MessageRole::Assistant, Some("step")) };
+        for unheard in [tool, internal, text(MessageRole::Assistant, Some("")), text(MessageRole::Assistant, None), text(MessageRole::System, Some("note"))] {
+            assert!(unheard.as_heard().is_none(), "nothing to hear in {:?}", unheard.role);
         }
     }
 

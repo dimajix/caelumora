@@ -6,8 +6,9 @@
 //!
 //! It hears what the others say, as every participant does, and takes it in
 //! as an agent run here does (issue 206): all of it into its history, with
-//! its own answers; what can be given on - text others said - as it passes
-//! its perceive processors, into its transcript (issue 196). When it is
+//! its own answers; what it hears of what others said - their words
+//! (`Message::as_heard`, issue 224) - as it passes its perceive processors,
+//! into its transcript (issue 196). When it is
 //! asked, it gives the remote agent the prompt parts its context provider
 //! assembles that it was not given yet - the frame of what was said, such
 //! as who is in the channel (issues 204, 214) - and its transcript - which then starts anew, so
@@ -233,14 +234,13 @@ impl ExternalAgentActor {
     }
 
     /// Takes in `received` and everything queued behind it as an agent run
-    /// here does (`take_in`, issues 196, 206, 222): what can be given on to
-    /// the remote agent - text others said (`worth_giving`) - as it passes
-    /// its perceive processors, for the remote agent to be given when it is
-    /// next asked; stored at once, so that a restart loses none of it.
-    /// Returns the last request to respond, if any.
+    /// here does (`take_in`, issues 196, 206, 222, 224): what it hears of
+    /// what others said, as it passes its perceive processors, for the
+    /// remote agent to be given when it is next asked; stored at once, so
+    /// that a restart loses none of it. Returns the last request to
+    /// respond, if any.
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> Option<Envelope> {
-        let own = self.id();
-        let request = take_in(state, received, rx, |m| worth_giving(m, own), &self.perceive_in_processors, &self.security_context).await;
+        let request = take_in(state, received, rx, self.id(), &self.perceive_in_processors, &self.security_context).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
@@ -743,15 +743,6 @@ async fn may_answer_in(policy: &dyn SecurityManager, security: &SecurityContext,
     policy.may_publish(security, agent, brought, channel).await
 }
 
-/// Whether the remote agent is given `message`: said by another, with text
-/// to give, and none of a plan's inner steps.
-fn worth_giving(message: &Message, own: ActorId) -> bool {
-    message.sender_id != own
-        && !message.internal
-        && matches!(message.role, MessageRole::User | MessageRole::Assistant)
-        && message.content.as_deref().is_some_and(|c| !c.is_empty())
-}
-
 #[async_trait]
 impl Actor for ExternalAgentActor {
     fn id(&self) -> ActorId {
@@ -774,8 +765,7 @@ impl Actor for ExternalAgentActor {
     /// remote agent is given it when it is next asked.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        let own = self.id();
-        catch_up(&mut state, visible, |m| worth_giving(m, own), &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
+        catch_up(&mut state, visible, self.id(), &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, output: Box<dyn EventSender>) -> Result<()> {
@@ -867,13 +857,12 @@ mod tests {
         let step = Message { internal: true, ..said(alice, "alice", "thinking") };
         let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
         let security = SecurityContext::default();
-        let takes = |m: &Message| worth_giving(m, own);
 
         let mut state = AgentChannelState::default();
-        perceive(&mut state, vec![first.clone(), mine.clone()], takes, &[], &security).await;
+        perceive(&mut state, vec![first.clone(), mine.clone()], own, &[], &security).await;
         assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
         state.transcript.start_anew();
-        perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()], takes, &[], &security).await;
+        perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()], own, &[], &security).await;
         assert_eq!(ids(state.history.messages()), vec![first.id, mine.id, empty.id, step.id, second.id], "all it heard is kept");
         assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
         state.transcript.start_anew();

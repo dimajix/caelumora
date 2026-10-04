@@ -8,7 +8,7 @@ use crate::message::{MessageProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
 use crate::transport::EventReceiver;
 use anyhow::Result;
-use caelumora_model::actor::{ActorEvent, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
@@ -39,22 +39,24 @@ where
     Ok(input)
 }
 
-/// Takes what others said, `heard`, into an agent's `state` (issues 196,
-/// 206), the same for both kinds of agent: all of it into its history; what
-/// of it the agent `takes` in, as it passes its perceive `processors`, into
-/// its transcript. A failing stage is logged and leaves the transcript as
-/// it was: what was heard stays in the history, and is not offered again.
+/// Takes what others said, `heard`, into the `state` of the agent `own`
+/// (issues 196, 206, 224), the same for both kinds of agent and every way
+/// in: all of it into its history, as it was said; what it hears of it -
+/// of what others said, `Message::as_heard` - as it passes its perceive
+/// `processors`, into its transcript. A failing stage is logged and leaves
+/// the transcript as it was: what was heard stays in the history, and is
+/// not offered again.
 async fn perceive(
     state: &mut AgentChannelState,
     heard: Vec<Message>,
-    takes: impl Fn(&Message) -> bool,
+    own: ActorId,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
 ) {
     if heard.is_empty() {
         return;
     }
-    let offered = heard.iter().filter(|m| takes(m)).cloned().collect();
+    let offered = heard.iter().filter(|m| m.sender_id != own).filter_map(Message::as_heard).collect();
     let perceived = match apply_stage_processors(processors, offered, security).await {
         Ok(perceived) => perceived,
         Err(e) => {
@@ -68,7 +70,7 @@ async fn perceive(
 /// Takes in what an agent was told while it could not listen (issue 222),
 /// the same for both kinds of agent: `received`, and everything `rx` holds
 /// already behind it, in order. What others said is perceived as it comes
-/// (`perceive`, with `takes` and `processors`); of the requests to respond
+/// (`perceive`, as the agent `own` with its `processors`); of the requests to respond
 /// the last is returned - one answer to the conversation as it stands, in
 /// the authority of the last who asked - and the others are dropped, as is
 /// every other event. Neither commits nor stores: when that happens is the
@@ -77,7 +79,7 @@ async fn take_in(
     state: &mut AgentChannelState,
     received: Envelope,
     rx: &mut Box<dyn EventReceiver>,
-    takes: impl Fn(&Message) -> bool,
+    own: ActorId,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
 ) -> Option<Envelope> {
@@ -90,7 +92,7 @@ async fn take_in(
             match event.event {
                 ActorEvent::FullResponseGenerated(messages) => {
                     trace!("Heard {:?}", messages.iter().map(|m| &m.content).collect::<Vec<_>>());
-                    perceive(state, messages, &takes, processors, security).await;
+                    perceive(state, messages, own, processors, security).await;
                     None
                 }
                 ActorEvent::ResponseRequested => Some(event),
@@ -105,12 +107,12 @@ async fn take_in(
 
 /// Takes in what an actor of an agent missed of its channel as what it
 /// hears (issues 190, 196, 206): of `visible`, what its history does not
-/// have yet, through `perceive` - what of it the agent `takes`, as it passes
-/// its perceive `processors` - and stores its `state` with it in `runtime`.
+/// have yet, through `perceive` - as the agent `own`, with its perceive
+/// `processors` - and stores its `state` with it in `runtime`.
 async fn catch_up(
     state: &mut AgentChannelState,
     visible: Vec<Message>,
-    takes: impl Fn(&Message) -> bool,
+    own: ActorId,
     processors: &[ComponentImpl<dyn PerceiveInProcessor>],
     security: &SecurityContext,
     runtime: &ActorRuntime,
@@ -119,7 +121,7 @@ async fn catch_up(
     if missed.is_empty() {
         return Ok(());
     }
-    perceive(state, missed, takes, processors, security).await;
+    perceive(state, missed, own, processors, security).await;
     runtime.store_channel_state(state).await
 }
 
@@ -174,7 +176,7 @@ mod tests {
     }
 
     fn said(text: &str) -> Message {
-        Message { content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+        Message { role: caelumora_model::message::MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
     }
 
     fn texts(messages: &[Message]) -> Vec<&str> {
@@ -199,12 +201,12 @@ mod tests {
             tx.try_send(event).expect("room");
         }
 
-        let request = take_in(&mut state, heard("one"), &mut rx, |_| true, &[], &security).await;
+        let request = take_in(&mut state, heard("one"), &mut rx, ActorId::System, &[], &security).await;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
         assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
         assert!(rx.try_recv().is_none(), "nothing left behind");
 
-        let request = take_in(&mut state, heard("four"), &mut rx, |_| true, &[], &security).await;
+        let request = take_in(&mut state, heard("four"), &mut rx, ActorId::System, &[], &security).await;
         assert!(request.is_none(), "heard, but nobody asked");
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
     }

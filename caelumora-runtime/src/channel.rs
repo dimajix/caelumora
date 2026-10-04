@@ -2875,6 +2875,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
+        use caelumora_model::message::{MessageId, MessageRole};
+        use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
+        let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let other = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN };
+        let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), Classification::CHANNEL_DEFAULT);
+        // Another agent's answer, as the channel's history keeps it.
+        let answer = Message { id: MessageId::new(), sender_id: other, sender_name: "hermes".to_string(), role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let tool = Message { id: MessageId::new(), sender_id: other, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+
+        actor.catch_up(vec![answer.clone(), tool.clone()]).await.unwrap();
+
+        let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+        let heard = state.transcript.messages();
+        assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
+        assert_eq!((heard[0].id, heard[0].role, heard[0].content.as_deref()), (answer.id, MessageRole::User, Some("Let me check.")), "the other's words, as another's");
+        assert!(heard[0].tool_calls.is_empty(), "not the other's call, as if its own");
+        let kept: Vec<_> = state.history.messages().iter().map(|m| (m.id, m.role)).collect();
+        assert_eq!(kept, [(answer.id, MessageRole::Assistant), (tool.id, MessageRole::Tool)], "the history keeps what was said, as it was said");
+    }
+
+    #[tokio::test]
     async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
         use caelumora_model::message::{MessageId, MessageRole};
         let components = caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets")] };

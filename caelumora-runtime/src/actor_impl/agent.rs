@@ -273,7 +273,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<Option<ActorState>> {
         let Some(received) = rx.recv().await else { return Ok(None) };
-        let request = take_in(state, received, rx, |_| true, &self.perceive_in_processors, &self.security_context).await;
+        let request = take_in(state, received, rx, self.id(), &self.perceive_in_processors, &self.security_context).await;
         // Read once taken in, not before waiting: the channel wakes an agent
         // before it delivers the message that asks it, and the request comes
         // in the same batch.
@@ -717,7 +717,7 @@ impl Actor for AgentActor {
     /// transcript.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
         let mut state = self.state.lock().await;
-        catch_up(&mut state, visible, |_| true, &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
+        catch_up(&mut state, visible, self.id(), &self.perceive_in_processors, &self.security_context, &self.actor_runtime).await
     }
 
     async fn run(
