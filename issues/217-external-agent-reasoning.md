@@ -1,6 +1,6 @@
 # 217 — What an external agent says while it works is dropped
 
-**Status:** open
+**Status:** rejected
 **Area:** Integrations
 
 ## The problem
@@ -55,3 +55,14 @@ agent says about its work reaches the caller in three ways, none of them standar
 - **2026-10-03** — Issue created at the maintainer's request, after asking whether A2A carries
   reasoning: it does not as such; status updates, metadata and extensions are the ways an agent can
   report it.
+- **2026-10-04** — Recorded what Hermes sends, with one streamed call (`SendStreamingMessage`,
+  about 16 s) and the finished task read with `GetTask`. Its agent card declares no extensions. The
+  stream held four events: the task `TASK_STATE_SUBMITTED`, a status update `TASK_STATE_WORKING`
+  without a message, one artifact update with the whole answer at once, and `TASK_STATE_COMPLETED`.
+  The finished task held the answer twice, as `status.message` and as an artifact. Nowhere was
+  there `metadata`, reasoning or token usage. So with Hermes neither option yields anything - its
+  working status says nothing, and it has no convention to read - and it reports no usage either,
+  so issue 209's gauge stays unknown for it.
+- **2026-10-04** — Rejected by the maintainer: the one external agent in use reports nothing while
+  it works, so there is nothing to show. Should an A2A agent that reports its reasoning or progress
+  be connected, the options above are where to start.
