@@ -48,7 +48,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `NotesList`, `TokenGauge`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `NotesList`, `TokenGauge`, `HoverCard`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -166,14 +166,20 @@ have changed.
 
 Under each agent, a bar shows how full its context is (issue 209): the tokens of its last call
 against the size of its context, amber from three quarters on and red from nine tenths
-(`TokenGauge`); without a known size, the tokens alone. Its tooltip keeps two things apart: the
+(`TokenGauge`); without a known size, the tokens alone. Its hover card keeps two things apart: the
 context of the last call, against the context's size, and the usage of all of the agent's calls in
 the channel as total input and total output tokens - totals, which grow much faster than the
 context, since every call is given the whole context again. Above the list, "Total tokens" adds up
 the usage of the agents shown. The numbers come with the stream's snapshot, and an agent's are
 fetched again when its turn ends (`GET …/participants/{aid}`); an external agent reports none. A
-message's usage tooltip shows the input and output tokens of its call and how full the call's
-context was.
+message's "(i)" shows the input and output tokens of its call, how full the call's context was,
+and its times.
+
+All three show their numbers in the same hover card (`HoverCard` with `UsageStats`, issue 219):
+groups under a heading, labels on the left and values aligned on the right, never wrapped, the card
+as wide as its content. It opens on hover, on keyboard focus and on tap, above its trigger - below
+where there is no room - and always inside the window; it is placed in the page's body, so that the
+scrolling member list and chat do not cut it off, and closes when the page scrolls.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who

@@ -8,7 +8,9 @@ import {type ClassValue, clsx} from 'clsx';
 import {twMerge} from 'tailwind-merge';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
-import {formatArguments, formatTimestamp, usageRows} from '../messages';
+import {formatArguments, formatTimestamp, usageGroups} from '../messages';
+import {HoverCard} from './HoverCard';
+import {UsageStats} from './UsageStats';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -71,40 +73,22 @@ export const MessageTime: React.FC<{timestamp?: string; className?: string}> = (
 
 /**
  * An "(i)" that reveals a message's usage statistics - on hover, on keyboard
- * focus, and on tap, where there is no hover (issue 43). Nothing for messages
- * without statistics.
+ * focus, and on tap, where there is no hover (issues 43, 219). Nothing for
+ * messages without statistics.
  */
 const UsageInfo: React.FC<{message: Message}> = ({message}) => {
-  const [open, setOpen] = useState(false);
-  const rows = usageRows(message);
-  if (rows.length === 0) return null;
+  const groups = usageGroups(message);
+  if (groups.length === 0) return null;
   return (
-    <span className="relative group normal-case tracking-normal font-normal">
+    <HoverCard content={<UsageStats groups={groups} />} focusable={false}>
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
-        onBlur={() => setOpen(false)}
         aria-label="Usage statistics"
-        aria-expanded={open}
         className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100 align-middle"
       >
         <Info size={13} />
       </button>
-      <span
-        role="tooltip"
-        className={cn(
-          "absolute left-0 bottom-full mb-1 z-20 w-56 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-lg p-2 text-xs",
-          open ? "block" : "hidden group-hover:block group-focus-within:block"
-        )}
-      >
-        {rows.map(([label, value]) => (
-          <span key={label} className="flex justify-between gap-3">
-            <span className="text-gray-500 dark:text-gray-400">{label}</span>
-            <span className="font-mono">{value}</span>
-          </span>
-        ))}
-      </span>
-    </span>
+    </HoverCard>
   );
 };
 

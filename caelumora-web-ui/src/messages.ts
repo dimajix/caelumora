@@ -63,24 +63,38 @@ export function fillLevel(tokens: number, size: number | undefined): number | nu
   return size ? Math.min(tokens / size, 1) : null;
 }
 
+/** Usage statistics under a heading, as label/value rows (issue 219). */
+export interface StatGroup {
+  title: string;
+  rows: Array<[string, string]>;
+}
+
+/** A share of a context, e.g. `8 %`. */
+function percent(level: number): string {
+  return `${Math.round(level * 100)} %`;
+}
+
 /**
- * What an agent's calls used (issue 209), as the text of a tooltip, in two
- * groups: its context - the last call only, against the context's size -
- * and its usage, summed over all calls, which grows much faster since
- * every call is given the whole context again.
+ * What an agent's calls used (issue 209), in two groups: its context - the
+ * last call only, against the context's size - and its usage, summed over
+ * all calls, which grows much faster since every call is given the whole
+ * context again.
  */
-export function tokenUsageText(usage: TokenUsage): string {
+export function tokenUsageGroups(usage: TokenUsage): StatGroup[] {
   const level = fillLevel(usage.last_call_tokens, usage.context_size);
-  const context = level === null
-    ? `${formatTokens(usage.last_call_tokens)} tokens, size unknown`
-    : `${formatTokens(usage.last_call_tokens)} of ${formatTokens(usage.context_size!)} tokens (${Math.round(level * 100)} %)`;
+  const context: Array<[string, string]> = [['Tokens', formatTokens(usage.last_call_tokens)]];
+  if (level === null) {
+    context.push(['Size', 'unknown']);
+  } else {
+    context.push(['Size', formatTokens(usage.context_size!)], ['Filled', percent(level)]);
+  }
   return [
-    `Context of the last call: ${context}`,
-    '',
-    `Usage of all ${formatTokens(usage.calls)} calls:`,
-    `Total input tokens: ${formatTokens(usage.prompt_tokens)}`,
-    `Total output tokens: ${formatTokens(usage.completion_tokens)}`,
-  ].join('\n');
+    {title: 'Context of the last call', rows: context},
+    {title: `Usage of all ${formatTokens(usage.calls)} ${usage.calls === 1 ? 'call' : 'calls'}`, rows: [
+      ['Total input tokens', formatTokens(usage.prompt_tokens)],
+      ['Total output tokens', formatTokens(usage.completion_tokens)],
+    ]},
+  ];
 }
 
 /** A duration the LLM backend reported in nanoseconds, in seconds. */
@@ -89,22 +103,27 @@ function seconds(nanoseconds: number): string {
 }
 
 /**
- * The usage statistics of a message as label/value rows, leaving out what
- * was not reported; empty for messages that have none (issue 43).
+ * The usage statistics of a message, grouped into its tokens and its
+ * times, leaving out what was not reported; empty for messages that have
+ * none (issue 43).
  */
-export function usageRows(message: Message): Array<[string, string]> {
-  const rows: Array<[string, string]> = [];
-  if (message.prompt_tokens != null) rows.push(['Input tokens', String(message.prompt_tokens)]);
-  if (message.completion_tokens != null) rows.push(['Output tokens', String(message.completion_tokens)]);
-  if (message.prompt_duration != null) rows.push(['Prompt time', seconds(message.prompt_duration)]);
-  if (message.completion_duration != null) rows.push(['Completion time', seconds(message.completion_duration)]);
-  if (message.total_duration != null) rows.push(['Total time', seconds(message.total_duration)]);
+export function usageGroups(message: Message): StatGroup[] {
+  const tokens: Array<[string, string]> = [];
+  if (message.prompt_tokens != null) tokens.push(['Input tokens', formatTokens(message.prompt_tokens)]);
+  if (message.completion_tokens != null) tokens.push(['Output tokens', formatTokens(message.completion_tokens)]);
   const level = fillLevel((message.prompt_tokens ?? 0) + (message.completion_tokens ?? 0), message.context_size);
   if (level !== null && message.context_size) {
-    rows.push(['Context', `${Math.round(level * 100)} % of ${formatTokens(message.context_size)}`]);
+    tokens.push(['Context', `${percent(level)} of ${formatTokens(message.context_size)}`]);
   }
+  const times: Array<[string, string]> = [];
+  if (message.prompt_duration != null) times.push(['Prompt time', seconds(message.prompt_duration)]);
+  if (message.completion_duration != null) times.push(['Completion time', seconds(message.completion_duration)]);
+  if (message.total_duration != null) times.push(['Total time', seconds(message.total_duration)]);
   if (message.completion_tokens != null && message.completion_duration) {
-    rows.push(['Speed', `${(message.completion_tokens / (message.completion_duration / 1e9)).toFixed(1)} tokens/s`]);
+    times.push(['Speed', `${(message.completion_tokens / (message.completion_duration / 1e9)).toFixed(1)} tokens/s`]);
   }
-  return rows;
+  return [
+    {title: 'Tokens', rows: tokens},
+    {title: 'Time', rows: times},
+  ].filter(group => group.rows.length > 0);
 }

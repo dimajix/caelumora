@@ -1,6 +1,6 @@
 # 219 — The usage statistics on hover look makeshift
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -47,3 +47,13 @@ The web UI shows token usage in two hovers, built in two different ways, and nei
 
 - **2026-10-04** — Issue created at the maintainer's request: the hover is sometimes too small when
   a line wraps, and does not look good otherwise.
+- **2026-10-04** — Done. One `HoverCard` for all three, with the numbers as `UsageStats`: groups
+  under a heading ("Context of the last call" and "Usage of all N calls" for an agent, "Tokens"
+  and "Time" for a message), labels left, values right in tabular figures, nothing wrapped, the
+  card as wide as its content. It opens on hover, focus and tap, above its trigger or below where
+  there is no room, kept inside the window; it is placed in the page's body, so that the scrolling
+  member list does not cut it off, and closes when the page scrolls. No library was needed.
+  `tokenUsageText` and `usageRows` became `tokenUsageGroups` and `usageGroups`. Checked in
+  headless Chromium against a running server, light and dark: all three cards fit their content,
+  the channel's total is moved left to stay inside the window, and a message at the top edge opens
+  its card below.

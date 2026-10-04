@@ -53,6 +53,8 @@ import {MarkdownMessage} from './MarkdownMessage';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {formatArguments, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
 import {TokenGauge} from './TokenGauge';
+import {HoverCard} from './HoverCard';
+import {UsageStats} from './UsageStats';
 import {ContextPanel} from './ContextPanel';
 import {HistoryPanel} from './HistoryPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
@@ -955,18 +957,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
             </div>
           )}
           {channelUsage && (
-            <div
+            <HoverCard
               className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
-              title={[
-                `Usage of all ${formatTokens(channelUsage.calls)} model calls of the agents shown:`,
-                `Total input tokens: ${formatTokens(channelUsage.prompt)}`,
-                `Total output tokens: ${formatTokens(channelUsage.completion)}`,
-              ].join('\n')}
+              content={<UsageStats groups={[{
+                title: `Usage of all ${formatTokens(channelUsage.calls)} model calls of the agents shown`,
+                rows: [
+                  ['Total input tokens', formatTokens(channelUsage.prompt)],
+                  ['Total output tokens', formatTokens(channelUsage.completion)],
+                ],
+              }]} />}
             >
               <Gauge size={14} />
               <span>Total tokens:</span>
               <span className="text-gray-700 dark:text-gray-300">{formatTokensShort(channelUsage.prompt + channelUsage.completion)}</span>
-            </div>
+            </HoverCard>
           )}
           <div className="space-y-2">
             {members.map(member => (
