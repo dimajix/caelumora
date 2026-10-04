@@ -140,7 +140,7 @@ pub(crate) mod testing {
     use super::*;
     use futures::StreamExt;
     use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// A remote agent that answers each request with the next of its
     /// scripted event lists, and records what it was given. A script that
@@ -164,6 +164,9 @@ pub(crate) mod testing {
         declared: Option<Classification>,
         /// How it is given what was said.
         profile: ModelProfile,
+        /// What each answer to a request waits for, one permit each, if
+        /// anything: a slow remote agent.
+        gate: Option<Arc<tokio::sync::Semaphore>>,
     }
 
     impl ScriptedExternalAgent {
@@ -185,6 +188,12 @@ pub(crate) mod testing {
         /// Is given what was said as `profile` says.
         pub(crate) fn marking(self, profile: ModelProfile) -> Self {
             Self { profile, ..self }
+        }
+
+        /// Begins each answer to a request only once `gate` gives it a
+        /// permit.
+        pub(crate) fn gated(self, gate: Arc<tokio::sync::Semaphore>) -> Self {
+            Self { gate: Some(gate), ..self }
         }
 
         /// Cannot be reached by the next `requests`: they fail before
@@ -214,7 +223,14 @@ pub(crate) mod testing {
             }
             drop(unreachable);
             self.sent.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((conversation.cloned(), message));
-            Ok(Self::next(&self.answers))
+            let answer = Self::next(&self.answers);
+            let Some(gate) = self.gate.clone() else { return Ok(answer) };
+            let opened = futures::stream::once(async move {
+                if let Ok(permit) = gate.acquire_owned().await {
+                    permit.forget();
+                }
+            });
+            Ok(Box::pin(opened.filter_map(|()| async { None }).chain(answer)))
         }
 
         async fn resume(&self, security: &SecurityContext, _: &TaskId) -> ExternalAgentResult<ExternalStream> {

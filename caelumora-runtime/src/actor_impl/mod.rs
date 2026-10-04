@@ -13,7 +13,7 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
-use tracing::{debug, warn, Instrument};
+use tracing::{debug, trace, warn, Instrument};
 
 /// Passes `input` through `processors` in turn, each given what the one
 /// before returned, for the actor whose context is `security`. A failing
@@ -89,6 +89,7 @@ async fn take_in(
             debug!("Received {}", event.describe());
             match event.event {
                 ActorEvent::FullResponseGenerated(messages) => {
+                    trace!("Heard {:?}", messages.iter().map(|m| &m.content).collect::<Vec<_>>());
                     perceive(state, messages, &takes, processors, security).await;
                     None
                 }

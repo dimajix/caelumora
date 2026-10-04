@@ -24,7 +24,7 @@
 //! when it began, its answer classified as what it has seen - and given up
 //! when the channel was lowered since.
 
-use super::{catch_up, failure_message, lowered_message, perceive};
+use super::{catch_up, failure_message, lowered_message, take_in};
 use crate::actor::{Actor, Answering};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent_state::AgentStateHandle;
@@ -232,26 +232,19 @@ impl ExternalAgentActor {
         token
     }
 
-    /// Takes in what others said (`perceive`), for the remote agent to be
-    /// given when it is next asked; stored at once, so that a restart loses
-    /// none of it.
-    async fn hear(&self, state: &mut AgentChannelState, messages: Vec<Message>) {
-        if messages.is_empty() {
-            return;
-        }
-        trace!("External agent {} hears {:?}", self.id(), messages.iter().map(|m| &m.content).collect::<Vec<_>>());
-        self.perceive(state, messages).await;
+    /// Takes in `received` and everything queued behind it as an agent run
+    /// here does (`take_in`, issues 196, 206, 222): what can be given on to
+    /// the remote agent - text others said (`worth_giving`) - as it passes
+    /// its perceive processors, for the remote agent to be given when it is
+    /// next asked; stored at once, so that a restart loses none of it.
+    /// Returns the last request to respond, if any.
+    async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> Option<Envelope> {
+        let own = self.id();
+        let request = take_in(state, received, rx, |m| worth_giving(m, own), &self.perceive_in_processors, &self.security_context).await;
         if let Err(e) = self.actor_runtime.store_channel_state(state).await {
             warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
         }
-    }
-
-    /// Takes `heard` into its state as an agent run here does (issues 196,
-    /// 206): what can be given on to the remote agent - text others said
-    /// (`worth_giving`) - as it passes its perceive processors.
-    async fn perceive(&self, state: &mut AgentChannelState, heard: Vec<Message>) {
-        let own = self.id();
-        perceive(state, heard, |m| worth_giving(m, own), &self.perceive_in_processors, &self.security_context).await;
+        request
     }
 
     /// Answers the `ResponseRequested` in `request`. Whatever happens, the
@@ -799,16 +792,13 @@ impl Actor for ExternalAgentActor {
             // What others said, a request to respond, or an open task's news.
             tokio::select! {
                 _ = self.ended.cancelled() => break,
-                request = rx.recv() => {
-                    let Some(mut request) = request else { break };
-                    let span = crate::logging::envelope_span(&request.context, request.event.kind());
-                    match &mut request.event {
-                        ActorEvent::FullResponseGenerated(messages) => self.hear(&mut state, std::mem::take(messages)).instrument(span).await,
-                        ActorEvent::ResponseRequested => {
-                            self.respond(&mut state, &request, &*output).instrument(span).await;
-                            self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
-                        }
-                        _ => {}
+                received = rx.recv() => {
+                    let Some(received) = received else { break };
+                    // One answer to all that was queued, to the last request.
+                    if let Some(request) = self.hear(&mut state, received, &mut rx).await {
+                        let span = crate::logging::envelope_span(&request.context, request.event.kind());
+                        self.respond(&mut state, &request, &*output).instrument(span).await;
+                        self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
                     }
                     rx.commit().await?;
                 }
@@ -852,6 +842,7 @@ impl Actor for ExternalAgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor_impl::perceive;
     use caelumora_model::confidentiality::Classification;
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {

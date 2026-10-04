@@ -3069,6 +3069,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_after_it() {
+        use crate::external::{ExternalEvent, Said};
+
+        let answer = |id: &str, text: &str| vec![Ok(ExternalEvent::Started(task(id))), Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+            answer("t-1", "First."), answer("t-2", "Second."), answer("t-3", "Third."),
+        ]).gated(gate.clone()));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while remote.sent.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the remote agent is asked about hello");
+
+        // Three messages, each asking the agent, while the remote one works.
+        let alice = alice_of(&context);
+        let queued = ["one", "two", "three"];
+        for text in queued {
+            channel.user_actor(alice).unwrap().send_message(text.to_string(), None).await.expect("taken while it answers");
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut said = 0;
+            while said < queued.len() {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::User(alice) && matches!(envelope.event, ActorEvent::FullResponseGenerated(_)) {
+                    said += 1;
+                }
+            }
+        }).await.expect("the messages are said in the channel");
+        gate.add_permits(3);
+
+        let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        assert_eq!(said(answered(&mut events, agent).await), ["First."]);
+        assert_eq!(said(answered(&mut events, agent).await), ["Second."], "one call answers what was queued");
+
+        // Nothing is left to answer: told something new, the agent asks the
+        // remote one about it, not about something stale.
+        channel.user_actor(alice).unwrap().send_message("four".to_string(), None).await.expect("sent");
+        assert_eq!(said(answered(&mut events, agent).await), ["Third."]);
+        let sent: Vec<Vec<Said>> = remote.sent.lock().unwrap().iter().map(|(_, message)| message.said.clone()).collect();
+        let texts = |said: &[Said]| said.iter().map(|s| s.text.clone()).collect::<Vec<_>>();
+        assert_eq!(sent.len(), 3, "one call per batch");
+        assert_eq!(texts(&sent[1]), queued, "given all that was queued, at once");
+        assert_eq!(texts(&sent[2]), ["four"]);
+        running.abort();
+    }
+
+    #[tokio::test]
     async fn an_external_agent_that_fails_or_cannot_be_reached_fails_its_answer_and_goes_on() {
         use crate::external::{ExternalAgentError, ExternalEvent};
 
