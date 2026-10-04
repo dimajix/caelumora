@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use crate::session::SessionLoop;
 use std::time::Duration;
+#[cfg(test)]
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
@@ -280,7 +281,11 @@ pub struct ChannelLoop {
     /// said is still delivered, but nobody is asked to respond to it
     /// (`route_event_impl`). The turns themselves are cancelled on the actors.
     quiet: AtomicBool,
-    event_tx: broadcast::Sender<Envelope>,
+    /// Every event the channel took in, for tests that watch what happens
+    /// in it beyond what a user is told; nobody follows a channel this way
+    /// otherwise - a user follows their actor (issue 220).
+    #[cfg(test)]
+    observed: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
     run_lock: Mutex<()>,
     /// The session the channel belongs to (issue 123), set by `attach` once
@@ -320,7 +325,6 @@ impl ChannelLoop {
         let state = Mutex::new(state);
 
         let recorder = runtime.new_recorder()?;
-        let (event_tx, _) = broadcast::channel(100);
 
         let channel_controller = runtime.controller_manager().new_channel_controller(channel);
 
@@ -339,7 +343,8 @@ impl ChannelLoop {
             state,
             state_store,
             quiet: AtomicBool::new(false),
-            event_tx,
+            #[cfg(test)]
+            observed: broadcast::channel(128).0,
             max_route_decisions: 100,
             run_lock: Mutex::new(()),
             session: OnceLock::new(),
@@ -401,8 +406,10 @@ impl ChannelLoop {
         adopted
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
-        self.event_tx.subscribe()
+    /// Every event the channel takes in from now on (see `observed`).
+    #[cfg(test)]
+    pub(crate) fn observe(&self) -> broadcast::Receiver<Envelope> {
+        self.observed.subscribe()
     }
 
     /// The whole history, whoever may see it; outside the channel, what a
@@ -1002,17 +1009,15 @@ impl ChannelLoop {
             self.wake_for_delivery();
         }
 
-        let broadcast = self.route_event_impl(running, &event).await;
-
-        if broadcast {
-            let _ = self.event_tx.send(event);
-        }
+        self.route_event_impl(running, &event).await;
+        #[cfg(test)]
+        let _ = self.observed.send(event);
     }
 
-    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope) -> bool {
+    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope) {
         if event.context.span_depth >= self.max_route_decisions {
             warn!("Too many routings, stopping further propagation");
-            return true
+            return
         }
 
         let span_id = event.context.span_id;
@@ -1029,7 +1034,7 @@ impl ChannelLoop {
         // asks nobody, and so wakes nobody.
         if !quiet {
             let actors = self.actors.load();
-            let asked = decision.forwards.iter()
+            let asked = decision.iter()
                 .filter(|(target_id, route)| *target_id != event.context.sender_id && matches!(route.event, ActorEvent::ResponseRequested));
             for (target_id, _) in asked {
                 if let Some(ChannelActor { actor, .. }) = actors.get(target_id) {
@@ -1039,7 +1044,7 @@ impl ChannelLoop {
         }
 
         // First, route all messages to all agents...
-        for route in decision.forwards {
+        for route in decision {
             let target_id = route.0;
 
             // Do not propagate message to sender again - unless the
@@ -1074,8 +1079,6 @@ impl ChannelLoop {
                 }
             }
         }
-
-        decision.broadcast
     }
 
     async fn append_history(&self, envelope: &Envelope) {
@@ -1368,7 +1371,7 @@ mod tests {
         let policy = Policy(|action| !matches!(action, ActionType::ShowCommand("wakeup")));
         let channel = channel_with(&[&alice], Arc::new(policy)).await;
         let actor = channel.user_actor(alice.id).unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let reply = actor.execute_command("help", "").await.expect("/help runs");
@@ -1395,8 +1398,8 @@ mod tests {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
-        let mut events = channel.subscribe();
-        let mut following = actor.subscribe();
+        let mut events = channel.observe();
+        let mut following = actor.watch().events;
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
@@ -1453,8 +1456,8 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::moderator::Moderator for AskBack {
-        async fn route(&self, event: &Envelope) -> crate::moderator::RouteDecision {
-            vec![(self.0, event.clone()), (self.0, event.forward(ActorEvent::ResponseRequested))].into()
+        async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+            vec![(self.0, event.clone()), (self.0, event.forward(ActorEvent::ResponseRequested))]
         }
         fn add_actor(&self, _: Arc<dyn Actor>) {}
         fn remove_actor(&self, _: ActorId) {}
@@ -1519,7 +1522,7 @@ mod tests {
         let (alice, bob) = (user("alice"), user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
-        let mut following = actor.subscribe();
+        let mut following = actor.watch().events;
 
         actor.send_message("@bob, look".to_string(), None).await.expect("sent");
 
@@ -1535,10 +1538,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::moderator::Moderator for TellsTheSender {
-        async fn route(&self, event: &Envelope) -> crate::moderator::RouteDecision {
+        async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
             let mut notice = event.forward(ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 0, not_asked: Vec::new() });
             notice.context.sender_id = ActorId::System;
-            vec![(event.context.sender_id, event.clone()), (event.context.sender_id, notice)].into()
+            vec![(event.context.sender_id, event.clone()), (event.context.sender_id, notice)]
         }
         fn add_actor(&self, _: Arc<dyn Actor>) {}
         fn remove_actor(&self, _: ActorId) {}
@@ -1563,6 +1566,55 @@ mod tests {
         let mut kinds = Vec::new();
         while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
         assert_eq!(kinds, ["ChainCutOff"], "its own message is not sent back, but what the system tells it is (issue 200)");
+    }
+
+    /// An agent that says one thing as it starts, as the answer to a request
+    /// one hop into a chain between agents, and waits.
+    #[derive(Debug)]
+    struct SaysOnce(ActorId);
+
+    #[async_trait::async_trait]
+    impl Actor for SaysOnce {
+        fn id(&self) -> ActorId { self.0 }
+        fn kind(&self) -> String { "says_once".to_string() }
+        fn name(&self) -> String { "talker".to_string() }
+        fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
+        async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
+            use caelumora_model::actor::EventContext;
+            let mut context = EventContext { sender_id: self.0, ..EventContext::default() };
+            context.agent_hops = 1;
+            let said = Message { sender_id: self.0, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+            let _ = tx.send(Envelope::new(SecurityContext::default(), context, ActorEvent::FullResponseGenerated(vec![said]))).await;
+            while rx.recv().await.is_some() {}
+            Ok(())
+        }
+        fn state(&self) -> ActorState { ActorState::Idle }
+        fn wakeup(&self) {}
+        fn stop(&self) {}
+    }
+
+    #[tokio::test]
+    async fn a_user_following_the_channel_is_told_when_a_chain_is_cut_off() {
+        use crate::moderator_impl::policy_moderator::PolicyModerator;
+        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
+        let alice = user("alice");
+        let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(crate::moderator_impl::broadcast_policy::BroadcastPolicy) as Arc<dyn crate::moderator_impl::ResponderPolicy> };
+        let moderator = Arc::new(PolicyModerator::new(responders, 1));
+        let channel = channel_moderated_by(&[&alice], moderator.clone()).await;
+        let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
+        channel.adopt(talker.clone(), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        let mut following = channel.user_actor(alice.id).unwrap().watch().events;
+        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+
+        let told = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::ChainCutOff { max_agent_hops, .. } = following.recv().await.expect("the channel runs").event {
+                    break max_agent_hops;
+                }
+            }
+        }).await.expect("the web UI follows the user's actor, which is told (issues 200, 220)");
+        assert_eq!(told, 1);
+        running.abort();
     }
 
     /// An agent asleep that only tells whether it was woken.
@@ -1652,7 +1704,7 @@ mod tests {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
-        let mut said = channel.subscribe();
+        let mut said = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
         actor.send_message("hello".to_string(), None).await.expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
@@ -2386,7 +2438,7 @@ mod tests {
         let manager = channel.runtime.new_actor_runtime(ActorId::System, document.session_id, document.id).runtime_manager().clone();
         let executor = CommandExecutor::empty(manager.security_manager());
         let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::new(manager, Arc::new(executor))).await.unwrap();
-        let mut events = restarted.subscribe();
+        let mut events = restarted.observe();
         let running = tokio::spawn({ let restarted = restarted.clone(); async move { restarted.run().await } });
         let helper = restarted.actor_by_id(ActorId::Agent(agent)).unwrap();
 
@@ -2594,7 +2646,7 @@ mod tests {
     async fn nothing_of_a_removed_participant_enters_the_channel() {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let gone = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnFailed { message: "too late".to_string() });
 
@@ -2826,7 +2878,7 @@ mod tests {
 
     /// Runs `built` and has alice say "hello".
     async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)) -> Stuck {
-        let events = channel.subscribe();
+        let events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
         channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
         let helper = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
@@ -3377,7 +3429,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Finished while you were away.".to_string())), Ok(ExternalEvent::Completed)]]));
         let (channel, _, agent, owner) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let said = answered(&mut events, agent).await;
@@ -3420,7 +3472,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Done for bob.".to_string())), Ok(ExternalEvent::Completed)]]));
         let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let told = tokio::time::timeout(Duration::from_secs(5), async {
@@ -3484,7 +3536,7 @@ mod tests {
 
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
         let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(begun_above("t-1", OpenTaskState::Working))).await.unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let told = turn_failed(&mut events, agent).await;
@@ -3543,7 +3595,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Half of it".to_string())), Ok(ExternalEvent::Failed("out of coffee".to_string()))]]));
         let (channel, _, agent, _) = external_channel(remote, external_components(), Some(working_on("t-1"))).await.unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let failed = turn_failed(&mut events, agent).await;
@@ -3565,7 +3617,7 @@ mod tests {
                 Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() }),
             ]]));
         let (channel, _, agent, _) = external_channel(remote, external_components(), Some(working_on("t-1"))).await.unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.observe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
         tokio::time::sleep(Duration::from_millis(200)).await;
 

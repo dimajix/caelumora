@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// How many envelopes a watcher of the actor may fall behind before it
-/// loses the oldest (see `UserActor::subscribe`). A power of two, since a
+/// loses the oldest (see `UserActor::watch`). A power of two, since a
 /// broadcast rounds up to one (as the `EventBus`, issue 38).
 const SUBSCRIBER_CAPACITY: usize = 128;
 
@@ -39,17 +39,17 @@ pub struct UserActor {
     user_rx: Mutex<Receiver<Envelope>>,
     user_tx: Sender<Envelope>,
     // Where envelopes routed to this user go, to everyone who listens:
-    // see `subscribe` (issue 220).
+    // see `watch` (issue 220).
     received: broadcast::Sender<Envelope>,
     // Cancelled when the actor ends - it left the channel, or the channel
     // stopped: what ends every `watch` (issue 104).
     ended: CancellationToken,
 }
 
-/// The channel as a user follows it (issue 104): every event the channel
-/// publishes, until `ended` - when the user's actor ends, because they left
-/// the channel or it stopped. Only a participant follows a channel live, and
-/// only through their actor.
+/// The channel as a user follows it (issues 104, 220): what is routed to
+/// their actor and what the actor says for them, until `ended` - when the
+/// actor ends, because they left the channel or it stopped. Only a
+/// participant follows a channel live, and only through their actor.
 pub struct ChannelWatch {
     pub events: broadcast::Receiver<Envelope>,
     pub ended: CancellationToken,
@@ -188,29 +188,15 @@ impl UserActor {
         self.actor_runtime.command_executor().visible(&self.security_context).await
     }
 
-    /// Receives the envelopes routed to this user from now on, e.g. for a
-    /// terminal UI. Any number may listen - two tabs, two devices (issue
-    /// 220).
-    ///
-    /// Without anyone listening, routed envelopes are dropped - the REST
-    /// server reads the channel's broadcast instead and does not listen
-    /// here yet. A receiver that falls `SUBSCRIBER_CAPACITY` envelopes
-    /// behind loses the oldest (`RecvError::Lagged`) rather than stalling
-    /// this actor, which would also stop it from forwarding what the user
-    /// sends.
-    pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
-        self.received.subscribe()
-    }
-
-    /// Follows the channel as this user: see `ChannelWatch`.
-    ///
-    /// # Errors
-    /// If the channel is gone.
-    pub fn watch(&self) -> Result<ChannelWatch> {
-        let channel = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
+    /// Follows the channel as this user, from now on: see `ChannelWatch`.
+    /// Any number may follow - two tabs, two devices (issue 220). One that
+    /// falls `SUBSCRIBER_CAPACITY` envelopes behind loses the oldest
+    /// (`RecvError::Lagged`) rather than stalling this actor, which would
+    /// also stop it from forwarding what the user sends; without anyone
+    /// following, envelopes are dropped.
+    pub fn watch(&self) -> ChannelWatch {
         // A child: whoever watches can end their own watch, not the actor.
-        Ok(ChannelWatch { events: channel.subscribe(), ended: self.ended.child_token() })
+        ChannelWatch { events: self.received.subscribe(), ended: self.ended.child_token() }
     }
 
     fn handle_actor_envelope(&self, maybe_event: Option<Envelope>) -> bool {
@@ -386,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn the_actor_shows_its_own_messages_to_those_who_follow_it() {
         let (actor, _channel) = user_actor().await;
-        let mut following = actor.subscribe();
+        let mut following = actor.watch().events;
 
         actor.send_message("hello".to_string(), None).await.unwrap();
 
@@ -428,7 +414,7 @@ mod tests {
     async fn every_subscriber_receives_what_is_routed_and_a_lagging_one_loses_the_oldest() {
         let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
-        let (mut first, mut second) = (actor.subscribe(), actor.subscribe());
+        let (mut first, mut second) = (actor.watch().events, actor.watch().events);
 
         assert!(!actor.handle_actor_envelope(Some(envelope_from(agent))));
         assert!(first.try_recv().is_ok() && second.try_recv().is_ok(), "two tabs, both are told");

@@ -1,6 +1,6 @@
 # 220 — A user's stream is the channel's broadcast, not what their actor receives
 
-**Status:** in progress
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -100,3 +100,15 @@ stream runs over the `EventBus`, the recorder records each delivery itself.
   the sender, so a user's own complete message comes only from their actor (step 2). The TUI,
   which now receives complete messages too, prints each message as it is complete, as the web UI
   shows it, and no longer the full response, which is what the agents hear.
+- **2026-10-04** — Steps 4 and 5, done. `UserActor::watch()` hands out a receiver of the actor's
+  broadcast (no longer fallible: it does not need the channel), and the REST stream and the TUI
+  follow it. `RouteDecision` is gone with its `broadcast`: `Moderator::route` returns the
+  forwards, and the channel delivers exactly those. The channel keeps a tap of everything it takes
+  in only under `#[cfg(test)]` (`ChannelLoop::observe`), for its own tests of traffic no user sees;
+  the session tests and the security suite follow a user's actor. The moderator's tests of
+  approvals and notices now check to whom an event goes instead of the flag. A test follows a
+  user's actor through a channel run by the `policy_moderator` and sees the `ChainCutOff` (200).
+  CHANNELS.md, REST-SERVER.md, TOOLS-AND-COMMANDS.md and CODING-GUIDELINES.md say so. Checked in
+  headless Chromium against a copy of the local data, with `max_agent_hops: 0`: in two tabs of one
+  user, the own message with its mention highlighted, the answer streaming, the cut-off chain and a
+  `/wakeup` run in the other tab all show; no console errors.

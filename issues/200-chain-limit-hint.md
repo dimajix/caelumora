@@ -59,3 +59,8 @@ understands.
   sees it, is left for later, and no issue was opened for it. It is sent at every cut-off, naming
   the agents mentioned if there were any. The web UI shows it as a notice "Chain cut off", gone on
   reload.
+- **2026-10-04** — The notice did not reach the web UI: its stream read the channel's broadcast,
+  which carries only the original event, not what the moderator forwards to the users - contrary
+  to what was assumed when deciding. Fixed by [220](220-user-stream-from-its-actor.md): a user's
+  stream is what their actor receives, so the `ChainCutOff` routed to them shows. Checked in the
+  browser.

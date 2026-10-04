@@ -167,8 +167,7 @@ pub async fn join_channel(
     // snapshot is assembled is lost. The price is that an event can arrive
     // twice - once in the snapshot, once as an event - which clients drop by
     // message id.
-    let watch = user_actor_of(&channel, &user)?.watch()
-        .map_err(|e| ApiError::internal("channel_unavailable", "following the channel", &e))?;
+    let watch = user_actor_of(&channel, &user)?.watch();
     let snapshot = move || {
         let (state, channel, viewer) = (state.clone(), channel.clone(), viewer.clone());
         async move { channel_snapshot(&state, &channel, &viewer).await }

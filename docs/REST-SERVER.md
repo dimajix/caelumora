@@ -161,9 +161,11 @@ end at the token's expiry or when the watch ends (issues 38, 104).
 ### Who follows a channel
 
 A channel is followed live only by its participants, through their own actor (`UserActor::watch`,
-issue 104). The stream is every event the channel publishes, and it ends when the actor ends: when
-the user left the channel, or when the channel was stopped or deleted. Deleting a channel stops its
-actors, whether or not they ran.
+issue 104). The stream is what their actor receives - what the moderator routes to the user - and
+what it says for them (issue 220), and it ends when the actor ends: when the user left the channel,
+or when the channel was stopped or deleted. Deleting a channel stops its actors, whether or not they
+ran. Any number of streams may follow one actor - two tabs, two devices; one that falls more than
+128 events behind loses the oldest and is sent a snapshot instead, if it asked for snapshots.
 
 Anyone else who may read the channel - its session's owner, say - reads its history over REST but
 does not follow it. Watching without taking part is issue 124, an invisible administrator issue 125.

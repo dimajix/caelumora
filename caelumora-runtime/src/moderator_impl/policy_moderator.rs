@@ -13,7 +13,7 @@
 
 use crate::actor::Actor;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::moderator::{Moderator, RouteDecision};
+use crate::moderator::Moderator;
 use crate::moderator_impl::ResponderPolicy;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -106,10 +106,10 @@ impl PolicyModerator {
 
 #[async_trait]
 impl Moderator for PolicyModerator {
-    async fn route(&self, event: &Envelope) -> RouteDecision {
+    async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         match &event.event {
             ActorEvent::FullResponseGenerated(messages) => {
-                self.route_full_response(event, messages).await.into()
+                self.route_full_response(event, messages).await
             }
             ActorEvent::ApprovalRequested(_) |
             ActorEvent::ApprovalGranted(_) |
@@ -133,7 +133,7 @@ impl Moderator for PolicyModerator {
                 self.actors().route_to_users(event)
             }
             _ => {
-                Vec::new().into()
+                Vec::new()
             }
         }
     }
@@ -235,11 +235,10 @@ impl ModeratorActors {
     /// Forwards `event` to every user in the channel, e.g. a `TurnFailed`
     /// or a streamed part of an answer, which concern the users watching
     /// and none of the other agents.
-    fn route_to_users(&self, event: &Envelope) -> RouteDecision {
+    fn route_to_users(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         self.user_actors.keys()
             .map(|id| (*id, event.clone()))
-            .collect::<Vec<_>>()
-            .into()
+            .collect()
     }
 
     /// Routes the approval of a tool call (issues 81, 148): the agent's
@@ -247,24 +246,21 @@ impl ModeratorActors {
     /// and tell them; the users' answers go to the approvers; an approver's
     /// decision goes to the agent that asked, and to the users, who learn
     /// so that the approval is over.
-    fn route_approval_events(&self, event: &Envelope) -> RouteDecision {
+    fn route_approval_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         let to_approvers = || self.approval_actors.keys().map(|id| (*id, event.clone())).collect::<Vec<_>>();
         let to_users = || self.user_actors.keys().map(|id| (*id, event.clone())).collect::<Vec<_>>();
         let sender = event.context.sender_id;
         match &event.event {
             ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => match sender {
                 // Agent -> ApproverActor: internal plumbing, not shown to users yet.
-                ActorId::Agent(_) => RouteDecision { forwards: to_approvers(), broadcast: false },
+                ActorId::Agent(_) => to_approvers(),
                 // ApproverActor -> Users: what users act on, or no longer.
-                ActorId::Approver(_) => RouteDecision { forwards: to_users(), broadcast: true },
-                _ => RouteDecision { forwards: Vec::new(), broadcast: false },
+                ActorId::Approver(_) => to_users(),
+                _ => Vec::new(),
             },
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) | ActorEvent::ApprovalTimedOut(response) => match sender {
-                // User -> ApproverActor: lets other observers see the answer
-                // too. A timeout is the approver's alone.
-                ActorId::User(_) if !matches!(event.event, ActorEvent::ApprovalTimedOut(_)) => {
-                    RouteDecision { forwards: to_approvers(), broadcast: true }
-                }
+                // User -> ApproverActor. A timeout is the approver's alone.
+                ActorId::User(_) if !matches!(event.event, ActorEvent::ApprovalTimedOut(_)) => to_approvers(),
                 // ApproverActor -> Agent, and the users: the decision.
                 ActorId::Approver(_) => {
                     let agent_id = ActorId::Agent(response.agent_id);
@@ -272,11 +268,11 @@ impl ModeratorActors {
                     if self.agent_actors.contains_key(&agent_id) {
                         forwards.push((agent_id, event.clone()));
                     }
-                    RouteDecision { forwards, broadcast: true }
+                    forwards
                 }
-                _ => RouteDecision { forwards: Vec::new(), broadcast: false },
+                _ => Vec::new(),
             },
-            _ => RouteDecision { forwards: Vec::new(), broadcast: false }
+            _ => Vec::new(),
         }
     }
 }
@@ -379,15 +375,15 @@ mod tests {
         envelope(sender_id, ActorEvent::FullResponseGenerated(vec![message]))
     }
 
-    fn responders(decision: &RouteDecision) -> Vec<ActorId> {
-        decision.forwards.iter()
+    fn responders(decision: &[(ActorId, Envelope)]) -> Vec<ActorId> {
+        decision.iter()
             .filter(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested))
             .map(|(id, _)| *id)
             .collect()
     }
 
-    fn receivers(decision: &RouteDecision) -> HashSet<ActorId> {
-        decision.forwards.iter()
+    fn receivers(decision: &[(ActorId, Envelope)]) -> HashSet<ActorId> {
+        decision.iter()
             .filter(|(_, e)| matches!(e.event, ActorEvent::FullResponseGenerated(_)))
             .map(|(id, _)| *id)
             .collect()
@@ -488,7 +484,7 @@ mod tests {
             let decision = moderator.route(&event).await;
 
             assert_eq!(responders(&decision), vec![agents[1]], "{:?} must ask the agent an agent mentioned", moderator);
-            let request = decision.forwards.iter().find(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested)).map(|(_, e)| e);
+            let request = decision.iter().find(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested)).map(|(_, e)| e);
             assert_eq!(request.map(|e| e.context.agent_hops), Some(1), "{:?} must count the hop", moderator);
         }
     }
@@ -505,7 +501,7 @@ mod tests {
     async fn a_chain_between_agents_ends_at_the_limit_and_a_user_starts_a_new_one() {
         let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2);
         let agents = add_agents(&moderator);
-        let hops_asked = |decision: &RouteDecision| decision.forwards.iter()
+        let hops_asked = |decision: &[(ActorId, Envelope)]| decision.iter()
             .filter(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested))
             .map(|(_, e)| e.context.agent_hops)
             .collect::<Vec<_>>();
@@ -542,7 +538,7 @@ mod tests {
         for event in events {
             let kind = event.kind();
             let decision = moderator.route(&envelope(agents[0], event)).await;
-            let to: Vec<ActorId> = decision.forwards.iter().map(|(id, _)| *id).collect();
+            let to: Vec<ActorId> = decision.iter().map(|(id, _)| *id).collect();
             assert_eq!(to, vec![user], "{kind} goes to the users, not to the agents (issue 220)");
         }
     }
@@ -553,7 +549,7 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
-        let cut_off = |decision: &RouteDecision| decision.forwards.iter()
+        let cut_off = |decision: &[(ActorId, Envelope)]| decision.iter()
             .filter_map(|(id, e)| match &e.event {
                 ActorEvent::ChainCutOff { max_agent_hops, not_asked, .. } => Some((*id, e.context.sender_id, *max_agent_hops, not_asked.clone())),
                 _ => None,
@@ -570,7 +566,7 @@ mod tests {
         assert_eq!(recipients, HashSet::from([user, agents[0], agents[2]]), "the users, the sender and whom it mentioned - not agents[1]");
         assert!(told.iter().all(|(_, sender, hops, not_asked)| *sender == ActorId::System && *hops == 2 && *not_asked == vec![agents[2]]));
         let ActorEvent::FullResponseGenerated(messages) = &event.event else { unreachable!() };
-        assert!(decision.forwards.iter().any(|(_, e)| matches!(&e.event, ActorEvent::ChainCutOff { message, .. } if *message == messages[0].id)), "it names the message cut off");
+        assert!(decision.iter().any(|(_, e)| matches!(&e.event, ActorEvent::ChainCutOff { message, .. } if *message == messages[0].id)), "it names the message cut off");
 
         let decision = moderator.route(&hops_from(agents[0], 2, Vec::new())).await;
         let told = cut_off(&decision);
@@ -657,14 +653,13 @@ mod tests {
     async fn every_moderator_forwards_a_failed_turn_to_the_users_only() {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
+            let user = ActorId::User(UserId::new());
+            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
             let event = envelope(agents[0], ActorEvent::TurnFailed { message: "boom".to_string() });
 
             let decision = moderator.route(&event).await;
 
-            // TestActor registers as an agent, so there are no users here:
-            // nothing may be routed to the agents, but the UI broadcast stays.
-            assert!(decision.forwards.is_empty(), "{:?} must not route a failed turn to agents", moderator);
-            assert!(decision.broadcast, "{:?} must broadcast a failed turn", moderator);
+            assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), vec![user], "{:?} must route a failed turn to the users only", moderator);
         }
     }
 
@@ -672,14 +667,15 @@ mod tests {
     async fn every_moderator_forwards_an_announced_command_to_the_users_only() {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
-            let user = ActorId::User(UserId::new());
+            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
             let event = envelope(user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), output: "Woke b.".to_string() });
 
             let decision = moderator.route(&event).await;
 
             // Commands address the system: the agents must not see them.
-            assert!(decision.forwards.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
-            assert!(decision.broadcast, "{:?} must broadcast an announced command", moderator);
+            assert!(decision.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
+            assert!(decision.iter().any(|(to, _)| *to == other), "{:?} must tell the other users", moderator);
         }
     }
 
@@ -687,13 +683,14 @@ mod tests {
     async fn every_moderator_forwards_a_removal_to_the_users_only() {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
-            let user = ActorId::User(UserId::new());
+            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
             let event = envelope(user, ActorEvent::ParticipantRemoved { participant: agents[0] });
 
             let decision = moderator.route(&event).await;
 
-            assert!(decision.forwards.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a removal to agents", moderator);
-            assert!(decision.broadcast, "{:?} must broadcast a removal", moderator);
+            assert!(decision.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a removal to agents", moderator);
+            assert!(decision.iter().any(|(to, _)| *to == other), "{:?} must tell the users", moderator);
         }
     }
 
@@ -716,48 +713,54 @@ mod tests {
         assert!(heard.iter().all(|m| m.role == MessageRole::User && m.tool_calls.is_empty() && m.tool_results.is_empty()));
     }
 
-    #[test]
-    fn approval_requested_from_agent_is_internal_only() {
-        let actors = ModeratorActors::new();
-        let event = envelope(ActorId::Agent(AgentId::new()), ActorEvent::ApprovalRequested(approval_request()));
-        let decision = actors.route_approval_events(&event);
-        assert!(!decision.broadcast);
+    /// The actors of a channel with one agent, one user and one approver.
+    fn approval_parties() -> (ModeratorActors, AgentId, ActorId, ActorId) {
+        let mut actors = ModeratorActors::new();
+        let agent = AgentId::new();
+        let user = ActorId::User(UserId::new());
+        let approver = ActorId::Approver(caelumora_model::approval::ApproverId::new());
+        for id in [ActorId::Agent(agent), user, approver] {
+            actors.add_actor(Arc::new(TestActor { id, state: ActorState::Idle }));
+        }
+        (actors, agent, user, approver)
+    }
+
+    /// To whom of `actors` an approval event of `sender` is routed.
+    fn routed_to(actors: &ModeratorActors, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
+        actors.route_approval_events(&envelope(sender, event)).into_iter().map(|(to, _)| to).collect()
     }
 
     #[test]
-    fn approval_requested_from_approver_is_broadcast() {
-        let actors = ModeratorActors::new();
-        let event = envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), ActorEvent::ApprovalRequested(approval_request()));
-        let decision = actors.route_approval_events(&event);
-        assert!(decision.broadcast);
+    fn a_request_reaches_the_users_only_through_the_approver() {
+        let (actors, agent, user, approver) = approval_parties();
+        let requested = || ActorEvent::ApprovalRequested(approval_request());
+        assert_eq!(routed_to(&actors, ActorId::Agent(agent), requested()), HashSet::from([approver]), "internal: not shown to the users yet");
+        assert_eq!(routed_to(&actors, approver, requested()), HashSet::from([user]), "what the users act on");
     }
 
     #[test]
-    fn approval_granted_from_user_is_broadcast() {
-        let actors = ModeratorActors::new();
-        let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
-        let event = envelope(ActorId::User(UserId::new()), ActorEvent::ApprovalGranted(response));
-        let decision = actors.route_approval_events(&event);
-        assert!(decision.broadcast);
+    fn a_users_answer_goes_to_the_approver() {
+        let (actors, agent, _, approver) = approval_parties();
+        let response = ApprovalResponse { id: Default::default(), agent_id: agent };
+        assert_eq!(routed_to(&actors, ActorId::User(UserId::new()), ActorEvent::ApprovalGranted(response)), HashSet::from([approver]));
     }
 
     #[test]
-    fn a_decision_of_the_approver_reaches_the_users_too() {
-        let actors = ModeratorActors::new();
-        let response = ApprovalResponse { id: Default::default(), agent_id: AgentId::new() };
+    fn a_decision_of_the_approver_reaches_the_agent_and_the_users() {
+        let (actors, agent, user, approver) = approval_parties();
+        let response = ApprovalResponse { id: Default::default(), agent_id: agent };
         for decided in [ActorEvent::ApprovalGranted(response.clone()), ActorEvent::ApprovalDenied(response.clone()), ActorEvent::ApprovalTimedOut(response.clone())] {
-            let event = envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), decided);
-            assert!(actors.route_approval_events(&event).broadcast, "{} ends the approval for the users", event.event.kind());
+            let kind = decided.kind();
+            assert_eq!(routed_to(&actors, approver, decided), HashSet::from([user, ActorId::Agent(agent)]), "{kind} ends the approval for the users");
         }
     }
 
     #[test]
     fn a_withdrawn_request_goes_to_the_approvers_and_from_them_to_the_users() {
-        let actors = ModeratorActors::new();
-        let withdrawn = ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
-        assert!(!actors.route_approval_events(&envelope(ActorId::Agent(AgentId::new()), withdrawn.clone())).broadcast);
-        assert!(actors.route_approval_events(&envelope(ActorId::Approver(caelumora_model::approval::ApproverId::new()), withdrawn.clone())).broadcast);
-        let decision = actors.route_approval_events(&envelope(ActorId::User(UserId::new()), withdrawn));
-        assert!(decision.forwards.is_empty() && !decision.broadcast, "only an agent withdraws");
+        let (actors, agent, user, approver) = approval_parties();
+        let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
+        assert_eq!(routed_to(&actors, ActorId::Agent(agent), withdrawn()), HashSet::from([approver]));
+        assert_eq!(routed_to(&actors, approver, withdrawn()), HashSet::from([user]));
+        assert!(routed_to(&actors, user, withdrawn()).is_empty(), "only an agent withdraws");
     }
 }

@@ -393,6 +393,8 @@ channels:
 The built-in moderator, `policy_moderator` (the default), routes the way every channel routes:
 
 *   every message goes to every other participant;
+*   how an answer comes about - `ResponseStarted`, partial and complete messages, intermediate
+    ones, plan steps - goes to the users, not to the agents, which hear the answer (issue 220);
 *   approvals, failed turns and announced commands go to whom they concern;
 *   every agent a message `@`-mentions is asked to respond;
 *   a chain between agents ends at a limit (see below).
@@ -414,6 +416,13 @@ each other. Under `user_driven_policy` (issue 175) the agents answer when a pers
 quiet in between: an agent's message is still delivered to the other agents, into their transcripts,
 but starts no turn. Loops come from asking to respond, not from delivering.
 
+What a moderator decides is all a participant is told: `Moderator::route` returns whom an event is
+delivered to and as what - the event itself, or one of the moderator's own, such as a request to
+respond - and the channel delivers exactly that. A user sees what is routed to their actor (issue
+220); the channel has no broadcast of its own besides. Nothing goes back to the actor that sent an
+event: an agent takes its own messages into its history and transcript itself, and a user's actor
+shows what its user says to those who follow it itself (`UserActor::send`).
+
 ### Chains between agents
 
 An agent's message that makes other agents respond - because it mentions them, or because the policy
@@ -429,7 +438,8 @@ that the chain was cut off (issue 200): an `ActorEvent::ChainCutOff` in the name
 sender of the response and those it mentioned - but not to the other agents or the approvers. It is
 never written to the history, and an agent takes no note of it. Since it is sent in another name,
 the channel delivers it to the sender, too: what it holds back from the sender is only what the
-sender sent itself. With `max_agent_hops: 0`, agents answer only users.
+sender sent itself. The users see it as everything else, through their actors (issue 220). With
+`max_agent_hops: 0`, agents answer only users.
 
 A user's message starts a new chain. What an external agent says unasked when a long task ends
 continues the context of its answer to the request that began the task (`Work::event_context` of

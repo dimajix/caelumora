@@ -1614,7 +1614,7 @@ mod tests {
         session.participants.push(caelumora_model::session::Participant::Agent(hermes.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), ActorId::Agent(hermes.id)])).await.unwrap();
-        let mut events = channel.subscribe();
+        let mut events = channel.user_actor(alice.id).unwrap().watch().events;
         let answered = |events: &mut tokio::sync::broadcast::Receiver<caelumora_model::actor::Envelope>| {
             let mut events = events.resubscribe();
             async move {
@@ -1771,8 +1771,8 @@ mod tests {
 
         // Leaving ends it.
         let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
-        let theirs = channel.user_actor(other.as_user_id().unwrap()).unwrap().watch().unwrap();
-        let mine = channel.user_actor(owner).unwrap().watch().unwrap();
+        let theirs = channel.user_actor(other.as_user_id().unwrap()).unwrap().watch();
+        let mine = channel.user_actor(owner).unwrap().watch();
         channel.remove_participant(&ctx, other).await.expect("removed");
         within(theirs.ended).await.expect("the watch of whoever left ends");
         assert!(!mine.ended.is_cancelled(), "everybody else's goes on");

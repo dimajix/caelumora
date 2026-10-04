@@ -114,7 +114,7 @@ suspends its turn while it waits, and nothing blocks.
     `WaitingForApproval`. Its state, the pending calls included, is stored after every step.
 2.  **Request.** The agent emits `ApprovalRequested`, carrying the call's `ApprovalId`. The
     moderator routes it to the channel's `ApproverActor` only. The approver passes it on unchanged
-    to the users (`UserActor`s), and that copy is broadcast.
+    to the users (`UserActor`s), whose frontends show it.
 3.  **Answers.** A user approves or denies over REST (`POST …/approvals`) or in the TUI.
     `UserActor::send_approval` sends `ApprovalGranted` or `ApprovalDenied` with the same id, which
     the moderator again routes to the approver only.
@@ -122,14 +122,13 @@ suspends its turn while it waits, and nothing blocks.
     `Majority`, `All`, `DenyOnFirst`). It decides again when users join or leave. A request nobody
     decides times out after ten minutes. The approver sends `ApprovalGranted`, `ApprovalDenied` or
     `ApprovalTimedOut` to the agent - the only way a decision reaches an agent (issue 81) - and to
-    the users, broadcast: an approval is over only once the approver says so, not when one user
-    answered.
+    the users: an approval is over only once the approver says so, not when one user answered.
 5.  **Resumption.** The agent runs the granted calls and continues its turn.
 
 A turn that ends while it waits - cancelled, given up - withdraws its requests (issue 148): the
 agent sends `ApprovalRequestWithdrawn` with the id, which the moderator routes to the approver only.
 The approver takes it only from the agent that asked, forgets the request without deciding it, and
-passes the withdrawal on to the users, broadcast, so that nobody is asked any longer. A stopped
+passes the withdrawal on to the users, so that nobody is asked any longer. A stopped
 agent withdraws nothing - it has left - and the approver answers its pending requests as it leaves
 (see [CHANNELS.md](CHANNELS.md)).
 

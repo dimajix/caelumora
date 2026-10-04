@@ -90,9 +90,9 @@ component, a failing tool executor - the agent logs it, discards the turn's unfi
 `ActorEvent::TurnFailed { message }` and returns to `Idle`. Don't let a turn-time error escape
 `AgentActor::run`.
 
-Moderators forward `TurnFailed` to the users. It is broadcast to the UI but never written to the
-history, so it cannot end up in a model's context. Errors the model *should* see are the subject of
-[15](../issues/15-disallowed-tool-errors-to-llm.md).
+Moderators forward `TurnFailed` to the users, whose actors pass it on to the UI. It is never
+written to the history, so it cannot end up in a model's context. Errors the model *should* see are
+the subject of [15](../issues/15-disallowed-tool-errors-to-llm.md).
 
 ### REST errors
 

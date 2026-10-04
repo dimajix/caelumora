@@ -653,7 +653,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let main = session.channels()[0].clone();
     main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    let mut events = main.subscribe();
+    let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
 
     let (failed, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
@@ -686,7 +686,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoe
     let session = world.shared_session(&[hermes], &[]).await;
     let main = session.channels()[0].clone();
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    let mut events = main.subscribe();
+    let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
     main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
     calls_made(&calls, 1).await;
 

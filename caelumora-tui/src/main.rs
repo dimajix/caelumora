@@ -45,7 +45,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     let user_actor = channel.user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the main channel"))?;
 
-    let mut receiver = user_actor.subscribe();
+    let mut receiver = user_actor.watch().events;
     let mut input_rx = spawn_rustyline_input();
     // Approval id -> agent id, so `/approve <id>`/`/deny <id>` know which
     // agent to answer. Covers both plan proposals and regular tool calls -
