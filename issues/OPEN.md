@@ -33,6 +33,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [171](171-readded-while-still-stopping.md) | open | A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state. |
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
+| [222](222-queued-requests-answered-one-by-one.md) | open | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
 
 ## Identity and access management
 

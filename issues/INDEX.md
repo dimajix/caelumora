@@ -107,6 +107,7 @@ argues against it, and what came out of the last attempt.
 | [187](187-deleted-channel-keeps-remote-tasks.md) | done | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
 | [199](199-external-agent-speak-wakes-all.md) | done | An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
+| [222](222-queued-requests-answered-one-by-one.md) | open | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
 
 ## Identity and access management
 
