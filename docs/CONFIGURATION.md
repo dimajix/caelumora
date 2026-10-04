@@ -42,6 +42,7 @@ component_defaults:
       think: true
       reasoning_history: current_turn
       system_messages: only_at_start
+      context_size: 65536
 ```
 
 | Parameter of `ollama_client` | Meaning | Default |
@@ -51,6 +52,7 @@ component_defaults:
 | `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (issue 63, see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
 | `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (issue 49, see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
+| `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx` (issue 209); left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
 
 An unknown parameter is refused, and the agent does not start.
 
@@ -58,3 +60,12 @@ Before the first call to a model, the client reads the model's control tokens fr
 `/api/show` and keeps them from being produced by any text it sends (issue 149, see
 [AGENT-TURN.md](AGENT-TURN.md#control-tokens-in-the-content)). If they cannot be read, the call
 fails.
+
+Every message the model produces carries the size of the context it was produced in
+(`Message::context_size`, issue 209), beside the tokens of its prompt and its answer: the
+configured `context_size`, or else the size Ollama loaded the model with. That one is read from
+`/api/ps` after a call - when the model is surely loaded - and read again once it is older than ten
+minutes, since Ollama may load the model anew with another size. A model that is not loaded, or a
+server that cannot say, leaves the size unknown. Ollama counts in a prompt's tokens all of the
+prompt, also what it kept from the previous call and did not evaluate again (measured with
+`gemma4:26b`), so prompt and answer against the context size say how full the context was.

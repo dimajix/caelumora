@@ -1,6 +1,6 @@
 # 209 — Token usage is not summed up, nor set against the model's context size
 
-**Status:** open
+**Status:** in progress
 **Area:** Observability and operations
 
 ## The problem
@@ -98,3 +98,28 @@ anew).
 
 - **2026-10-03** — Issue created. Found: `ollama_client` records the tokens of every call in its
   message already, sets no `num_ctx`, and the `ModelProfile` knows no context size.
+- **2026-10-04** — Measured with `gemma4:26b`: `prompt_eval_count` counts the whole prompt, also
+  what Ollama kept from the previous call - the same prompt sent twice gave 5029 tokens both times,
+  evaluated in 3142 ms and then in 53 ms; one round more gave 5042. So prompt and answer tokens
+  against the context size are the fill level. `/api/show` gave the model's trained maximum as
+  262144, `/api/ps` the context it was loaded with as 65536 - the server's default.
+- **2026-10-04** — Decided with the maintainer:
+  - **Context size:** configured as `context_size` of `ollama_client` and sent as `num_ctx`; without
+    one, the size the model is loaded with, read from `/api/ps` and kept for ten minutes; unknown
+    if the model is not loaded.
+  - **Where it is kept:** not in `ModelProfile` - fixed when the turn begins, before the size read
+    after a call is known - but in each message the model produces, as `Message::context_size`
+    beside its token counts: a measurement of the call, like them.
+  - **Sums:** computed from the transcript when read (`TokenUsage`), handed out per agent by the
+    views; external agents unknown, not zero.
+  - **Who sees it:** every member of the channel - every published message carries its token counts
+    already.
+  - **REST and web UI:** `GET .../participants/{aid}` returns one member with its usage, fetched
+    again by the web UI when the agent's turn ends (`FullResponseGenerated`), instead of the whole
+    channel. The channel's sum is no part of the API: the web UI adds up the members it shows.
+  - Three steps: the client and the message, the sums through the views and REST, the web UI.
+- **2026-10-04** — Step 1 done: `ollama_client` takes `context_size`, sends it as
+  `options.num_ctx`, and gives every complete message its `context_size` - the configured one, or
+  the one read from `/api/ps` after the call (`RunningContextSizes`, shared by the clients of a
+  registry like the control tokens, kept for `RUNNING_CONTEXT_SIZE_KEPT`). A model name without a
+  tag is matched as its `latest`. CONFIGURATION.md and COMPONENTS.md say so.

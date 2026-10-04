@@ -70,6 +70,11 @@ pub struct Message {
     pub completion_duration: Option<u64>,    // ns
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_duration: Option<u64>,         // ns
+    /// How many tokens the model's context held in the call that produced
+    /// the message (issue 209): what `prompt_tokens` and
+    /// `completion_tokens` fill. `None` where it is not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_size: Option<u64>,
 }
 
 // No `Default`: a message has no classification that would be right
@@ -98,6 +103,7 @@ impl Message {
             prompt_duration: None,
             completion_duration: None,
             total_duration: None,
+            context_size: None,
         }
     }
 }

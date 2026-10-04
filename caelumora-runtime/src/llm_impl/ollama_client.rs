@@ -12,9 +12,17 @@
 //! applies - `reasoning_history`, which reasoning of earlier messages the
 //! model is given back (`never`, `current_turn` - the default - or
 //! `always`, issue 63), and `system_messages`, where the model keeps system
-//! messages (`only_at_start` - the default - or `anywhere`, issue 49). An
-//! unknown parameter is refused, so that a misspelt one does not silently
-//! fall back to its default.
+//! messages (`only_at_start` - the default - or `anywhere`, issue 49), and
+//! `context_size`, how many tokens the model's context holds - sent as
+//! `num_ctx`; left out, Ollama's default applies (issue 209). An unknown
+//! parameter is refused, so that a misspelt one does not silently fall back
+//! to its default.
+//!
+//! Every complete message carries the size of the context it was produced
+//! in (`Message::context_size`): the configured one, or else the one Ollama
+//! loaded the model with, read from `/api/ps` after a call - when the model
+//! is surely loaded - and kept for `RUNNING_CONTEXT_SIZE_KEPT`. A model that
+//! is not loaded, or a server that cannot say, leaves it unknown.
 //!
 //! Ollama tokenizes the content of a message with the model's special
 //! tokens enabled. So that no text - a participant's, a tool result's, the
@@ -40,7 +48,7 @@ use tracing::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 use tokio_util::io::StreamReader;
@@ -54,7 +62,15 @@ struct OllamaChatRequest {
     tools: Vec<OllamaTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<OllamaOptions>,
     stream: bool,
+}
+
+/// The model's options for one request: only those this client sets.
+#[derive(Debug, Serialize)]
+struct OllamaOptions {
+    num_ctx: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -366,6 +382,85 @@ async fn read_control_tokens(http: &reqwest::Client, remote: &RemoteEndpoint, mo
     Ok(Arc::new(tokens))
 }
 
+/// How long a context size read from `/api/ps` is kept before it is read
+/// again: Ollama may load the model anew, with another size.
+const RUNNING_CONTEXT_SIZE_KEPT: Duration = Duration::from_secs(600);
+
+/// What is read of `/api/ps`: the models loaded, each with the size of the
+/// context it was loaded with.
+#[derive(Deserialize)]
+struct OllamaPsResponse {
+    #[serde(default)]
+    models: Vec<OllamaRunningModel>,
+}
+
+#[derive(Deserialize)]
+struct OllamaRunningModel {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    context_length: Option<u64>,
+}
+
+/// The context sizes of the models the clients of one registry have asked,
+/// as Ollama loaded them - `None` for a model that was not loaded - each
+/// with when it was read, per Ollama server and model.
+#[derive(Default)]
+struct RunningContextSizes {
+    models: dashmap::DashMap<(String, String), (Instant, Option<u64>)>,
+}
+
+impl std::fmt::Debug for RunningContextSizes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunningContextSizes").field("models", &self.models.len()).finish()
+    }
+}
+
+impl RunningContextSizes {
+    /// The context size `model` is loaded with on the server at `endpoint`,
+    /// read from it again once what was read is older than
+    /// `RUNNING_CONTEXT_SIZE_KEPT`. `None` if it is not loaded or the server
+    /// cannot say - which is kept as well, so that a server that cannot say
+    /// is not asked after every call.
+    async fn get(&self, http: &reqwest::Client, endpoint: &RemoteEndpoint, model: &str) -> Option<u64> {
+        let key = (endpoint.url.clone(), model.to_string());
+        if let Some(entry) = self.models.get(&key) {
+            let (read, size) = *entry;
+            if read.elapsed() < RUNNING_CONTEXT_SIZE_KEPT {
+                return size;
+            }
+        }
+        let size = read_running_context_size(http, endpoint, model).await.unwrap_or_else(|e| {
+            warn!("ollama: cannot read the context size of model {}: {}", model, e);
+            None
+        });
+        self.models.insert(key, (Instant::now(), size));
+        size
+    }
+}
+
+/// Reads the context size `model` is loaded with from `/api/ps`; `None` if
+/// it is not loaded.
+async fn read_running_context_size(http: &reqwest::Client, remote: &RemoteEndpoint, model: &str) -> LLMResult<Option<u64>> {
+    let endpoint = remote.shown();
+    let response = send(http.get(api_url(remote, "ps")), remote).await?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(LLMError::Rejected { endpoint, model: model.to_string(), status: status.as_u16(), message: backend_error_message(&body) });
+    }
+    let ps: OllamaPsResponse = response.json().await
+        .map_err(|e| LLMError::InvalidResponse { endpoint, reason: format!("cannot read the models loaded: {}", describe_request_error(e)) })?;
+    Ok(ps.models.into_iter().find(|m| same_model(&m.name, model)).and_then(|m| m.context_length))
+}
+
+/// Whether the model names `a` and `b` name the same model: a name without
+/// a tag is Ollama's `latest`.
+fn same_model(a: &str, b: &str) -> bool {
+    let tagged = |name: &str| if name.rsplit('/').next().is_some_and(|last| last.contains(':')) { name.to_string() } else { format!("{name}:latest") };
+    tagged(a) == tagged(b)
+}
+
 
 
 /// The body of an error Ollama sends, as a whole response or as one line of
@@ -406,6 +501,8 @@ struct OllamaClientConfig {
     reasoning_history: ReasoningHistory,
     #[serde(default)]
     system_messages: SystemMessages,
+    #[serde(default)]
+    context_size: Option<u64>,
 }
 
 impl OllamaClientConfig {
@@ -416,6 +513,9 @@ impl OllamaClientConfig {
         // without knowing who that is.
         if config.endpoint.auth.is_some() {
             return Err(ComponentError::InvalidConfig("'endpoint.auth' is not supported: Ollama is reached without authentication".to_string()));
+        }
+        if config.context_size == Some(0) {
+            return Err(ComponentError::InvalidConfig("'context_size' must be at least 1".to_string()));
         }
         Ok(config)
     }
@@ -456,20 +556,27 @@ pub struct OllamaClient {
     think: Option<bool>,
     /// How the model is given its context (issue 63).
     profile: ModelProfile,
+    /// The context size Ollama is asked for (issue 209); `None` leaves it
+    /// to Ollama, and the size is read as it loaded the model.
+    context_size: Option<u64>,
     /// The model's control tokens, shared with the other clients of the
     /// registry (issue 149).
     control_tokens: Arc<ControlTokenCache>,
+    /// The context sizes Ollama loaded models with, shared likewise.
+    running_context_sizes: Arc<RunningContextSizes>,
 }
 
 impl OllamaClient {
-    fn new(config: OllamaClientConfig, control_tokens: Arc<ControlTokenCache>) -> Self {
+    fn new(config: OllamaClientConfig, control_tokens: Arc<ControlTokenCache>, running_context_sizes: Arc<RunningContextSizes>) -> Self {
         Self {
             http: reqwest::Client::new(),
             endpoint: config.endpoint,
             model: config.model,
             think: config.think,
             profile: ModelProfile { reasoning_history: config.reasoning_history, system_messages: config.system_messages },
+            context_size: config.context_size,
             control_tokens,
+            running_context_sizes,
         }
     }
 }
@@ -616,6 +723,7 @@ impl LLMClient for OllamaClient {
             messages: context.iter().flat_map(OllamaChatMessage::from).collect(),
             tools: ollama_tools,
             think: self.think,
+            options: self.context_size.map(|num_ctx| OllamaOptions { num_ctx }),
             stream: true,
         };
 
@@ -624,6 +732,8 @@ impl LLMClient for OllamaClient {
         let remote = self.endpoint.clone();
         let endpoint = remote.shown();
         let control_tokens = self.control_tokens.clone();
+        let context_size = self.context_size;
+        let running_context_sizes = self.running_context_sizes.clone();
 
         let output = stream! {
             match control_tokens.get(&http, &remote, &model).await {
@@ -652,9 +762,18 @@ impl LLMClient for OllamaClient {
                 yield Err(LLMError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
                 return;
             }
-            let mut answer = std::pin::pin!(answer_of(response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url)), endpoint, model));
+            let mut answer = std::pin::pin!(answer_of(response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url)), endpoint, model.clone()));
             while let Some(event) = answer.next().await {
-                yield event;
+                match event {
+                    Ok(MessageEvent::Complete(mut message)) => {
+                        message.context_size = match context_size {
+                            Some(size) => Some(size),
+                            None => running_context_sizes.get(&http, &remote, &model).await,
+                        };
+                        yield Ok(MessageEvent::Complete(message));
+                    }
+                    event => yield event,
+                }
             }
         };
 
@@ -668,6 +787,7 @@ impl LLMClient for OllamaClient {
 
 pub fn register(registry: &mut ComponentRegistry) {
     let control_tokens = Arc::new(ControlTokenCache::default());
+    let running_context_sizes = Arc::new(RunningContextSizes::default());
     registry.register(
         ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>(),
         move |descriptor, _context| {
@@ -676,7 +796,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let params = if descriptor.params.is_null() { serde_json::json!({}) } else { descriptor.params.clone() };
             let config = OllamaClientConfig::of(params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, control_tokens.clone())));
+            facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, control_tokens.clone(), running_context_sizes.clone())));
             Ok(facets)
         },
     );
@@ -749,6 +869,7 @@ mod tests {
             messages: Vec::new(),
             tools: Vec::new(),
             think: None,
+            options: None,
             stream: true,
         };
         let json = serde_json::to_value(&request).unwrap();
@@ -762,6 +883,7 @@ mod tests {
             messages: Vec::new(),
             tools: Vec::new(),
             think: Some(true),
+            options: None,
             stream: true,
         };
         let json = serde_json::to_value(&request).unwrap();
@@ -811,16 +933,19 @@ mod tests {
 
     /// A stand-in for Ollama: `/api/show` lists `<|im_start|>` as a control
     /// token and `<think>` as a user-defined one, `/api/chat` keeps what it
-    /// is sent and answers.
+    /// is sent and answers, `/api/ps` lists the `loaded` models with the
+    /// context size each was loaded with.
     #[derive(Clone, Default)]
     struct FakeOllama {
         shown: Arc<std::sync::atomic::AtomicUsize>,
         sent: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
         show_fails: bool,
+        loaded: Vec<(&'static str, u64)>,
+        listed: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     async fn serve(fake: FakeOllama) -> String {
-        use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+        use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
         use std::sync::atomic::Ordering;
         let app = Router::new()
             .route("/api/show", post(|State(fake): State<FakeOllama>| async move {
@@ -835,6 +960,11 @@ mod tests {
                     "tokenizer.ggml.merges": ["a b"],
                 } })))
             }))
+            .route("/api/ps", get(|State(fake): State<FakeOllama>| async move {
+                fake.listed.fetch_add(1, Ordering::SeqCst);
+                let models: Vec<_> = fake.loaded.iter().map(|(name, size)| json!({ "name": name, "context_length": size })).collect();
+                Json(json!({ "models": models }))
+            }))
             .route("/api/chat", post(|State(fake): State<FakeOllama>, Json(body): Json<serde_json::Value>| async move {
                 fake.sent.lock().unwrap().push(body);
                 "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":true}\n"
@@ -847,8 +977,64 @@ mod tests {
     }
 
     fn client(base_url: &str) -> OllamaClient {
-        let config = serde_json::from_value(json!({ "endpoint": { "url": base_url }, "model": "qwen3:8b" })).unwrap();
-        OllamaClient::new(config, Arc::new(ControlTokenCache::default()))
+        client_with(json!({ "endpoint": { "url": base_url }, "model": "qwen3:8b" }))
+    }
+
+    fn client_with(params: serde_json::Value) -> OllamaClient {
+        let config = OllamaClientConfig::of(params).unwrap();
+        OllamaClient::new(config, Arc::new(ControlTokenCache::default()), Arc::new(RunningContextSizes::default()))
+    }
+
+    /// The context size of the complete message of a call of `client`.
+    async fn context_size_of_an_answer(client: &OllamaClient) -> Option<u64> {
+        let events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
+        match events.last() {
+            Some(Ok(MessageEvent::Complete(message))) => message.context_size,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_configured_context_size_is_asked_for_and_carried_by_the_answer() {
+        let fake = FakeOllama { loaded: vec![("qwen3:8b", 4096)], ..FakeOllama::default() };
+        let client = client_with(json!({ "endpoint": { "url": serve(fake.clone()).await }, "model": "qwen3:8b", "context_size": 32768 }));
+
+        assert_eq!(context_size_of_an_answer(&client).await, Some(32768));
+
+        assert_eq!(fake.sent.lock().unwrap()[0]["options"]["num_ctx"], 32768);
+        assert_eq!(fake.listed.load(std::sync::atomic::Ordering::SeqCst), 0, "what is configured is not read");
+    }
+
+    #[tokio::test]
+    async fn without_a_configured_size_the_answer_carries_the_one_the_model_is_loaded_with() {
+        let fake = FakeOllama { loaded: vec![("llama3:latest", 2048), ("qwen3:8b", 8192)], ..FakeOllama::default() };
+        let client = client(&serve(fake.clone()).await);
+
+        assert_eq!(context_size_of_an_answer(&client).await, Some(8192));
+        assert_eq!(context_size_of_an_answer(&client).await, Some(8192));
+
+        assert!(fake.sent.lock().unwrap()[0].get("options").is_none(), "Ollama's default applies");
+        assert_eq!(fake.listed.load(std::sync::atomic::Ordering::SeqCst), 1, "what was read is kept");
+    }
+
+    #[tokio::test]
+    async fn the_context_size_of_a_model_not_loaded_is_unknown() {
+        let fake = FakeOllama { loaded: vec![("llama3", 2048)], ..FakeOllama::default() };
+        let client = client(&serve(fake).await);
+        assert_eq!(context_size_of_an_answer(&client).await, None);
+    }
+
+    #[test]
+    fn a_model_name_without_a_tag_is_its_latest() {
+        assert!(same_model("llama3", "llama3:latest"));
+        assert!(same_model("registry.local:5000/llama3", "registry.local:5000/llama3:latest"), "a port is no tag");
+        assert!(!same_model("qwen3:8b", "qwen3:14b"));
+    }
+
+    #[test]
+    fn a_context_size_of_nothing_is_refused() {
+        assert!(OllamaClientConfig::of(json!({ "context_size": 0 })).is_err());
+        assert_eq!(OllamaClientConfig::of(json!({ "context_size": 65536 })).unwrap().context_size, Some(65536));
     }
 
     #[tokio::test]
