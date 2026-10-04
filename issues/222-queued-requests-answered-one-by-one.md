@@ -1,6 +1,6 @@
 # 222 — A slow agent answers every request queued while it worked, one stale answer each
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -208,3 +208,12 @@ The maintainer decided for A on 2026-10-04, which is what the steps above descri
   or a woken agent drops its request; and a full inbox drops events, which becomes an issue of its
   own. Decided by the maintainer: the one turn has the authority of the last request (A), not a
   turn per initiator. Nothing implemented yet.
+- **2026-10-04** — Done as planned, in steps: `EventReceiver::try_recv` (`e57d6d8`); `take_in` in
+  `actor_impl` and the agent run here taking its inbox with it, whether it sleeps read after taking
+  in (`63c5862`); the external agent the same way (`17f609c`); the authority of the last request in
+  the security suite (`71a8a99`); AGENT-TURN.md and CHANNELS.md (`f83b3b9`). Deviating from the
+  plan, the external agent stores its state after every batch, also one with only a request. What
+  was left open became issues of its own: a full inbox drops events
+  ([223](223-full-inbox-drops-events.md)); and, asked by the maintainer whether `worth_giving`
+  should hold for both kinds of agent, what an agent hears of others is shaped in two places and on
+  joining not at all ([224](224-what-agents-hear-of-others.md)).

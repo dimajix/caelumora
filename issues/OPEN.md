@@ -33,7 +33,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [171](171-readded-while-still-stopping.md) | open | A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state. |
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
-| [222](222-queued-requests-answered-one-by-one.md) | open | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
+| [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 
 ## Identity and access management
 
@@ -92,6 +92,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
+| [224](224-what-agents-hear-of-others.md) | open | What an agent hears of others is shaped by the moderator and again by the external agent, and an agent run here that joins takes others' answers from the history unshaped, as if they were its own. |
 
 ## Code structure
 

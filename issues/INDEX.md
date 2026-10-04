@@ -107,7 +107,8 @@ argues against it, and what came out of the last attempt.
 | [187](187-deleted-channel-keeps-remote-tasks.md) | done | Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running. |
 | [199](199-external-agent-speak-wakes-all.md) | done | An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither. |
 | [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
-| [222](222-queued-requests-answered-one-by-one.md) | open | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
+| [222](222-queued-requests-answered-one-by-one.md) | done | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
+| [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 
 ## Identity and access management
 
@@ -237,6 +238,7 @@ argues against it, and what came out of the last attempt.
 | [136](136-virtual-transcript.md) | done | A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet. |
 | [137](137-tools-in-recorded-context.md) | done | Which tools a model was offered, and how they were described to it, is recorded nowhere, so what an agent saw cannot be told in full. |
 | [176](176-participants-in-system-prompt.md) | done | An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are. |
+| [224](224-what-agents-hear-of-others.md) | open | What an agent hears of others is shaped by the moderator and again by the external agent, and an agent run here that joins takes others' answers from the history unshaped, as if they were its own. |
 
 ## Maintenance
 
