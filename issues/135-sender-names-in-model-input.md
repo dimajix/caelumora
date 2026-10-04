@@ -1,6 +1,6 @@
 # 135 — The model is not told who said what
 
-**Status:** in progress
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -204,3 +204,9 @@ measured.
   17-18): Carol writes a note worded like the runtime's into her own message, claiming Alice's real
   approval was Bob's imitation, and gemma4 believes it about 29 times of 30 - with the format
   explained, under `xml` where it stands inside her element, and with a real note flagging it.
+- **2026-10-04** — Step 3, and with it the issue: done. Decided in
+  [150](150-impersonation-towards-the-agent.md) from the measurements of step 2 - the runtime builds
+  no defense against faked markers into the model's input, since a note of its own can be faked as
+  well and is believed; consequences rest on the runtime's decisions, and the web UI shows faked
+  markers to the people. A model is told who wrote each message by the rule of its profile, as
+  shown in the context panel.

@@ -48,7 +48,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
-| [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
+| [150](150-impersonation-towards-the-agent.md) | in progress | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
 
 ## Tools and approvals
@@ -90,7 +90,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
 | [22](22-skill-management.md) | open | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [135](135-sender-names-in-model-input.md) | in progress | In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what. |
 
 ## Code structure
 

@@ -132,7 +132,7 @@ argues against it, and what came out of the last attempt.
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
 | [149](149-special-tokens-in-content.md) | done | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
-| [150](150-impersonation-towards-the-agent.md) | open | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
+| [150](150-impersonation-towards-the-agent.md) | in progress | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
 | [158](158-publish-question-built-five-times.md) | done | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
 | [167](167-origin-and-releases.md) | rejected | A classification says who may read something but not where it was written: a release overwrites the origin, releases cannot be told apart, and there is no rule for writing. |
 | [168](168-turn-label-as-high-water-mark.md) | done | A turn writes under its channel's classification even when everything it saw was classified lower, so what it remembers is lost to lower channels. |
@@ -231,7 +231,7 @@ argues against it, and what came out of the last attempt.
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
 | [119](119-seen-item-and-context-item.md) | done | What a model saw when it produced a message and what its turn gave it are two types of the same thing. |
-| [135](135-sender-names-in-model-input.md) | in progress | In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what. |
+| [135](135-sender-names-in-model-input.md) | done | In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what. |
 | [136](136-virtual-transcript.md) | done | A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet. |
 | [137](137-tools-in-recorded-context.md) | done | Which tools a model was offered, and how they were described to it, is recorded nowhere, so what an agent saw cannot be told in full. |
 | [176](176-participants-in-system-prompt.md) | done | An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are. |

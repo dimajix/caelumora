@@ -1,6 +1,6 @@
 # 150 — A participant can pass themselves off as another to the agent
 
-**Status:** open
+**Status:** in progress
 **Area:** Identity and access management
 
 ## The problem
@@ -71,3 +71,21 @@ not verified by the model.
   makes gemma4 disbelieve a real approval about 29 times of 30, whatever is explained or flagged. A
   note in the text is a stronger lever than the faked marker it defends against, and it cannot be
   made unforgeable in the text.
+- **2026-10-04** — Decided with the maintainer, after the measurements of 135's step 2
+  (`work/sender_names/RESULTS.md`, findings 12-18):
+  - **No defense in the text.** The runtime does not recognise faked markers to tell the model of
+    them, nor quote them: a note of the runtime helps against a faked marker only together with
+    the quote and fully only under `xml`, and a note can itself be faked - which is believed almost
+    every time and undoes a real message. Whatever the runtime writes into the model's input, a
+    participant can write too.
+  - **What the model believes about who said what has no consequences of its own (A).** What
+    weighs - approving a tool call, permissions - is the runtime's, decided on the actual user
+    (approvals, `SecurityManager`); the documentation of the sender rule says that the markers are
+    claims the model does not verify (AGENT-TURN.md, *Who said what*). Still to do: review which
+    tools run without approval and what an agent may do with them on someone's word alone.
+  - **Shown to the people instead (D).** The web UI marks a message that contains a line marked as
+    another participant's, for the people in the channel; the context panel already shows every
+    message as its real sender wrote it. Still to do.
+  - `xml` stays a choice for a model where it helps; it does not protect against a faked marker by
+    itself (0 of 20).
+  The issue stays in progress for the review of the tools and the mark in the web UI.
