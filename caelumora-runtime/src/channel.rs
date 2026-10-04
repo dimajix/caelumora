@@ -2924,9 +2924,12 @@ mod tests {
     #[tokio::test]
     async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_answers_in_the_channel() {
         use crate::external::{ExternalEvent, Said};
+        use caelumora_model::context::{ModelProfile, SenderFormat};
         use caelumora_model::external_agent::ConversationId;
 
         let conversation = ConversationId("c-1".to_string());
+        // Told who said what, by the handle (issue 135).
+        let marking = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![
                 Ok(ExternalEvent::Conversation(conversation.clone())),
@@ -2936,7 +2939,7 @@ mod tests {
                 Ok(ExternalEvent::Completed),
             ],
             vec![Ok(ExternalEvent::Started(task("t-2"))), Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
-        ]));
+        ]).marking(marking));
         let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
 
         let first = answered(&mut events, agent).await;
@@ -2953,9 +2956,9 @@ mod tests {
         let sent = remote.sent.lock().unwrap().clone();
         let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
         assert_eq!(sent[0].0, None, "the remote agent opens the conversation");
-        assert_eq!(sent[0].1.said, vec![said("hello")]);
+        assert_eq!(sent[0].1.said, vec![said("@alice: hello")], "marked with its sender, as the component's profile says");
         assert_eq!(sent[1].0, Some(conversation.clone()), "and keeps it");
-        assert_eq!(sent[1].1.said, vec![said("How are you?")], "only what it has not heard, not its own answer");
+        assert_eq!(sent[1].1.said, vec![said("@alice: How are you?")], "only what it has not heard, not its own answer");
 
         let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
         assert_eq!(state.remote.conversation, Some(conversation));
@@ -2963,11 +2966,11 @@ mod tests {
         let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
         assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
         let given: Vec<_> = state.transcript.all_entries().filter_map(|e| e.entry.message()?.content.clone()).collect();
-        assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given");
+        assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, as received");
         assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
         // The context of each answer is what was given in its call (issue 205).
-        assert_eq!(given_for(&state, agent, &first[0]), ["hello"]);
-        assert_eq!(given_for(&state, agent, &second[0]), ["How are you?"], "not what it was given before");
+        assert_eq!(given_for(&state, agent, &first[0]), ["@alice: hello"], "as it was given, marked");
+        assert_eq!(given_for(&state, agent, &second[0]), ["@alice: How are you?"], "not what it was given before");
         running.abort();
     }
 

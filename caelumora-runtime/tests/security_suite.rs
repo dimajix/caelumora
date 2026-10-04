@@ -566,6 +566,10 @@ impl ExternalAgent for RemoteAtWork {
     fn classification(&self) -> Option<Classification> {
         self.declared.clone()
     }
+
+    fn profile(&self) -> caelumora_model::context::ModelProfile {
+        caelumora_model::context::ModelProfile::default()
+    }
 }
 
 /// The world, with the kind `remote_at_work`: a `RemoteAtWork` declaring

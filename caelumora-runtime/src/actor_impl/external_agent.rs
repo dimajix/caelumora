@@ -302,6 +302,10 @@ impl ExternalAgentActor {
         // is now, and written as what it has seen - what the remote agent
         // brings in itself, and all it was given in this channel (issue 212).
         let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
+        // How it is given what was said, recorded with the context of what
+        // comes of it, so that the context is resolved as it was given
+        // (issue 135).
+        work.context.profile = self.remote.profile();
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
         if !may_answer_in(self.actor_runtime.security_manager().as_ref(), &work.security_context, self.id(), &brought, &work.classification).await {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
@@ -335,7 +339,7 @@ impl ExternalAgentActor {
             parts.push(part.text.clone());
         }
         let said = given.iter()
-            .map(|m| Said { sender: m.sender_name.clone(), text: m.content.clone().unwrap_or_default() })
+            .map(|m| Said { sender: m.sender_name.clone(), text: work.context.profile.given(m.clone(), self.id(), false).content.unwrap_or_default() })
             .collect();
         trace!("External agent {} is given {:?} after {:?}", self.id(), said, parts);
         let mut stream = self.remote.send(&answering.security_context, state.remote.conversation.as_ref(), OutboundMessage { prompts: parts, said, answers: answers.clone() }).await?;

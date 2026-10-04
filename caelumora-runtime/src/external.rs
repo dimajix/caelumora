@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::SecretError;
+use caelumora_model::context::ModelProfile;
 use caelumora_model::security::SecurityContext;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
@@ -19,8 +20,11 @@ use std::fmt::Debug;
 /// What one participant said, as the remote agent is given it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Said {
-    /// The name the channel knows the speaker by.
+    /// The name the channel knows the speaker by - for a protocol that can
+    /// carry a sender itself; A2A cannot (issue 135), so `text` names them.
     pub sender: String,
+    /// What they said, as the remote agent is given it: marked with the
+    /// sender as the component's profile says.
     pub text: String,
 }
 
@@ -123,6 +127,11 @@ pub trait ExternalAgent: Send + Sync + Debug {
     /// channel. Its answers are classified as what their work has seen -
     /// this and all it was given (`Work::label`, issue 212).
     fn classification(&self) -> Option<Classification>;
+
+    /// How the remote agent is given what was said: of the profile, only
+    /// how senders are marked matters to it (issue 135) - A2A has no place
+    /// for a sender, so it is marked in the content, as for a model.
+    fn profile(&self) -> ModelProfile;
 }
 
 /// Stand-ins for a remote agent, for the tests of what uses the facet.
@@ -153,6 +162,8 @@ pub(crate) mod testing {
         unreachable: Mutex<usize>,
         /// How it classifies what it brings in itself.
         declared: Option<Classification>,
+        /// How it is given what was said.
+        profile: ModelProfile,
     }
 
     impl ScriptedExternalAgent {
@@ -169,6 +180,11 @@ pub(crate) mod testing {
         /// Declares what it brings in itself classified `classification`.
         pub(crate) fn declaring(self, classification: Classification) -> Self {
             Self { declared: Some(classification), ..self }
+        }
+
+        /// Is given what was said as `profile` says.
+        pub(crate) fn marking(self, profile: ModelProfile) -> Self {
+            Self { profile, ..self }
         }
 
         /// Cannot be reached by the next `requests`: they fail before
@@ -214,6 +230,10 @@ pub(crate) mod testing {
 
         fn classification(&self) -> Option<Classification> {
             self.declared.clone()
+        }
+
+        fn profile(&self) -> ModelProfile {
+            self.profile
         }
     }
 }

@@ -26,6 +26,7 @@ use crate::external::{ExternalAgent, ExternalAgentResult, ExternalStream, Outbou
 use crate::remote::RemoteEndpoint;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
@@ -202,6 +203,12 @@ impl ExternalAgent for A2aAgentComponent {
     fn classification(&self) -> Option<Classification> {
         self.classification.clone()
     }
+
+    fn profile(&self) -> ModelProfile {
+        // What it has always been given: the sender's name before what they
+        // said. Configurable in a step of its own (issue 135).
+        ModelProfile { sender_format: SenderFormat::Prefix, sender_style: SenderStyle::Name, ..ModelProfile::default() }
+    }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -311,7 +318,7 @@ mod tests {
     }
 
     fn hello() -> OutboundMessage {
-        OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
+        OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "alice: hello".to_string() }], answers: None }
     }
 
     async fn all(stream: ExternalStream) -> Vec<ExternalEvent> {
