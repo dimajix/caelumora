@@ -16,14 +16,15 @@ use crate::controller::UserController;
 use chrono::Utc;
 use tracing::{debug, info, warn};
 use std::sync::Arc;
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// Capacity of the queue towards a subscriber (see `UserActor::subscribe`).
-const SUBSCRIBER_CAPACITY: usize = 100;
+/// How many envelopes a watcher of the actor may fall behind before it
+/// loses the oldest (see `UserActor::subscribe`). A power of two, since a
+/// broadcast rounds up to one (as the `EventBus`, issue 38).
+const SUBSCRIBER_CAPACITY: usize = 128;
 
 #[derive(Debug)]
 pub struct UserActor {
@@ -37,9 +38,9 @@ pub struct UserActor {
     // channel by `run`.
     user_rx: Mutex<Receiver<Envelope>>,
     user_tx: Sender<Envelope>,
-    // Where envelopes routed to this user go, if anyone listens: see
-    // `subscribe`. A plain lock, never held across an await.
-    subscriber: std::sync::Mutex<Option<Sender<Envelope>>>,
+    // Where envelopes routed to this user go, to everyone who listens:
+    // see `subscribe` (issue 220).
+    received: broadcast::Sender<Envelope>,
     // Cancelled when the actor ends - it left the channel, or the channel
     // stopped: what ends every `watch` (issue 104).
     ended: CancellationToken,
@@ -73,7 +74,7 @@ impl UserActor {
             actor_runtime,
             user_rx: Mutex::new(urx),
             user_tx: utx,
-            subscriber: std::sync::Mutex::new(None),
+            received: broadcast::channel(SUBSCRIBER_CAPACITY).0,
             ended: CancellationToken::new(),
         })
     }
@@ -171,20 +172,17 @@ impl UserActor {
     }
 
     /// Receives the envelopes routed to this user from now on, e.g. for a
-    /// terminal UI. There is one subscriber at a time; subscribing again
-    /// replaces the previous one.
+    /// terminal UI. Any number may listen - two tabs, two devices (issue
+    /// 220).
     ///
-    /// Without a subscriber, routed envelopes are dropped - the REST server
-    /// reads the channel's broadcast instead and never subscribes here. A
-    /// subscriber that falls `SUBSCRIBER_CAPACITY` envelopes behind loses the
-    /// newest ones rather than stalling this actor, which would also stop it
-    /// from forwarding what the user sends.
-    pub fn subscribe(&self) -> Receiver<Envelope> {
-        let (tx, rx) = mpsc::channel(SUBSCRIBER_CAPACITY);
-        if let Ok(mut subscriber) = self.subscriber.lock() {
-            *subscriber = Some(tx);
-        }
-        rx
+    /// Without anyone listening, routed envelopes are dropped - the REST
+    /// server reads the channel's broadcast instead and does not listen
+    /// here yet. A receiver that falls `SUBSCRIBER_CAPACITY` envelopes
+    /// behind loses the oldest (`RecvError::Lagged`) rather than stalling
+    /// this actor, which would also stop it from forwarding what the user
+    /// sends.
+    pub fn subscribe(&self) -> broadcast::Receiver<Envelope> {
+        self.received.subscribe()
     }
 
     /// Follows the channel as this user: see `ChannelWatch`.
@@ -202,20 +200,8 @@ impl UserActor {
         match maybe_event {
             Some(event) => {
                 debug!("UserActor {} received {}", self.id(), event.describe());
-                let Ok(mut subscriber) = self.subscriber.lock() else {
-                    return false;
-                };
-                if let Some(tx) = subscriber.as_ref() {
-                    match tx.try_send(event) {
-                        Ok(()) => {}
-                        Err(TrySendError::Full(event)) => {
-                            warn!("UserActor {}: subscriber is not keeping up, dropping {}", self.id(), event.describe());
-                        }
-                        Err(TrySendError::Closed(_)) => {
-                            *subscriber = None;
-                        }
-                    }
-                }
+                // An error only says that nobody listens.
+                let _ = self.received.send(event);
                 false
             }
             None => true,
@@ -408,24 +394,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_lagging_subscriber_loses_envelopes_but_does_not_stall_the_actor() {
+    async fn every_subscriber_receives_what_is_routed_and_a_lagging_one_loses_the_oldest() {
         let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
-        let mut rx = actor.subscribe();
+        let (mut first, mut second) = (actor.subscribe(), actor.subscribe());
+
+        assert!(!actor.handle_actor_envelope(Some(envelope_from(agent))));
+        assert!(first.try_recv().is_ok() && second.try_recv().is_ok(), "two tabs, both are told");
 
         for _ in 0..(SUBSCRIBER_CAPACITY + 10) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent))));
         }
-
+        assert!(matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))), "the oldest are lost, and it learns how many");
         let mut received = 0;
-        while rx.try_recv().is_ok() {
+        while first.try_recv().is_ok() {
             received += 1;
         }
-        assert_eq!(received, SUBSCRIBER_CAPACITY, "the queue holds what it can, the rest is dropped");
-
-        drop(rx);
-        actor.handle_actor_envelope(Some(envelope_from(agent)));
-        assert!(actor.subscriber.lock().unwrap().is_none(), "a closed subscriber is removed");
+        assert_eq!(received, SUBSCRIBER_CAPACITY, "the newest are kept");
     }
 
 

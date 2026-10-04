@@ -18,6 +18,7 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tokio::sync::broadcast::error::RecvError;
 use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
@@ -58,7 +59,15 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     loop {
         tokio::select! {
-            maybe_envelope = receiver.recv() => {
+            received = receiver.recv() => {
+                let maybe_envelope = match received {
+                    Ok(envelope) => Some(envelope),
+                    Err(RecvError::Lagged(lost)) => {
+                        println!("\r[{} events missed]", lost);
+                        continue;
+                    }
+                    Err(RecvError::Closed) => None,
+                };
                 let sender = maybe_envelope.as_ref().map(|e| e.context.sender_name.clone()).unwrap_or_default();
                 match maybe_envelope.map(|envelope| envelope.event) {
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {
