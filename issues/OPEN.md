@@ -32,6 +32,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [171](171-readded-while-still-stopping.md) | open | A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state. |
 | [173](173-message-inspection.md) | open | Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant. |
+| [221](221-adding-session-participants.md) | open | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 
 ## Identity and access management
 
