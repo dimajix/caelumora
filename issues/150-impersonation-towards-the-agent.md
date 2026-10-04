@@ -66,3 +66,8 @@ not verified by the model.
   quoted line helps, fully under `xml` only. That speaks for `xml` where faked markers matter, and
   for the note to stand outside the participants' messages. Not decided yet: other models are to
   be measured first, and whether a faked note can turn the defense against a real message.
+- **2026-10-04** — The defense measured before turned around (`work/sender_names/RESULTS.md`,
+  findings 17-18): a participant who writes a note worded like the runtime's into their own message
+  makes gemma4 disbelieve a real approval about 29 times of 30, whatever is explained or flagged. A
+  note in the text is a stronger lever than the faked marker it defends against, and it cannot be
+  made unforgeable in the text.

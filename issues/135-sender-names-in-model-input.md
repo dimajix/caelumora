@@ -200,3 +200,7 @@ measured.
   where the note - an unmarked message - reads like the agent's own and the model began marking its
   answers itself. No defense made it doubt what was true. Still open: other models, a faked note,
   the recognition itself.
+- **2026-10-04** — Step 2 continued with a faked note of the runtime (`RESULTS.md`, findings
+  17-18): Carol writes a note worded like the runtime's into her own message, claiming Alice's real
+  approval was Bob's imitation, and gemma4 believes it about 29 times of 30 - with the format
+  explained, under `xml` where it stands inside her element, and with a real note flagging it.
