@@ -68,6 +68,10 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     }
                     Err(RecvError::Closed) => None,
                 };
+                // What the user said is on the screen already, as typed.
+                if maybe_envelope.as_ref().is_some_and(|e| e.context.sender_id == ActorId::User(user)) {
+                    continue;
+                }
                 let sender = maybe_envelope.as_ref().map(|e| e.context.sender_name.clone()).unwrap_or_default();
                 match maybe_envelope.map(|envelope| envelope.event) {
                     Some(ActorEvent::CompleteMessageGenerated(message)) => {

@@ -102,8 +102,9 @@ impl UserActor {
     /// `ChannelError::ClassificationRefused` if the message may not enter
     /// the channel as classified; an error if the channel is gone.
     pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
-        let channel = self.actor_runtime.channel_loop().map(|c| c.classification())
+        let channel_loop = self.actor_runtime.channel_loop()
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel = channel_loop.classification();
         let classification = classification.unwrap_or_else(|| channel.clone());
         let action = ActionType::Publish { classification: &classification, actor: self.id(), channel: &channel };
         self.actor_runtime.security_manager()
@@ -111,6 +112,7 @@ impl UserActor {
             .await?;
         let msg = Message {
             role: MessageRole::User,
+            mentions: channel_loop.mentions_in(&message),
             content: Some(message),
             id: MessageId(Uuid::new_v4()),
             sender_id: self.id(),
@@ -122,10 +124,25 @@ impl UserActor {
         // the channel's agents for it - the channel does not wake by itself
         // (issue 90).
         let span_id = Uuid::new_v4();
-        self.user_tx.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
-        self.user_tx.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
-        self.user_tx.send(self.envelope(ActorEvent::FullResponseGenerated(vec![msg]), span_id)).await?;
+        self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
+        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg.clone()), span_id)).await?;
+        self.send(self.envelope(ActorEvent::FullResponseGenerated(vec![msg]), span_id)).await?;
         Ok(span_id)
+    }
+
+    /// Hands `envelope` to `run`, which forwards it into the channel, and
+    /// shows it to those who follow this actor: the channel sends nothing
+    /// back to its sender, so as an agent takes its own messages in itself,
+    /// this actor shows what its user says itself (issue 220) - all but the
+    /// request to wake the channel, which is not said to anyone.
+    async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
+        let shown = (!matches!(envelope.event, ActorEvent::WakeupRequested)).then(|| envelope.clone());
+        self.user_tx.send(envelope).await?;
+        if let Some(envelope) = shown {
+            // An error only says that nobody listens.
+            let _ = self.received.send(envelope);
+        }
+        Ok(())
     }
 
     /// Sends this user's decision on an approval. Returns the `span_id`, as
@@ -137,7 +154,7 @@ impl UserActor {
             ActorEvent::ApprovalDenied(response)
         };
         let span_id = Uuid::new_v4();
-        self.user_tx.send(self.envelope(event, span_id)).await?;
+        self.send(self.envelope(event, span_id)).await?;
         Ok(span_id)
     }
 
@@ -161,7 +178,7 @@ impl UserActor {
         let output = executor.execute(name, args, &context).await?;
         if output.visibility == CommandVisibility::Channel {
             let event = ActorEvent::CommandExecuted { command: name.to_string(), output: output.text.clone() };
-            self.user_tx.send(self.envelope(event, Uuid::new_v4())).await?;
+            self.send(self.envelope(event, Uuid::new_v4())).await?;
         }
         Ok(CommandReply { command: name.to_string(), output: output.text, visibility: output.visibility })
     }
@@ -364,6 +381,20 @@ mod tests {
             assert_eq!(envelope.context.channel_id, actor.channel_id);
         }
         assert_ne!(complete.context.event_id, full.context.event_id, "two events, two event ids");
+    }
+
+    #[tokio::test]
+    async fn the_actor_shows_its_own_messages_to_those_who_follow_it() {
+        let (actor, _channel) = user_actor().await;
+        let mut following = actor.subscribe();
+
+        actor.send_message("hello".to_string(), None).await.unwrap();
+
+        let shown: Vec<&str> = std::iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
+        assert_eq!(shown, ["CompleteMessageGenerated", "FullResponseGenerated"], "what it said, not the request to wake the channel (issue 220)");
+
+        actor.send_approval(ApprovalResponse { id: Default::default(), agent_id: Default::default() }, true).await.unwrap();
+        assert_eq!(following.try_recv().map(|e| e.event.kind()).ok(), Some("ApprovalGranted"), "everything it sends");
     }
 
     #[tokio::test]

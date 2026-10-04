@@ -970,6 +970,13 @@ impl ChannelLoop {
         true
     }
 
+    /// The participants `text` mentions by their `@`-handles, as the channel
+    /// resolves them when a message enters it (issue 29) - for an actor
+    /// that shows its own message before (issue 220).
+    pub(crate) fn mentions_in(&self, text: &str) -> Vec<ActorId> {
+        self.mentions.load().resolve(text)
+    }
+
     /// Resolves the `@`-mentions in every complete message carried by `event`
     /// and stores them in `Message::mentions`. Done here, once, as the message
     /// enters the channel, so that every frontend, the history and the
@@ -977,7 +984,7 @@ impl ChannelLoop {
     fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
         let resolve = |m: &mut Message| {
             if let Some(content) = &m.content {
-                m.mentions = self.mentions.load().resolve(content);
+                m.mentions = self.mentions_in(content);
             }
         };
         match &mut event.event {
@@ -1389,9 +1396,11 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.subscribe();
+        let mut following = actor.subscribe();
         let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
 
         let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
+        assert!(matches!(following.try_recv().map(|e| e.event), Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
         assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Channel, "the answer goes to the channel");
         assert_eq!(reply.output, "No agent was asleep.", "and back to the issuer, whom the channel does not route it to");
 
@@ -1503,6 +1512,20 @@ mod tests {
         delivered(&mut rx); // this test's moderator forwards the request, too
         channel.route_event(&actors, said()).await;
         assert_eq!(delivered(&mut rx), ["FullResponseGenerated", "ResponseRequested"], "woken, the channel asks again");
+    }
+
+    #[tokio::test]
+    async fn a_users_own_message_is_shown_with_its_mentions_resolved() {
+        let (alice, bob) = (user("alice"), user("bob"));
+        let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
+        let actor = channel.user_actor(alice.id).unwrap();
+        let mut following = actor.subscribe();
+
+        actor.send_message("@bob, look".to_string(), None).await.expect("sent");
+
+        let shown = following.try_recv().expect("shown at once, before the channel takes it in");
+        let ActorEvent::CompleteMessageGenerated(message) = shown.event else { panic!("its message, got {}", shown.event.kind()) };
+        assert_eq!(message.mentions, vec![ActorId::User(bob.id)], "as the channel resolves them (issue 220)");
     }
 
     /// Sends every event back to its sender, once as it is and once as a

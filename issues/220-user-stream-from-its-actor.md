@@ -87,3 +87,10 @@ stream runs over the `EventBus`, the recorder records each delivery itself.
   out any number of receivers; one that falls behind loses the oldest and learns how many. The TUI
   reads it and says when it missed events. `watch()` and with it the web UI still read the
   channel's broadcast.
+- **2026-10-04** — Step 2: the user's actor shows everything it sends into the channel to those
+  who follow it, but the request to wake the channel (`UserActor::send`): its messages - with
+  their mentions resolved by the channel's index (`ChannelLoop::mentions_in`), which the channel
+  uses as they enter it, too - its answers to approvals, and a command's answer for the whole
+  channel, which its issuer otherwise would not receive once the stream follows the actor, since
+  the REST reply leaves it out. A user's actor sends no partial messages; were it to, they would be
+  shown the same way. The TUI leaves out what its own user sent, which it shows as typed.
