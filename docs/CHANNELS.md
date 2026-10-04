@@ -273,6 +273,13 @@ An **actor** is anything that sends and receives events in a channel.
     once. What an agent's model saw is not asked of its actor but read through the views (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). The implementations are `AgentActor`,
     `UserActor`, `ApproverActor` and `ExternalAgentActor` (`caelumora_runtime::actor_impl`).
+*   **An actor's inbox** is an `EventReceiver` (`caelumora_runtime::transport`): `recv` waits for
+    the next envelope, `recv_matching` for the next one of a kind - an agent waiting for approvals
+    leaves the others queued - and `try_recv` takes what is queued already without waiting. `commit`
+    acknowledges everything taken since the last one. Both kinds of agent take an envelope together
+    with everything queued behind it (`actor_impl::take_in`, issue 222): every message heard is
+    taken in, in order, and only the last request is answered, once - see
+    [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle).
 *   **Which actor runs an agent** is its personality's `kind` (issue 179): `internal` - the
     default - an `AgentActor`; `external` an `ExternalAgentActor`, for an agent that runs elsewhere
     and is reached through the personality's one `ExternalAgent` component. The channel decides it
@@ -284,9 +291,10 @@ An **actor** is anything that sends and receives events in a channel.
     agent does (issues 196, 206): all of it into its history, with its own answers; what can be
     given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
     of its personality, into its transcript. What it reads of the channel, its prompt providers
-    read. When it is asked to respond, it gives the remote agent the prompt parts of its
-    personality first, such as who is in the channel (`channel_members_prompt_provider` with
-    `changes_only`, issue 204, see [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). Its
+    read. When it is asked to respond - once for all it took in together, in the contexts of the
+    last request, as an agent begins one turn (issue 222) - it gives the remote agent the prompt
+    parts of its personality first, such as who is in the channel (`channel_members_prompt_provider`
+    with `changes_only`, issue 204, see [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). Its
     `ContextProvider` assembles them, as an agent's does for a turn (issue 214) - by default
     `external_context_provider`, which gives each part on its own, with the component it came from,
     in the order of the configuration, positions ignored. The actor gives each part only when it is
@@ -295,22 +303,22 @@ An **actor** is anything that sends and receives events in a channel.
     one, also when its provider has nothing new by then. After a restart only what changed is given;
     when the remote agent opens another conversation, all of it again. A2A has no system message:
     the parts are text of the user's message too, ahead of what was said. Then it gives the remote
-    agent its transcript - each message a part of its own, marked with its sender as the
-    component's profile says (`sender_format`, issue 135; `Said` keeps the sender beside it, for a
-    protocol that can carry one) - which then starts anew
-    (`Transcript::start_anew`, issue 205): the transcript's active path is what the remote agent has
-    not heard yet - what a failed send did not give is given with the next one, and a restart gives
-    nothing twice - and what each call gave stays as a branch from its root. It publishes what
-    comes back: pieces as `PartialMessageGenerated`, the answer as `FullResponseGenerated`, a task
-    the remote agent failed as `TurnFailed`. A question back from the remote agent is its answer;
-    the next request continues that task, which is done as that request's work from then on,
-    whatever the remote agent tells of it (issue 213). A cancel cancels the remote task and
-    publishes what came so far - unless the cancel came from lowering the channel, which gives the
-    answer up (issue 212, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)); a stop cancels it - and
-    every other open task of the agent - and publishes nothing. Each request is a piece of work
-    (`Work`), as a turn is - whose `TurnState` holds one: bound by the channel's classification as
-    it is when it begins, and classified as what it has seen - all that was given and what the
-    remote agent declares to bring in.
+    agent its transcript - each message a part of its own, marked with its sender as the component's
+    profile says (`sender_format`, issue 135; `Said` keeps the sender beside it, for a protocol that
+    can carry one) - which then starts anew (`Transcript::start_anew`, issue 205): the transcript's
+    active path is what the remote agent has not heard yet - what a failed send did not give is
+    given with the next one, and a restart gives nothing twice - and what each call gave stays as a
+    branch from its root. It publishes what comes back: pieces as `PartialMessageGenerated`, the
+    answer as `FullResponseGenerated`, a task the remote agent failed as `TurnFailed`. A question
+    back from the remote agent is its answer; the next request continues that task, which is done as
+    that request's work from then on, whatever the remote agent tells of it (issue 213). A cancel
+    cancels the remote task and publishes what came so far - unless the cancel came from lowering
+    the channel, which gives the answer up (issue 212, see
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md)); a stop cancels it - and every other open task of the
+    agent - and publishes nothing. Each request is a piece of work (`Work`), as a turn is - whose
+    `TurnState` holds one: bound by the channel's classification as it is when it begins, and
+    classified as what it has seen - all that was given and what the remote agent declares to bring
+    in.
 *   **An external agent speaks on its own** when a task outlives the request it was given for: the
     answer broke off before the task ended, or the channel was restarted meanwhile - also by a
     crash: a task is stored as soon as the remote agent took it on, with what it was given for it. A

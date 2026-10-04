@@ -11,7 +11,9 @@ in a turn in [COMPONENTS.md](COMPONENTS.md); tools and approvals in
 `AgentActor::run` is a state machine over `ActorState`. Two states wait between turns, five belong
 to a turn.
 
-**Between turns** (`Idle`, `Sleeping`) the agent waits for the next event:
+**Between turns** (`Idle`, `Sleeping`) the agent waits for the next event, and takes it in together
+with everything queued behind it - what came while it was busy - in order (`actor_impl::take_in`,
+issue 222), then commits once:
 
 *   **Perceive.** A `FullResponseGenerated` of another participant is appended to the agent's
     history - all that was offered to it - and passed through its `PerceiveInProcessor`s, which may
@@ -20,10 +22,16 @@ to a turn.
     was heard stays in the history and is not offered again. An external agent takes in what it
     hears the same way (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of
     the policy (issues 85, 90).
-*   **Begin.** A `ResponseRequested` from the moderator begins a turn on its state
-    (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted` and has the agent's
-    `ContextProvider` assemble the context. The agent goes on in `Planning`. A sleeping agent
-    ignores it; only `wakeup` ends the sleep.
+*   **Begin.** The last `ResponseRequested` from the moderator among what was taken in begins one
+    turn on its state (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted` and
+    has the agent's `ContextProvider` assemble the context. The agent goes on in `Planning`. The
+    requests before it are dropped: the one turn answers the conversation as it stands, having
+    heard every message, and acts in the contexts of the last request - with the authority of the
+    last who asked, never of someone who did not. An agent that falls behind thus answers once
+    when it is free again, not once per request that waited, each to a conversation that has moved
+    on. A sleeping agent ignores the request; only `wakeup` ends the sleep. Whether it sleeps is
+    read once everything is taken in: the channel wakes an agent before it delivers the message
+    that asks it, and the request may come in the same batch.
 
 **In a turn** the agent moves through these states:
 
