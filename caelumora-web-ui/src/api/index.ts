@@ -3,6 +3,7 @@ import type {
   ChannelMember,
   ChannelResponse,
   Command,
+  HistoryMessage,
   CommandReply,
   MessageContextResponse,
   CreateChannelRequest,
@@ -217,6 +218,13 @@ export const api = {
   async getMessageContext(sessionId: string, channelId: string, actorUuid: string, messageId: string): Promise<MessageContextResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/messages/${messageId}/context`);
     await ensureOk(res, 'Failed to fetch the context');
+    return res.json();
+  },
+
+  /** All that was offered to actor `actorUuid` in the channel and what it said itself (issue 207). */
+  async getAgentHistory(sessionId: string, channelId: string, actorUuid: string): Promise<HistoryMessage[]> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history`);
+    await ensureOk(res, 'Failed to fetch the history');
     return res.json();
   },
 

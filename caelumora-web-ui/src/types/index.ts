@@ -382,6 +382,17 @@ export interface SeenMessage {
   sets_label: boolean;
 }
 
+/**
+ * A message of an agent's history (issue 207): offered to it or said by it,
+ * whether its context can be shown, and whether it was passed on to the
+ * agent's transcript - not if its perceive processors dropped it.
+ */
+export interface HistoryMessage {
+  message: Message;
+  has_context: boolean;
+  in_transcript: boolean;
+}
+
 /** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {
   message_id: string;

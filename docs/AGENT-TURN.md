@@ -572,16 +572,24 @@ only one of them produced it.
     given, but the messages the remote agent was given in the one call that produced it (issue
     205) - also for a question back, the answer to it, and what a task says unasked, which has
     the context of the call that began the task - without prompt parts or tools, which are the
-    remote agent's own. The whole conversation is in its history. And
+    remote agent's own. The whole conversation is in its history:
+*   `history()`, all that was offered to the agent in the channel and what it said itself (issue
+    207), as the messages stand now. It is one sequence for the agent as a whole and may differ
+    from what the channel shows - an agent that joined late, was asleep or caught up after a
+    restart heard what it heard. `has_context(message_id)` tells which of them `context_of` can
+    answer for, `in_transcript(message_id)` which reached the transcript: not those the perceive
+    processors dropped (issue 196); one they changed keeps its id and counts as passed on. The
+    transcript itself is not shown on its own: what of it the model was given is the context of
+    each message. And
 *   `given_up_turns()`, the turns the agent gave up in the channel (issue 145): each with its
     reason, time and messages. The context of each of those messages is asked for like that of any
     other.
 
 Of an external agent (issue 179) the view is the same, over the same `AgentChannelState` (issue
 206): its transcript is what the remote agent was given; its notes, private notes, given-up turns
-and pending approvals are empty, since it keeps none; and `context_of` answers `NotRecorded` for
-every message, since no context is recorded with its answers yet (issue
-[205](../issues/205-external-agent-message-context.md)).
+and pending approvals are empty, since it keeps none; and `context_of` answers with what the remote
+agent was given in the call that produced the message (issue
+[205](../issues/205-external-agent-message-context.md)), as described above.
 
 REST exposes it as `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
 answers `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor) or `404

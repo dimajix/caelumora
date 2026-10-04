@@ -48,7 +48,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `NotesList`, `TokenGauge`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `NotesList`, `TokenGauge`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -204,3 +204,10 @@ given in earlier calls. The panel's head words it so that it holds for both kind
 … was given"; the label set by what it had seen, marked what of this set it): the REST API does not
 tell them apart. A context never changes, so what was fetched once is kept. See
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
+
+The member list gives every agent whose context the user may read a history icon. It opens the
+history panel (`HistoryPanel`, issue 207): all that was offered to the agent in the channel and what
+it said itself (`GET …/actors/{aid}/history`), which may differ from what the channel shows. What
+its perceive processors did not pass on to its transcript is greyed out and marked "not passed on";
+a message whose context is recorded opens it in the context panel, and closing that returns to the
+history. The history is loaded again whenever the channel's messages change.

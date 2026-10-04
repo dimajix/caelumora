@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronRight,
   Gauge,
+  History,
   NotebookPen,
   Pencil,
   Scale,
@@ -51,6 +52,7 @@ import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {formatArguments, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
 import {TokenGauge} from './TokenGauge';
 import {ContextPanel} from './ContextPanel';
+import {HistoryPanel} from './HistoryPanel';
 import {AddParticipantDialog} from './AddParticipantDialog';
 import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
@@ -141,6 +143,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   // The agent message whose context is shown, with the channel it belongs
   // to - another channel shows none (issue 41).
   const [contextOf, setContextOf] = useState<{channelId: string; message: Message} | null>(null);
+  // The agent whose history is shown, with the channel it belongs to (issue
+  // 207); a context opened from it is shown on top and returns to it.
+  const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
@@ -851,6 +856,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           members={members}
           onClose={() => setContextOf(null)}
         />
+      ) : historyOf && historyOf.channelId === channelId ? (
+        <HistoryPanel
+          key={actorKey(historyOf.member.id)}
+          sessionId={sessionId}
+          channelId={channelId}
+          member={historyOf.member}
+          members={members}
+          version={messages.length}
+          onShowContext={message => setContextOf({channelId, message})}
+          onClose={() => setHistoryOf(null)}
+        />
       ) : (
       <div className="w-64 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block">
         <div className="p-4">
@@ -930,6 +946,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   </div>
                   {usage[actorKey(member.id)] && <TokenGauge usage={usage[actorKey(member.id)]} />}
                 </div>
+                {member.can_read_context && (
+                  <button
+                    onClick={() => setHistoryOf({channelId, member})}
+                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
+                    title={`Show what ${member.name} heard and said`}
+                    aria-label={`Show what ${member.name} heard and said`}
+                  >
+                    <History size={14} />
+                  </button>
+                )}
                 {/* The approver belongs to every channel and cannot be removed. */}
                 {channel?.can_change && member.kind !== 'approver' && (
                   <button

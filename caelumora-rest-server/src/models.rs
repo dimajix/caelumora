@@ -381,6 +381,18 @@ impl From<caelumora_model::transcript::GivenUpTurn> for GivenUpTurnResponse {
     }
 }
 
+/// A message of an agent's history (issue 207) - offered to it or said by
+/// it - with whether its context can be shown (`has_context`: the agent
+/// produced it, and what it saw then is recorded) and whether it was passed
+/// on to the agent's transcript (`in_transcript`: not if its perceive
+/// processors dropped it).
+#[derive(Debug, Serialize)]
+pub struct HistoryMessageResponse {
+    pub message: Message,
+    pub has_context: bool,
+    pub in_transcript: bool,
+}
+
 /// What an agent's model saw when it produced a message (issues 06, 47):
 /// the messages of its transcript and the prompt parts of that turn, in the
 /// order the model was given them, with the digest of the context, and the

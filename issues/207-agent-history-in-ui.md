@@ -1,6 +1,6 @@
 # 207 — An agent's history cannot be shown
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -53,3 +53,14 @@ channel, so it is shown for the agent as a whole.
 ## History
 
 - **2026-10-03** — Issue created. The history is shown per agent, not per message.
+- **2026-10-04** — Decided with the maintainer and done. `AgentContextView` gains `history()`, with
+  `has_context(message)` and `in_transcript(message)` answered from the state it holds; the
+  permission is that of a message's context (`MemberView::context()`). REST:
+  `GET …/actors/{aid}/history`, each message with `has_context` and `in_transcript`. Not paged,
+  unlike the "done when" says: the channel's messages are not paged either, and paging one of two
+  alike endpoints would part them - both are paged together in
+  [218](218-paged-histories.md). Web UI: a history icon in the member list opens `HistoryPanel`;
+  what was not passed on to the transcript is greyed out, a message with a recorded context opens
+  it in `ContextPanel`. The transcript is not shown on its own, and that is no open point: the
+  history is everything heard and said, the transcript is what each message's context is
+  reconstructed from, and that the context panel already shows.

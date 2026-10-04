@@ -1,5 +1,5 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::Sse;
@@ -388,6 +388,23 @@ pub async fn given_up_turns(
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?
         .given_up_turns();
     Ok(Json(turns.into_iter().map(Into::into).collect()))
+}
+
+/// All that was offered to actor `aid` in the channel and what it said
+/// itself (issue 207), oldest first, for whoever may read what it saw.
+/// Not paged: like the channel's messages, the history is returned whole.
+pub async fn agent_history(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<HistoryMessageResponse>>, ApiError> {
+    let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let view = member_of(&channel, aid).await?.context().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the history"))?;
+    let history = view.history().into_iter()
+        .map(|message| HistoryMessageResponse { has_context: view.has_context(message.id), in_transcript: view.in_transcript(message.id), message })
+        .collect();
+    Ok(Json(history))
 }
 
 pub async fn send_approval(

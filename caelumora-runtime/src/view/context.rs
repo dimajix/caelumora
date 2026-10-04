@@ -11,7 +11,7 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
-use caelumora_model::message::MessageId;
+use caelumora_model::message::{Message, MessageId};
 use caelumora_model::note::Note;
 use caelumora_model::transcript::{GivenUpTurn, Transcript};
 
@@ -72,6 +72,28 @@ impl AgentContextView {
         self.state.history.message(message).map(|m| m.classification)
     }
 
+    /// All that was offered to the agent in the channel and what it said
+    /// itself (issue 207), as the messages stand now: the conversation as
+    /// it heard it, for the agent as a whole - what of it each of its
+    /// messages was produced from is that message's context.
+    pub fn history(&self) -> Vec<Message> {
+        self.state.history.messages()
+    }
+
+    /// Whether the agent produced the message `message` and what it saw
+    /// then is recorded - whether `context_of` can tell it.
+    pub fn has_context(&self, message: MessageId) -> bool {
+        self.state.history.all_entries().any(|e| e.entry.context_of(message).is_some())
+    }
+
+    /// Whether the message `message` the agent heard was passed on to its
+    /// transcript, on whichever branch - not if its perceive processors
+    /// dropped it (issue 196). One they changed keeps its id and counts as
+    /// passed on.
+    pub fn in_transcript(&self, message: MessageId) -> bool {
+        self.state.transcript.all_entries().any(|n| n.entry.message().is_some_and(|m| m.id == message))
+    }
+
     /// The turns the agent gave up in the channel, with their messages
     /// (issue 145).
     pub fn given_up_turns(&self) -> Vec<GivenUpTurn> {
@@ -95,7 +117,7 @@ mod tests {
     use caelumora_model::agent::AgentId;
     use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
     use caelumora_model::digest::prompt;
-    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_model::message::MessageRole;
 
     #[test]
     fn a_message_context_is_found_only_for_what_the_agent_produced_and_can_still_be_resolved() {
@@ -119,6 +141,18 @@ mod tests {
         assert!(matches!(view.context_of(question.id), Err(ContextError::NotRecorded { .. })), "someone else wrote it");
         assert_eq!(view.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "the label it was written with");
         assert_eq!(view.classification_of(MessageId::new()), None);
+        let heard: Vec<MessageId> = view.history().iter().map(|m| m.id).collect();
+        assert_eq!(heard, vec![question.id, answer.id], "all it heard and said (issue 207)");
+        assert!(view.has_context(answer.id) && !view.has_context(question.id));
+        assert!(view.in_transcript(question.id));
+
+        // What the perceive processors dropped stays in the history only.
+        let mut heard_only = state.clone();
+        let dropped = text("dropped");
+        heard_only.perceive(vec![dropped.clone()], Vec::new());
+        let view = AgentContextView::of(actor, heard_only);
+        assert!(view.history().iter().any(|m| m.id == dropped.id));
+        assert!(!view.in_transcript(dropped.id) && view.in_transcript(answer.id));
 
         // A prompt part is told with how it was classified (issue 170).
         let confidential = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
