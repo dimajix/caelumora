@@ -16,12 +16,17 @@ with everything queued behind it - what came while it was busy - in order (`acto
 issue 222), then commits once:
 
 *   **Perceive.** A `FullResponseGenerated` of another participant is appended to the agent's
-    history - all that was offered to it - and passed through its `PerceiveInProcessor`s, which may
-    drop, change or add messages; what passes is what the agent processes, and is appended to its
-    transcript - whatever the personality configures (issue 196). A failing stage is logged; what
-    was heard stays in the history and is not offered again. An external agent takes in what it
-    hears the same way (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of
-    the policy (issues 85, 90).
+    history - all that was offered to it, as it was said. What the agent hears of it is offered to
+    its `PerceiveInProcessor`s: of what others said, their words (`Message::as_heard`, issue 224) -
+    a `user` or `assistant` message with text, as a `user` message without its tool calls and
+    results, which were the sender's; nothing of a tool message, an empty one or a `system` one. The
+    rule is the same live, for what was queued and for what an agent catches up with on joining,
+    which comes from the channel's history as it was said. The processors may drop, change or add
+    messages; what passes is what the agent processes, and is appended to its transcript - whatever
+    the personality configures (issue 196). A failing stage is logged; what was heard stays in the
+    history and is not offered again. An external agent takes in what it hears the same way
+    (`actor_impl::perceive`, issue 206). No turn begins, and nothing is asked of the policy (issues
+    85, 90).
 *   **Begin.** The last `ResponseRequested` from the moderator among what was taken in begins one
     turn on its state (`AgentChannelState::begin_turn`, see below), announces `ResponseStarted` and
     has the agent's `ContextProvider` assemble the context. The agent goes on in `Planning`. The

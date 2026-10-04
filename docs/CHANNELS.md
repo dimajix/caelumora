@@ -222,16 +222,16 @@ UI's stop button. It is an operation on the channel, like renaming or deleting i
 taking part: the policy decides who may, and nobody has to be a participant for it (issue 102).
 
 It is not a kill. A running tool finishes, the agent reflects, emits `FullResponseGenerated` so that
-observers stop waiting, and returns to a normal state with its history intact. A model call in
-flight, however, is dropped rather than awaited: `Actor::cancel` is synchronous, leaves the agent's
-run loop an interrupt and cancels the turn's `CancellationToken`. The streaming loop waits on that
-token next to the model's stream, so the request is abandoned at once, wherever it stands (issue
-76). Waiting for an approval waits on it too: a turn waiting for a decision ends at once, without
-one, and withdraws its requests (see [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). The run loop
-takes the interrupt after the step it cut short and goes on in `Cancelling`, whatever that step
-returned; `stop` works the same way with an interrupt of its own, which wins (issue 152). A tool
-does not see the token: it runs to its end, and a cancel waits for it
-([161](../issues/161-tools-cannot-be-interrupted.md)).
+observers stop waiting - the users get it even when the turn said nothing (issue 225) - and returns
+to a normal state with its history intact. A model call in flight, however, is dropped rather than
+awaited: `Actor::cancel` is synchronous, leaves the agent's run loop an interrupt and cancels the
+turn's `CancellationToken`. The streaming loop waits on that token next to the model's stream, so
+the request is abandoned at once, wherever it stands (issue 76). Waiting for an approval waits on it
+too: a turn waiting for a decision ends at once, without one, and withdraws its requests (see
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). The run loop takes the interrupt after the step it
+cut short and goes on in `Cancelling`, whatever that step returned; `stop` works the same way with
+an interrupt of its own, which wins (issue 152). A tool does not see the token: it runs to its end,
+and a cancel waits for it ([161](../issues/161-tools-cannot-be-interrupted.md)).
 
 Lowering a channel's classification cancels its turns in the same way, as a consequence of the
 reclassification; each agent then gives its turn up instead of taking it over (issue 141, see
@@ -288,24 +288,25 @@ An **actor** is anything that sends and receives events in a channel.
     nothing else - the participants, the REST API, the moderator - tells the two apart.
 *   **An external agent** has no turn and no tools. Its actor hears what others say, as every
     participant does - and, when it joins, what it may see of the channel's - and takes it in as an
-    agent does (issues 196, 206): all of it into its history, with its own answers; what can be
-    given on - text others said, no inner steps of a plan - as it passes the `PerceiveInProcessor`s
-    of its personality, into its transcript. What it reads of the channel, its prompt providers
-    read. When it is asked to respond - once for all it took in together, in the contexts of the
-    last request, as an agent begins one turn (issue 222) - it gives the remote agent the prompt
-    parts of its personality first, such as who is in the channel (`channel_members_prompt_provider`
-    with `changes_only`, issue 204, see [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). Its
-    `ContextProvider` assembles them, as an agent's does for a turn (issue 214) - by default
-    `external_context_provider`, which gives each part on its own, with the component it came from,
-    in the order of the configuration, positions ignored. The actor gives each part only when it is
-    not what the remote agent was given last of it (`RemoteState::given_prompts`, stored), since the
-    remote agent keeps its conversation; a part a failed send did not give is given with the next
-    one, also when its provider has nothing new by then. After a restart only what changed is given;
-    when the remote agent opens another conversation, all of it again. A2A has no system message:
-    the parts are text of the user's message too, ahead of what was said. Then it gives the remote
-    agent its transcript - each message a part of its own, marked with its sender as the component's
-    profile says (`sender_format`, issue 135; `Said` keeps the sender beside it, for a protocol that
-    can carry one) - which then starts anew (`Transcript::start_anew`, issue 205): the transcript's
+    agent does (issues 196, 206): all of it into its history, with its own answers; what it hears of
+    what others said - their words, by the rule every agent hears by (`Message::as_heard`, issue
+    224) - as it passes the `PerceiveInProcessor`s of its personality, into its transcript. What it
+    reads of the channel, its prompt providers read. When it is asked to respond - once for all it
+    took in together, in the contexts of the last request, as an agent begins one turn (issue 222) -
+    it gives the remote agent the prompt parts of its personality first, such as who is in the
+    channel (`channel_members_prompt_provider` with `changes_only`, issue 204, see
+    [AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). Its `ContextProvider` assembles them, as
+    an agent's does for a turn (issue 214) - by default `external_context_provider`, which gives
+    each part on its own, with the component it came from, in the order of the configuration,
+    positions ignored. The actor gives each part only when it is not what the remote agent was given
+    last of it (`RemoteState::given_prompts`, stored), since the remote agent keeps its
+    conversation; a part a failed send did not give is given with the next one, also when its
+    provider has nothing new by then. After a restart only what changed is given; when the remote
+    agent opens another conversation, all of it again. A2A has no system message: the parts are text
+    of the user's message too, ahead of what was said. Then it gives the remote agent its
+    transcript - each message a part of its own, marked with its sender as the component's profile
+    says (`sender_format`, issue 135; `Said` keeps the sender beside it, for a protocol that can
+    carry one) - which then starts anew (`Transcript::start_anew`, issue 205): the transcript's
     active path is what the remote agent has not heard yet - what a failed send did not give is
     given with the next one, and a restart gives nothing twice - and what each call gave stays as a
     branch from its root. It publishes what comes back: pieces as `PartialMessageGenerated`, the
@@ -403,7 +404,10 @@ channels:
 
 The built-in moderator, `policy_moderator` (the default), routes the way every channel routes:
 
-*   every message goes to every other participant;
+*   every response goes, as it was said, to every other participant: to the users always, who
+    learn so that an answer ended even when it said nothing (issue 225), to the agents if there is
+    something to hear in it (`Message::is_heard`, issue 224) - each agent takes in its words
+    itself;
 *   how an answer comes about - `ResponseStarted`, partial and complete messages, intermediate
     ones, plan steps - goes to the users, not to the agents, which hear the answer (issue 220);
 *   approvals, failed turns and announced commands go to whom they concern;

@@ -1,6 +1,6 @@
 # 224 — What an agent hears of others is shaped in two places, and on joining not at all
 
-**Status:** in progress
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -135,3 +135,7 @@ Steps 1 and 2 are one commit (the rule in one place, the bug fixed), step 3 anot
   proposed to ask without building what is heard: `Message::is_heard`, which `as_heard` uses too. A
   test's agent that answered with a `system` message now answers as an `assistant`: nothing is heard
   of a `system` message, and nothing in the code says anything into a channel as one.
+- **2026-10-04** — Done. Step 3 in `ee74c00`, with `Message::is_heard` and the agents' iterator
+  built only when there is something to hear, as the maintainer proposed. AGENT-TURN.md
+  (*Perceive*) and CHANNELS.md (the external agent, the moderator, cancelling) say what an agent
+  hears of others, by which rule, and that the users always learn that an answer ended.
