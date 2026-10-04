@@ -63,17 +63,24 @@ export function fillLevel(tokens: number, size: number | undefined): number | nu
   return size ? Math.min(tokens / size, 1) : null;
 }
 
-/** The usage of an agent's calls as label/value rows (issue 209). */
-export function tokenUsageRows(usage: TokenUsage): Array<[string, string]> {
+/**
+ * What an agent's calls used (issue 209), as the text of a tooltip, in two
+ * groups: its context - the last call only, against the context's size -
+ * and its usage, summed over all calls, which grows much faster since
+ * every call is given the whole context again.
+ */
+export function tokenUsageText(usage: TokenUsage): string {
   const level = fillLevel(usage.last_call_tokens, usage.context_size);
+  const context = level === null
+    ? `${formatTokens(usage.last_call_tokens)} tokens, size unknown`
+    : `${formatTokens(usage.last_call_tokens)} of ${formatTokens(usage.context_size!)} tokens (${Math.round(level * 100)} %)`;
   return [
-    ['Context', level === null
-      ? `${formatTokens(usage.last_call_tokens)} tokens, size unknown`
-      : `${formatTokens(usage.last_call_tokens)} of ${formatTokens(usage.context_size!)} (${Math.round(level * 100)} %)`],
-    ['Calls', formatTokens(usage.calls)],
-    ['Prompt tokens', formatTokens(usage.prompt_tokens)],
-    ['Completion tokens', formatTokens(usage.completion_tokens)],
-  ];
+    `Context of the last call: ${context}`,
+    '',
+    `Usage of all ${formatTokens(usage.calls)} calls:`,
+    `Total input tokens: ${formatTokens(usage.prompt_tokens)}`,
+    `Total output tokens: ${formatTokens(usage.completion_tokens)}`,
+  ].join('\n');
 }
 
 /** A duration the LLM backend reported in nanoseconds, in seconds. */
@@ -87,8 +94,8 @@ function seconds(nanoseconds: number): string {
  */
 export function usageRows(message: Message): Array<[string, string]> {
   const rows: Array<[string, string]> = [];
-  if (message.prompt_tokens != null) rows.push(['Prompt tokens', String(message.prompt_tokens)]);
-  if (message.completion_tokens != null) rows.push(['Completion tokens', String(message.completion_tokens)]);
+  if (message.prompt_tokens != null) rows.push(['Input tokens', String(message.prompt_tokens)]);
+  if (message.completion_tokens != null) rows.push(['Output tokens', String(message.completion_tokens)]);
   if (message.prompt_duration != null) rows.push(['Prompt time', seconds(message.prompt_duration)]);
   if (message.completion_duration != null) rows.push(['Completion time', seconds(message.completion_duration)]);
   if (message.total_duration != null) rows.push(['Total time', seconds(message.total_duration)]);

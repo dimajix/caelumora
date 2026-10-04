@@ -3,7 +3,7 @@
 
 import React from 'react';
 import type {TokenUsage} from '../types';
-import {fillLevel, formatTokensShort, tokenUsageRows} from '../messages';
+import {fillLevel, formatTokensShort, tokenUsageText} from '../messages';
 
 /** From this share of its context on, an agent's gauge warns, and from the second it alarms. */
 const WARN_AT = 0.75;
@@ -16,7 +16,7 @@ const ALARM_AT = 0.9;
  */
 export const TokenGauge: React.FC<{usage: TokenUsage}> = ({usage}) => {
   const level = fillLevel(usage.last_call_tokens, usage.context_size);
-  const tooltip = tokenUsageRows(usage).map(([label, value]) => `${label}: ${value}`).join('\n');
+  const tooltip = tokenUsageText(usage);
   if (level === null) {
     return (
       <div className="text-[11px] text-gray-400 dark:text-gray-500" title={tooltip}>

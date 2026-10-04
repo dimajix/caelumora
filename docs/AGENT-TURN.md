@@ -339,12 +339,14 @@ and its answer - and the size of the context the call had (`Message::context_siz
 from its transcript when it is read (`TranscriptView::usage`, a `TokenUsage`), not kept as a
 counter: over the agent's own messages only - the others' in its transcript carry their senders'
 tokens - on every branch, so that turns given up count, since their calls were made, and in the
-turn under way. Two numbers come out of it and mean different things:
+turn under way. Two groups come out of it and mean different things:
 
-*   **consumption** - the prompt and answer tokens of all calls; every call sends the whole context
-    again, so this is what was used, not what is held;
-*   **fill level** - the prompt and answer tokens of the last call (`last_call_tokens`) against its
-    context size: how full the agent's context is.
+*   **context** - the input and output tokens of the last call (`last_call_tokens`) against its
+    context size: how full the agent's context was at its fullest in that call, its reasoning
+    included, which a later call may not be given back;
+*   **usage** - the total input and output tokens of all calls (`prompt_tokens`,
+    `completion_tokens`): what was processed. Every call is given the whole context again, so the
+    totals grow much faster than the context and are no measure of how full it is.
 
 An external agent's calls report no tokens, so its usage is unknown, not zero. The views hand it out
 per member, in its snapshot with `Detail::USAGE`, to whoever reads the channel - who sees the tokens

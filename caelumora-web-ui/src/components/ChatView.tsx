@@ -908,10 +908,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           {channelUsage && (
             <div
               className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
-              title={`All model calls of the channel's agents: ${formatTokens(channelUsage.prompt)} prompt and ${formatTokens(channelUsage.completion)} completion tokens in ${formatTokens(channelUsage.calls)} calls`}
+              title={[
+                `Usage of all ${formatTokens(channelUsage.calls)} model calls of the agents shown:`,
+                `Total input tokens: ${formatTokens(channelUsage.prompt)}`,
+                `Total output tokens: ${formatTokens(channelUsage.completion)}`,
+              ].join('\n')}
             >
               <Gauge size={14} />
-              <span>Tokens used:</span>
+              <span>Total tokens:</span>
               <span className="text-gray-700 dark:text-gray-300">{formatTokensShort(channelUsage.prompt + channelUsage.completion)}</span>
             </div>
           )}

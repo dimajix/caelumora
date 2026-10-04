@@ -163,11 +163,14 @@ have changed.
 
 Under each agent, a bar shows how full its context is (issue 209): the tokens of its last call
 against the size of its context, amber from three quarters on and red from nine tenths
-(`TokenGauge`); without a known size, the tokens alone. Its tooltip holds what all of the agent's
-calls in the channel used, and above the list "Tokens used" adds that up for the agents shown. The
-numbers come with the stream's snapshot, and an agent's are fetched again when its turn ends (`GET
-…/participants/{aid}`); an external agent reports none. A message's usage tooltip shows, beside its
-tokens, how full the context of its call was.
+(`TokenGauge`); without a known size, the tokens alone. Its tooltip keeps two things apart: the
+context of the last call, against the context's size, and the usage of all of the agent's calls in
+the channel as total input and total output tokens - totals, which grow much faster than the
+context, since every call is given the whole context again. Above the list, "Total tokens" adds up
+the usage of the agents shown. The numbers come with the stream's snapshot, and an agent's are
+fetched again when its turn ends (`GET …/participants/{aid}`); an external agent reports none. A
+message's usage tooltip shows the input and output tokens of its call and how full the call's
+context was.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who
