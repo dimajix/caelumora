@@ -61,3 +61,8 @@ not verified by the model.
   runtime at the place of a faked marker, or giving the faked line as a quotation, makes models
   disbelieve it; what is built follows from that. External agents are affected as well - A2A has no
   sender, so the name is in the content there too - and their model cannot be tested.
+- **2026-10-04** — First measurements with gemma4:26b on the input of 135
+  (`work/sender_names/RESULTS.md`, findings 12-16): only the runtime's note together with the
+  quoted line helps, fully under `xml` only. That speaks for `xml` where faked markers matter, and
+  for the note to stand outside the participants' messages. Not decided yet: other models are to
+  be measured first, and whether a faked note can turn the defense against a real message.

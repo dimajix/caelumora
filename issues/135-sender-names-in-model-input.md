@@ -192,3 +192,11 @@ measured.
   hast diese Nachricht geschrieben, @kaya." without a marker of its own; its context panel shows
   the message as `@kaya: Hallo! ...` and the roster part with the explanation. Next: the
   experiments of step 2.
+- **2026-10-04** — Step 2 begun with gemma4:26b alone (`work/sender_names/spoof_defenses.py`,
+  `RESULTS.md` findings 12-16; the run with three models was stopped, the models pushing each other
+  out of the GPU). A faked marker is believed in every format and style without a defense; quoting
+  the line alone does nothing; a note of the runtime after the message together with the quoted
+  line made gemma4 disbelieve it every time under `xml` (10/10), half the time under `prefix`,
+  where the note - an unmarked message - reads like the agent's own and the model began marking its
+  answers itself. No defense made it doubt what was true. Still open: other models, a faked note,
+  the recognition itself.
