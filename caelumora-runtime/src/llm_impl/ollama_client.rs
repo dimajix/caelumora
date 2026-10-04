@@ -12,7 +12,10 @@
 //! applies - `reasoning_history`, which reasoning of earlier messages the
 //! model is given back (`never`, `current_turn` - the default - or
 //! `always`, issue 63), and `system_messages`, where the model keeps system
-//! messages (`only_at_start` - the default - or `anywhere`, issue 49), and
+//! messages (`only_at_start` - the default - or `anywhere`, issue 49),
+//! `sender_format` and `sender_style`, how the model is told who wrote a
+//! message of another participant (`none`, `prefix` - the default - or
+//! `xml`; by `handle` - the default - or `name`, issue 135), and
 //! `context_size`, how many tokens the model's context holds - sent as
 //! `num_ctx`; left out, Ollama's default applies (issue 209). An unknown
 //! parameter is refused, so that a misspelt one does not silently fall back
@@ -39,7 +42,7 @@ use crate::remote::{describe_chain, describe_request_error, RemoteEndpoint};
 use async_stream::stream;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::context::{ModelProfile, ReasoningHistory, SystemMessages};
+use caelumora_model::context::{ModelProfile, ReasoningHistory, SenderFormat, SenderStyle, SystemMessages};
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::tool::{ToolCall, ToolVisibility};
 use chrono::Utc;
@@ -501,6 +504,10 @@ struct OllamaClientConfig {
     reasoning_history: ReasoningHistory,
     #[serde(default)]
     system_messages: SystemMessages,
+    #[serde(default = "SenderFormat::configured_default")]
+    sender_format: SenderFormat,
+    #[serde(default)]
+    sender_style: SenderStyle,
     #[serde(default)]
     context_size: Option<u64>,
 }
@@ -573,7 +580,12 @@ impl OllamaClient {
             endpoint: config.endpoint,
             model: config.model,
             think: config.think,
-            profile: ModelProfile { reasoning_history: config.reasoning_history, system_messages: config.system_messages, ..ModelProfile::default() },
+            profile: ModelProfile {
+                reasoning_history: config.reasoning_history,
+                system_messages: config.system_messages,
+                sender_format: config.sender_format,
+                sender_style: config.sender_style,
+            },
             context_size: config.context_size,
             control_tokens,
             running_context_sizes,
@@ -909,11 +921,14 @@ mod tests {
         assert_eq!(config.think, None);
         assert_eq!(config.reasoning_history, ReasoningHistory::CurrentTurn);
         assert_eq!(config.system_messages, SystemMessages::OnlyAtStart);
+        assert_eq!((config.sender_format, config.sender_style), (SenderFormat::Prefix, SenderStyle::Handle), "told who said what (issue 135)");
 
-        let config: OllamaClientConfig = serde_json::from_value(json!({ "model": "qwen3:8b", "think": true, "reasoning_history": "never", "system_messages": "anywhere" })).unwrap();
+        let config: OllamaClientConfig = serde_json::from_value(json!({ "model": "qwen3:8b", "think": true, "reasoning_history": "never", "system_messages": "anywhere", "sender_format": "xml", "sender_style": "name" })).unwrap();
         assert_eq!((config.model.as_str(), config.think), ("qwen3:8b", Some(true)));
         assert_eq!(config.reasoning_history, ReasoningHistory::Never);
         assert_eq!(config.system_messages, SystemMessages::Anywhere);
+        assert_eq!((config.sender_format, config.sender_style), (SenderFormat::Xml, SenderStyle::Name));
+        assert!(OllamaClientConfig::of(json!({ "sender_format": "header" })).is_err(), "only the formats there are");
     }
 
     #[test]

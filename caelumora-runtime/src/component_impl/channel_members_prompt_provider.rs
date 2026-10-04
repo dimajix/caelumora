@@ -92,14 +92,16 @@ impl PromptProvider for ChannelMembersPromptProvider {
             }
         }
         let roster = (me, others);
+        let explanation = work.profile().sender_explanation();
+        let explanation = explanation.as_deref();
         let text = match &self.told {
-            None => render(roster.0.as_ref(), &roster.1),
+            None => render(roster.0.as_ref(), &roster.1, explanation),
             Some(told) => {
                 let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 if told.as_ref() == Some(&roster) {
                     String::new()
                 } else {
-                    let mut text = render(roster.0.as_ref(), &roster.1);
+                    let mut text = render(roster.0.as_ref(), &roster.1, explanation);
                     if let Some((_, before)) = told.as_ref() {
                         text.push_str(&render_changes(before, &roster.1));
                     }
@@ -116,8 +118,10 @@ impl PromptProvider for ChannelMembersPromptProvider {
 /// The prompt part naming the agent itself, `me`, and the `others`.
 /// Introductions of people are marked as their own words: the system prompt
 /// is what models trust most, and what a participant writes about
-/// themselves must not read as the system's instruction (issue 150).
-fn render(me: Option<&Member>, others: &[Member]) -> String {
+/// themselves must not read as the system's instruction (issue 150). How
+/// the others' messages are marked is told with them, `explanation`, as
+/// the agent's model profile words it (issue 135).
+fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> String {
     let mut text = "[Who is in this channel]\n".to_string();
     if let Some(me) = me {
         text.push_str(&format!("You are {}.\n", named(me)));
@@ -141,6 +145,9 @@ fn render(me: Option<&Member>, others: &[Member]) -> String {
             (_, None) => described(member),
         };
         text.push_str(&format!("- {line}\n"));
+    }
+    if let Some(explanation) = explanation {
+        text.push_str(&format!("{explanation}\n"));
     }
     text
 }
@@ -234,14 +241,16 @@ mod tests {
     #[test]
     fn the_agent_is_named_first_and_people_speak_in_their_own_words() {
         let me = member("Jonathan", false, Some("A quiz master."));
-        let text = render(Some(&me), &[member("Kaya", true, Some("I run the budget.")), member("Sassy", false, None)]);
+        let others = [member("Kaya", true, Some("I run the budget.")), member("Sassy", false, None)];
+        let text = render(Some(&me), &others, None);
         assert_eq!(text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
             The others - mention one by their @handle to address them:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n");
-        assert!(render(Some(&me), &[]).ends_with("Nobody else is in this channel.\n"));
+        assert!(render(Some(&me), &[], Some("Marked.")).ends_with("Nobody else is in this channel.\n"), "nothing to explain without others");
+        assert!(render(Some(&me), &others, Some("Messages of the others begin ...")).ends_with("- Sassy (@sassy), an agent.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
     }
 
     #[test]

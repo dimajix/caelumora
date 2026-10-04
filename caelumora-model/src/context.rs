@@ -181,6 +181,23 @@ impl ModelProfile {
         self.sender_format.given(message, agent, self.sender_style)
     }
 
+    /// What the model is to be told of how the senders of messages are
+    /// marked, `None` if they are not (issue 135): without it, models
+    /// imitate the marker in their answers (`work/sender_names/RESULTS.md`,
+    /// findings 2 and 3).
+    pub fn sender_explanation(&self) -> Option<String> {
+        let (sender, example) = match self.sender_style {
+            SenderStyle::Handle => ("@handle", "@handle"),
+            SenderStyle::Name => ("name", "Name"),
+        };
+        let marked = match self.sender_format {
+            SenderFormat::None => return None,
+            SenderFormat::Prefix => format!("begin with their sender's {sender} and a colon: \"{example}: ...\""),
+            SenderFormat::Xml => format!("are wrapped in an element naming their sender's {sender}: <message from=\"{example}\">...</message>"),
+        };
+        Some(format!("Messages of the others {marked}. Your own messages carry no such marker: answer without one, and never write a message for someone else."))
+    }
+
     /// Gives every system message of `items` that does not lead them - a
     /// prompt part or a message of the conversation - in the role the
     /// model keeps where it stands (issue 49).
@@ -236,6 +253,14 @@ pub enum SenderFormat {
 }
 
 impl SenderFormat {
+    /// How a model or remote agent is given senders unless its component is
+    /// configured otherwise: marked before the content - a channel of
+    /// several participants does not work without. Unlike the type's
+    /// default, which is how a context recorded before it was given.
+    pub fn configured_default() -> Self {
+        Self::Prefix
+    }
+
     /// `message` as the model of `agent` is given it: marked with its
     /// sender, named in `style`, if another participant - a user or agent -
     /// said it, unchanged otherwise.
@@ -519,6 +544,10 @@ mod tests {
 
         let profile = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
         assert_eq!(profile.given(said(alice, "Alice", MessageRole::User, "hi"), agent, false).content.as_deref(), Some("@alice: hi"), "the profile applies it");
+        assert_eq!(ModelProfile::default().sender_explanation(), None, "nothing to explain where nothing is marked");
+        assert!(profile.sender_explanation().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
+        let xml = ModelProfile { sender_format: SenderFormat::Xml, sender_style: SenderStyle::Name, ..ModelProfile::default() };
+        assert!(xml.sender_explanation().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
         let recorded: ModelProfile = serde_json::from_value(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere" })).unwrap();
         assert_eq!(recorded.sender_format, SenderFormat::None, "a context recorded before was given without markers");
     }

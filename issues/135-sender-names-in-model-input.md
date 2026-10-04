@@ -178,3 +178,10 @@ measured.
   which cannot carry a sender, but the base for a protocol that can - and `a2a_agent` sends the
   text as it is instead of formatting `name: text` itself, ignoring the sender. Its profile is
   `prefix` with `name` for now, which sends what it sent before.
+- **2026-10-04** — Step 1.3: configured. `ollama_client` and `a2a_agent` take `sender_format` and
+  `sender_style`, by default `prefix` and `handle` (`SenderFormat::configured_default` - the type's
+  own default stays `none`, how contexts recorded before were given). For Hermes this changes
+  `Kaya: text` to `@kaya: text`. `ModelProfile::sender_explanation` words how the others' messages
+  are marked and that the agent's own carry no marker; the roster part
+  (`channel_members_prompt_provider`) tells it after the others, reading the profile of the work
+  (`AgentWork::profile`), and nothing where nothing is marked or nobody else is there.

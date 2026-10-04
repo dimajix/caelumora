@@ -13,6 +13,7 @@ use crate::agent_state::AgentStateHandle;
 use crate::view::{SessionView, ViewsFactory};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::ModelProfile;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::work::Work;
@@ -89,6 +90,12 @@ impl<'a> AgentWork<'a> {
     /// completes.
     pub fn agent_channel_state(&self) -> &'a AgentChannelState {
         self.agent_channel_state
+    }
+
+    /// How the agent's model is given its context (issue 135): what a
+    /// prompt part tells of how what it is given is marked.
+    pub fn profile(&self) -> ModelProfile {
+        self.work.context.profile
     }
 
     /// The agent's own state (issue 62), shared by all its actors.

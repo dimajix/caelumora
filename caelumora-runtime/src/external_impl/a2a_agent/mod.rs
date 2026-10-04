@@ -59,6 +59,13 @@ struct A2aAgentConfig {
     /// unless named.
     #[serde(default)]
     classification: Option<Classification>,
+    /// How the agent is told who said what (issue 135): A2A has no sender
+    /// of a message, so it is marked in the content - `prefix` unless
+    /// named, by `handle` unless named.
+    #[serde(default = "SenderFormat::configured_default")]
+    sender_format: SenderFormat,
+    #[serde(default)]
+    sender_style: SenderStyle,
 }
 
 impl A2aAgentConfig {
@@ -73,6 +80,7 @@ impl A2aAgentConfig {
 pub struct A2aAgentComponent {
     client: Arc<A2aClient>,
     classification: Option<Classification>,
+    profile: ModelProfile,
 }
 
 impl A2aAgentComponent {
@@ -85,7 +93,8 @@ impl A2aAgentComponent {
         if let Err(e) = client.streaming(security).await {
             warn!("A2A agent component '{}' cannot read its agent card yet: {}", id, e);
         }
-        Ok(Self { client: Arc::new(client), classification: config.classification })
+        let profile = ModelProfile { sender_format: config.sender_format, sender_style: config.sender_style, ..ModelProfile::default() };
+        Ok(Self { client: Arc::new(client), classification: config.classification, profile })
     }
 
     /// The events of `task` on an agent without streaming, asked for with
@@ -205,9 +214,7 @@ impl ExternalAgent for A2aAgentComponent {
     }
 
     fn profile(&self) -> ModelProfile {
-        // What it has always been given: the sender's name before what they
-        // said. Configurable in a step of its own (issue 135).
-        ModelProfile { sender_format: SenderFormat::Prefix, sender_style: SenderStyle::Name, ..ModelProfile::default() }
+        self.profile
     }
 }
 
@@ -333,6 +340,9 @@ mod tests {
     fn the_parameters_name_the_agent_and_how_to_reach_it() {
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/" } })).unwrap();
         assert_eq!(config.timeout(), Duration::from_secs(30));
+        assert_eq!((config.sender_format, config.sender_style), (SenderFormat::Prefix, SenderStyle::Handle), "told who said what (issue 135)");
+        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "sender_format": "none", "sender_style": "name" })).unwrap();
+        assert_eq!((config.sender_format, config.sender_style), (SenderFormat::None, SenderStyle::Name));
         assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x" }, "roles": [] })).is_err(), "nothing unknown");
         assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x", "timeout": 3 } })).is_err(), "nothing unknown in the endpoint");
     }
