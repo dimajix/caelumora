@@ -109,3 +109,10 @@ reason to look a service up each time does not apply.
   `ChannelLoop::member_of`. No behaviour changed. The free `channel::require_cleared`, which
   `SessionLoop` and `SessionManager` call for a new channel, still threads the runtime's services
   into `Member::of`; it goes with the step for the session.
+- **2026-10-05** — Step 4, the session: `SessionLoop` and `SessionManager` take the
+  `SecurityManager`, the `EntityStore` and the `EventBus` - about 70 of their lookups - from the
+  `RuntimeManager` once, in `new`. They keep the `RuntimeManager`, which builds what they make:
+  session loops, channel runtimes, views, the command executor. The few lookups of the `StateStore`
+  and the `ControllerManager` stay, as do the module's helpers `require_classification`,
+  `require_seen` and `channel::require_cleared`, which take the `RuntimeManager` whole rather than
+  its parts. No behaviour changed.

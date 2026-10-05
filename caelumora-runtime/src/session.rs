@@ -2,6 +2,7 @@ use caelumora_model::name::Name;
 use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
+use crate::event::EventBus;
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
@@ -9,7 +10,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
@@ -94,7 +95,13 @@ struct ChannelEntry {
 pub struct SessionLoop {
     id: SessionId,
     session_controller: Arc<SessionController>,
+    /// What builds its channels' runtimes and the views of it.
     runtime_manager: Arc<RuntimeManager>,
+    /// The services it works with, taken from `runtime_manager` once (issue
+    /// 229).
+    security: Arc<dyn SecurityManager>,
+    entities: Arc<dyn EntityStore>,
+    events: Arc<EventBus>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor>,
     /// The session's channels, and which of them run (issue 116). A channel
@@ -133,6 +140,9 @@ impl SessionLoop {
         let session_loop = Arc::new(Self {
             id,
             session_controller,
+            security: runtime_manager.security_manager(),
+            entities: runtime_manager.entity_store(),
+            events: runtime_manager.event_bus(),
             runtime_manager,
             commands,
             channels,
@@ -204,7 +214,7 @@ impl SessionLoop {
     pub async fn channel_for(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let channel = self.channel_by_id(channel_id).ok_or_else(not_found)?;
-        self.runtime_manager.security_manager()
+        self.security
             .require(context, ActionType::GetChannel(&channel.security_attributes()), not_found).await?;
         require_seen(&self.runtime_manager, context, &channel.classification(), not_found).await?;
         Ok(channel)
@@ -232,7 +242,7 @@ impl SessionLoop {
         // Whether the actor may change the session at all, before anything
         // is asked of the others in the channel (issue 198, F2): who may not
         // learns nothing of their clearance.
-        self.runtime_manager.security_manager()
+        self.security
             .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         let name = spec.name;
         if self.channels.iter().any(|entry| entry.channel.name() == name) {
@@ -258,7 +268,7 @@ impl SessionLoop {
 
         let channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, participants);
         crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         store.create_channel(context, &channel).await?;
         if let Err(error) = self.session_controller.add_channel(context, channel.id).await {
             self.discard_channel(channel.id).await;
@@ -277,7 +287,7 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone());
+        self.events.publish(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone());
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)
     }
@@ -311,7 +321,7 @@ impl SessionLoop {
         self.session_controller.remove_channel(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
-        if let Err(e) = self.runtime_manager.entity_store().delete_channel(context, channel_id).await {
+        if let Err(e) = self.entities.delete_channel(context, channel_id).await {
             warn!("Channel {} was taken out of session {} but not marked deleted: {}", channel_id, self.id, e);
         }
 
@@ -320,7 +330,7 @@ impl SessionLoop {
         // and with it whoever did not - is aborted (issue 187): they store
         // their state on their way out, which stays.
         running.stop_actors().await;
-        let event_bus = self.runtime_manager.event_bus();
+        let event_bus = &self.events;
         if let Some(task) = task {
             task.abort();
             event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
@@ -344,10 +354,10 @@ impl SessionLoop {
     ///   session or restore the channel; nothing is changed then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let session = Arc::clone(&self.session());
-        self.runtime_manager.security_manager()
+        self.security
             .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         let channel = match store.get_deleted_channel(context, channel_id).await.optional()? {
             Some(channel) if channel.session_id == self.id => channel,
             _ => return Err(not_found().into()),
@@ -375,7 +385,7 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone());
+        self.events.publish(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone());
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(channel_loop)
     }
@@ -383,7 +393,7 @@ impl SessionLoop {
     /// Deletes the stored channel `channel_id` again after creating it failed
     /// half-way - in the runtime's name: its creation was permitted.
     async fn discard_channel(&self, channel_id: ChannelId) {
-        if let Err(e) = purge_channel_document(self.runtime_manager.entity_store().as_ref(), channel_id).await {
+        if let Err(e) = purge_channel_document(self.entities.as_ref(), channel_id).await {
             warn!("Channel {} of session {} could not be deleted again: {}", channel_id, self.id, e);
         }
     }
@@ -398,7 +408,7 @@ impl SessionLoop {
         let mut join_set = JoinSet::new();
         // The session's own events; those about its users and agents are the
         // `ControllerManager`'s to take in (issue 121).
-        let mut global_rx = self.runtime_manager.event_bus().subscribe_session(self.id());
+        let mut global_rx = self.events.subscribe_session(self.id());
 
         loop {
             tokio::select! {
@@ -416,7 +426,7 @@ impl SessionLoop {
                             // Gone: a deleted channel, whose actors all
                             // stopped in time; `delete_channel` announces it.
                             if let Some(attributes) = attributes {
-                                self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
+                                self.events.publish(GlobalEvent::ChannelStopped(self.id, channel_id), attributes);
                             }
                         }
                         // A deleted channel; `delete_channel` announces it.
@@ -443,7 +453,7 @@ impl SessionLoop {
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let channel = entry.channel.clone();
-        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes());
+        self.events.publish(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes());
         entry.task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()
@@ -469,7 +479,13 @@ pub struct SessionManager {
     /// at the same time (issue 62): two loops of one session would run two
     /// actors per agent and channel, which overwrite each other's state.
     starts: DashMap<SessionId, Arc<tokio::sync::Mutex<()>>>,
+    /// What builds the loops of the sessions it starts.
     runtime_manager: Arc<RuntimeManager>,
+    /// The services it works with, taken from `runtime_manager` once (issue
+    /// 229).
+    security: Arc<dyn SecurityManager>,
+    entities: Arc<dyn EntityStore>,
+    events: Arc<EventBus>,
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -497,6 +513,9 @@ impl SessionManager {
             sessions: DashMap::new(),
             handles: DashMap::new(),
             starts: DashMap::new(),
+            security: runtime_manager.security_manager(),
+            entities: runtime_manager.entity_store(),
+            events: runtime_manager.event_bus(),
             runtime_manager,
         }
     }
@@ -523,7 +542,7 @@ impl SessionManager {
         });
         self.handles.insert(id, handle);
 
-        self.runtime_manager.event_bus().publish(GlobalEvent::SessionStarted(id), attributes);
+        self.events.publish(GlobalEvent::SessionStarted(id), attributes);
         Ok(session_loop)
     }
 
@@ -540,11 +559,11 @@ impl SessionManager {
         match running {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
-                self.runtime_manager.security_manager()
+                self.security
                     .require(context, ActionType::GetSession(&attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
                 Ok(Found::Running(session_loop))
             }
-            None => Ok(Found::Stored(self.runtime_manager.entity_store().get_session(context, id).await?)),
+            None => Ok(Found::Stored(self.entities.get_session(context, id).await?)),
         }
     }
 
@@ -560,7 +579,7 @@ impl SessionManager {
     /// cannot be made into a session; whatever creating the session reports.
     pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<String>) -> Result<Arc<SessionLoop>> {
         let owner = context.initiator_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.initiator_id))?;
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
@@ -581,7 +600,7 @@ impl SessionManager {
             require_classification(&self.runtime_manager, context, &channel.classification).await?;
             crate::channel::require_cleared(&self.runtime_manager, context, channel).await?;
         }
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         store.create_session(context, &session).await?;
         for (index, channel) in channels.iter().enumerate() {
             if let Err(error) = store.create_channel(context, channel).await {
@@ -598,7 +617,7 @@ impl SessionManager {
             }
         }
 
-        let event_bus = self.runtime_manager.event_bus();
+        let event_bus = &self.events;
         event_bus.publish(GlobalEvent::SessionCreated(id), session.security_attributes.clone());
         for channel in &channels {
             event_bus.publish(GlobalEvent::ChannelCreated(id, channel.id), channel.security_attributes.clone());
@@ -611,7 +630,7 @@ impl SessionManager {
     /// session the caller may read follows from an action already permitted,
     /// and it must not fail because the caller is not in one of its channels.
     async fn load_channels(&self, session: &Session) -> Result<Vec<Channel>> {
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         let system = SecurityContext::system();
         let mut channels = Vec::with_capacity(session.channels.len());
         for id in &session.channels {
@@ -660,7 +679,7 @@ impl SessionManager {
         let _starting = start.lock().await;
         let found = self.find(context, id).await?;
         let attributes = found.session().security_attributes;
-        self.runtime_manager.security_manager()
+        self.security
             .require(context, ActionType::StopSession(&attributes), || StoreError::PermissionDenied).await?;
         Ok(matches!(found, Found::Running(_)) && self.stop_running(id).is_some())
     }
@@ -673,7 +692,7 @@ impl SessionManager {
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
             let attributes = session_loop.session().security_attributes.clone();
-            self.runtime_manager.event_bus().publish(GlobalEvent::SessionStopped(id), attributes);
+            self.events.publish(GlobalEvent::SessionStopped(id), attributes);
         }
         removed
     }
@@ -695,7 +714,7 @@ impl SessionManager {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
         let session = self.find(context, id).await?.session();
-        self.runtime_manager.security_manager()
+        self.security
             .require(context, ActionType::DeleteSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
@@ -706,7 +725,7 @@ impl SessionManager {
 
         self.stop_running(id);
 
-        let event_bus = self.runtime_manager.event_bus();
+        let event_bus = &self.events;
         for (channel_id, attributes) in channels {
             event_bus.publish(GlobalEvent::ChannelDeleted(id, channel_id), attributes);
         }
@@ -714,7 +733,7 @@ impl SessionManager {
         // Marked, not removed (issue 164): its channels and their state stay
         // as they are, hidden with it - a channel is reached only through
         // its session - until it is purged.
-        let removed = self.runtime_manager.entity_store().delete_session(context, id).await?;
+        let removed = self.entities.delete_session(context, id).await?;
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         self.starts.remove(&id);
         Ok(removed)
@@ -734,10 +753,10 @@ impl SessionManager {
         // restored.
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         store.restore_session(context, id).await?;
         let session = store.get_session(context, id).await?;
-        self.runtime_manager.event_bus().publish(GlobalEvent::SessionRestored(id), session.security_attributes.clone());
+        self.events.publish(GlobalEvent::SessionRestored(id), session.security_attributes.clone());
         info!("Session {} restored by {}", id, context.caller_id);
         Ok(session)
     }
@@ -757,7 +776,7 @@ impl SessionManager {
     pub async fn purge_session(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         let session = store.get_deleted_session(context, id).await?;
         if !store.purge_session(context, id).await? {
             return Err(StoreError::NotFound { entity: "session", id: id.to_string() }.into());
@@ -793,9 +812,9 @@ impl SessionManager {
     /// not read it, `StoreError::PermissionDenied` if they may but not
     /// delete it.
     pub async fn delete_agent(&self, context: &SecurityContext, id: AgentId) -> Result<()> {
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         let agent = store.get_agent(context, id).await?;
-        self.runtime_manager.security_manager()
+        self.security
             .require(context, ActionType::DeleteAgent(&agent.security_attributes), || StoreError::PermissionDenied).await?;
         let actor = ActorId::Agent(id);
         let system = SecurityContext::system();
@@ -830,7 +849,7 @@ impl SessionManager {
             }
         }
         store.delete_agent(context, id).await?;
-        self.runtime_manager.event_bus().publish(GlobalEvent::AgentDeleted(id), agent.security_attributes.clone());
+        self.events.publish(GlobalEvent::AgentDeleted(id), agent.security_attributes.clone());
         info!("Agent {} deleted by {}", id, context.caller_id);
         Ok(())
     }
@@ -845,14 +864,14 @@ impl SessionManager {
     /// but not restore it, `StoreError::Conflict` if another agent took its
     /// name in its scope meanwhile.
     pub async fn restore_agent(&self, context: &SecurityContext, id: AgentId) -> Result<Agent> {
-        let store = self.runtime_manager.entity_store();
+        let store = &self.entities;
         let deleted = store.get_deleted_agent(context, id).await?;
         if store.list_agents(&SecurityContext::system()).await?.iter().any(|a| a.name == deleted.name) {
             return Err(StoreError::Conflict(format!("agent {} is taken meanwhile", deleted.name)).into());
         }
         store.restore_agent(context, id).await?;
         let agent = Agent { deleted: None, ..deleted };
-        self.runtime_manager.event_bus().publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
+        self.events.publish(GlobalEvent::AgentRestored(id), agent.security_attributes.clone());
         info!("Agent {} restored by {}", id, context.caller_id);
         Ok(agent)
     }
@@ -868,7 +887,7 @@ impl SessionManager {
     /// `context` may not see it, `StoreError::PermissionDenied` if they may
     /// but not purge it.
     pub async fn purge_agent(&self, context: &SecurityContext, id: AgentId) -> Result<()> {
-        if !self.runtime_manager.entity_store().purge_agent(context, id).await? {
+        if !self.entities.purge_agent(context, id).await? {
             return Err(StoreError::NotFound { entity: "agent", id: id.to_string() }.into());
         }
         self.runtime_manager.state_store().delete_agent_state(id).await?;
