@@ -375,23 +375,23 @@ impl MemberView {
     /// The tools the member has now, in their tool sets (issue 194), as it
     /// would offer them at the start of its next turn - read from its
     /// actor, since an agent's tools are built for each of its channels.
-    /// `None` if it has none here: it is no agent run here, has left, or
-    /// the channel does not run.
+    /// None if it has none here: it is no agent run here or has left - and
+    /// also while the channel does not run, when its tools are not built.
     ///
     /// # Errors
     /// `Forbidden` if the member is an agent whose tools the viewer may not
     /// see (`ReadAgentTools`).
-    pub async fn tool_sets(&self) -> ViewResult<Option<Vec<ToolSet>>> {
-        let Some(attributes) = self.state.attributes() else { return Ok(None) };
+    pub async fn tool_sets(&self) -> ViewResult<Vec<ToolSet>> {
+        let Some(attributes) = self.state.attributes() else { return Ok(Vec::new()) };
         let views = self.channel.views();
         let forbidden = || ViewError::Forbidden { actor: self.id() };
         views.runtime().security_manager()
             .require(views.viewer().context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, forbidden).await
             .map_err(|_| forbidden())?;
         if self.former {
-            return Ok(None);
+            return Ok(Vec::new());
         }
-        Ok(self.channel.running().and_then(|channel| channel.actor_by_id(self.id())).and_then(|actor| actor.tool_sets()))
+        Ok(self.channel.running().and_then(|channel| channel.actor_by_id(self.id())).map(|actor| actor.tool_sets()).unwrap_or_default())
     }
 
     /// Whether the viewer may delete the member - an agent that exists,

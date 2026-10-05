@@ -44,11 +44,11 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
     fn state(&self) -> ActorState;
 
     /// The tools it has now, in their tool sets (issue 194), as it would
-    /// offer them at the start of its next turn. `None` for an actor that
-    /// has no tools here - a user, an approver, an external agent, whose
-    /// tools are its remote side's.
-    fn tool_sets(&self) -> Option<Vec<ToolSet>> {
-        None
+    /// offer them at the start of its next turn. None for an actor that has
+    /// no tools here - a user, an approver, an external agent, whose tools
+    /// are its remote side's.
+    fn tool_sets(&self) -> Vec<ToolSet> {
+        Vec::new()
     }
 
     /// Wakes the actor from `Sleeping`. Synchronous and infallible on

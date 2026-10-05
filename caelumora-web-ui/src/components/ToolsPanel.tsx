@@ -23,7 +23,7 @@ interface ToolsPanelProps {
 
 export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, member, onClose}) => {
   const actor = actorUuid(member.id);
-  const [sets, setSets] = useState<ToolSet[] | null | undefined>(undefined);
+  const [sets, setSets] = useState<ToolSet[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,13 +61,11 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, mem
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {notice && <div className="text-sm text-gray-500 dark:text-gray-400">{notice}</div>}
-        {sets === undefined && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
-        {sets === null && (
-          <div className="text-sm text-gray-500 dark:text-gray-400">
-            It has no tools here: it is not running in this channel, or its tools are those of a remote agent.
-          </div>
+        {sets === null && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
+        {sets?.length === 0 && (
+          <div className="text-sm text-gray-500 dark:text-gray-400">It has no tools here.</div>
         )}
-        {sets && (
+        {sets && sets.length > 0 && (
           <>
             <div className="text-xs text-gray-500 dark:text-gray-400">{count} {count === 1 ? 'tool' : 'tools'} in {sets.length} {sets.length === 1 ? 'set' : 'sets'}</div>
             <ToolSetList sets={sets} />

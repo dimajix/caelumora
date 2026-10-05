@@ -836,8 +836,8 @@ impl Actor for AgentActor {
         self.control.state()
     }
 
-    fn tool_sets(&self) -> Option<Vec<ToolSet>> {
-        Some(self.tool_executor.tool_sets())
+    fn tool_sets(&self) -> Vec<ToolSet> {
+        self.tool_executor.tool_sets()
     }
 
     fn wakeup(&self) {

@@ -490,9 +490,9 @@ export interface Tool {
   classification?: Classification;
 }
 
-/** The tools an agent has now in a channel (issue 194); null if it has none here - no agent run here, left, or the channel does not run. */
+/** The tools an agent has now in a channel (issue 194); none where it has none here - no agent run here, left, or the channel does not run. */
 export interface AgentToolsResponse {
-  tool_sets: ToolSet[] | null;
+  tool_sets: ToolSet[];
 }
 
 /** Knowledge a message was produced with (issue 17). */

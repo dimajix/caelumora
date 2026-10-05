@@ -203,7 +203,7 @@ list. It opens the tools panel (`ToolsPanel`): what the agent can call in this c
 (`GET …/actors/{aid}/tools`), by the tool set the tools come from, with each set's description and,
 where it is unavailable, why - each tool marked where a call needs approval, is shown to its owner
 only, or has its results classified. The sets are drawn by `ToolSetList`, as in the context panel.
-An agent that has no tools here - not running, or external - says so.
+An agent that has no tools here - external, or its channel not running - says so.
 
 An agent the user may delete (`can_delete`) has a delete button in the member list; it asks once
 more ("Delete agent?"), since the agent leaves every channel it takes part in, not only this one,

@@ -549,12 +549,12 @@ async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
 
     let hers = member(world.alice).await;
     let (tools, asked) = world.asked(hers.tool_sets()).await;
-    assert!(tools.unwrap().is_some(), "read from its running actor");
+    assert!(tools.is_ok(), "read from its running actor");
     assert_eq!(asked, checks(&["alice: ReadAgentTools(alice's) yes"]));
     let his = member(world.bob).await;
     assert!(his.may_read_tools().await, "offered to bob, who takes part in the channel");
     let (tools, asked) = world.asked(his.tool_sets()).await;
-    assert!(tools.unwrap().is_some(), "and read by him");
+    assert!(tools.is_ok(), "and read by him");
     assert_eq!(asked, checks(&["bob: ReadAgentTools(alice's) yes"]));
     let theirs = world.manager.views(Viewer::new(World::as_user(world.carol))).session(session.id()).await;
     assert!(theirs.is_err(), "carol, who is no member, does not even reach the channel");

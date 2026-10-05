@@ -214,3 +214,7 @@ Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
   (`caelumora.tool-sets.v2`): the same tools treated otherwise are another offer. What issue 137
   kept apart - what the model is told - is now the backend's to keep apart, which sends the model
   name, description and parameters alone.
+- **2026-10-05** — At the maintainer's request, an agent's current tools are a plain list: none for
+  a member that has no tools here and also while the channel does not run, rather than `None`
+  apart from an empty list. The difference lost - "can do nothing" or "not known now" - only shows
+  for a stopped session, which the web UI does not ask about.
