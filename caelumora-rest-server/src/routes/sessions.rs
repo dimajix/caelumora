@@ -1,8 +1,9 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Subject};
-use crate::models::{CreateSessionRequest, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
+use crate::models::{CreateSessionRequest, DeletedResponse, ListOptions, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
 use crate::state::AppState;
-use axum::{extract::State, http::StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::session::SessionId;
@@ -23,14 +24,22 @@ pub async fn create_session(
     Ok(Json(SessionResponse::from(&**session_loop.session())))
 }
 
-pub async fn list_sessions(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let sessions = crate::routes::views(&state, &user).sessions().await
+/// The sessions the user may read - or, with `?deleted=true`, those they
+/// deleted and may read as such, the trash (issue 164).
+pub async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
+    let views = crate::routes::views(&state, &user);
+    if options.deleted {
+        let deleted = views.deleted_sessions().await
+            .map_err(|e| ApiError::internal("sessions_unavailable", "listing the deleted sessions", &e.into()))?;
+        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
+    }
+    let sessions = views.sessions().await
         .map_err(|e| ApiError::internal("sessions_unavailable", "listing the sessions", &e.into()))?;
     let mut listed = Vec::with_capacity(sessions.len());
     for session in sessions {
         listed.push(SessionResponse::from(session.snapshot(Detail::empty()).await));
     }
-    Ok(Json(listed))
+    Ok(Json(listed).into_response())
 }
 
 /// One session with its channels, in the form the global snapshot uses - so
@@ -47,10 +56,31 @@ pub async fn get_session(
     Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
 }
 
+/// Restores the deleted session `id` (issue 164) and answers it as `GET`
+/// does. It is not started; opening it starts it.
+pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    state.session_manager.restore_session(&user.security_context(), session_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("restoring session {session_id}")))?;
+    let session = crate::routes::views(&state, &user).session(session_id).await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("loading session {session_id}")))?;
+    Ok(Json(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into()))
+}
+
+/// Removes the deleted session `id` for good, with its channels and their
+/// state (issue 164) - as the policy allows, by default the system's alone.
+pub async fn purge_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
+    let session_id = SessionId(id);
+    state.session_manager.purge_session(&user.security_context(), session_id).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("purging session {session_id}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
-    // `delete_session` stops the running loop, removes the persisted session (and all of its
-    // channels), and emits the corresponding lifecycle events.
+    // `delete_session` stops the running loop, marks the session deleted -
+    // kept with its channels until it is purged (issue 164) - and emits the
+    // corresponding lifecycle events.
     match state.session_manager.delete_session(&user.security_context(), session_id).await {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
         Err(e) => Err(ApiError::from_runtime(e, Subject::Session, &format!("deleting session {session_id}"))),

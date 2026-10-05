@@ -81,6 +81,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(sessions::get_session).delete(sessions::delete_session).patch(sessions::rename_session),
         )
         .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
+        .route("/sessions/{id}/restore", post(sessions::restore_session))
+        .route("/sessions/{id}/purge", post(sessions::purge_session))
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
         .route(
@@ -88,6 +90,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(channels::get_channel_messages).post(channels::send_message),
         )
         .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
+        .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", axum::routing::put(channels::reclassify_message))
         .route("/sessions/{id}/channels/{cid}/approvals", post(channels::send_approval))
         .route("/sessions/{id}/channels/{cid}/cancel", post(channels::cancel_channel))

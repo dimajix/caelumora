@@ -48,7 +48,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/messages.ts` | Helpers for showing messages, shared by the chat and the context panel |
 | `src/moderator.ts`, `src/confidentiality.ts` | Labels and explanations of responder policies and classifications |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `NotesList`, `TokenGauge`, `HoverCard`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
+| `src/components/` | `Login`, `Sidebar`, `ChatView`, `MessageView`, `MarkdownMessage`, `ContextPanel`, `HistoryPanel`, `DeletedList`, `NotesList`, `TokenGauge`, `HoverCard`, `UsageStats`, `NewChannelDialog`, `AddParticipantDialog`, `PrivacyDialog`, `ErrorBanner` |
 
 ## Talking to the server
 
@@ -102,6 +102,13 @@ then on.
 The user's name at the foot of the sidebar opens `ProfileDialog` (issue 176), where they write how
 they introduce themselves to the agents (`GET`/`PUT /profile`). It counts the characters against the
 limit the server names, and says that every agent in every channel they take part in is given it.
+
+What the user deleted stays in the trash until it is purged (issue 164, `DeletedList`): below the
+sessions a folded "Deleted sessions", and in every unfolded session a folded "Deleted channels",
+each loaded when unfolded and again on `SessionDeleted`, `SessionRestored`, `ChannelDeleted` and
+`ChannelRestored`. An entry shows who deleted it when, and offers "Restore" where `can_restore`
+and "Delete for good" - confirmed by a second click - where `can_purge`; a channel only with its
+session. A restored session or channel is fetched again like a new one.
 
 A new session is created from a template; the one used last in this browser is preselected (issue
 40). A new channel is created with its name, responder policy, classification - a level and, if any

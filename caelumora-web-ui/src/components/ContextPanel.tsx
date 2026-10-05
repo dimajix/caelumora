@@ -139,7 +139,8 @@ const PromptView: React.FC<{prompt: SeenPrompt; leading: boolean}> = ({prompt, l
 function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
   const channel = knowledge.session_id !== sessionId
     ? 'a channel of another session'
-    : knowledge.channel_name ? `#${knowledge.channel_name}` : 'a deleted channel';
+    : knowledge.channel_name ? `#${knowledge.channel_name}`
+    : knowledge.channel_deleted ? 'a deleted channel' : 'a channel you cannot see';
   const agent = knowledge.agent_name ?? 'an agent';
   switch (knowledge.source) {
     case 'notes':

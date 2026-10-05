@@ -402,3 +402,27 @@ rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-l
 
   Not done as planned: `MemberView::left()` does not replace the `former` flag - a former member
   found by its messages has left, but nobody recorded when.
+- **2026-10-05** — Step 5 done: reading what was deleted.
+  - **Views:** `Reached<T> { There, Gone(Removal), Never }` is what `Views::channel_of` answers:
+    gone if the channel or its session was deleted and the viewer could read it were it there
+    (`GetChannel`, `GetSession` on the stored attributes, looked up in the runtime's name), never
+    there for anyone else. `Views::deleted_sessions` and `SessionView::deleted_channels` are the
+    trash, read through `list_deleted_…` as the viewer; a channel may be restored by whoever may
+    restore it and change its session.
+  - **REST:** `GET /sessions?deleted=true` and `GET …/channels?deleted=true` (`DeletedResponse`:
+    `id`, `name`, `deleted`, `can_restore`, `can_purge`), `POST /sessions/{id}/restore`,
+    `POST /sessions/{id}/purge`, `POST …/channels/{cid}/restore`; `KnowledgeRefResponse` has
+    `channel_deleted`.
+  - **Web UI:** `DeletedList`, folded under the sessions and in every unfolded session, with
+    "Restore" and "Delete for good" (confirmed by a second click) as the server allows, reloaded on
+    the delete and restore events. The context panel now tells a deleted channel from one the user
+    cannot see; before, it called every unnamed channel of the session deleted.
+  - **Tests:** a view test of the trash, the view test of `channel_of` for gone and never, a REST
+    test of `DeletedResponse`. REST-SERVER.md, WEB-UI.md, AGENT-TURN.md.
+
+  Departures from the plan. The trash has an entry of its own, `DeletedSnapshot<I>` (sessions and
+  channels alike), instead of `deleted`, `can_restore` and `can_purge` on `SessionSnapshot` and
+  `ChannelSnapshot`: an entry of the trash needs none of the snapshots' details, and the fields
+  would have been optional on two types. `Views::agent_of` and `name_of` stay as they are until
+  step 6, since no agent can be deleted before; there a deleted agent is to be named by its stored
+  name.

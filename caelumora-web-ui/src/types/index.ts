@@ -78,6 +78,18 @@ export interface Removal {
   at: string;
 }
 
+/**
+ * Something deleted - a session, a channel - in the trash (issue 164): who
+ * deleted it and when, and whether you may restore it or remove it for good.
+ */
+export interface Deleted {
+  id: string;
+  name: string;
+  deleted: Removal;
+  can_restore: boolean;
+  can_purge: boolean;
+}
+
 export interface ChannelResponse {
   id: string;
   name: string;
@@ -460,6 +472,8 @@ export interface KnowledgeRef {
   channel_id: string;
   /** Null for a channel that is gone, or of another session. */
   channel_name: string | null;
+  /** Whether the channel was deleted (issue 164) - told only to whoever could read it were it there. */
+  channel_deleted: boolean;
   source: 'notes' | 'private_notes' | 'history' | 'memory';
   /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
   agent_id: ActorId | null;

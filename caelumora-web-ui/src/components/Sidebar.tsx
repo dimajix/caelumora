@@ -18,6 +18,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, sessionChange} from '../globalEvents';
 import {loadLastTemplate, saveLastTemplate} from '../session';
 import {openEventStream} from '../stream';
+import {DeletedList} from './DeletedList';
 import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
 import {ProfileDialog} from './ProfileDialog';
@@ -27,6 +28,12 @@ import {twMerge} from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** Whether `event` may change what the trash holds (issue 164). */
+function trashChangedBy(event: Record<string, unknown>): boolean {
+  const kind = Object.keys(event)[0];
+  return kind === 'SessionDeleted' || kind === 'SessionRestored' || kind === 'ChannelDeleted' || kind === 'ChannelRestored';
 }
 
 /** `sessions` with `session` added, or replacing the one with its id. */
@@ -88,6 +95,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // dialog follows changes to it.
   const [privacyOf, setPrivacyOf] = useState<string | null>(null);
   const privacySession = sessions.find(s => s.id === privacyOf) ?? null;
+  // Changes whenever something may have been deleted or restored, so that
+  // the trash is loaded again (issue 164).
+  const [trashVersion, setTrashVersion] = useState(0);
+  const trashChanged = () => setTrashVersion(v => v + 1);
 
   useEffect(() => {
     api.getTemplates()
@@ -116,6 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // The stream outlives renders; these always see the current props.
   const removeSessionFromStream = useEffectEvent((sessionId: string) => removeSession(sessionId));
+  const trashChangedFromStream = useEffectEvent(() => trashChanged());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
 
   // The list is the global stream's: its snapshot, then its events (issue
@@ -139,6 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return;
         }
         dispatchGlobalEvent(event);
+        if (trashChangedBy(event)) trashChangedFromStream();
         const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);
@@ -227,6 +240,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     try {
       await api.deleteSession(sessionId);
       removeSession(sessionId);
+      trashChanged();
     } catch (error) {
       reportError('Failed to delete session', error);
     }
@@ -248,9 +262,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setSessions(prev => prev.map(s => (s.id === sessionId
         ? { ...s, channels: s.channels.filter(c => c.id !== channelId) }
         : s)));
+      trashChanged();
     } catch (error) {
       reportError('Failed to delete the channel', error);
     }
+  };
+
+  const handleRestoreSession = async (sessionId: string) => {
+    const restored = await api.restoreSession(sessionId);
+    setSessions(prev => upsert(prev, restored));
+    setExpandedSessions(prev => ({ ...prev, [sessionId]: true }));
+  };
+
+  const handleRestoreChannel = async (sessionId: string, channelId: string) => {
+    await api.restoreChannel(sessionId, channelId);
+    await refreshSession(sessionId);
   };
 
   const toggleMenu = (e: React.MouseEvent, sessionId: string) => {
@@ -417,6 +443,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Plus size={14} className="mr-2" />
                     New channel
                   </button>
+                  <DeletedList
+                    title="Deleted channels"
+                    load={() => api.getDeletedChannels(session.id)}
+                    version={trashVersion}
+                    onRestore={(channelId) => handleRestoreChannel(session.id, channelId)}
+                  />
                 </div>
               )}
             </div>
@@ -426,6 +458,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               No sessions found
             </div>
           )}
+          <DeletedList
+            title="Deleted sessions"
+            load={() => api.getDeletedSessions()}
+            version={trashVersion}
+            onRestore={handleRestoreSession}
+            onPurge={(sessionId) => api.purgeSession(sessionId)}
+          />
         </div>
       </div>
 

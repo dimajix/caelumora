@@ -645,7 +645,9 @@ agent was given in the call that produced the message (issue
 REST exposes it as `GET /sessions/{id}/channels/{cid}/actors/{aid}/messages/{mid}/context`. It
 answers `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor) or `404
 context_unavailable` (recorded, but no longer resolvable). The response lists the knowledge read
-with channel and agent names - a channel of another session is not named - and the tools offered
+with channel and agent names - a channel of another session is not named; one deleted is marked
+`channel_deleted` to whoever could read it were it there (`Views::channel_of`, issue 164) - and
+the tools offered
 with the digest of their set. Every prompt part and every knowledge read carries its
 `classification` (`null` if not known), and every item and knowledge read `sets_label`: whether it
 set the message's label (issue 170, `LabelCauses` in the REST server; the rule is in

@@ -42,9 +42,11 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
+use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::StoreResultExt;
+use caelumora_model::snapshot::DeletedSnapshot;
+use caelumora_model::store::{EntityKind, StoreResultExt};
 use std::sync::Arc;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
@@ -210,26 +212,75 @@ impl Views {
     }
 
     /// The channel `channel` of session `session`, wherever it is - what a
-    /// memory entry's origin or a `KnowledgeRef` points to - if the viewer
-    /// may read it:
-    /// `None` if its session or the channel is gone, or not the viewer's to
-    /// read (asked as `session(id)` and `SessionView::channel` ask). Until
-    /// the store keeps what was deleted (issue 164), gone and never there
-    /// are one answer.
+    /// memory entry's origin or a `KnowledgeRef` points to (issue 164):
+    /// there, if the viewer may read it (asked as `session(id)` and
+    /// `SessionView::channel` ask); gone, if it or its session was deleted
+    /// and the viewer could read it were it there (`GetChannel`,
+    /// `GetSession` on its stored attributes), with who deleted it and
+    /// when; never there otherwise - so nothing can be probed.
     ///
     /// # Errors
     /// `Failed` if reaching it failed.
-    pub async fn channel_of(&self, session: SessionId, channel: ChannelId) -> ViewResult<Option<ChannelView>> {
-        let session = match self.session(session).await {
-            Ok(session) => session,
-            Err(ViewError::SessionNotFound(_)) => return Ok(None),
+    pub async fn channel_of(&self, session: SessionId, channel: ChannelId) -> ViewResult<Reached<ChannelView>> {
+        let session_view = match self.session(session).await {
+            Ok(session_view) => session_view,
+            Err(ViewError::SessionNotFound(_)) => return self.gone_session(session).await,
             Err(e) => return Err(e),
         };
-        match session.channel(channel).await {
-            Ok(channel) => Ok(Some(channel)),
-            Err(ViewError::ChannelNotFound { .. }) => Ok(None),
+        match session_view.channel(channel).await {
+            Ok(channel) => Ok(Reached::There(channel)),
+            Err(ViewError::ChannelNotFound { .. }) => self.gone_channel(session, channel).await,
             Err(e) => Err(e),
         }
+    }
+
+    /// Whether session `id` was deleted and the viewer could read it were
+    /// it there.
+    async fn gone_session<T>(&self, id: SessionId) -> ViewResult<Reached<T>> {
+        let deleted = self.runtime.entity_store().get_deleted_session(&SecurityContext::system(), id).await.optional()
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}"))))?;
+        Ok(match deleted {
+            Some(session) if self.runtime.security_manager().may_read_session(self.viewer.context(), &session.security_attributes).await =>
+                session.deleted.map_or(Reached::Never, Reached::Gone),
+            _ => Reached::Never,
+        })
+    }
+
+    /// Whether channel `id` of session `session` was deleted and the viewer
+    /// could read it were it there.
+    async fn gone_channel<T>(&self, session: SessionId, id: ChannelId) -> ViewResult<Reached<T>> {
+        let deleted = self.runtime.entity_store().get_deleted_channel(&SecurityContext::system(), id).await.optional()
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up channel {id}"))))?;
+        Ok(match deleted {
+            Some(channel) if channel.session_id == session
+                && self.runtime.security_manager().may_read_channel(self.viewer.context(), &channel.security_attributes).await =>
+                channel.deleted.map_or(Reached::Never, Reached::Gone),
+            _ => Reached::Never,
+        })
+    }
+
+    /// The sessions the viewer deleted and may read as such (issue 164),
+    /// in the order the store lists them: the trash.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
+        let sessions = self.runtime.entity_store().list_deleted_sessions(self.viewer.context()).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted sessions")))?;
+        let policy = self.runtime.security_manager();
+        let mut deleted = Vec::with_capacity(sessions.len());
+        for session in sessions {
+            let Some(removal) = session.deleted.clone() else { continue };
+            let attributes = &session.security_attributes;
+            deleted.push(DeletedSnapshot {
+                id: session.id,
+                name: session.name.clone(),
+                deleted: removal,
+                can_restore: policy.may_restore(self.viewer.context(), EntityKind::Session, attributes).await,
+                can_purge: policy.may_purge(self.viewer.context(), EntityKind::Session, attributes).await,
+            });
+        }
+        Ok(deleted)
     }
 
     /// Whether the viewer, reading from its place, may read what `source`
@@ -280,6 +331,26 @@ impl Views {
     /// shows less.
     async fn roles(&self) -> Vec<String> {
         caelumora_model::confidentiality::user_roles(self.runtime.entity_store().as_ref(), self.viewer.context().initiator_id).await.unwrap_or_default()
+    }
+}
+
+/// Where an edge leads (issue 164): to what is there, to what was there and
+/// was deleted - by whom and when - or, as far as the viewer may know, to
+/// nothing that ever was.
+#[derive(Debug)]
+pub enum Reached<T> {
+    There(T),
+    Gone(Removal),
+    Never,
+}
+
+impl<T> Reached<T> {
+    /// What is there, if it is.
+    pub fn there(self) -> Option<T> {
+        match self {
+            Reached::There(value) => Some(value),
+            Reached::Gone(_) | Reached::Never => None,
+        }
     }
 }
 
@@ -839,7 +910,7 @@ use caelumora_model::turn::TurnState;
     }
 
     #[tokio::test]
-    async fn a_member_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_none() {
+    async fn a_member_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_told_from_one_never_there() {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
@@ -859,18 +930,65 @@ use caelumora_model::turn::TurnState;
         store.put_channel_state(channel.id, &mut state).await.unwrap();
 
         let views = manager.views(as_user(alice.id));
-        let reached = views.channel_of(session.id, channel.id).await.unwrap().expect("there");
+        let reached = views.channel_of(session.id, channel.id).await.unwrap().there().expect("there");
         let former = reached.member(ActorId::Agent(helper.id)).await.expect("known by what it said");
         assert!(former.former() && former.name() == Some("Helper"));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
         assert!(reached.members().await.iter().all(|m| m.id() != ActorId::Agent(helper.id)), "not listed among the members");
         assert!(matches!(reached.member(ActorId::User(UserId::new())).await, Err(ViewError::MemberNotFound { .. })), "a user who never took part");
 
-        // Gone: the channel, then the session.
-        channel.id = ChannelId::new();
-        assert!(views.channel_of(session.id, channel.id).await.unwrap().is_none());
-        assert!(views.channel_of(SessionId::new(), channel.id).await.unwrap().is_none());
-        assert!(manager.views(as_user(UserId::new())).channel_of(session.id, reached.id()).await.unwrap().is_none(), "nor is it there for a stranger");
+        // Never there: another channel, another session - nor for a stranger.
+        assert!(matches!(views.channel_of(session.id, ChannelId::new()).await.unwrap(), Reached::Never));
+        assert!(matches!(views.channel_of(SessionId::new(), channel.id).await.unwrap(), Reached::Never));
+        let stranger = manager.views(as_user(UserId::new()));
+        assert!(matches!(stranger.channel_of(session.id, reached.id()).await.unwrap(), Reached::Never), "nor is it there for a stranger");
+
+        // Gone (issue 164): the channel deleted, then the session - with who
+        // deleted it, to whoever could read it, and never there for others.
+        let alice_ctx = as_user(alice.id).context().clone();
+        let mut deleted = channel.clone();
+        deleted.id = ChannelId::new();
+        store.create_channel(&system, &deleted).await.unwrap();
+        store.delete_channel(&alice_ctx, deleted.id).await.unwrap();
+        match views.channel_of(session.id, deleted.id).await.unwrap() {
+            Reached::Gone(removal) => assert_eq!(removal.by, ActorId::User(alice.id)),
+            other => panic!("gone, not {other:?}"),
+        }
+        assert!(matches!(stranger.channel_of(session.id, deleted.id).await.unwrap(), Reached::Never), "not to a stranger");
+        store.delete_session(&alice_ctx, session.id).await.unwrap();
+        assert!(matches!(views.channel_of(session.id, channel.id).await.unwrap(), Reached::Gone(_)), "gone with its session");
+        assert!(matches!(stranger.channel_of(session.id, channel.id).await.unwrap(), Reached::Never));
+    }
+
+    #[tokio::test]
+    async fn the_trash_shows_what_its_owner_deleted_with_what_they_may_do_about_it() {
+        let (store, manager) = owned_runtime();
+        let (alice, bob) = (user("alice"), user("bob"));
+        let session = make_session("hers", ActorId::User(alice.id), vec![ActorId::User(bob.id)]);
+        let channel = main_channel(&session);
+        let mut side = channel.clone();
+        side.id = ChannelId::new();
+        side.name = caelumora_model::name::Name::new("side").unwrap();
+        let system = SecurityContext::system();
+        store.create_session(&system, &session).await.unwrap();
+        store.create_channel(&system, &channel).await.unwrap();
+        store.create_channel(&system, &side).await.unwrap();
+        let alice_ctx = as_user(alice.id).context().clone();
+        store.delete_channel(&alice_ctx, side.id).await.unwrap();
+
+        let hers = manager.views(as_user(alice.id));
+        let channels = hers.session(session.id).await.unwrap().deleted_channels().await.unwrap();
+        assert_eq!(channels.iter().map(|c| (c.id, c.name.as_str())).collect::<Vec<_>>(), [(side.id, "side")]);
+        assert!(channels[0].can_restore && !channels[0].can_purge, "restored by her, purged only with the session");
+        assert_eq!(channels[0].deleted.by, ActorId::User(alice.id));
+        let his = manager.views(as_user(bob.id));
+        assert!(his.session(session.id).await.unwrap().deleted_channels().await.unwrap().is_empty(), "not a contributor's trash");
+
+        store.delete_session(&alice_ctx, session.id).await.unwrap();
+        let sessions = hers.deleted_sessions().await.unwrap();
+        assert_eq!(sessions.iter().map(|s| s.id).collect::<Vec<_>>(), [session.id]);
+        assert!(sessions[0].can_restore && !sessions[0].can_purge, "purging is not the owner's");
+        assert!(his.deleted_sessions().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -896,7 +1014,7 @@ use caelumora_model::turn::TurnState;
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();
 
-        let reached = manager.views(as_user(alice.id)).channel_of(session.id, channel.id).await.unwrap().expect("there");
+        let reached = manager.views(as_user(alice.id)).channel_of(session.id, channel.id).await.unwrap().there().expect("there");
         let former = reached.member(ActorId::Agent(helper.id)).await.expect("kept as having left");
         assert!(former.former() && former.left() == Some(&removed));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");

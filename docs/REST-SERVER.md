@@ -60,13 +60,15 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `GET /templates` | The session templates a new session can be made from |
 | `GET /compartments` | The configured compartments a channel's classification may name (issue 133) |
 | `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, and `max_introduction_chars`; `PUT` sets it - `null` or blank removes it - and answers `400 invalid_introduction` for one that is too long or contains control characters |
-| `GET /sessions`, `POST /sessions` | List the user's sessions; create one from a template (`SessionManager::create_from_template`) |
+| `GET /sessions`, `POST /sessions` | List the user's sessions - with `?deleted=true` those they deleted and may read as such, the trash, each with `deleted` (who, when), `can_restore` and `can_purge` (issue 164); create one from a template (`SessionManager::create_from_template`) |
+| `POST /sessions/{id}/restore`, `POST /sessions/{id}/purge` | Restore a deleted session - answered like `GET /sessions/{id}`, not started -, or remove it for good with its channels and their state; `403` unless the policy allows, by default the system's alone (issue 164) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
 | `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
-| `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)) |
+| `GET …/channels`, `POST …/channels` | List a session's channels - with `?deleted=true` those deleted from it, like the sessions' trash (issue 164); create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)) |
 | `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel, with its `former_members`, each with `left` - who removed it and when (issue 164); delete it - marked and kept (issue 164) |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
+| `POST …/channels/{cid}/restore` | Restore a deleted channel into its session and start it again, answered like `GET`; `409` if its name was taken meanwhile. A channel is purged only with its session (issue 164) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`) |
 | `POST …/approvals` | Approve or deny a tool call |

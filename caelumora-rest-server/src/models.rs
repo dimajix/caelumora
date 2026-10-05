@@ -7,7 +7,7 @@ use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::template::{SessionTemplate, SessionTemplateId};
 use caelumora_model::snapshot;
-use caelumora_runtime::view::SessionView;
+use caelumora_runtime::view::{Reached, SessionView};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -114,6 +114,32 @@ impl ParticipantKind {
 pub struct StreamOptions {
     #[serde(default)]
     pub snapshot: bool,
+}
+
+/// Whether a listing lists what is there or what was deleted - the trash
+/// (issue 164).
+#[derive(Debug, Default, Deserialize)]
+pub struct ListOptions {
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+/// Something deleted - a session, a channel - in the trash (issue 164): who
+/// deleted it and when, and whether the requesting user may restore it or
+/// remove it for good.
+#[derive(Debug, Serialize)]
+pub struct DeletedResponse<I> {
+    pub id: I,
+    pub name: String,
+    pub deleted: caelumora_model::removal::Removal,
+    pub can_restore: bool,
+    pub can_purge: bool,
+}
+
+impl<I> From<snapshot::DeletedSnapshot<I>> for DeletedResponse<I> {
+    fn from(view: snapshot::DeletedSnapshot<I>) -> Self {
+        Self { id: view.id, name: view.name, deleted: view.deleted, can_restore: view.can_restore, can_purge: view.can_purge }
+    }
 }
 
 /// The state of a channel when a stream connects: its members and the end of
@@ -469,6 +495,9 @@ pub struct KnowledgeRefResponse {
     pub channel_id: caelumora_model::session::ChannelId,
     /// `None` for a channel that is gone, or of another session.
     pub channel_name: Option<String>,
+    /// Whether the channel was deleted (issue 164) - told only to whoever
+    /// could read it were it there; for anyone else, it never was.
+    pub channel_deleted: bool,
     /// `"notes"`, `"private_notes"`, `"memory"` or `"history"`.
     pub source: &'static str,
     /// Whose notes, for `"notes"` and `"private_notes"`.
@@ -493,10 +522,12 @@ impl KnowledgeRefResponse {
     pub async fn describe(session: &SessionView, knowledge: &KnowledgeRef, causes: &LabelCauses) -> Self {
         // Named only if the viewer may read it - of this session or another
         // (issue 134) - and it is still there; by id alone otherwise.
-        let channel = session.views().channel_of(knowledge.session, knowledge.channel).await.unwrap_or_else(|e| {
+        let reached = session.views().channel_of(knowledge.session, knowledge.channel).await.unwrap_or_else(|e| {
             tracing::warn!("Cannot reach channel {} of the knowledge read: {:#}", knowledge.channel, e);
-            None
+            Reached::Never
         });
+        let channel_deleted = matches!(reached, Reached::Gone(_));
+        let channel = reached.there();
         let (source, agent_id, digest, history_start) = match knowledge.source {
             KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
             KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
@@ -511,6 +542,7 @@ impl KnowledgeRefResponse {
             session_id: knowledge.session,
             channel_id: knowledge.channel,
             channel_name: channel.map(|c| c.name().to_string()),
+            channel_deleted,
             source,
             agent_id,
             agent_name,
@@ -659,6 +691,19 @@ mod tests {
         assert_eq!(json["notes"][0]["notes"][0]["id"], 1);
         assert_eq!(json["pending_approvals"], serde_json::json!([]));
         assert!(json["channel"]["members"][1].get("notes").is_none(), "not repeated at the member");
+    }
+
+    #[test]
+    fn something_deleted_is_answered_with_who_deleted_it_and_what_may_be_done() {
+        let alice = ActorId::User(UserId::new());
+        let id = SessionId::new();
+        let removal = caelumora_model::removal::Removal::now(alice);
+        let deleted = snapshot::DeletedSnapshot { id, name: "hers".to_string(), deleted: removal, can_restore: true, can_purge: false };
+        let json = serde_json::to_value(DeletedResponse::from(deleted)).unwrap();
+        assert_eq!(json["id"], serde_json::to_value(id).unwrap());
+        assert_eq!(json["deleted"]["by"], serde_json::to_value(alice).unwrap());
+        assert!(json["deleted"]["at"].is_string());
+        assert_eq!((json["can_restore"].as_bool(), json["can_purge"].as_bool()), (Some(true), Some(false)));
     }
 
     #[test]

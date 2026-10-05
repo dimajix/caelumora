@@ -20,6 +20,8 @@ export type SessionChange =
 // themselves are not shown in the list.
 const REFRESHING = new Set([
   'SessionCreated',
+  'SessionRestored',
+  'ChannelRestored',
   'ChannelCreated',
   'ChannelUpdated',
   'ChannelDeleted',

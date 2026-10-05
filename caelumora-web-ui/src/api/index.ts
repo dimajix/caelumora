@@ -9,6 +9,7 @@ import type {
   MessageContextResponse,
   CreateChannelRequest,
   CreateSessionRequest,
+  Deleted,
   Message,
   PublishedNotes,
   SessionResponse,
@@ -273,6 +274,40 @@ export const api = {
       method: 'DELETE',
     });
     await ensureOk(res, 'Failed to delete session');
+  },
+
+  /** The sessions you deleted and may read as such: the trash (issue 164). */
+  async getDeletedSessions(): Promise<Deleted[]> {
+    const res = await request('/sessions?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted sessions');
+    return res.json();
+  },
+
+  /** Restores a deleted session (issue 164); it is not started until it is opened. */
+  async restoreSession(sessionId: string): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the session');
+    return res.json();
+  },
+
+  /** Removes a deleted session for good, with its channels (issue 164). */
+  async purgeSession(sessionId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the session for good');
+  },
+
+  /** The channels deleted from a session that you may read as such (issue 164). */
+  async getDeletedChannels(sessionId: string): Promise<Deleted[]> {
+    const res = await request(`/sessions/${sessionId}/channels?deleted=true`);
+    await ensureOk(res, 'Failed to fetch the deleted channels');
+    return res.json();
+  },
+
+  /** Restores a deleted channel into its session and starts it again (issue 164). */
+  async restoreChannel(sessionId: string, channelId: string): Promise<ChannelResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the channel');
+    return res.json();
   },
 
   async renameSession(sessionId: string, name: string): Promise<SessionResponse> {

@@ -136,3 +136,18 @@ pub struct MemberSnapshot {
     /// takes part.
     pub left: Option<crate::removal::Removal>,
 }
+
+/// Something deleted - a session, a channel - as the trash shows it to the
+/// viewer (issue 164): what it was called, who deleted it and when, and
+/// what the viewer may do about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeletedSnapshot<I> {
+    pub id: I,
+    pub name: String,
+    pub deleted: crate::removal::Removal,
+    /// Whether the viewer may restore it.
+    pub can_restore: bool,
+    /// Whether the viewer may remove it for good - never for a channel,
+    /// which is purged with its session.
+    pub can_purge: bool,
+}

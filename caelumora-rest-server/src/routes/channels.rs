@@ -1,8 +1,8 @@
 use crate::auth::AuthenticatedUser;
-use crate::models::{AddParticipantRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
+use crate::models::{AddParticipantRequest, DeletedResponse, ListOptions, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CreateChannelRequest, KnowledgeRefResponse, CommandReplyResponse, ExecuteCommandRequest, GivenUpTurnResponse, HistoryMessageResponse, LabelCauses, MessageContextResponse, SeenItemResponse, PublishedNotesResponse, SendApprovalRequest, SendMessageRequest, StreamOptions};
 use crate::state::AppState;
 use axum::response::sse::Event;
-use axum::response::Sse;
+use axum::response::{IntoResponse, Response, Sse};
 use crate::error::{ApiError, Subject};
 use axum::{extract::{Query, State}, http::StatusCode};
 use crate::error::{Json, Path};
@@ -26,21 +26,44 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// The channels of the session the user may read - or, with
+/// `?deleted=true`, those deleted from it they may read as such (issue 164).
 pub async fn list_channels(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
+    Query(options): Query<ListOptions>,
     user: AuthenticatedUser,
-) -> Result<Json<Vec<ChannelResponse>>, ApiError> {
+) -> Result<Response, ApiError> {
     let session_id = SessionId(id);
     // Only the channels the user may read (issue 70), as they see them
     // (issue 80).
     let session = crate::routes::views(&state, &user).session(session_id).await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("listing the channels of session {session_id}")))?;
-    let mut channels = Vec::new();
+    if options.deleted {
+        let deleted = session.deleted_channels().await
+            .map_err(|e| ApiError::from_runtime(e.into(), Subject::Session, &format!("listing the deleted channels of session {session_id}")))?;
+        return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
+    }
+    let mut channels: Vec<ChannelResponse> = Vec::new();
     for channel in session.channels().await {
         channels.push(channel.snapshot(Detail::MEMBERS).await.into());
     }
-    Ok(Json(channels))
+    Ok(Json(channels).into_response())
+}
+
+/// Restores a channel deleted from the session (issue 164), starts it again
+/// and answers it as `GET` does. Only who may change the session and
+/// restore the channel may.
+pub async fn restore_channel(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<ChannelResponse>, ApiError> {
+    let session_id = SessionId(id);
+    let session = crate::routes::ensure_session(&state, &user, session_id).await?;
+    session.restore_channel(&user.security_context(), ChannelId(cid)).await
+        .map_err(|e| ApiError::from_runtime(e, Subject::Session, &format!("restoring channel {cid} of session {session_id}")))?;
+    Ok(Json(crate::routes::channel_view(&state, &user, session_id, ChannelId(cid)).await?))
 }
 
 /// Creates a channel in the session and starts it (issue 09). Only who may

@@ -10,7 +10,8 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::snapshot::{Detail, ParticipantSnapshot, SessionSnapshot};
+use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
+use caelumora_model::store::EntityKind;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -185,6 +186,33 @@ impl SessionView {
                 channels
             }
         }
+    }
+
+    /// The channels of the session the viewer deleted and may read as such
+    /// (issue 164): the session's trash. One may be restored by whoever may
+    /// restore it and change the session (`SessionLoop::restore_channel`);
+    /// none is purged but with the session.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
+        let runtime = self.views().runtime();
+        let context = self.views().viewer().context();
+        let channels = runtime.entity_store().list_deleted_channels(context).await
+            .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id()))))?;
+        let may_change = self.may_change().await;
+        let mut deleted = Vec::new();
+        for channel in channels.into_iter().filter(|c| c.session_id == self.id()) {
+            let Some(removal) = channel.deleted.clone() else { continue };
+            deleted.push(DeletedSnapshot {
+                id: channel.id,
+                name: channel.name.to_string(),
+                deleted: removal,
+                can_restore: may_change && runtime.security_manager().may_restore(context, EntityKind::Channel, &channel.security_attributes).await,
+                can_purge: false,
+            });
+        }
+        Ok(deleted)
     }
 
     /// The session as the viewer sees it at this moment (issue 80): with
