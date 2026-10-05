@@ -9,7 +9,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextItem, ContextResolver, PromptPart, PromptRef};
 use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::tool::ToolDefinition;
+use caelumora_model::tool::Tool;
 
 impl Turn<'_> {
     /// What the model is given for the next step - its messages and the
@@ -20,7 +20,7 @@ impl Turn<'_> {
     /// tools the turn offers (issue 137). Resolved from the turn's context the
     /// way a recorded message's context is (`ContextResolver`, issue 136),
     /// so the two cannot diverge.
-    pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<ToolDefinition>)> {
+    pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<Tool>)> {
         let resolved = ContextResolver::of(self.agent_channel_state)
             .resolve(&self.current().work.context, ActorId::Agent(self.agent_id))
             .context("the context of the turn names what the agent's state does not hold")?;
@@ -219,7 +219,7 @@ mod tests {
             state.begin_turn(Default::default(), Default::default(), Default::default(), sets, Default::default());
             let mut turn = Turn::of(agent, "agent".to_string(), state, crate::agent_state::AgentStateHandle::detached()).expect("a turn was begun");
             let (_, offered) = turn.full_context().unwrap();
-            assert_eq!(offered, tools.iter().map(Tool::definition).collect::<Vec<_>>(), "the model is offered what the turn began with");
+            assert_eq!(offered, tools, "the model is offered what the turn began with");
             for message in messages {
                 turn.push_message((*message).clone());
             }
@@ -227,15 +227,16 @@ mod tests {
         };
         take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
         take_turn(&mut state, Vec::new(), &[&third]);
-        // Only what the model is told of a tool counts for its set.
+        // The same tools, treated otherwise: offered so then.
         take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
         let offered = |id| ContextResolver::of(&state).resolve(&state.recorded_context_of(id).unwrap(), ActorId::Agent(agent))
-            .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| t.name).collect::<Vec<_>>();
-        assert_eq!(offered(first.id), ["echo", "notes"]);
-        assert_eq!(offered(second.id), ["echo", "notes"], "the whole turn offers the same tools");
+            .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
+        let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
+        assert_eq!(named(offered(first.id)), ["echo", "notes?"]);
+        assert_eq!(named(offered(second.id)), ["echo", "notes?"], "the whole turn offers the same tools");
         assert!(offered(third.id).is_empty(), "none were offered");
-        assert_eq!(offered(fourth.id), ["echo", "notes"]);
-        assert_eq!(state.offered_tools.len(), 1, "a set offered again is kept once");
+        assert_eq!(named(offered(fourth.id)), ["echo?", "notes"], "as they were treated when they were offered");
+        assert_eq!(state.offered_tools.len(), 2, "each offer kept once");
     }
 }

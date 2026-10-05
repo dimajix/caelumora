@@ -18,7 +18,7 @@ use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::name::{Name, ScopedName};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::Journaled;
-use crate::tool::{RecordedToolSets, Tool, ToolDefinition, ToolSet};
+use crate::tool::{RecordedToolSets, Tool, ToolSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -212,7 +212,7 @@ pub struct AgentChannelState {
     /// point to (issues 137, 194). Stored as `tool_sets` before issue 194
     /// took the name, and each offer as a flat list of tools.
     #[serde(alias = "tool_sets", deserialize_with = "recorded_offers")]
-    pub offered_tools: Kept<Vec<ToolSet<ToolDefinition>>>,
+    pub offered_tools: Kept<Vec<ToolSet>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
@@ -265,9 +265,8 @@ impl AgentChannelState {
         profile: ModelProfile,
     ) {
         let offered = (!tool_sets.is_empty()).then(|| {
-            let definitions: Vec<ToolSet<ToolDefinition>> = tool_sets.iter().map(ToolSet::definition).collect();
-            let digest = crate::digest::tool_sets(&definitions);
-            self.offered_tools.keep(digest, || definitions);
+            let digest = crate::digest::tool_sets(&tool_sets);
+            self.offered_tools.keep(digest, || tool_sets.clone());
             digest
         });
         let tools: Vec<Tool> = tool_sets.into_iter().flat_map(|set| set.tools).collect();
@@ -375,7 +374,7 @@ pub enum AgentChannelStateChange {
     OfferedTools {
         digest: Digest,
         #[serde(deserialize_with = "recorded_offer")]
-        tools: Vec<ToolSet<ToolDefinition>>,
+        tools: Vec<ToolSet>,
     },
     ProcessingState(ActorState),
     /// The turn under way, whole: it is changed in place at every step
@@ -387,12 +386,12 @@ pub enum AgentChannelStateChange {
 }
 
 /// The tool sets of one offer as they were recorded (`RecordedToolSets`).
-fn recorded_offer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<ToolSet<ToolDefinition>>, D::Error> {
+fn recorded_offer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<ToolSet>, D::Error> {
     RecordedToolSets::deserialize(deserializer).map(Into::into)
 }
 
 /// Every offer of tool sets as it was recorded (`RecordedToolSets`).
-fn recorded_offers<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Kept<Vec<ToolSet<ToolDefinition>>>, D::Error> {
+fn recorded_offers<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Kept<Vec<ToolSet>>, D::Error> {
     Kept::<RecordedToolSets>::deserialize(deserializer).map(|kept| kept.map(Into::into))
 }
 

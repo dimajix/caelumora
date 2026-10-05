@@ -458,32 +458,31 @@ export interface MessageContextResponse {
   /** The digest of the tool sets the model was offered, null if none (issue 137). */
   tools_digest: string | null;
   /** The tools the model was offered, as it was told of them, in their sets (issue 194). */
-  tool_sets: ToolSet<ToolDefinition>[];
+  tool_sets: ToolSet[];
 }
 
 /**
  * The tools of one source of an agent - a component, e.g. an MCP server - with what they are for
  * (issue 194). A record made before has one set without a name.
  */
-export interface ToolSet<T> {
+export interface ToolSet {
   /** The component the tools come from; empty in a record made before tool sets. */
   name: string;
   description: string;
-  tools: T[];
+  tools: Tool[];
   /** Why the source gives no tools now; absent if it does. */
   unavailable?: string;
 }
 
-/** A tool as a model is offered it (issue 137). */
-export interface ToolDefinition {
+/**
+ * A tool of an agent (issues 137, 194): what its model is told of it - name, description, parameters -
+ * and what only the runtime acts on.
+ */
+export interface Tool {
   name: string;
   description: string;
-  /** Its parameters, as the model was told of them (`ToolParameters`). */
+  /** Its parameters, as the model is told of them (`ToolParameters`). */
   parameters: unknown;
-}
-
-/** A tool as an agent has it, with what only the runtime acts on (issue 194). */
-export interface Tool extends ToolDefinition {
   requires_approval: boolean;
   /** Absent: its calls are shown to the channel. */
   visibility?: ToolVisibility;
@@ -493,7 +492,7 @@ export interface Tool extends ToolDefinition {
 
 /** The tools an agent has now in a channel (issue 194); null if it has none here - no agent run here, left, or the channel does not run. */
 export interface AgentToolsResponse {
-  tool_sets: ToolSet<Tool>[] | null;
+  tool_sets: ToolSet[] | null;
 }
 
 /** Knowledge a message was produced with (issue 17). */

@@ -226,17 +226,18 @@ where they were given, a leading system prompt on top (issue 47), the knowledge 
 "Knowledge read" - a channel of another session, which an agent's memory came from, is not named
 (issue 134) - and - collapsed - the tools the model was offered as "Tools offered", grouped by the
 tool set they came from with its description and, where it was unavailable, why (issue 194), each
-tool with its description and parameters (issue 137). Every prompt part, message and knowledge read
-shows how it was classified - "counts as the channel" where that is not known - and what set the
-message's label, which the panel's head names, is marked in amber (issue 170). The panel shows
-internal messages and tool results, which the chat hides, and the reasoning of the messages the
-model was given, marked "owner only" where it is the owner's; `MessageView` renders a message the
-same way in both. For an answer of an external agent the panel shows the messages the remote agent
-was given in the call that produced it, and nothing else (issue 205): no prompt parts, tools or
-knowledge, and not what it was given in earlier calls. The panel's head words it so that it holds
-for both kinds of agent ("What … was given"; the label set by what it had seen, marked what of this
-set it): the REST API does not tell them apart. A context never changes, so what was fetched once is
-kept. See [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
+tool with its description and parameters (issue 137) and marked, as in the tools panel, where a call
+needed approval, was shown to its owner only, or had its results classified. Every prompt part,
+message and knowledge read shows how it was classified - "counts as the channel" where that is not
+known - and what set the message's label, which the panel's head names, is marked in amber (issue
+170). The panel shows internal messages and tool results, which the chat hides, and the reasoning of
+the messages the model was given, marked "owner only" where it is the owner's; `MessageView` renders
+a message the same way in both. For an answer of an external agent the panel shows the messages the
+remote agent was given in the call that produced it, and nothing else (issue 205): no prompt parts,
+tools or knowledge, and not what it was given in earlier calls. The panel's head words it so that it
+holds for both kinds of agent ("What … was given"; the label set by what it had seen, marked what of
+this set it): the REST API does not tell them apart. A context never changes, so what was fetched
+once is kept. See [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
 
 The member list gives every agent whose context the user may read a history icon. It opens the
 history panel (`HistoryPanel`, issue 207): all that was offered to the agent in the channel and what

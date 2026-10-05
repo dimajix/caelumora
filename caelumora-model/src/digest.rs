@@ -256,11 +256,11 @@ pub fn prompt(prompt: &str) -> Digest {
 }
 
 /// The digest of the tool sets a model is offered, in the order it is
-/// offered them (issues 137, 194): what the model is told of each set -
-/// name, description, whether it is unavailable - and of each of its tools -
-/// name, description, parameters.
-pub fn tool_sets(sets: &[crate::tool::ToolSet<crate::tool::ToolDefinition>]) -> Digest {
-    let mut e = Encoder::new("caelumora.tool-sets.v1");
+/// offered them (issues 137, 194): of each set its name, description and
+/// whether it is unavailable, of each of its tools all of it - what the
+/// model is told, and how the runtime treats its calls then.
+pub fn tool_sets(sets: &[crate::tool::ToolSet]) -> Digest {
+    let mut e = Encoder::new("caelumora.tool-sets.v2");
     e.bytes(&(sets.len() as u64).to_le_bytes());
     for set in sets {
         e.str(&set.name);
@@ -268,9 +268,7 @@ pub fn tool_sets(sets: &[crate::tool::ToolSet<crate::tool::ToolDefinition>]) -> 
         e.opt_str(set.unavailable.as_deref());
         e.bytes(&(set.tools.len() as u64).to_le_bytes());
         for tool in &set.tools {
-            e.str(&tool.name);
-            e.str(&tool.description);
-            e.json(&to_json(&tool.parameters));
+            e.json(&to_json(tool));
         }
     }
     e.finish()
@@ -332,18 +330,22 @@ mod tests {
 
     #[test]
     fn the_tools_offered_are_told_apart_by_what_the_model_is_told() {
-        use crate::tool::{ToolDefinition, ToolParameters, ToolSet};
-        let tool = |name: &str, description: &str| ToolDefinition {
+        use crate::tool::{Tool, ToolParameters, ToolSet};
+        let tool = |name: &str, description: &str| Tool {
             name: name.to_string(),
             description: description.to_string(),
             parameters: ToolParameters::object([("a", ToolParameters::string("x")), ("b", ToolParameters::number("y"))], ["a"]),
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
         };
-        let set = |name: &str, tools: Vec<ToolDefinition>| ToolSet::new(name, format!("the {name} tools"), tools);
+        let set = |name: &str, tools: Vec<Tool>| ToolSet::new(name, format!("the {name} tools"), tools);
         let (a, b) = (tool("a", "does a"), tool("b", "does b"));
-        let sets = |tools: Vec<ToolDefinition>| tool_sets(&[set("s", tools)]);
+        let sets = |tools: Vec<Tool>| tool_sets(&[set("s", tools)]);
         assert_eq!(sets(vec![a.clone(), b.clone()]), sets(vec![a.clone(), b.clone()]), "the order of parameters in a map does not matter");
         assert_ne!(sets(vec![a.clone(), b.clone()]), sets(vec![b.clone(), a.clone()]), "the order they are offered in does");
         assert_ne!(sets(vec![a.clone()]), sets(vec![tool("a", "does something else")]), "the description does");
+        assert_ne!(sets(vec![a.clone()]), sets(vec![Tool { requires_approval: true, ..a.clone() }]), "and how its calls are treated");
         assert_ne!(tool_sets(&[set("s", vec![a.clone(), b.clone()])]), tool_sets(&[set("s", vec![a.clone()]), set("t", vec![b.clone()])]), "the grouping does");
         let unavailable = ToolSet { unavailable: Some("unreachable".to_string()), ..set("s", Vec::new()) };
         assert_ne!(tool_sets(&[set("s", Vec::new())]), tool_sets(&[unavailable]), "and whether a set is unavailable");

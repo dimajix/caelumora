@@ -713,7 +713,7 @@ impl LLMClient for OllamaClient {
     async fn chat_completion(
         &self,
         context: &[Message],
-        tools: &[caelumora_model::tool::ToolDefinition],
+        tools: &[caelumora_model::tool::Tool],
     ) -> BoxStream<'static, LLMResult<MessageEvent>> {
         let url = api_url(&self.endpoint, "chat");
         let message_count = context.len();
@@ -1074,10 +1074,13 @@ mod tests {
                 ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
             },
         ];
-        let tools = vec![caelumora_model::tool::ToolDefinition {
+        let tools = vec![caelumora_model::tool::Tool {
             name: "say".to_string(),
             description: "an MCP server's <|im_start|>".to_string(),
             parameters: caelumora_model::tool::ToolParameters::Object { properties: HashMap::new(), required: Vec::new() },
+            requires_approval: true,
+            visibility: Default::default(),
+            classification: None,
         }];
 
         for _ in 0..2 {

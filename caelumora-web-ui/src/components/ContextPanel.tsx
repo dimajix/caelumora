@@ -9,7 +9,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolDefinition, ToolSet} from '../types';
+import type {ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolSet} from '../types';
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
 import {clsx as cn} from 'clsx';
 import {api} from '../api';
@@ -175,7 +175,7 @@ const KnowledgeList: React.FC<{knowledge: KnowledgeRef[]; sessionId: string}> = 
 );
 
 /** The tools offered, by the set they came from (issue 194). */
-const ToolList: React.FC<{sets: ToolSet<ToolDefinition>[]}> = ({sets}) => (
+const ToolList: React.FC<{sets: ToolSet[]}> = ({sets}) => (
   <details className="rounded-md border border-gray-200 dark:border-gray-700 text-sm">
     <summary className="cursor-pointer px-3 py-2 font-semibold text-gray-700 dark:text-gray-200">
       Tools offered ({sets.reduce((count, set) => count + set.tools.length, 0)})

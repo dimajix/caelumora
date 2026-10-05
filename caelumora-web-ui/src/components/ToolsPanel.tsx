@@ -7,8 +7,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Wrench, X} from 'lucide-react';
-import type {ChannelMember, Tool, ToolSet} from '../types';
-import {classificationLabel} from '../confidentiality';
+import type {ChannelMember, ToolSet} from '../types';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
@@ -22,19 +21,9 @@ interface ToolsPanelProps {
   onClose: () => void;
 }
 
-/** What the runtime acts on of `tool`, as marks after its name. */
-function marksOf(tool: Tool): string[] {
-  const marks: string[] = [];
-  if (tool.requires_approval) marks.push('needs approval');
-  if (tool.visibility?.call === 'owner') marks.push('call owner only');
-  else if (tool.visibility?.content === 'owner') marks.push('content owner only');
-  if (tool.classification) marks.push(classificationLabel(tool.classification));
-  return marks;
-}
-
 export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, member, onClose}) => {
   const actor = actorUuid(member.id);
-  const [sets, setSets] = useState<ToolSet<Tool>[] | null | undefined>(undefined);
+  const [sets, setSets] = useState<ToolSet[] | null | undefined>(undefined);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,7 +70,7 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, mem
         {sets && (
           <>
             <div className="text-xs text-gray-500 dark:text-gray-400">{count} {count === 1 ? 'tool' : 'tools'} in {sets.length} {sets.length === 1 ? 'set' : 'sets'}</div>
-            <ToolSetList sets={sets} marks={marksOf} />
+            <ToolSetList sets={sets} />
           </>
         )}
       </div>

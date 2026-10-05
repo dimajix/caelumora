@@ -306,19 +306,21 @@ channel's history identifies the agent by the message's sender.
 
 A turn offers its model the agent's tools as they were when it began: they are asked for once, in
 their tool sets (`GuardedToolExecutor::tool_sets`, issue 194), in `AgentActor::request_response`,
-and fixed in the turn (`TurnState::tools`, flat, issue 137) like its
-classification and publication - a resumed turn keeps them. The model is told of a tool only its
-name, description and parameters - a `ToolDefinition` (`Tool::definition`); whether its calls need
-approval and how far they may travel stay with the runtime, which labels the model's answer (`label`
-in `actor_impl/agent.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`) by the
-same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the next turn
-on; a call of one that is gone fails as unknown.
+and fixed in the turn (`TurnState::tools`, flat, issue 137) like its classification and publication
+- a resumed turn keeps them. The model is told of a tool only its name, description and parameters -
+the backend sends no more (`LLMClient::chat_completion`); whether its calls need approval, who sees
+them and how its results are classified stay with the runtime, which labels the model's answer
+(`label` in `actor_impl/agent.rs`) and puts its calls up for approval (`GuardedToolExecutor::admit`)
+by the same `Tool`s. A tool that changes or disappears during a turn is offered as it is from the
+next turn on; a call of one that is gone fails as unknown.
 
-Beginning a turn (`AgentChannelState::begin_turn`) keeps the tool sets - each as the model is told
-of it, `ToolSet<ToolDefinition>` - in `AgentChannelState::offered_tools`, once per digest
-(`digest::tool_sets`, in the order offered), and puts its digest into the turn's context, so that
-every message of the turn records it; no tool sets are recorded as `None`. An offer recorded before
-issue 194, a flat list of tools, is read as one set without a name.
+Beginning a turn (`AgentChannelState::begin_turn`) keeps the tool sets - each tool whole, with how
+the runtime treated its calls then - in `AgentChannelState::offered_tools`, once per digest
+(`digest::tool_sets`, in the order offered, over all of it: the same tools treated otherwise are
+another offer), and puts its digest into the turn's context, so that every message of the turn
+records it; no tool sets are recorded as `None`. An offer recorded before issue 194, a flat list of
+what the model was told of each tool, is read as one set without a name, its tools needing no
+approval as far as is known.
 `LLMClient::chat_completion` gets the tools from the resolved context, like the messages - the
 tools of all sets in one list, since the backends know no sets - so what the model was offered and
 what is recorded as offered are the same.

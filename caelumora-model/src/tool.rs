@@ -105,11 +105,19 @@ impl Default for ToolVisibility {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A tool of an agent: what its model is told of it - its name, what it
+/// does, its parameters - and what only the runtime acts on, whether its
+/// calls need approval, who sees them, how its results are classified. A
+/// backend sends the model the first three alone; the record of what a
+/// model was offered keeps all of it, as it was then (issues 137, 194).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
+    /// Left out in a record made before issue 194, which kept only what the
+    /// model was told: not known, read as no.
+    #[serde(default)]
     pub requires_approval: bool,
     /// Who sees its calls. Approvers see the arguments of a call that needs
     /// approval regardless: they cannot decide otherwise.
@@ -122,72 +130,40 @@ pub struct Tool {
     pub classification: Option<Classification>,
 }
 
-impl Tool {
-    /// The tool as its model is offered it (issue 137).
-    pub fn definition(&self) -> ToolDefinition {
-        ToolDefinition { name: self.name.clone(), description: self.description.clone(), parameters: self.parameters.clone() }
-    }
-}
-
-/// A tool as a model is offered it (issue 137): what the model is told of
-/// it - its name, what it does, its parameters - and nothing of what only
-/// the runtime acts on, whether its calls need approval or how far they may
-/// travel. What a backend sends, and what is recorded as offered.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: ToolParameters,
-}
-
 /// The tools of one source of an agent - a component, e.g. an MCP server -
-/// with what they are for (issue 194): `T` is `Tool` as the runtime has
-/// them, `ToolDefinition` as a model is offered them and the record keeps
-/// them.
+/// with what they are for (issue 194).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolSet<T = Tool> {
+pub struct ToolSet {
     /// The id of the component the tools come from, unique within the
     /// agent.
     pub name: String,
     /// What the tools are for, written for a model.
     pub description: String,
-    pub tools: Vec<T>,
+    pub tools: Vec<Tool>,
     /// Why the source gives no tools now, in general terms - never the
     /// error, which may name hosts (issue 32). `None`: available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unavailable: Option<String>,
 }
 
-impl<T> ToolSet<T> {
+impl ToolSet {
     /// The available set `name` of `tools`, for `description`.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, tools: Vec<T>) -> Self {
+    pub fn new(name: impl Into<String>, description: impl Into<String>, tools: Vec<Tool>) -> Self {
         Self { name: name.into(), description: description.into(), tools, unavailable: None }
     }
 }
 
-impl ToolSet<Tool> {
-    /// The set as its model is offered it (issue 137).
-    pub fn definition(&self) -> ToolSet<ToolDefinition> {
-        ToolSet {
-            name: self.name.clone(),
-            description: self.description.clone(),
-            tools: self.tools.iter().map(Tool::definition).collect(),
-            unavailable: self.unavailable.clone(),
-        }
-    }
-}
-
 /// The tool sets a model was offered as they were recorded: as sets since
-/// issue 194, before as a flat list of definitions - read as one set
-/// without a name or description.
+/// issue 194, before as a flat list of tools - read as one set without a
+/// name or description.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(crate) enum RecordedToolSets {
-    Sets(Vec<ToolSet<ToolDefinition>>),
-    Flat(Vec<ToolDefinition>),
+    Sets(Vec<ToolSet>),
+    Flat(Vec<Tool>),
 }
 
-impl From<RecordedToolSets> for Vec<ToolSet<ToolDefinition>> {
+impl From<RecordedToolSets> for Vec<ToolSet> {
     fn from(recorded: RecordedToolSets) -> Self {
         match recorded {
             RecordedToolSets::Sets(sets) => sets,

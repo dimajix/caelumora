@@ -1786,7 +1786,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::llm::LLMClient for NeverAnswers {
-        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::ToolDefinition])
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
             -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
         {
             Box::pin(futures::stream::pending())
@@ -1906,7 +1906,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::llm::LLMClient for Scripted {
-        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::ToolDefinition])
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
             -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
         {
             match self.0.lock().unwrap().pop_front() {
@@ -1931,7 +1931,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::llm::LLMClient for Gated {
-        async fn chat_completion(&self, messages: &[Message], _: &[caelumora_model::tool::ToolDefinition])
+        async fn chat_completion(&self, messages: &[Message], _: &[caelumora_model::tool::Tool])
             -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
         {
             self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
@@ -2238,7 +2238,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::llm::LLMClient for FailsAfter {
-        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::ToolDefinition])
+        async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
             -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
         {
             match self.0.lock().unwrap().pop_front() {

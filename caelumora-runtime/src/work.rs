@@ -16,7 +16,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::ModelProfile;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::tool::{ToolDefinition, ToolSet};
+use caelumora_model::tool::ToolSet;
 use caelumora_model::work::Work;
 use std::sync::Arc;
 
@@ -102,7 +102,7 @@ impl<'a> AgentWork<'a> {
     /// The tool sets the work began with, as its model is offered them
     /// (issue 194) - kept in the agent's state by the digest its context
     /// names. None for work that offers no tools, e.g. an external agent's.
-    pub fn tool_sets(&self) -> &'a [ToolSet<ToolDefinition>] {
+    pub fn tool_sets(&self) -> &'a [ToolSet] {
         let state = self.agent_channel_state;
         self.work.context.tools.and_then(|digest| state.offered_tools.get(&digest)).map(Vec::as_slice).unwrap_or_default()
     }

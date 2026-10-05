@@ -78,3 +78,6 @@ had is not.
   offered anew only from the next turn; a skill that adds tools within a turn
   ([22](22-skill-management.md)) will need an explicit, recorded change of the turn's set. Model and
   parameters remain unrecorded, as noted above.
+- **2026-10-05** — Revised with [194](194-tool-sets.md): `ToolDefinition` is merged into `Tool`.
+  The record keeps each tool whole, with how the runtime treated its calls then, and the digest of
+  an offer covers that too; the backend sends the model name, description and parameters alone.

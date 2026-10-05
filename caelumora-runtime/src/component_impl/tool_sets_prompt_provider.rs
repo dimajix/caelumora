@@ -16,7 +16,7 @@ use crate::work::AgentWork;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::tool::{ToolDefinition, ToolSet};
+use caelumora_model::tool::ToolSet;
 use std::sync::Arc;
 
 pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
@@ -40,7 +40,7 @@ impl PromptProvider for ToolSetsPromptProvider {
 
 /// The text naming the unavailable sets among `sets`, empty if there are
 /// none.
-fn render(sets: &[ToolSet<ToolDefinition>]) -> String {
+fn render(sets: &[ToolSet]) -> String {
     let lines: Vec<String> = sets.iter()
         .filter_map(|set| set.unavailable.as_deref().map(|why| format!("{} ({}): {}", set.name, one_line(&set.description), one_line(why))))
         .collect();

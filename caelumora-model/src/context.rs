@@ -27,7 +27,7 @@ use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{Message, MessageRole, TokenUsage};
 use crate::transcript::{Transcript, TranscriptEntry};
-use crate::tool::{ToolDefinition, ToolSet};
+use crate::tool::ToolSet;
 use serde::{Deserialize, Serialize};
 
 /// A prompt part an agent's model was given besides the conversation - the
@@ -363,7 +363,7 @@ pub struct ResolvedContext {
     pub reference: ContextRef,
     pub items: Vec<ContextItem>,
     /// The tools offered, in their sets (issue 194).
-    pub tool_sets: Vec<ToolSet<ToolDefinition>>,
+    pub tool_sets: Vec<ToolSet>,
 }
 
 /// An agent's transcript continued by the messages of its turn under way
@@ -414,7 +414,7 @@ impl<'a> TranscriptView<'a> {
 pub struct ContextResolver<'a> {
     transcript: TranscriptView<'a>,
     prompts: &'a Kept<String>,
-    offered_tools: &'a Kept<Vec<ToolSet<ToolDefinition>>>,
+    offered_tools: &'a Kept<Vec<ToolSet>>,
 }
 
 impl<'a> ContextResolver<'a> {
@@ -692,7 +692,7 @@ mod tests {
     fn the_tools_offered_are_resolved_from_their_set() {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
-        let echo = ToolDefinition { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]) };
+        let echo = crate::tool::Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None };
         let offered = vec![ToolSet::new("echo_tool", "echoes", vec![echo])];
         let digest = crate::digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());

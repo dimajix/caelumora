@@ -464,7 +464,7 @@ pub struct MessageContextResponse {
     /// offered none (issue 137).
     pub tools_digest: Option<caelumora_model::digest::Digest>,
     /// The tools, as the model was told of them, in their sets (issue 194).
-    pub tool_sets: Vec<caelumora_model::tool::ToolSet<caelumora_model::tool::ToolDefinition>>,
+    pub tool_sets: Vec<caelumora_model::tool::ToolSet>,
 }
 
 /// The tools an agent has now in a channel, in their tool sets (issue

@@ -208,3 +208,9 @@ Order: step 0 alone, then 1-3 together, then 4, 5 and 6 each on their own.
 - **2026-10-05** — Changed at the maintainer's request before it was committed: `ReadAgentTools`
   carries the channel's attributes as well, and the ownership policy lets every member of the
   channel see the agent's tools, besides whoever reads the agent.
+- **2026-10-05** — After it was done, at the maintainer's request: `Tool` and `ToolDefinition` are
+  one type, and `ToolSet` is no longer generic. The record of what a model was offered keeps each
+  tool whole, with how the runtime treated its calls then, and its digest covers all of it
+  (`caelumora.tool-sets.v2`): the same tools treated otherwise are another offer. What issue 137
+  kept apart - what the model is told - is now the backend's to keep apart, which sends the model
+  name, description and parameters alone.

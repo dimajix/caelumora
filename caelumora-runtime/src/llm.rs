@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::tool::ToolDefinition;
+use caelumora_model::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -39,12 +39,15 @@ pub fn unlabelled_message() -> Message {
 
 #[async_trait]
 pub trait LLMClient: Send + Sync + Debug {
-    /// Sends `context` and the `tools` the model may call, as the model is
-    /// offered them (issue 137), and streams its answer as `MessageEvent`s:
+    /// Sends `context` and the `tools` the model may call (issue 137) - of
+    /// each only its name, description and parameters: whether its calls
+    /// need approval, who sees them and how its results are classified are
+    /// the runtime's, not the model's (issue 194) - and streams its answer
+    /// as `MessageEvent`s:
     /// partial messages as they arrive, then the complete ones, each built
     /// on `unlabelled_message`. The stream owns the request; dropping it
     /// abandons it.
-    async fn chat_completion(&self, context: &[Message], tools: &[ToolDefinition]) -> BoxStream<'static, LLMResult<MessageEvent>>;
+    async fn chat_completion(&self, context: &[Message], tools: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>>;
 
     /// How the model is to be given its context - which reasoning of
     /// earlier messages, say (issue 63). A property of the model, fixed in
