@@ -142,21 +142,6 @@ pub(crate) async fn component_store_behaves(store: &dyn ComponentStore) {
         create_component, get_component, update_component, delete_component, list_components);
 }
 
-/// A store that marks a document deleted by hand, writing it as it would
-/// be stored once deleted (issue 164) - for the suite, until deleting
-/// marks.
-#[async_trait::async_trait]
-pub(crate) trait MarkByHand {
-    async fn store_marked_session(&self, session: &Session);
-    async fn store_marked_user(&self, user: &User);
-}
-
-/// `value` marked deleted.
-fn marked<T: Deletable>(mut value: T) -> T {
-    value.set_deleted(Some(Removal::now(crate::actor::ActorId::System)));
-    value
-}
-
 // A named function rather than a closure: a closure returning a borrow of
 // its argument doesn't get the lifetime inferred.
 fn component_id(value: &StoredComponent) -> &str {
@@ -235,21 +220,35 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(), "the agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(other_agent, channel).await.expect("get").turn.is_none(), "the agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_some(), "other channels keep theirs");
+
+    store.put_agent_channel_state(agent, channel, &mut in_turn).await.expect("put agent channel state");
+    store.delete_agent_state(agent).await.expect("delete agent state");
+    assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(), "the agent's states in every channel are gone");
+    assert!(store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_none(), "the agent's states in every channel are gone");
+    assert!(store.get_agent_channel_state(other_agent, other_channel).await.is_ok(), "another agent's stay");
+    store.delete_agent_state(agent).await.expect("nothing to delete is no error");
     assert!(store.get_agent_channel_state(remote_agent, channel).await.expect("get").remote.is_empty(), "the external agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(remote_agent, other_channel).await.expect("get").remote.conversation.is_some(), "other channels keep theirs");
     store.get_channel_state(other_channel).await.expect("other channels keep theirs");
     store.delete_channel_state(channel).await.expect("nothing left to delete is no error");
 }
+/// `value` marked deleted, as only deleting may.
+fn marked<T: Deletable>(mut value: T) -> T {
+    value.set_deleted(Some(Removal::now(crate::actor::ActorId::System)));
+    value
+}
 
-/// What is marked deleted is not there for any of the five operations,
-/// also not for the system, and its id stays taken; nothing created or
-/// changed may carry the mark (issue 164).
-pub(crate) async fn marked_documents_are_absent<S: EntityStore + MarkByHand>(store: &S) {
+/// Deleting marks (issue 164): what is marked is not there for any of the
+/// five operations, also not for the system, and its id stays taken;
+/// nothing created or changed may carry the mark. What was deleted is
+/// read, restored and purged by operations of its own.
+pub(crate) async fn deleting_marks(store: &dyn EntityStore) {
     let system = SecurityContext::system();
     let kept = session();
     store.create_session(&system, &kept).await.expect("create");
     let gone = session();
-    store.store_marked_session(&marked(gone.clone())).await;
+    store.create_session(&system, &gone).await.expect("create");
+    assert!(store.delete_session(&system, gone.id).await.expect("delete"));
 
     let read = store.get_session(&system, gone.id).await;
     assert!(matches!(read, Err(StoreError::NotFound { entity: "session", .. })), "not read, not even by the system: {read:?}");
@@ -265,10 +264,34 @@ pub(crate) async fn marked_documents_are_absent<S: EntityStore + MarkByHand>(sto
     assert!(matches!(created, Err(StoreError::Validation(_))), "nothing is created marked: {created:?}");
     let changed = store.update_session(&system, &marked(kept.clone())).await;
     assert!(matches!(changed, Err(StoreError::Validation(_))), "nor changed to be: {changed:?}");
-    assert!(store.get_session(&system, kept.id).await.expect("still there").deleted.is_none());
+
+    // The trash.
+    let deleted = store.get_deleted_session(&system, gone.id).await.expect("read as deleted");
+    let mark = deleted.deleted.expect("marked");
+    assert_eq!(mark.by, system.caller_id, "by whom");
+    let trash = store.list_deleted_sessions(&system).await.expect("list deleted");
+    assert_eq!(trash.iter().map(|s| s.id).collect::<Vec<_>>(), [gone.id], "only what was deleted");
+    let not_deleted = store.get_deleted_session(&system, kept.id).await;
+    assert!(matches!(not_deleted, Err(StoreError::NotFound { .. })), "what is there is not in the trash: {not_deleted:?}");
+
+    // Restored: there again, as it was.
+    store.restore_session(&system, gone.id).await.expect("restore");
+    assert!(store.get_session(&system, gone.id).await.expect("there again").deleted.is_none());
+    let again = store.restore_session(&system, gone.id).await;
+    assert!(matches!(again, Err(StoreError::NotFound { .. })), "only what was deleted is restored: {again:?}");
+
+    // Purged: only what was deleted, gone for good, and its id free again.
+    assert!(!store.purge_session(&system, gone.id).await.expect("purge restored"), "what is not marked is not purged");
+    assert!(store.get_session(&system, gone.id).await.is_ok(), "and stays");
+    assert!(store.delete_session(&system, gone.id).await.expect("delete"));
+    assert!(store.purge_session(&system, gone.id).await.expect("purge marked"));
+    assert!(!store.purge_session(&system, gone.id).await.expect("purge again"), "nothing left");
+    assert!(store.list_deleted_sessions(&system).await.expect("list deleted").is_empty());
+    store.create_session(&system, &gone).await.expect("its id is free again");
 
     let carol = user("carol");
-    store.store_marked_user(&marked(carol.clone())).await;
+    store.create_user(&system, &carol).await.expect("create user");
+    assert!(store.delete_user(&system, carol.id).await.expect("delete user"));
     let found = store.find_user_by_name(&system, "carol").await;
     assert!(matches!(found, Err(StoreError::NotFound { .. })), "not found by name: {found:?}");
 }

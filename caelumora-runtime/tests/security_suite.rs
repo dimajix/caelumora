@@ -98,7 +98,8 @@ fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttributes> 
         | GetUser(a) | CreateUser(a) | UpdateUser(a) | DeleteUser(a)
         | GetUserProfile(a) | CreateUserProfile(a) | UpdateUserProfile(a) | DeleteUserProfile(a)
         | CancelChannel(a) | WakeChannel(a)
-        | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a) => Some(a),
+        | GetComponent(a) | CreateComponent(a) | UpdateComponent(a) | DeleteComponent(a)
+        | ReadDeleted(_, a) | Restore(_, a) | Purge(_, a) => Some(a),
         _ => None,
     }
 }
@@ -899,8 +900,8 @@ async fn stopping_a_session_needs_owning_it() {
     assert_eq!(asked, checks(&["alice: GetSession(alice's) yes", "alice: StopSession(alice's) yes"]));
 }
 
-/// Deleting a session: reading it and deleting it - its owner's alone;
-/// its channels go with it, in the runtime's name.
+/// Deleting a session: reading it and deleting it - its owner's alone. It
+/// is marked and kept, with its channels (issue 164).
 #[tokio::test]
 async fn deleting_a_session_needs_owning_it() {
     let world = World::new().await;
@@ -971,6 +972,71 @@ async fn deleting_a_channel_needs_owning_its_session() {
         "alice: GetChannel(alice's) yes",
         "alice: DeleteChannel(alice's) yes",
     ]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Restoring a deleted session: reading it as deleted and restoring it -
+/// its owner's alone, not a contributor's; for whoever may not read the
+/// trash, there is nothing to restore (issue 164).
+#[tokio::test]
+async fn restoring_a_session_needs_owning_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    world.manager.delete_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    let (_, asked) = world.asked(world.manager.restore_session(&World::as_user(world.carol), session.id())).await;
+    assert_eq!(asked, checks(&["carol: ReadDeleted(alice's) no"]));
+    let (_, asked) = world.asked(world.manager.restore_session(&World::as_user(world.bob), session.id())).await;
+    assert_eq!(asked, checks(&["bob: ReadDeleted(alice's) no"]), "a contributor does not see the trash");
+    let (restored, asked) = world.asked(world.manager.restore_session(&World::as_user(world.alice), session.id())).await;
+    assert!(restored.is_ok());
+    assert_eq!(asked, checks(&[
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
+        "alice: GetSession(alice's) yes",
+    ]), "and reads it back, restored");
+}
+
+/// Purging a deleted session: the system's alone until there is an
+/// administrator (issue 125) - its owner may read it as deleted, but not
+/// remove it for good (issue 164).
+#[tokio::test]
+async fn purging_a_session_is_not_its_owners() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    world.manager.delete_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    let (_, asked) = world.asked(world.manager.purge_session(&World::as_user(world.bob), session.id())).await;
+    assert_eq!(asked, checks(&["bob: ReadDeleted(alice's) no"]));
+    let (refused, asked) = world.asked(world.manager.purge_session(&World::as_user(world.alice), session.id())).await;
+    assert!(refused.is_err());
+    assert_eq!(asked, checks(&[
+        "alice: ReadDeleted(alice's) yes",
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Purge(alice's) no",
+    ]), "only what was deleted, asked by the session manager and again by the store");
+}
+
+/// Restoring a deleted channel: changing its session - its owner's alone
+/// -, everyone's clearance and restoring the channel (issue 164).
+#[tokio::test]
+async fn restoring_a_channel_needs_owning_its_session() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = session.channels()[0].id();
+    session.delete_channel(&World::as_user(world.alice), main).await.unwrap();
+    let (_, asked) = world.asked(session.restore_channel(&World::as_user(world.bob), main)).await;
+    assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]));
+    let (restored, asked) = world.asked(session.restore_channel(&World::as_user(world.alice), main)).await;
+    assert!(restored.is_ok());
+    assert_eq!(asked, checks(&[
+        "alice: UpdateSession(alice's) yes",
+        "alice: ReadDeleted(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: JoinChannel(bob) yes",
+        "alice: ReadDeleted(alice's) yes",
+        "alice: Restore(alice's) yes",
+        "alice: GetSession(alice's) yes",
+        "alice: UpdateSession(alice's) yes",
+    ]), "everyone's clearance again, as when it was created, and listing it in the session");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

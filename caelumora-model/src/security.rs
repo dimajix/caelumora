@@ -3,6 +3,7 @@ use crate::session::SessionId;
 use crate::channel::ChannelId;
 use crate::confidentiality::{Classification, ConfidentialityRules};
 use crate::privacy::SessionPrivacy;
+use crate::store::EntityKind;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -120,6 +121,16 @@ pub enum ActionType<'a> {
     CreateComponent(&'a SecurityAttributes),
     UpdateComponent(&'a SecurityAttributes),
     DeleteComponent(&'a SecurityAttributes),
+    /// Reading what was deleted of a kind - marked, not purged (issue 164):
+    /// one entity, carrying its stored attributes, or for each entity of a
+    /// listing. The trash.
+    ReadDeleted(EntityKind, &'a SecurityAttributes),
+    /// Taking the mark of a deletion away (issue 164).
+    Restore(EntityKind, &'a SecurityAttributes),
+    /// Removing an entity for good, marked or not, with what belongs to it
+    /// (issue 164) - an administrator's act, or a retention policy's (issue
+    /// 07).
+    Purge(EntityKind, &'a SecurityAttributes),
 }
 
 /// One side of a [`ActionType::ReadChannel`]: a channel, the
@@ -194,6 +205,9 @@ impl ActionType<'_> {
             ActionType::CreateComponent(_) => "CreateComponent".into(),
             ActionType::UpdateComponent(_) => "UpdateComponent".into(),
             ActionType::DeleteComponent(_) => "DeleteComponent".into(),
+            ActionType::ReadDeleted(kind, _) => format!("ReadDeleted({kind})"),
+            ActionType::Restore(kind, _) => format!("Restore({kind})"),
+            ActionType::Purge(kind, _) => format!("Purge({kind})"),
         }
     }
 }
@@ -345,6 +359,14 @@ pub trait AccessQuestions {
     /// `channel` (`JoinChannel`, issue 133) - what decides, besides
     /// `GetChannel`, which channels they are shown.
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool;
+
+    /// Whether `context` may take back the deletion of an entity of `kind`
+    /// with `attributes` (`Restore`, issue 164).
+    async fn may_restore(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool;
+
+    /// Whether `context` may remove an entity of `kind` with `attributes`
+    /// for good (`Purge`, issue 164).
+    async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool;
 }
 
 #[async_trait]
@@ -386,6 +408,14 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_see_channel(&self, context: &SecurityContext, roles: &[String], channel: &Classification) -> bool {
         self.check(context, ActionType::JoinChannel { participant: context.initiator_id, roles, channel }).await
+    }
+
+    async fn may_restore(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::Restore(kind, attributes)).await
+    }
+
+    async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::Purge(kind, attributes)).await
     }
 }
 
@@ -550,7 +580,12 @@ impl SecurityManager for OwnershipSecurityManager {
             | ActionType::UpdateUserProfile(a)
             | ActionType::DeleteUserProfile(a)
             | ActionType::UpdateComponent(a)
-            | ActionType::DeleteComponent(a) => a.owner_id == me && me != ActorId::None,
+            | ActionType::DeleteComponent(a)
+            | ActionType::ReadDeleted(_, a)
+            | ActionType::Restore(_, a) => a.owner_id == me && me != ActorId::None,
+            // Until there is an administrator (issue 125): the system
+            // alone, as the retention policy (issue 07) acts.
+            ActionType::Purge(..) => false,
             ActionType::ListPersonalities
             | ActionType::ListSessionTemplates
             | ActionType::ListAgents

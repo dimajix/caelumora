@@ -17,6 +17,10 @@
 //! - **What is marked deleted** (issue 164) is not there for any of them,
 //!   before anything is asked: the store treats it as absent. And nothing
 //!   created or changed may carry the mark, so that only deleting sets it.
+//! - **Reading what was deleted** asks `ReadDeleted` with the stored
+//!   attributes, and answers "not found" alike; **restoring** it asks that
+//!   and then `Restore`, **purging** it that and then `Purge`. What is not
+//!   marked is neither restored nor purged.
 //!
 //! Every check goes through `Enforcement::require` (issue 95), with the
 //! answer the store gives - "not found" for what the caller may not see -
@@ -93,6 +97,50 @@ impl<'a> Access<'a> {
             return Ok(false);
         }
         self.allow((kind.delete)(stored.security_attributes())).await.map(|_| true)
+    }
+
+    /// `found`, if it is marked deleted and the caller may read what was
+    /// deleted of its kind; not found otherwise.
+    pub(crate) async fn read_deleted<T: Stored>(&self, found: Option<T>, kind: &Actions, id: String) -> StoreResult<T> {
+        let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
+        let Some(value) = found.filter(|v| !present(v)) else { return Err(not_found()) };
+        self.require(ActionType::ReadDeleted(kind.entity, value.security_attributes()), not_found).await?;
+        Ok(value)
+    }
+
+    /// The entities of `values` that are marked deleted and the caller may
+    /// read as such.
+    pub(crate) async fn filter_deleted<T: Stored>(&self, values: Vec<T>, kind: &Actions) -> Vec<T> {
+        let mut readable = Vec::new();
+        for value in values.into_iter().filter(|v| !present(v)) {
+            if self.manager.check(self.ctx, ActionType::ReadDeleted(kind.entity, value.security_attributes())).await {
+                readable.push(value);
+            }
+        }
+        readable
+    }
+
+    /// Whether the caller may take the mark of `stored` away: not found if
+    /// it is not marked or they may not read it as deleted, refused if they
+    /// may but not restore it.
+    pub(crate) async fn restore<T: Stored>(&self, stored: Option<&T>, kind: &Actions, id: String) -> StoreResult<()> {
+        let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
+        let Some(stored) = stored.filter(|s| !present(*s)) else { return Err(not_found()) };
+        self.require(ActionType::ReadDeleted(kind.entity, stored.security_attributes()), not_found).await?;
+        self.allow(ActionType::Restore(kind.entity, stored.security_attributes())).await
+    }
+
+    /// Whether to remove `stored` for good: `false` if it is not marked
+    /// deleted or the caller may not read it as deleted, an error if they
+    /// may but not purge it. Only what was deleted is purged, so that a
+    /// purge never removes what was restored meanwhile.
+    pub(crate) async fn purge<T: Stored>(&self, stored: Option<&T>, kind: &Actions) -> StoreResult<bool> {
+        let Some(stored) = stored.filter(|s| !present(*s)) else { return Ok(false) };
+        let attributes = stored.security_attributes();
+        if self.require(ActionType::ReadDeleted(kind.entity, attributes), || ()).await.is_err() {
+            return Ok(false);
+        }
+        self.allow(ActionType::Purge(kind.entity, attributes)).await.map(|_| true)
     }
 }
 
@@ -276,6 +324,32 @@ mod tests {
         assert!(!store.delete_session(&carol_ctx, hers.id).await.unwrap(), "nothing carol could see to delete");
         assert!(matches!(store.delete_session(&bob_ctx, hers.id).await, Err(StoreError::PermissionDenied)));
         assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
+        use crate::security::OwnershipSecurityManager;
+        let store = MemoryStore::with_security_manager(Arc::new(OwnershipSecurityManager::new()));
+        let (alice, alice_ctx) = user();
+        let (bob, bob_ctx) = user();
+        let hers = session(alice, vec![bob]);
+        store.create_session(&alice_ctx, &hers).await.unwrap();
+        assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
+        assert_eq!(store.get_deleted_session(&alice_ctx, hers.id).await.unwrap().deleted.map(|d| d.by), Some(alice), "deleted by her");
+
+        let seen = store.get_deleted_session(&bob_ctx, hers.id).await;
+        assert!(matches!(seen, Err(StoreError::NotFound { .. })), "a contributor does not see the trash: {seen:?}");
+        assert!(store.list_deleted_sessions(&bob_ctx).await.unwrap().is_empty());
+        let restored = store.restore_session(&bob_ctx, hers.id).await;
+        assert!(matches!(restored, Err(StoreError::NotFound { .. })), "nor restores from it: {restored:?}");
+        assert!(!store.purge_session(&bob_ctx, hers.id).await.unwrap(), "nothing bob could see to purge");
+
+        let purged = store.purge_session(&alice_ctx, hers.id).await;
+        assert!(matches!(purged, Err(StoreError::PermissionDenied)), "the owner does not purge: {purged:?}");
+        assert_eq!(store.list_deleted_sessions(&alice_ctx).await.unwrap().len(), 1, "the owner sees her trash");
+        store.restore_session(&alice_ctx, hers.id).await.expect("and restores from it");
+        assert!(store.delete_session(&alice_ctx, hers.id).await.unwrap());
+        assert!(store.purge_session(&SecurityContext::system(), hers.id).await.unwrap(), "the system purges");
     }
 
     #[tokio::test]

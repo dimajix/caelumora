@@ -62,10 +62,10 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `GET /profile`, `PUT /profile` | The logged-in user's own profile (issue 176): their `introduction`, `null` if none, and `max_introduction_chars`; `PUT` sets it - `null` or blank removes it - and answers `400 invalid_introduction` for one that is too long or contains control characters |
 | `GET /sessions`, `POST /sessions` | List the user's sessions; create one from a template (`SessionManager::create_from_template`) |
 | `GET /sessions/{id}` | One session, in the form of the global stream's snapshot (`SessionSnapshot`), without starting it |
-| `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session |
+| `PATCH /sessions/{id}`, `DELETE /sessions/{id}` | Rename, delete a session - marked and kept, with its channels (issue 164) |
 | `PUT /sessions/{id}/privacy` | Change whom the session lets read what was said in it - its owner (`privacy`: `private`, `same_owner` or `shared_audience`, issue 134); answers the `SessionSnapshot` |
 | `GET …/channels`, `POST …/channels` | List a session's channels; create one, with an optional `classification` (`level` and `compartments`, see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)) and optional kinds of its `moderator` and `responder_policy` (see [CHANNELS.md](CHANNELS.md#moderators)) |
-| `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it |
+| `GET …/channels/{cid}`, `DELETE …/channels/{cid}` | One channel; delete it - marked and kept (issue 164) |
 | `PUT …/channels/{cid}/classification` | Reclassify the channel - its owner (issue 133) |
 | `PUT …/messages/{mid}/classification` | Reclassify a message - its author or the channel's owner (issue 133; `message_not_found`) |
 | `GET …/messages`, `POST …/messages` | The channel's history, older messages on request; write a message, with an optional `classification` that releases it (issue 133; refused as `invalid_classification`) |

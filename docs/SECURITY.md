@@ -63,6 +63,10 @@ The `OwnershipSecurityManager` decides by those attributes and the context's ini
 *   The owner may do everything. Contributors may read and use - write into a session, cancel or
     wake a channel. What belongs to the system, everybody may read and use.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
+*   What was deleted (issue 164) is the owner's to read (`ReadDeleted`) and to restore
+    (`Restore`). Removing it for good (`Purge`) is the system's alone - the retention policy's
+    ([07](../issues/07-session-deletion-audit.md)) - until there is an administrator
+    ([125](../issues/125-invisible-admin.md)).
 *   The runtime acting on its own uses `SecurityContext::system()` (`ActorId::System`), which may do
     everything. This is deliberate and never a default: an empty context has no rights.
 
@@ -85,6 +89,9 @@ itself is unchanged.
 *   **Changes and deletions** are checked against the attributes *as stored*, never against those of
     the new value, which the caller controls.
 *   **Creations** are checked against the new entity's attributes.
+*   **What was deleted** is not there for any of these. Reading it as deleted asks `ReadDeleted`
+    and answers "not found" alike; restoring asks that and `Restore`, purging that and `Purge`.
+    What is not marked is neither restored nor purged.
 
 ### How the SessionManager checks
 
@@ -94,6 +101,9 @@ What is not a store call asks first and acts afterwards.
     running session like a stored one - `GetSession`, answering "not found" alike whether the
     session runs or not - for `open_session`, `stop_session`, `delete_session` and the views.
 *   `stop_session` (`StopSession`) and `delete_session` check before they stop anything.
+*   `restore_session` and `purge_session` reach only what was deleted (`ReadDeleted`) and leave
+    `Restore` and `Purge` to the store; `purge_session` then purges the session's channels in the
+    runtime's name.
 *   Renaming stores first - which is where it is checked - and changes the live entity only then.
 
 ### Not decided yet

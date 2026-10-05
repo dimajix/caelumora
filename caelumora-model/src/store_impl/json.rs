@@ -1,7 +1,7 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponent;
-use crate::removal::Stored;
+use crate::removal::{Deletable, Removal, Stored};
 use crate::security::SecurityManager;
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
@@ -345,8 +345,8 @@ fn sanitize_file_component(value: &str) -> String {
 
 use crate::security::SecurityContext;
 
-/// The five operations of every entity kind (issue 93), each document a
-/// file at `path` and checked with its kind's `Actions`.
+/// The operations of every kind (issues 93, 164), each document a file at
+/// `path` and checked with its kind's `Actions`.
 impl JsonFileStore {
     async fn create_file<T: Stored + Serialize + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
         self.access(ctx).create(value, kind).await?;
@@ -369,13 +369,65 @@ impl JsonFileStore {
         write_json_atomic(&path, value).await
     }
 
-    async fn delete_file<T: Stored + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
+    /// Marks the document deleted, by the caller and now (issue 164),
+    /// rewriting it where it is.
+    async fn delete_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
+        let stored = read_json_opt::<T>(&path).await?;
+        if !self.access(ctx).delete(stored.as_ref(), kind).await? {
+            return Ok(false);
+        }
+        let Some(mut marked) = stored else { return Ok(false) };
+        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
+        debug!("Marking {} at {} deleted", kind.entity, path.display());
+        write_json_atomic(&path, &marked).await?;
+        Ok(true)
+    }
+
+    /// Removes the document for good: deleting a kind that is not marked.
+    async fn remove_file<T: Stored + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
         let stored = read_json_opt::<T>(&path).await?;
         if !self.access(ctx).delete(stored.as_ref(), kind).await? {
             return Ok(false);
         }
         debug!("Deleting {} at {}", kind.entity, path.display());
         delete_if_exists(&path).await
+    }
+
+    async fn restore_file<T: Deletable + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<()> {
+        let stored = read_json_opt::<T>(&path).await?;
+        self.access(ctx).restore(stored.as_ref(), kind, id).await?;
+        let Some(mut restored) = stored else { return Ok(()) };
+        restored.set_deleted(None);
+        debug!("Restoring {} at {}", kind.entity, path.display());
+        write_json_atomic(&path, &restored).await
+    }
+
+    async fn purge_file<T: Deletable + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
+        let stored = read_json_opt::<T>(&path).await?;
+        if !self.access(ctx).purge(stored.as_ref(), kind).await? {
+            return Ok(false);
+        }
+        // Read once more right before: restored while the purge was asked
+        // about, it stays. A file cannot be removed on that condition
+        // atomically; whoever restores and purges at once serialises them
+        // (`SessionManager`).
+        if !read_json_opt::<T>(&path).await?.is_some_and(|value| value.deleted().is_some()) {
+            return Ok(false);
+        }
+        debug!("Purging {} at {}", kind.entity, path.display());
+        delete_if_exists(&path).await
+    }
+
+    async fn get_deleted_file<T: Deletable + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<T> {
+        let found = read_json_opt::<T>(&path).await?;
+        self.access(ctx).read_deleted(found, kind, id).await
+    }
+
+    async fn list_deleted_dir<T: Deletable + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
+        let access = self.access(ctx);
+        access.allow(kind.list).await?;
+        let all = read_all_from_dir::<T>(&dir).await?;
+        Ok(access.filter_deleted(all, kind).await)
     }
 
     async fn list_dir<T: Stored + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
@@ -404,6 +456,18 @@ impl EntityStore for JsonFileStore {
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         self.list_dir(ctx, &PERSONALITIES, self.personality_dir()).await
     }
+    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
+        self.restore_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
+    }
+    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
+        self.purge_file::<Personality>(ctx, &PERSONALITIES, self.personality_path(id)).await
+    }
+    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        self.get_deleted_file(ctx, &PERSONALITIES, self.personality_path(id), id.to_string()).await
+    }
+    async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+        self.list_deleted_dir(ctx, &PERSONALITIES, self.personality_dir()).await
+    }
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()> {
@@ -421,6 +485,18 @@ impl EntityStore for JsonFileStore {
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         self.list_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
     }
+    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
+        self.restore_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
+    }
+    async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+        self.purge_file::<SessionTemplate>(ctx, &SESSION_TEMPLATES, self.session_template_path(id)).await
+    }
+    async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
+        self.get_deleted_file(ctx, &SESSION_TEMPLATES, self.session_template_path(id), id.to_string()).await
+    }
+    async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+        self.list_deleted_dir(ctx, &SESSION_TEMPLATES, self.session_templates_dir()).await
+    }
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()> {
@@ -437,6 +513,18 @@ impl EntityStore for JsonFileStore {
     }
     async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
         self.list_dir(ctx, &AGENTS, self.agents_dir()).await
+    }
+    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
+        self.restore_file::<Agent>(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
+    }
+    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
+        self.purge_file::<Agent>(ctx, &AGENTS, self.agent_path(id)).await
+    }
+    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
+        self.get_deleted_file(ctx, &AGENTS, self.agent_path(id), id.to_string()).await
+    }
+    async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
+        self.list_deleted_dir(ctx, &AGENTS, self.agents_dir()).await
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another
@@ -456,6 +544,18 @@ impl EntityStore for JsonFileStore {
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
         self.list_dir(ctx, &SESSIONS, self.sessions_dir()).await
     }
+    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()> {
+        self.restore_file::<Session>(ctx, &SESSIONS, self.session_path(id), id.to_string()).await
+    }
+    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
+        self.purge_file::<Session>(ctx, &SESSIONS, self.session_path(id)).await
+    }
+    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+        self.get_deleted_file(ctx, &SESSIONS, self.session_path(id), id.to_string()).await
+    }
+    async fn list_deleted_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
+        self.list_deleted_dir(ctx, &SESSIONS, self.sessions_dir()).await
+    }
 
     // Channels (issue 70) - their state likewise.
     async fn create_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()> {
@@ -472,6 +572,18 @@ impl EntityStore for JsonFileStore {
     }
     async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
         self.list_dir(ctx, &CHANNELS, self.channels_dir()).await
+    }
+    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
+        self.restore_file::<Channel>(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
+    }
+    async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
+        self.purge_file::<Channel>(ctx, &CHANNELS, self.channel_path(id)).await
+    }
+    async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
+        self.get_deleted_file(ctx, &CHANNELS, self.channel_path(id), id.to_string()).await
+    }
+    async fn list_deleted_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
+        self.list_deleted_dir(ctx, &CHANNELS, self.channels_dir()).await
     }
 
     // Users - found by name as well, since a username is an identity
@@ -490,6 +602,18 @@ impl EntityStore for JsonFileStore {
     }
     async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
         self.list_dir(ctx, &USERS, self.users_dir()).await
+    }
+    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+        self.restore_file::<User>(ctx, &USERS, self.user_path(id), id.to_string()).await
+    }
+    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.purge_file::<User>(ctx, &USERS, self.user_path(id)).await
+    }
+    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        self.get_deleted_file(ctx, &USERS, self.user_path(id), id.to_string()).await
+    }
+    async fn list_deleted_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
+        self.list_deleted_dir(ctx, &USERS, self.users_dir()).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let users: Vec<User> = self.list_dir(ctx, &USERS, self.users_dir()).await?;
@@ -512,6 +636,18 @@ impl EntityStore for JsonFileStore {
     async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
         self.list_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
     }
+    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+        self.restore_file::<UserProfile>(ctx, &USER_PROFILES, self.user_profile_path(id), id.to_string()).await
+    }
+    async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.purge_file::<UserProfile>(ctx, &USER_PROFILES, self.user_profile_path(id)).await
+    }
+    async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
+        self.get_deleted_file(ctx, &USER_PROFILES, self.user_profile_path(id), id.to_string()).await
+    }
+    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
+        self.list_deleted_dir(ctx, &USER_PROFILES, self.user_profiles_dir()).await
+    }
 }
 
 /// Preconfigured components, kept like the entities (issue 164).
@@ -527,7 +663,7 @@ impl ComponentStore for JsonFileStore {
         self.update_file(ctx, &COMPONENTS, self.component_path(value.id()), value.id().to_string(), value).await
     }
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.delete_file::<StoredComponent>(ctx, &COMPONENTS, self.component_path(id)).await
+        self.remove_file::<StoredComponent>(ctx, &COMPONENTS, self.component_path(id)).await
     }
     async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>> {
         self.list_dir(ctx, &COMPONENTS, self.components_dir()).await
@@ -606,6 +742,23 @@ impl StateStore for JsonFileStore {
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
         Ok(())
     }
+
+    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
+        let path = self.agent_state_path(agent_id);
+        delete_if_exists(&path).await?;
+        delete_if_exists(&journal_path(&path)).await?;
+        let mut channels = match tokio::fs::read_dir(self.agent_channel_states_dir()).await {
+            Ok(channels) => channels,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(to_backend_error(err)),
+        };
+        while let Some(channel) = channels.next_entry().await.map_err(to_backend_error)? {
+            let path = channel.path().join(format!("{agent_id}.json"));
+            delete_if_exists(&path).await?;
+            delete_if_exists(&journal_path(&path)).await?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -639,20 +792,10 @@ mod tests {
         suite::component_store_behaves(&store(dir.path())).await;
     }
 
-    #[async_trait::async_trait]
-    impl suite::MarkByHand for JsonFileStore {
-        async fn store_marked_session(&self, session: &Session) {
-            write_json_atomic(&self.session_path(session.id), session).await.unwrap();
-        }
-        async fn store_marked_user(&self, user: &User) {
-            write_json_atomic(&self.user_path(user.id), user).await.unwrap();
-        }
-    }
-
     #[tokio::test]
-    async fn keeps_what_is_marked_deleted_out_of_sight() {
+    async fn keeps_what_is_deleted_marked() {
         let dir = tempdir().unwrap();
-        suite::marked_documents_are_absent(&store(dir.path())).await;
+        suite::deleting_marks(&store(dir.path())).await;
     }
 
     #[tokio::test]
@@ -707,7 +850,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_session_leaves_its_state_to_the_state_store() {
+    async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store() {
         use crate::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
@@ -753,7 +896,10 @@ mod tests {
         assert!(store.agent_channel_state_dir(channel_id).exists());
 
         assert!(store.delete_session(&ctx, session_id).await.unwrap());
-        assert!(!store.session_path(session_id).exists());
+        assert!(store.session_path(session_id).exists(), "deleting marks the file");
+        assert!(store.agent_channel_state_dir(channel_id).exists(), "the state is the state store's");
+        assert!(store.purge_session(&ctx, session_id).await.unwrap());
+        assert!(!store.session_path(session_id).exists(), "purging removes it");
 
         store.put_channel_state(channel_id, &mut ChannelState::new(channel_id)).await.unwrap();
         store.delete_channel_state(channel_id).await.unwrap();
@@ -761,8 +907,9 @@ mod tests {
         assert!(!store.agent_channel_state_dir(channel_id).exists());
         store.delete_channel_state(channel_id).await.expect("nothing to delete is no error");
 
-        // Deleting again reports that nothing was removed.
+        // Deleting or purging again reports that nothing was there.
         assert!(!store.delete_session(&ctx, session_id).await.unwrap());
+        assert!(!store.purge_session(&ctx, session_id).await.unwrap());
         let err = store.get_session(&ctx, session_id).await.unwrap_err();
         assert!(matches!(err, StoreError::NotFound { entity: "session", .. }));
     }

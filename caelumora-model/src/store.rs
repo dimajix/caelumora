@@ -117,11 +117,16 @@ impl std::fmt::Display for EntityKind {
 /// looks for another kind by name filters `list_x`, with `Scope::contains`
 /// where the scope matters.
 ///
-/// An entity marked deleted (`Deletable::deleted`, issue 164) is not there
-/// for any of the five: not read, not listed, not changed, not deleted
-/// again - also not for the system - and its id is not free for `create`.
-/// Nothing new or changed can carry the mark (`Validation`): only deleting
-/// sets it.
+/// Deleting marks (issue 164): `delete_x` sets the mark - who, when - and
+/// keeps the document. What is marked is not there for any of the five:
+/// not read, not listed, not changed, not deleted again - also not for the
+/// system - and its id is not free for `create`. Nothing new or changed can
+/// carry the mark (`Validation`): only deleting sets it. What was deleted
+/// is reached by four operations of its own, each kind alike:
+/// `get_deleted_x` and `list_deleted_x` read it (`ReadDeleted`),
+/// `restore_x` takes the mark away (`Restore`), and `purge_x` removes what
+/// was deleted for good (`Purge`) - only what is marked, so that what is
+/// deleted is deleted first, and a purge never takes what was restored.
 #[async_trait]
 pub trait EntityStore : Debug + Sync + Send {
     // Personalities
@@ -130,6 +135,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_personality(&self, ctx: &SecurityContext, value: &Personality) -> StoreResult<()>;
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
+    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()>;
+    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool>;
+    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality>;
+    async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>>;
 
     // Session templates
     async fn create_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
@@ -137,6 +146,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_session_template(&self, ctx: &SecurityContext, value: &SessionTemplate) -> StoreResult<()>;
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
+    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()>;
+    async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool>;
+    async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate>;
+    async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>>;
 
     // Agents
     async fn create_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
@@ -144,6 +157,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_agent(&self, ctx: &SecurityContext, value: &Agent) -> StoreResult<()>;
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
     async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
+    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()>;
+    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool>;
+    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent>;
+    async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>>;
 
     // Sessions
     async fn create_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
@@ -151,6 +168,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_session(&self, ctx: &SecurityContext, value: &Session) -> StoreResult<()>;
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
+    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()>;
+    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool>;
+    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session>;
+    async fn list_deleted_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>>;
 
     // Channels (issue 70): documents of their own, which the session lists
     // by id.
@@ -159,6 +180,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_channel(&self, ctx: &SecurityContext, value: &Channel) -> StoreResult<()>;
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
     async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>>;
+    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()>;
+    async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool>;
+    async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel>;
+    async fn list_deleted_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>>;
 
     // Users - they belong to the system: everybody reads them, only the
     // system changes them (issue 94).
@@ -167,6 +192,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_user(&self, ctx: &SecurityContext, value: &User) -> StoreResult<()>;
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>>;
+    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()>;
+    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
+    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User>;
+    async fn list_deleted_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>>;
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User>;
 
     // User profiles - what a user says about themselves (issue 176), one
@@ -177,6 +206,10 @@ pub trait EntityStore : Debug + Sync + Send {
     async fn update_user_profile(&self, ctx: &SecurityContext, value: &UserProfile) -> StoreResult<()>;
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
     async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
+    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()>;
+    async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool>;
+    async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
+    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>>;
 }
 
 /// The preconfigured components: runtime configuration that personalities
@@ -221,6 +254,10 @@ pub trait StateStore : Debug + Sync + Send {
     /// Deletes the state of a channel that no longer exists: its own and that
     /// of every agent in it. Nothing to delete is not an error (issue 09).
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()>;
+
+    /// Deletes the state of an agent purged for good (issue 164): its own
+    /// and its state in every channel. Nothing to delete is not an error.
+    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()>;
 }
 
 

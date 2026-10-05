@@ -12,6 +12,9 @@ pub enum GlobalEvent {
     SessionCreated(SessionId),
     SessionUpdated(SessionId, SessionUpdateEvent),
     SessionDeleted(SessionId),
+    /// A deleted session was restored (issue 164): it is there again, as it
+    /// was, and is started when it is opened.
+    SessionRestored(SessionId),
     SessionStarted(SessionId),
     SessionStopped(SessionId),
     ChannelCreated(SessionId, ChannelId),
@@ -21,6 +24,8 @@ pub enum GlobalEvent {
     /// fetched by whoever may read it.
     MessageReclassified(SessionId, ChannelId, MessageId, Classification),
     ChannelDeleted(SessionId, ChannelId),
+    /// A deleted channel was restored into its session (issue 164).
+    ChannelRestored(SessionId, ChannelId),
     ChannelStarted(SessionId, ChannelId),
     ChannelStopped(SessionId, ChannelId),
     /// About an agent itself, which belongs to no session: one of user or

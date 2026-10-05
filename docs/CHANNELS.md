@@ -13,9 +13,10 @@ A **session** is the container of one interaction. Its `SessionLoop` runs its ch
 
 Every channel is a document of its own in the `EntityStore` (issue 70). The session document lists
 its channels by id, in order (`Session.channels`). Creating a session stores its channels with it
-(`SessionTemplate::build` yields both), deleting a session deletes them, and loading a session loads
-them. Loading happens in the runtime's name, since starting a session the caller may read must not
-fail on a channel the caller is not in.
+(`SessionTemplate::build` yields both), deleting a session keeps them - hidden with it, since a
+channel is reached only through its session (issue 164) -, purging it removes them, and loading a
+session loads them. Loading happens in the runtime's name, since starting a session the caller may
+read must not fail on a channel the caller is not in.
 
 Every session has a privacy policy (`Session.privacy`, issue 134): whom it lets read what was said
 in it from other sessions. It is taken over from its template (`SessionTemplate.privacy`, private
@@ -33,17 +34,22 @@ Channels can be created in and deleted from a running session: `SessionLoop::cre
 *   **Creating** stores the channel (`CreateChannel`) and then adds its id to the session through
     `SessionController::add_channel`, which checks `UpdateSession`, so that only the owner may do
     it.
-*   **Deleting** takes the channel out of the session (`remove_channel`) and deletes its document
-    (`DeleteChannel`).
+*   **Deleting** takes the channel out of the session (`remove_channel`) and marks its document
+    deleted (`DeleteChannel`, issue 164). The channel and its state are kept.
+*   **Restoring** a deleted channel (`SessionLoop::restore_channel`) asks `UpdateSession` and its
+    participants' clearance, as creating one does, takes the mark away (`Restore`), lists it in
+    the session again and starts it from its stored state. Its name must still be free.
+*   **Purging** is not a channel's: a deleted channel is removed for good - document and state -
+    with its session (`SessionManager::purge_session`), which needs no running loop.
 
 Only then is the running session changed and the change announced (`ChannelCreated`,
-`ChannelDeleted`).
+`ChannelDeleted`, `ChannelRestored`; a purge announces nothing).
 
 A deleted channel stops its actors before its task is aborted (issue 187).
 `ChannelLoop::stop_actors` tells every actor to `stop` and waits until their tasks have ended, at
 most `STOP_GRACE`. In that time an external agent cancels its open remote tasks and every actor
-stores its state. Only then is the channel's task aborted, and with it whatever still runs, and
-only then is the channel's state deleted, so that nothing stored late outlives the channel.
+stores its state. Only then is the channel's task aborted, and with it whatever still runs; the
+state they stored is kept with the deleted channel.
 
 ### Stopping an actor
 
@@ -96,7 +102,7 @@ and deleted.
 later, which it receives over a queue.
 
 *   Stopping the session aborts `run`, and with it every channel.
-*   Deleting a channel aborts that channel's task and deletes its state.
+*   Deleting a channel aborts that channel's task; its state is kept until it is purged.
 *   A channel deleted while it waits to be started is never started.
 *   A participant that cannot be run is left out when the channel starts, with a warning, and the
     channel runs with everyone else: a user or agent deleted since it joined (issue 120), or an

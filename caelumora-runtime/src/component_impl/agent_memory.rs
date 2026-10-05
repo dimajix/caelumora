@@ -279,6 +279,7 @@ mod tests {
                 }
                 None => {
                     store.delete_session(&SecurityContext::system(), id).await.unwrap();
+                    store.purge_session(&SecurityContext::system(), id).await.unwrap();
                     self.loops.remove(&id);
                 }
             }

@@ -11,7 +11,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
 use tracing::{info, warn};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::template::SessionTemplateId;
@@ -264,8 +264,7 @@ impl SessionLoop {
             return Err(error.into());
         }
 
-        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone());
-        let channel_loop = match ChannelLoop::new(channel.clone(), runtime).await {
+        let channel_loop = match self.add_channel_loop(&channel).await {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
                 // Stored, but it cannot run: taken back out, so that the
@@ -277,16 +276,27 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        channel_loop.attach(self);
-        self.channels.insert(channel.id, ChannelEntry { channel: channel_loop.clone(), task: None });
         self.runtime_manager.event_bus().publish(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone());
-        let _ = self.start_tx.send(channel.id);
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)
     }
 
-    /// Stops and deletes the channel `channel_id` on behalf of `context`,
-    /// together with its state (issue 09). Asked about first, like creating
+    /// Builds the loop of `channel`, which the session lists, and has the
+    /// session run it.
+    async fn add_channel_loop(self: &Arc<Self>, channel: &Channel) -> Result<Arc<ChannelLoop>> {
+        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone());
+        let channel_loop = ChannelLoop::new(channel.clone(), runtime).await?;
+        channel_loop.attach(self);
+        self.channels.insert(channel.id, ChannelEntry { channel: channel_loop.clone(), task: None });
+        let _ = self.start_tx.send(channel.id);
+        Ok(channel_loop)
+    }
+
+    /// Stops and deletes the channel `channel_id` on behalf of `context`.
+    /// Deleting marks (issue 164): the channel is taken out of the session
+    /// and its document marked, but it and its state stay stored - it can
+    /// be restored (`restore_channel`) - until it is purged with its session
+    /// (`SessionManager::purge_session`). Asked about first, like creating
     /// one: a refused deletion leaves the channel running.
     ///
     /// # Errors
@@ -301,13 +311,13 @@ impl SessionLoop {
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
         if let Err(e) = self.runtime_manager.entity_store().delete_channel(context, channel_id).await {
-            warn!("Channel {} was taken out of session {} but not deleted: {}", channel_id, self.id, e);
+            warn!("Channel {} was taken out of session {} but not marked deleted: {}", channel_id, self.id, e);
         }
 
         let task = self.channels.remove(&channel_id).and_then(|(_, entry)| entry.task);
         // Given the time to end by themselves before the channel's task -
-        // and with it whoever did not - is aborted (issue 187), and before
-        // the state is deleted, which they store on their way out.
+        // and with it whoever did not - is aborted (issue 187): they store
+        // their state on their way out, which stays.
         running.stop_actors().await;
         let event_bus = self.runtime_manager.event_bus();
         if let Some(task) = task {
@@ -315,15 +325,64 @@ impl SessionLoop {
             event_bus.publish(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone());
         }
         event_bus.publish(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone());
-        self.runtime_manager.state_store().delete_channel_state(channel_id).await?;
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
+    }
+
+    /// Restores the deleted channel `channel_id` of this session on behalf
+    /// of `context` (issue 164): its mark taken away, listed in the session
+    /// again and started from its stored state. Asks to change the session
+    /// (`UpdateSession`) and its participants' clearance, as creating one
+    /// does, and the store asks to restore it (`Restore`).
+    ///
+    /// # Errors
+    /// - `SessionError::ChannelNotFound` if the session has no such deleted
+    ///   channel, or `context` may not see it.
+    /// - `SessionError::DuplicateChannelName` if its name was taken since.
+    /// - `StoreError::PermissionDenied` if `context` may not change the
+    ///   session or restore the channel; nothing is changed then.
+    pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
+        let session = Arc::clone(&self.session());
+        self.runtime_manager.security_manager()
+            .require(context, ActionType::UpdateSession(&session.security_attributes), || StoreError::PermissionDenied).await?;
+        let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
+        let store = self.runtime_manager.entity_store();
+        let channel = match store.get_deleted_channel(context, channel_id).await.optional()? {
+            Some(channel) if channel.session_id == self.id => channel,
+            _ => return Err(not_found().into()),
+        };
+        if self.channels.iter().any(|entry| entry.channel.name() == channel.name) {
+            return Err(SessionError::DuplicateChannelName { session: self.id, name: channel.name }.into());
+        }
+        // As when it was created: its participants' clearance may have
+        // changed while it was deleted.
+        crate::channel::require_cleared(&self.runtime_manager, context, &channel).await?;
+        store.restore_channel(context, channel_id).await?;
+        let channel = Channel { deleted: None, ..channel };
+        let listed = match self.session_controller.add_channel(context, channel_id).await {
+            Ok(()) => self.add_channel_loop(&channel).await,
+            Err(error) => Err(error.into()),
+        };
+        let channel_loop = match listed {
+            Ok(channel_loop) => channel_loop,
+            Err(error) => {
+                // Deleted again, so that it is neither half back nor lost.
+                let _ = self.session_controller.remove_channel(context, channel_id).await;
+                if let Err(undo) = store.delete_channel(&SecurityContext::system(), channel_id).await {
+                    warn!("Channel {} of session {} could not be restored and not be marked deleted again: {}", channel_id, self.id, undo);
+                }
+                return Err(error);
+            }
+        };
+        self.runtime_manager.event_bus().publish(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone());
+        info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
+        Ok(channel_loop)
     }
 
     /// Deletes the stored channel `channel_id` again after creating it failed
     /// half-way - in the runtime's name: its creation was permitted.
     async fn discard_channel(&self, channel_id: ChannelId) {
-        if let Err(e) = self.runtime_manager.entity_store().delete_channel(&SecurityContext::system(), channel_id).await {
+        if let Err(e) = purge_channel_document(self.runtime_manager.entity_store().as_ref(), channel_id).await {
             warn!("Channel {} of session {} could not be deleted again: {}", channel_id, self.id, e);
         }
     }
@@ -389,6 +448,16 @@ impl SessionLoop {
             channel.id()
         }));
     }
+}
+
+/// Removes the document of channel `channel_id` for good, in the runtime's
+/// name: marked deleted first if it is not - a channel of a session being
+/// purged, which is hidden with the session, or one whose creation failed
+/// - since only what was deleted is purged (issue 164).
+async fn purge_channel_document(store: &dyn EntityStore, channel_id: ChannelId) -> StoreResult<bool> {
+    let system = SecurityContext::system();
+    store.delete_channel(&system, channel_id).await?;
+    store.purge_channel(&system, channel_id).await
 }
 
 pub struct SessionManager {
@@ -519,9 +588,11 @@ impl SessionManager {
                 // permitted, so it is taken back in the runtime's name.
                 let system = SecurityContext::system();
                 for created in &channels[..index] {
-                    let _ = store.delete_channel(&system, created.id).await;
+                    let _ = purge_channel_document(store.as_ref(), created.id).await;
                 }
-                let _ = store.delete_session(&system, id).await;
+                if store.delete_session(&system, id).await.is_ok() {
+                    let _ = store.purge_session(&system, id).await;
+                }
                 return Err(error.into());
             }
         }
@@ -606,7 +677,9 @@ impl SessionManager {
         removed
     }
 
-    /// Stop and permanently delete a session together with all of its channels.
+    /// Stops and deletes a session. Deleting marks (issue 164): the session
+    /// is kept, with its channels and their state, hidden until it is
+    /// restored (`restore_session`) or purged (`purge_session`).
     ///
     /// Asked about before anything happens - a refused deletion must not
     /// stop the session on the way (issue 11).
@@ -637,22 +710,69 @@ impl SessionManager {
             event_bus.publish(GlobalEvent::ChannelDeleted(id, channel_id), attributes);
         }
 
-        let store = self.runtime_manager.entity_store();
-        let removed = store.delete_session(context, id).await?;
-        // Its channels go with it - in the runtime's name, since deleting the
-        // session was permitted (issue 70).
-        for channel_id in &session.channels {
-            store.delete_channel(&SecurityContext::system(), *channel_id).await?;
-        }
-        // The state lives in the `StateStore`, which may be another store
-        // than the session's.
-        let state_store = self.runtime_manager.state_store();
-        for channel_id in &session.channels {
-            state_store.delete_channel_state(*channel_id).await?;
-        }
+        // Marked, not removed (issue 164): its channels and their state stay
+        // as they are, hidden with it - a channel is reached only through
+        // its session - until it is purged.
+        let removed = self.runtime_manager.entity_store().delete_session(context, id).await?;
         event_bus.publish(GlobalEvent::SessionDeleted(id), session.security_attributes.clone());
         self.starts.remove(&id);
         Ok(removed)
+    }
+
+    /// Restores the deleted session `id` on behalf of `context` (issue 164):
+    /// its mark taken away, with the channels it listed when it was
+    /// deleted. It is not started; opening it starts it, as any stored
+    /// session.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such deleted session or
+    /// `context` may not see it, `StoreError::PermissionDenied` if they may
+    /// but not restore it.
+    pub async fn restore_session(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
+        // The lock of deleting and purging it: a purge never meets it half
+        // restored.
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
+        let store = self.runtime_manager.entity_store();
+        store.restore_session(context, id).await?;
+        let session = store.get_session(context, id).await?;
+        self.runtime_manager.event_bus().publish(GlobalEvent::SessionRestored(id), session.security_attributes.clone());
+        info!("Session {} restored by {}", id, context.caller_id);
+        Ok(session)
+    }
+
+    /// Removes the deleted session `id` for good on behalf of `context`
+    /// (issue 164): its document, and - in the runtime's name, since the
+    /// purge was permitted - the documents and the state of its channels,
+    /// those it listed and those deleted from it before. Only what was
+    /// deleted is purged; the store asks `Purge`. Under the lock of
+    /// deleting and restoring it, so that what is restored meanwhile is not
+    /// purged.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if there is no such deleted session or
+    /// `context` may not see it, `StoreError::PermissionDenied` if they may
+    /// but not purge it.
+    pub async fn purge_session(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
+        let start = self.start_lock(id);
+        let _starting = start.lock().await;
+        let store = self.runtime_manager.entity_store();
+        let session = store.get_deleted_session(context, id).await?;
+        if !store.purge_session(context, id).await? {
+            return Err(StoreError::NotFound { entity: "session", id: id.to_string() }.into());
+        }
+        let mut channels = session.channels.clone();
+        channels.extend(store.list_deleted_channels(&SecurityContext::system()).await?.into_iter().filter(|c| c.session_id == id).map(|c| c.id));
+        // The state lives in the `StateStore`, which may be another store
+        // than the session's.
+        let state_store = self.runtime_manager.state_store();
+        for channel_id in channels {
+            purge_channel_document(store.as_ref(), channel_id).await?;
+            state_store.delete_channel_state(channel_id).await?;
+        }
+        self.starts.remove(&id);
+        info!("Session {} purged by {}", id, context.caller_id);
+        Ok(())
     }
 
     /// The root of the views (issue 163): every session `viewer` may
@@ -1072,7 +1192,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_deleted_channel_is_stopped_announced_and_its_state_is_gone() {
+    async fn a_deleted_channel_is_stopped_announced_and_kept_until_it_is_restored() {
         use caelumora_model::agent::{AgentChannelState, AgentId};
         let runtime = test_runtime();
         let manager = SessionManager::new(runtime.clone());
@@ -1088,7 +1208,9 @@ mod tests {
 
         assert!(session.channel_by_id(id).is_none());
         assert!(!runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.contains(&id));
-        assert!(runtime.state_store().get_channel_state(id).await.is_err(), "its state is deleted");
+        assert!(runtime.entity_store().get_channel(&ctx, id).await.is_err(), "not there");
+        assert!(runtime.entity_store().get_deleted_channel(&ctx, id).await.is_ok(), "but kept, marked (issue 164)");
+        assert!(runtime.state_store().get_channel_state(id).await.is_ok(), "with its state");
         let events = drain(&mut rx);
         let stopped = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStopped(_, cid) if *cid == id));
         let deleted = events.iter().position(|e| matches!(e, GlobalEvent::ChannelDeleted(_, cid) if *cid == id));
@@ -1096,6 +1218,20 @@ mod tests {
 
         let missing = session.delete_channel(&ctx, id).await.expect_err("gone");
         assert!(matches!(missing.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })));
+
+        // Restored: listed and running again, from the state it kept.
+        let taken = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let refused = session.restore_channel(&ctx, id).await.expect_err("its name is taken");
+        assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::DuplicateChannelName { .. })), "{refused}");
+        session.delete_channel(&ctx, taken.id()).await.unwrap();
+        session.restore_channel(&ctx, id).await.expect("restored");
+        assert!(session.channel_by_id(id).is_some());
+        assert!(runtime.entity_store().get_session(&ctx, session.id()).await.unwrap().channels.contains(&id), "listed again");
+        assert!(drain(&mut rx).iter().any(|e| matches!(e, GlobalEvent::ChannelRestored(_, cid) if *cid == id)), "and announced");
+        assert!(runtime.state_store().get_channel_state(id).await.is_ok());
+        let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");
+        assert!(matches!(again.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "{again}");
+        session.delete_channel(&ctx, id).await.unwrap();
 
         // The last channel may go too; the session keeps running without.
         let main = session.channel_by_name("main").unwrap().id();
@@ -1652,7 +1788,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_session_deletes_its_state_from_the_state_store() {
+    async fn a_deleted_session_keeps_its_state_until_it_is_purged_and_can_be_restored() {
         use caelumora_model::store::StateStore;
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
@@ -1667,9 +1803,25 @@ mod tests {
 
         manager.delete_session(&ctx, id).await.unwrap();
 
-        assert!(states.get_channel_state(channel_id).await.is_err(), "deleted from the state store, not only from the entity store");
         use caelumora_model::store::EntityStore;
+        assert!(entities.get_session(&ctx, id).await.is_err(), "not there");
+        assert!(states.get_channel_state(channel_id).await.is_ok(), "but kept, with its channels' state (issue 164)");
+        manager.restore_session(&ctx, id).await.expect("restored");
+        manager.open_session(&ctx, id).await.expect("and opened as any stored session");
+        assert!(manager.restore_session(&ctx, id).await.is_err(), "not deleted");
+        assert!(manager.purge_session(&ctx, id).await.is_err(), "only what was deleted is purged");
+
+        // A channel deleted from it before goes with it, too.
+        let side = manager.open_session(&ctx, id).await.unwrap().create_channel(&ctx, spec("side", vec![])).await.unwrap().id();
+        manager.open_session(&ctx, id).await.unwrap().delete_channel(&ctx, side).await.unwrap();
+        assert!(states.get_channel_state(side).await.is_ok(), "kept with the deleted channel");
+        manager.delete_session(&ctx, id).await.unwrap();
+        manager.purge_session(&ctx, id).await.expect("purged");
+        assert!(entities.get_deleted_session(&ctx, id).await.is_err(), "nothing left to restore");
+        assert!(states.get_channel_state(channel_id).await.is_err(), "deleted from the state store, not only from the entity store");
         assert!(entities.get_channel(&ctx, channel_id).await.is_err(), "its channels go with it (issue 70)");
+        assert!(entities.get_deleted_channel(&ctx, side).await.is_err(), "also those deleted from it before");
+        assert!(states.get_channel_state(side).await.is_err(), "with their state");
     }
 
     #[tokio::test]

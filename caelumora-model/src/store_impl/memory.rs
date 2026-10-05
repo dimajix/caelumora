@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use crate::removal::Stored;
+use crate::removal::{Deletable, Removal, Stored};
 use crate::security::{DummySecurityManager, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use std::fmt::Display;
@@ -88,8 +88,8 @@ impl MemoryStore {
     }
 }
 
-/// The five operations of every entity kind (issue 93), on the map that
-/// holds that kind and checked with its `Actions`.
+/// The operations of every kind (issues 93, 164), on the map that holds
+/// that kind and checked with its `Actions`.
 impl MemoryStore {
     async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
@@ -117,13 +117,65 @@ impl MemoryStore {
         Ok(())
     }
 
-    async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
+    /// Marks the entity deleted, by the caller and now (issue 164).
+    async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<bool>
+    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
+        let stored = self.read_lock(map, |v| v.get(&key).cloned());
+        if !self.access(ctx).delete(stored.as_ref(), kind).await? {
+            return Ok(false);
+        }
+        let Some(mut marked) = stored else { return Ok(false) };
+        marked.set_deleted(Some(Removal::now(ctx.caller_id)));
+        self.write_lock(map, |v| v.insert(key, marked));
+        Ok(true)
+    }
+
+    /// Removes the entity for good: deleting a kind that is not marked.
+    async fn remove_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
     where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(key).cloned());
         if !self.access(ctx).delete(stored.as_ref(), kind).await? {
             return Ok(false);
         }
         Ok(self.write_lock(map, |v| v.remove(key).is_some()))
+    }
+
+    async fn restore_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K) -> StoreResult<()>
+    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
+        let stored = self.read_lock(map, |v| v.get(&key).cloned());
+        self.access(ctx).restore(stored.as_ref(), kind, key.to_string()).await?;
+        let Some(mut restored) = stored else { return Ok(()) };
+        restored.set_deleted(None);
+        self.write_lock(map, |v| v.insert(key, restored));
+        Ok(())
+    }
+
+    async fn purge_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
+    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
+        let stored = self.read_lock(map, |v| v.get(key).cloned());
+        if !self.access(ctx).purge(stored.as_ref(), kind).await? {
+            return Ok(false);
+        }
+        // Only if it is still marked: restored while the purge was asked
+        // about, it stays.
+        Ok(self.write_lock(map, |v| {
+            let marked = v.get(key).is_some_and(|value| value.deleted().is_some());
+            marked && v.remove(key).is_some()
+        }))
+    }
+
+    async fn get_deleted_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<T>
+    where K: Eq + Hash + Display + Send + Sync, T: Deletable + Clone + Send + Sync {
+        let found = self.read_lock(map, |v| v.get(key).cloned());
+        self.access(ctx).read_deleted(found, kind, key.to_string()).await
+    }
+
+    async fn list_deleted_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
+    where K: Eq + Hash + Send + Sync, T: Deletable + Clone + Send + Sync {
+        let access = self.access(ctx);
+        access.allow(kind.list).await?;
+        let all = self.read_lock(map, |v| v.values().cloned().collect());
+        Ok(access.filter_deleted(all, kind).await)
     }
 
     async fn list_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
@@ -155,10 +207,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.personalities, &PERSONALITIES, value.id, value).await
     }
     async fn delete_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.personalities, &PERSONALITIES, &id).await
+        self.delete_in(ctx, &self.personalities, &PERSONALITIES, id).await
     }
     async fn list_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
         self.list_in(ctx, &self.personalities, &PERSONALITIES).await
+    }
+    async fn restore_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.personalities, &PERSONALITIES, id).await
+    }
+    async fn purge_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.personalities, &PERSONALITIES, &id).await
+    }
+    async fn get_deleted_personality(&self, ctx: &SecurityContext, id: PersonalityId) -> StoreResult<Personality> {
+        self.get_deleted_in(ctx, &self.personalities, &PERSONALITIES, &id).await
+    }
+    async fn list_deleted_personalities(&self, ctx: &SecurityContext) -> StoreResult<Vec<Personality>> {
+        self.list_deleted_in(ctx, &self.personalities, &PERSONALITIES).await
     }
 
     // Session templates
@@ -172,10 +236,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.session_templates, &SESSION_TEMPLATES, value.id, value).await
     }
     async fn delete_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
+        self.delete_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
     }
     async fn list_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
         self.list_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
+    }
+    async fn restore_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.session_templates, &SESSION_TEMPLATES, id).await
+    }
+    async fn purge_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
+    }
+    async fn get_deleted_session_template(&self, ctx: &SecurityContext, id: SessionTemplateId) -> StoreResult<SessionTemplate> {
+        self.get_deleted_in(ctx, &self.session_templates, &SESSION_TEMPLATES, &id).await
+    }
+    async fn list_deleted_session_templates(&self, ctx: &SecurityContext) -> StoreResult<Vec<SessionTemplate>> {
+        self.list_deleted_in(ctx, &self.session_templates, &SESSION_TEMPLATES).await
     }
 
     // Agents
@@ -189,10 +265,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.agents, &AGENTS, value.id, value).await
     }
     async fn delete_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.agents, &AGENTS, &id).await
+        self.delete_in(ctx, &self.agents, &AGENTS, id).await
     }
     async fn list_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
         self.list_in(ctx, &self.agents, &AGENTS).await
+    }
+    async fn restore_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.agents, &AGENTS, id).await
+    }
+    async fn purge_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.agents, &AGENTS, &id).await
+    }
+    async fn get_deleted_agent(&self, ctx: &SecurityContext, id: AgentId) -> StoreResult<Agent> {
+        self.get_deleted_in(ctx, &self.agents, &AGENTS, &id).await
+    }
+    async fn list_deleted_agents(&self, ctx: &SecurityContext) -> StoreResult<Vec<Agent>> {
+        self.list_deleted_in(ctx, &self.agents, &AGENTS).await
     }
 
     // Sessions - their state is the `StateStore`'s, which may be another
@@ -207,10 +295,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.sessions, &SESSIONS, value.id, value).await
     }
     async fn delete_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.sessions, &SESSIONS, &id).await
+        self.delete_in(ctx, &self.sessions, &SESSIONS, id).await
     }
     async fn list_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
         self.list_in(ctx, &self.sessions, &SESSIONS).await
+    }
+    async fn restore_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.sessions, &SESSIONS, id).await
+    }
+    async fn purge_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.sessions, &SESSIONS, &id).await
+    }
+    async fn get_deleted_session(&self, ctx: &SecurityContext, id: SessionId) -> StoreResult<Session> {
+        self.get_deleted_in(ctx, &self.sessions, &SESSIONS, &id).await
+    }
+    async fn list_deleted_sessions(&self, ctx: &SecurityContext) -> StoreResult<Vec<Session>> {
+        self.list_deleted_in(ctx, &self.sessions, &SESSIONS).await
     }
 
     // Channels (issue 70)
@@ -224,10 +324,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.channels, &CHANNELS, value.id, value).await
     }
     async fn delete_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.channels, &CHANNELS, &id).await
+        self.delete_in(ctx, &self.channels, &CHANNELS, id).await
     }
     async fn list_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
         self.list_in(ctx, &self.channels, &CHANNELS).await
+    }
+    async fn restore_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.channels, &CHANNELS, id).await
+    }
+    async fn purge_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.channels, &CHANNELS, &id).await
+    }
+    async fn get_deleted_channel(&self, ctx: &SecurityContext, id: ChannelId) -> StoreResult<Channel> {
+        self.get_deleted_in(ctx, &self.channels, &CHANNELS, &id).await
+    }
+    async fn list_deleted_channels(&self, ctx: &SecurityContext) -> StoreResult<Vec<Channel>> {
+        self.list_deleted_in(ctx, &self.channels, &CHANNELS).await
     }
 
     // Users - found by name as well, since a username is an identity
@@ -242,10 +354,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.users, &USERS, value.id, value).await
     }
     async fn delete_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.users, &USERS, &id).await
+        self.delete_in(ctx, &self.users, &USERS, id).await
     }
     async fn list_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
         self.list_in(ctx, &self.users, &USERS).await
+    }
+    async fn restore_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.users, &USERS, id).await
+    }
+    async fn purge_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.users, &USERS, &id).await
+    }
+    async fn get_deleted_user(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<User> {
+        self.get_deleted_in(ctx, &self.users, &USERS, &id).await
+    }
+    async fn list_deleted_users(&self, ctx: &SecurityContext) -> StoreResult<Vec<User>> {
+        self.list_deleted_in(ctx, &self.users, &USERS).await
     }
     async fn find_user_by_name(&self, ctx: &SecurityContext, name: &str) -> StoreResult<User> {
         let users = self.list_in(ctx, &self.users, &USERS).await?;
@@ -263,10 +387,22 @@ impl EntityStore for MemoryStore {
         self.update_in(ctx, &self.user_profiles, &USER_PROFILES, value.user_id(), value).await
     }
     async fn delete_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.user_profiles, &USER_PROFILES, &id).await
+        self.delete_in(ctx, &self.user_profiles, &USER_PROFILES, id).await
     }
     async fn list_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
         self.list_in(ctx, &self.user_profiles, &USER_PROFILES).await
+    }
+    async fn restore_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<()> {
+        self.restore_in(ctx, &self.user_profiles, &USER_PROFILES, id).await
+    }
+    async fn purge_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<bool> {
+        self.purge_in(ctx, &self.user_profiles, &USER_PROFILES, &id).await
+    }
+    async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile> {
+        self.get_deleted_in(ctx, &self.user_profiles, &USER_PROFILES, &id).await
+    }
+    async fn list_deleted_user_profiles(&self, ctx: &SecurityContext) -> StoreResult<Vec<UserProfile>> {
+        self.list_deleted_in(ctx, &self.user_profiles, &USER_PROFILES).await
     }
 }
 
@@ -283,7 +419,7 @@ impl ComponentStore for MemoryStore {
         self.update_in(ctx, &self.components, &COMPONENTS, value.id().to_string(), value).await
     }
     async fn delete_component(&self, ctx: &SecurityContext, id: &str) -> StoreResult<bool> {
-        self.delete_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
+        self.remove_in(ctx, &self.components, &COMPONENTS, &id.to_string()).await
     }
     async fn list_components(&self, ctx: &SecurityContext) -> StoreResult<Vec<StoredComponent>> {
         self.list_in(ctx, &self.components, &COMPONENTS).await
@@ -331,6 +467,12 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
+    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
+        self.write_lock(&self.agent_states, |v| v.remove(&agent_id));
+        self.write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]
@@ -353,18 +495,8 @@ mod tests {
         suite::component_store_behaves(&MemoryStore::new()).await;
     }
 
-    #[async_trait::async_trait]
-    impl suite::MarkByHand for MemoryStore {
-        async fn store_marked_session(&self, session: &Session) {
-            self.write_lock(&self.sessions, |v| v.insert(session.id, session.clone()));
-        }
-        async fn store_marked_user(&self, user: &User) {
-            self.write_lock(&self.users, |v| v.insert(user.id, user.clone()));
-        }
-    }
-
     #[tokio::test]
-    async fn keeps_what_is_marked_deleted_out_of_sight() {
-        suite::marked_documents_are_absent(&MemoryStore::new()).await;
+    async fn keeps_what_is_deleted_marked() {
+        suite::deleting_marks(&MemoryStore::new()).await;
     }
 }

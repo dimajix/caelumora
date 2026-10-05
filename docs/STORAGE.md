@@ -74,8 +74,25 @@ again - also not by the system, so that no caller has to remember to leave it ou
 taken: creating it again is a `Conflict`, and so seeding does not bring back deleted demo data.
 Nothing created or changed may carry the mark (`Validation`): only deleting is to set it.
 
-So far nothing does: `delete_x` still removes the document. Marking on delete, restoring, purging
-and reading what was deleted are the next steps of 164.
+`delete_x` sets the mark - by the caller, now - and keeps the document. What was deleted is reached
+by four operations of its own, for every deletable kind alike, each with a permission of its own:
+
+| Operation | asks | does |
+|---|---|---|
+| `get_deleted_x`, `list_deleted_x` | `ReadDeleted` | read the marked documents; what is not marked is not found |
+| `restore_x` | `ReadDeleted`, then `Restore` | takes the mark away |
+| `purge_x` | `ReadDeleted`, then `Purge` | removes the document for good - only if it is marked, also when it is removed |
+
+A preconfigured component has none of them: `delete_component` removes it for good. The state of
+what was deleted stays in the `StateStore` until it is purged (see *Deleting state*).
+
+Purging only what is marked keeps a purge from removing what was restored meanwhile: the
+`MemoryStore` removes an entry only if it is still marked when it does, and the `JsonFileStore`
+reads the file once more right before - a file cannot be removed on a condition atomically.
+Restoring and purging a session are serialised by the `SessionManager`, under the lock it also
+deletes and starts a session with. What the runtime removes for good that is not marked - the
+channels of a session being purged, which are hidden with it, or a document whose creation failed
+- it marks first, in its own name.
 
 ### Demo data
 
@@ -197,11 +214,14 @@ for the other's (issue 62).
 
 ### Deleting state
 
-The entity store and the state store are configured separately and may be different stores. Deleting
-a channel therefore deletes its state explicitly, through `StateStore::delete_channel_state`, which
-removes the channel's state and that of every agent in it, external ones included; deleting a
-session does the same for each of its channels. It is never a side effect of
-`EntityStore::delete_session`.
+Deleting a session or a channel keeps its state: it is only marked (issue 164), and its state is
+hidden with it. Purging it removes the state too. The entity store and the state store are
+configured separately and may be different stores, so a purge deletes the state explicitly:
+`StateStore::delete_channel_state` removes a channel's state and that of every agent in it,
+external ones included, and purging a session does so for each of its channels - those it listed
+and those deleted from it before. `StateStore::delete_agent_state` removes an agent's own state and
+its state in every channel, for the purge of an agent. It is never a side effect of the
+`EntityStore`.
 
 ## Controllers
 

@@ -127,7 +127,7 @@ Per deletable kind, besides the five operations:
 |---|---|---|
 | `delete_x(ctx, id) -> bool` | `DeleteX`, as today | marks; `false` if nothing there, or marked already |
 | `restore_x(ctx, id) -> ()` | `Restore(kind, stored)` | removes the mark; `NotFound` if not marked or not readable |
-| `purge_x(ctx, id) -> bool` | `Purge(kind, stored)` | removes the document, marked or not |
+| `purge_x(ctx, id) -> bool` | `Purge(kind, stored)` | removes the document, marked or not *(changed: only if marked, see the history)* |
 | `get_deleted_x(ctx, id) -> X` | `ReadDeleted(kind, stored)` | the marked document; `NotFound` otherwise |
 | `list_deleted_x(ctx) -> Vec<X>` | `ListX`, then `ReadDeleted` each | the marked documents |
 
@@ -172,7 +172,8 @@ purge of an agent.
   this session; the name must be free (`channel_by_name`); `restore_channel`;
   `SessionController::add_channel`; start the loop as `create_channel` does, from the stored state;
   `ChannelRestored`.
-- `SessionLoop::purge_channel(ctx, id)`: `purge_channel`, `delete_channel_state`.
+- `SessionLoop::purge_channel(ctx, id)`: `purge_channel`, `delete_channel_state`. *(Not made: a
+  channel is purged with its session only; see the history.)*
 - `discard_channel` and the rollback in `create_session` purge as the system.
 - `ChannelController::remove_participant` moves the participant to `former` with the `Removal`;
   `add_participant` takes it out again. Attributes, history limits and events as today.
@@ -204,7 +205,7 @@ purge of an agent.
 | `DELETE /sessions/{id}`, `DELETE …/channels/{cid}` | unchanged for clients: now soft |
 | `GET /sessions?deleted=true`, `GET /sessions/{id}/channels?deleted=true` | the trash, each entry with `deleted`, `can_restore`, `can_purge` |
 | `POST /sessions/{id}/restore`, `POST …/channels/{cid}/restore` | restore; `409` if the name is taken, `404` if not deleted or not visible |
-| `POST /sessions/{id}/purge`, `POST …/channels/{cid}/purge` | purge; `403` unless the policy allows |
+| `POST /sessions/{id}/purge` | purge; `403` unless the policy allows. A channel is purged with its session only. |
 | `GET …/channels/{cid}` | additionally `former_members`, each with `left` |
 | `…/actors/{aid}/history`, `given-up-turns`, `messages/{mid}/context`, `GET …/participants/{aid}` | also for a former member: `member_of` asks `ChannelView::member` |
 | `DELETE /agents/{id}`, `POST /agents/{id}/restore`, `POST /agents/{id}/purge`, `GET /agents?deleted=true` | step 6 |
@@ -328,3 +329,55 @@ rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-l
   own), and `ComponentRegistry` takes it instead of the `EntityStore`. The store suite runs
   components in `component_store_behaves`. STORAGE.md, COMPONENTS.md, ARCHITECTURE.md,
   CONFIGURATION.md.
+- **2026-10-05** — Steps 2 and 4 done together, at the maintainer's decision. Step 2 alone was to
+  change no behaviour, so the runtime would have had to delete and then purge - a purge hidden in
+  every delete. Together, deleting marks and purging is an operation of its own from the start.
+  - **Store:** `delete_x` marks (`Removal` by the caller, now) and keeps the document; for the
+    seven deletable kinds `restore_x`, `purge_x`, `get_deleted_x` and `list_deleted_x`, generic over
+    `Deletable` in both stores (`delete_in`/`delete_file` mark, `restore_…`, `purge_…`,
+    `get_deleted_…`, `list_deleted_…`; `remove_in`/`remove_file` delete a component for good).
+    `Access` asks `ReadDeleted` for the trash and for restoring, `Purge` for purging - after
+    whether the caller may see the entity, as it is or as deleted. `StateStore::delete_agent_state`
+    for the purge of an agent (step 6).
+  - **Policy:** `ActionType::ReadDeleted`, `Restore` and `Purge`, each with the `EntityKind` and the
+    stored attributes; the owner reads and restores, purging is the system's alone.
+    `AccessQuestions` has `may_restore` and `may_purge` for the snapshots of step 5.
+  - **Runtime:** `SessionManager::delete_session` marks the session only; channels and state stay.
+    `restore_session` takes the mark away and does not start it; `purge_session` purges only what
+    was deleted, and with it - in the runtime's name - the channels it listed and those deleted
+    from it before, with their state. `SessionLoop::delete_channel` marks; `restore_channel` asks
+    `UpdateSession`, lists and starts it again (`add_channel_loop`, shared with `create_channel`),
+    and refuses a name taken meanwhile. `GlobalEvent::SessionRestored` and `ChannelRestored`; a
+    purge announces nothing. The rollbacks of a failed creation purge in the runtime's name.
+  - **A channel is purged with its session only**, decided by the maintainer: purging touches the
+    stores alone and needs no running loop, so it is not the `SessionLoop`'s, and `purge_session`
+    already purges its channels - the document through the store, the state through the
+    `StateStore`. A channel deleted from a session that stays stays in the trash until the session
+    is purged. Should the retention policy ([07](07-session-deletion-audit.md)) or a route need to
+    purge a single channel, it is a method of the `SessionManager`, not of the loop.
+  - **Beyond the plan:** `restore_channel` checks its participants' clearance again
+    (`require_cleared`), as `create_channel` does - their roles may have changed while it was
+    deleted. Found while writing its test in the security suite.
+  - **Tests:** the store suite deletes for real now (`deleting_marks`; `MarkByHand` is gone), a
+    policy test in `store_impl::access`, the session tests that asserted that state is gone now
+    assert that it stays until the purge, and the security suite has restoring and purging a
+    session and a channel. SECURITY.md, STORAGE.md, CHANNELS.md, REST-SERVER.md.
+
+  The readers the plan named to change by the filter alone - `Views::privacy_of`,
+  `template::agent`, `SessionLoop::channel_by_name` - do not change in behaviour: a deleted session
+  was gone for `privacy_of` before too, agents are deleted only from step 6 on, and
+  `channel_by_name` looks at the running channels. They get no tests of their own here.
+
+  A test helper in `agent_memory` that makes a session disappear now purges it instead of deleting
+  it: it may create the session again under the same id, which a marked id refuses.
+
+  **Purging only what is marked.** As planned, `purge_x` removed a document marked or not, for the
+  cascade to the channels of a deleted session, which are hidden with it but not marked. The
+  runtime checked "only what was deleted" before (`get_deleted_x`), so a restore in between would
+  have been purged. Changed, as the maintainer agreed: `purge_x` purges only what is marked -
+  `Access::purge` asks `ReadDeleted`, then `Purge` - and removes it only if it is still marked when
+  it does (`MemoryStore` under its lock; `JsonFileStore` by reading the file once more, which
+  narrows the window but cannot close it). The guarantee is the runtime's: `restore_session` takes
+  the lock `delete_session` and `purge_session` hold. The cascade and the rollbacks of a failed
+  creation mark first and purge then, in the runtime's name (`purge_channel_document`). A purge
+  that removes nothing after all ends as `NotFound`, without touching the channels.
