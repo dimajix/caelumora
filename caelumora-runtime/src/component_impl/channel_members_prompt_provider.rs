@@ -330,7 +330,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached()).expect("a turn was begun")
-            .with_views(ViewsFactory::in_session(session_loop, runtime, context.clone()));
+            .with_views(ViewsFactory::in_session(session_loop, context.clone()));
 
         let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.work()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\

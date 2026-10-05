@@ -292,7 +292,7 @@ mod tests {
         /// What a turn of `memory`'s agent in channel `at` navigates.
         fn views_in(&self, at: &At, memory: &AgentMemoryComponent) -> ViewsFactory {
             let session = self.loops.get(&at.0.0).expect("a session of the test").clone();
-            ViewsFactory::in_session(session, self.runtime.clone(), memory.security_context.clone())
+            ViewsFactory::in_session(session, memory.security_context.clone())
         }
     }
 

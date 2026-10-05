@@ -155,6 +155,12 @@ impl SessionLoop {
         Ok(session_loop)
     }
 
+    /// The views of an agent in this session, as `viewer` (issue 163):
+    /// this session alone, reached through its loop.
+    pub(crate) fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
+        Views::of_own_session(&self.runtime_manager, self.clone(), viewer)
+    }
+
     pub fn id(&self) -> SessionId {
         self.session_controller.id()
     }

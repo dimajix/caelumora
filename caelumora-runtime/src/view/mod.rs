@@ -178,6 +178,12 @@ impl Views {
         &self.viewer
     }
 
+    /// The views of an agent in `session`, which it reaches alone (issue
+    /// 229): what `SessionLoop::views` gives.
+    pub(crate) fn of_own_session(runtime: &RuntimeManager, session: Arc<SessionLoop>, viewer: Viewer) -> Self {
+        Self::new(runtime, Arc::new(OwnSession(session)), viewer)
+    }
+
     /// The viewer's context: in whose name every edge asks.
     pub(crate) fn context(&self) -> &SecurityContext {
         self.viewer.context()
@@ -461,7 +467,7 @@ enum FactoryRoot {
     /// A session loop held directly: for turns outside of an actor, in
     /// tests.
     #[cfg(test)]
-    Session { session: Arc<SessionLoop>, runtime: Arc<RuntimeManager> },
+    Session(Arc<SessionLoop>),
 }
 
 impl ViewsFactory {
@@ -470,21 +476,21 @@ impl ViewsFactory {
     }
 
     #[cfg(test)]
-    pub(crate) fn in_session(session: Arc<SessionLoop>, runtime: Arc<RuntimeManager>, context: SecurityContext) -> Self {
-        Self { root: FactoryRoot::Session { session, runtime }, context }
+    pub(crate) fn in_session(session: Arc<SessionLoop>, context: SecurityContext) -> Self {
+        Self { root: FactoryRoot::Session(session), context }
     }
 
     /// The agent's own session, as it reads from `channel` at
     /// `classification`; `None` while the channel is not attached to its
     /// session yet, or once it is gone.
     pub(crate) fn session(&self, channel: ChannelId, classification: Classification) -> Option<SessionView> {
-        let (session_loop, runtime) = match &self.root {
-            FactoryRoot::Actor(actor) => (actor.channel_loop()?.session_loop()?, actor.runtime_manager().clone()),
+        let session_loop = match &self.root {
+            FactoryRoot::Actor(actor) => actor.channel_loop()?.session_loop()?,
             #[cfg(test)]
-            FactoryRoot::Session { session, runtime } => (session.clone(), runtime.clone()),
+            FactoryRoot::Session(session) => session.clone(),
         };
         let from = Place { channel, classification, session: session_loop.privacy() };
-        let views = Views::new(&runtime, Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
+        let views = session_loop.views(Viewer::from_place(self.context.clone(), from));
         Some(SessionView::of(views, Found::Running(session_loop)))
     }
 }

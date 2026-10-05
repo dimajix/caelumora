@@ -116,3 +116,10 @@ reason to look a service up each time does not apply.
   and the `ControllerManager` stay, as do the module's helpers `require_classification`,
   `require_seen` and `channel::require_cleared`, which take the `RuntimeManager` whole rather than
   its parts. No behaviour changed.
+- **2026-10-05** — Step 5, the views of an agent: `SessionLoop::views(viewer)` gives the views of an
+  agent in its session, as `SessionManager::views` gives a user's, from the `RuntimeManager` the
+  loop holds anyway (`Views::of_own_session`). `ViewsFactory` holds only the actor's runtime - or,
+  in tests, the session loop - and no longer reaches through `runtime_manager()`. No behaviour
+  changed. Left reaching through it: the approver for the `ControllerManager` (step 2, as decided)
+  and a test in `channel.rs` that builds a channel anew after a restart and needs a fresh
+  `ChannelRuntime`.
