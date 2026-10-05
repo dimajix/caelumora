@@ -130,3 +130,8 @@ reason to look a service up each time does not apply.
   `.clone()` elsewhere - clippy's `clone_on_ref_ptr` finds about 350 places; enabling the lint and
   converting them is a step of its own. With this step the issue is done as far as it set out: the
   types named above hold their services, and the accessors lend.
+- **2026-10-05** — Asked for by the maintainer, as part of this issue: the workspace turns on
+  clippy's `clone_on_ref_ptr` (`[workspace.lints.clippy]`, every crate with `[lints] workspace =
+  true`), and the code clones its `Arc`s with `Arc::clone` - about 350 places in 35 files, tests
+  included. Where a concrete `Arc` is passed as an `Arc<dyn …>`, the type is named
+  (`Arc::<MemoryStore>::clone(&store)`). No behaviour changed.

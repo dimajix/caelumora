@@ -231,9 +231,9 @@ impl RuntimeManager {
     ) -> ComponentResult<Self> {
         component_registry.set_defaults(&component_defaults)?;
 
-        let event_bus = Arc::new(EventBus::new(security_manager.clone()));
-        let controller_manager = Arc::new(ControllerManager::new(entity_store.clone(), event_bus.clone()));
-        let agent_states = Arc::new(crate::agent_state::AgentStates::new(state_store.clone(), event_bus.clone()));
+        let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager)));
+        let controller_manager = Arc::new(ControllerManager::new(Arc::clone(&entity_store), Arc::clone(&event_bus)));
+        let agent_states = Arc::new(crate::agent_state::AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
 
         Ok(Self {
             security_manager,
@@ -311,7 +311,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::new(manager, commands)
     }
@@ -335,7 +335,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(store.clone(), store.clone(), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, crate::component::ComponentRegistry::built_in(store.clone()))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), default_commands(), defaults, crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

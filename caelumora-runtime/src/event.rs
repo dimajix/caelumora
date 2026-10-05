@@ -156,8 +156,8 @@ impl EventBus {
 
     fn start_dispatcher(&self) -> mpsc::UnboundedSender<PublishedEvent> {
         let (tx, mut rx) = mpsc::unbounded_channel::<PublishedEvent>();
-        let parties = self.parties.clone();
-        let security_manager = self.security_manager.clone();
+        let parties = Arc::clone(&self.parties);
+        let security_manager = Arc::clone(&self.security_manager);
         tokio::spawn(async move {
             while let Some(published) = rx.recv().await {
                 // The parties as they are now; the lock is not held while the

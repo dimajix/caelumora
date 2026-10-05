@@ -139,7 +139,7 @@ mod tests {
     async fn gives_the_configured_roles_and_follows_a_change() {
         let store: Arc<dyn EntityStore> = Arc::new(MemoryStore::new());
         let roles = BTreeMap::from([("alice".to_string(), vec!["hr".to_string()])]);
-        let provider = AcceptAnyUserProvider::with_roles(store.clone(), roles, vec!["staff".to_string()]);
+        let provider = AcceptAnyUserProvider::with_roles(Arc::clone(&store), roles, vec!["staff".to_string()]);
         let alice = provider.authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
         let bob = provider.authenticate("bob", &Credential::Password("x")).await.unwrap().unwrap();
         assert_eq!((alice.roles, bob.roles), (vec!["hr".to_string()], vec!["staff".to_string()]));

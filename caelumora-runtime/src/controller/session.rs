@@ -159,7 +159,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.create_session(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), store.clone());
+        let controller = SessionController::new(session.clone(), Arc::new(()), Arc::<MemoryStore>::clone(&store));
 
         controller.update_name(&ctx, "renamed".to_string()).await.unwrap();
 

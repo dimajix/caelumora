@@ -325,8 +325,8 @@ mod tests {
     async fn user_actor() -> (UserActor, Arc<crate::channel::ChannelLoop>) {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let channel_runtime = ChannelRuntime::new(runtime.clone(), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))));
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),

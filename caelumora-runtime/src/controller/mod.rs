@@ -82,11 +82,11 @@ impl ControllerManager {
     }
 
     pub fn new_session_controller(&self, session: Session) -> Arc<SessionController> {
-        Arc::new(SessionController::new(session, self.event_bus.clone(), self.entity_store.clone()))
+        Arc::new(SessionController::new(session, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)))
     }
 
     pub fn new_channel_controller(&self, channel: Channel) -> Arc<ChannelController> {
-        Arc::new(ChannelController::new(channel, self.event_bus.clone(), self.entity_store.clone()))
+        Arc::new(ChannelController::new(channel, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)))
     }
 
     /// The controller of agent `id` in this instance: the one its actors
@@ -104,7 +104,7 @@ impl ControllerManager {
             return Ok(controller);
         }
         let agent = self.entity_store.get_agent(&SecurityContext::system(), id).await?;
-        let controller = Arc::new(AgentController::new(agent, self.event_bus.clone(), self.entity_store.clone()));
+        let controller = Arc::new(AgentController::new(agent, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)));
         remember(&mut agents, id, &controller);
         Ok(controller)
     }
@@ -152,7 +152,7 @@ impl ControllerManager {
     fn start_follower(&self) {
         self.follower.get_or_init(|| {
             let mut events = self.event_bus.subscribe_all();
-            let (agents, users) = (self.agents.clone(), self.users.clone());
+            let (agents, users) = (Arc::clone(&self.agents), Arc::clone(&self.users));
             tokio::spawn(async move {
                 while let Some(event) = events.recv().await {
                     match &event {
@@ -197,7 +197,7 @@ mod tests {
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
         let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new())));
-        let manager = ControllerManager::new(store.clone(), bus.clone());
+        let manager = ControllerManager::new(Arc::<MemoryStore>::clone(&store), Arc::clone(&bus));
         (store, bus, manager)
     }
 

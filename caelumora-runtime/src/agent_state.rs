@@ -135,7 +135,7 @@ impl AgentStates {
         }
         let state = self.state_store.get_agent_state(agent_id).await
             .with_context(|| format!("Cannot load the state of agent {}", agent_id))?;
-        let backing = Backing { state_store: self.state_store.clone(), events: self.events.clone(), attributes };
+        let backing = Backing { state_store: Arc::clone(&self.state_store), events: Arc::clone(&self.events), attributes };
         let handle = Arc::new(AgentStateHandle::new(agent_id, state, Some(backing)));
         handles.retain(|_, h| h.strong_count() > 0);
         handles.insert(agent_id, Arc::downgrade(&handle));
@@ -156,7 +156,7 @@ mod tests {
     #[tokio::test]
     async fn every_actor_of_an_agent_shares_one_state_and_no_change_is_lost() {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        let states = AgentStates::new(store.clone(), Arc::new(()));
+        let states = AgentStates::new(Arc::clone(&store), Arc::new(()));
         let agent = AgentId::new();
         let (in_main, in_research) = (states.get(agent, Default::default()).await.unwrap(), states.get(agent, Default::default()).await.unwrap());
         assert!(Arc::ptr_eq(&in_main, &in_research), "one handle for both channels");
@@ -203,7 +203,7 @@ mod tests {
     async fn a_stored_change_is_announced_without_its_content() {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
         let announced = Arc::new(Announced::default());
-        let states = AgentStates::new(store, announced.clone());
+        let states = AgentStates::new(store, Arc::<Announced>::clone(&announced));
         let agent = AgentId::new();
         let handle = states.get(agent, Default::default()).await.unwrap();
 

@@ -103,7 +103,7 @@ impl A2aAgentComponent {
     /// told, and it is asked again a little later each time. Its own
     /// translation: every answer repeats what the task produced so far.
     fn polled(&self, security: &SecurityContext, mut first: Option<WireTask>, task: TaskId) -> ExternalStream {
-        let client = self.client.clone();
+        let client = Arc::clone(&self.client);
         let security = security.clone();
         Box::pin(async_stream::stream! {
             let mut translation = Translation::default();
@@ -224,7 +224,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| async move {
             let config: A2aAgentConfig = serde_json::from_value(descriptor.params.clone())
                 .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))?;
-            let component = A2aAgentComponent::build(descriptor.id.clone(), config, context.secret_manager.clone(), &context.security_context).await?;
+            let component = A2aAgentComponent::build(descriptor.id.clone(), config, Arc::clone(&context.secret_manager), &context.security_context).await?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::new(component));
             Ok(facets)
@@ -313,7 +313,7 @@ mod tests {
             answers: answers.into_iter().map(|(m, sse, v)| (m.to_string(), (sse, v))).collect(),
             asked: Vec::new(),
         }));
-        let app = Router::new().route("/.well-known/agent-card.json", get(card)).route("/a2a", post(rpc)).with_state(stub.clone());
+        let app = Router::new().route("/.well-known/agent-card.json", get(card)).route("/a2a", post(rpc)).with_state(Arc::clone(&stub));
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (component(&format!("http://{address}")).await, stub)
     }

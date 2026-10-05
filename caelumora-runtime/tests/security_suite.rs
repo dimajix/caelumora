@@ -126,12 +126,12 @@ impl World {
         let roles = Roles::new([("staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
         let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_rules(rules), asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
-        let policy: Arc<dyn SecurityManager> = recorder.clone();
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let mut registry = ComponentRegistry::built_in(store.clone());
+        let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(runtime));
         let mut world = Self { policy: recorder, store, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new() };
         world.alice = world.user("alice").await;
@@ -369,7 +369,7 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
     let session = world.shared_session(&[], &[helper]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world.store.update_personality(&World::as_user(world.bob), &withdrawn).await.unwrap();
@@ -464,7 +464,7 @@ async fn a_stranger_finds_nothing_of_a_session() {
 async fn a_participant_takes_part_but_changes_nothing() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     let bob = World::as_user(world.bob);
 
     world.manager.open_session(&bob, session.id()).await.expect("he opens it");
@@ -621,7 +621,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     let model = Arc::new(Once(Mutex::new(Some(stop))));
     let world = World::with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn caelumora_runtime::llm::LLMClient>(model.clone());
+        facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
     })).await;
     let stopping = Personality {
@@ -634,7 +634,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     world.store.update_personality(&World::system(), &stopping).await.unwrap();
     let helper = world.agent("helper", world.alice, &stopping).await;
     let session = world.shared_session(&[helper], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
 
@@ -759,10 +759,10 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 /// `with_remote_at_work`, answering each request once `gate` lets it, if
 /// there is one.
 async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<tokio::sync::Semaphore>>) -> World {
-    let calls = calls.clone();
+    let calls = Arc::clone(calls);
     World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: context.secret_manager.clone(), calls: calls.clone(), declared: declared.clone(), gate: gate.clone() }));
+        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(&context.secret_manager), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
         Ok(facets)
     })).await
 }
@@ -798,7 +798,7 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
     let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let (_, asked) = world.asked(async {
@@ -835,11 +835,11 @@ async fn an_external_agents_task_is_followed_in_the_name_of_whoever_asked() {
 async fn an_agent_asked_by_several_while_it_answers_answers_once_in_the_name_of_the_last() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    let world = with_remote(&calls, None, Some(gate.clone())).await;
+    let world = with_remote(&calls, None, Some(Arc::clone(&gate))).await;
     let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
     main.user_actor(world.alice).expect("she takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
@@ -881,7 +881,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
@@ -915,7 +915,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_in_the_name_of_whoe
     let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
     main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
@@ -1262,7 +1262,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let (helper, other) = (world.agent("helper", world.alice, &shared).await, world.agent("other", world.alice, &shared).await);
     let session = world.shared_session(&[], &[helper, other]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     let alice = World::as_user(world.alice);
 
     let (added, asked) = world.asked(main.add_participant(&alice, ActorId::Agent(helper), HistoryAccess::All)).await;
@@ -1291,7 +1291,7 @@ async fn who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at()
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
     let session = world.shared_session(&[], &[helper]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     let (refused, asked) = world.asked(main.add_participant(&World::as_user(world.bob), ActorId::Agent(helper), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
     assert_eq!(asked, checks(&["bob: UpdateChannel(alice's) no"]));
@@ -1306,7 +1306,7 @@ async fn removing_an_agent_needs_owning_the_channel() {
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
-    let main = session.channels()[0].clone();
+    let main = Arc::clone(&session.channels()[0]);
     let (_, asked) = world.asked(main.remove_participant(&World::as_user(world.bob), ActorId::Agent(helper))).await;
     assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: UpdateChannel(alice's) no"]));
     let (removed, asked) = world.asked(main.remove_participant(&World::as_user(world.alice), ActorId::Agent(helper))).await;

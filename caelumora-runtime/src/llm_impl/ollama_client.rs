@@ -743,9 +743,9 @@ impl LLMClient for OllamaClient {
         let model = self.model.clone();
         let remote = self.endpoint.clone();
         let endpoint = remote.shown();
-        let control_tokens = self.control_tokens.clone();
+        let control_tokens = Arc::clone(&self.control_tokens);
         let context_size = self.context_size;
-        let running_context_sizes = self.running_context_sizes.clone();
+        let running_context_sizes = Arc::clone(&self.running_context_sizes);
 
         let output = stream! {
             match control_tokens.get(&http, &remote, &model).await {
@@ -808,7 +808,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let params = if descriptor.params.is_null() { serde_json::json!({}) } else { descriptor.params.clone() };
             let config = OllamaClientConfig::of(params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, control_tokens.clone(), running_context_sizes.clone())));
+            facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, Arc::clone(&control_tokens), Arc::clone(&running_context_sizes))));
             Ok(facets)
         },
     );

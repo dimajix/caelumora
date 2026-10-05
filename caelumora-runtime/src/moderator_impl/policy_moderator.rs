@@ -414,7 +414,7 @@ mod tests {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let registry = Arc::new(ComponentRegistry::built_in(store));
         let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], security.clone()));
+        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
         let context = ComponentContext::new(SecurityContext::default(), security, secrets);
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
         let container = ComponentContainer::from_config(&config, &registry, &context).await.unwrap();
@@ -576,7 +576,7 @@ mod tests {
         let store = Arc::new(caelumora_model::store_impl::memory::MemoryStore::new());
         let registry = Arc::new(ComponentRegistry::built_in(store));
         let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], security.clone()));
+        let secrets = Arc::new(caelumora_model::secret::SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
         let context = ComponentContext::new(SecurityContext::default(), security, secrets);
         let configured = |max_agent_hops: serde_json::Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
             params: serde_json::json!({ "max_agent_hops": max_agent_hops }),

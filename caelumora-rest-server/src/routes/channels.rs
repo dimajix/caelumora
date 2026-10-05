@@ -192,7 +192,7 @@ pub async fn join_channel(
     // message id.
     let watch = user_actor_of(&channel, &user)?.watch();
     let snapshot = move || {
-        let (state, channel, viewer) = (state.clone(), channel.clone(), viewer.clone());
+        let (state, channel, viewer) = (Arc::clone(&state), Arc::clone(&channel), viewer.clone());
         async move { channel_snapshot(&state, &channel, &viewer).await }
     };
     Ok(Sse::new(crate::sse::stream(&user, options.snapshot, watch.events, format!("channel {}", cid), snapshot, watch.ended.cancelled_owned()).await))

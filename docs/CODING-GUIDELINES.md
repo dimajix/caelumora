@@ -80,11 +80,12 @@ A type takes the services it works with - the `SecurityManager`, the stores, the
 
 An `Arc` (or `Rc`) is cloned with `Arc::clone(&value)`, not `value.clone()`: the call says that
 only a reference count goes up, where `.clone()` reads the same as a deep copy of a `Vec` or a
-`String` - the convention of the Rust book, and what clippy's `clone_on_ref_ptr` asks for. Where an
+`String` - the convention of the Rust book, and what clippy's `clone_on_ref_ptr` asks for, which the
+workspace turns on (`[workspace.lints.clippy]` in `Cargo.toml`). Where an
 accessor lends `&Arc<…>`, it is `Arc::clone(runtime.security_manager())`. A clone is made only
 where an owner is needed - a field, a task, a value moved elsewhere; a call that only uses the
-value borrows it. An `Arc<Concrete>` that becomes an `Arc<dyn Trait>` is cloned first and coerced
-where it is stored or passed.
+value borrows it. An `Arc<Concrete>` that becomes an `Arc<dyn Trait>` where it is passed names its
+type, `Arc::<MemoryStore>::clone(&store)`, since the type cannot be inferred from the place it goes.
 
 ## Error handling
 

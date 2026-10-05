@@ -293,8 +293,8 @@ mod tests {
     async fn the_members_of_the_channel_are_read_with_their_introductions() {
         let store = Arc::new(MemoryStore::new());
         let policy = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let (kaya, bob) = (User { id: UserId::new(), username: "Kaya".to_string(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: "Bob".to_string(), email: String::new(), roles: Vec::new(), deleted: None });
@@ -324,7 +324,7 @@ mod tests {
         };
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();
-        let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], runtime.clone()).await.unwrap();
+        let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id));
         let mut state = AgentChannelState::default();

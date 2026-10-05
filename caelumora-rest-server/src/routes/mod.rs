@@ -113,16 +113,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/sessions/{id}/channels/{cid}/commands",
             get(channels::list_commands).post(channels::execute_command),
         )
-        .route_layer(axum::middleware::from_fn_with_state(state.auth.clone(), require_auth))
-        .with_state(state.clone());
+        .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth))
+        .with_state(Arc::clone(&state));
 
     // The event streams authenticate like everything else, but do not renew
     // the session they run on - see `require_stream_auth` (issue 33).
     let streams = Router::new()
         .route("/sessions/{id}/channels/{cid}/events", get(channels::join_channel))
         .route("/events", get(events::global_events))
-        .route_layer(axum::middleware::from_fn_with_state(state.auth.clone(), require_stream_auth))
-        .with_state(state.clone());
+        .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
+        .with_state(Arc::clone(&state));
 
-    crate::auth::router(state.auth.clone()).merge(protected).merge(streams)
+    crate::auth::router(Arc::clone(&state.auth)).merge(protected).merge(streams)
 }

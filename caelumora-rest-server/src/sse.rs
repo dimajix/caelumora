@@ -64,7 +64,7 @@ where
     // the first is an expiry, and only it may tell a client to reconnect.
     let expired = Arc::new(AtomicBool::new(false));
     let deadline = {
-        let expired = expired.clone();
+        let expired = Arc::clone(&expired);
         async move {
             tokio::time::sleep(lifetime).await;
             expired.store(true, Ordering::Relaxed);
@@ -120,7 +120,7 @@ where
     let snapshot = Arc::new(snapshot);
     let first = if with_snapshot { snapshot().await.map(|value| named_event("snapshot", &value)) } else { None };
     let resync = with_snapshot.then(|| move || {
-        let snapshot = snapshot.clone();
+        let snapshot = Arc::clone(&snapshot);
         async move { snapshot().await.map(|value| named_event("snapshot", &value)) }
     });
     let updates = resync_on_lag(receiver, what, resync).take_until(until);

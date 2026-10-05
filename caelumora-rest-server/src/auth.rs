@@ -400,7 +400,7 @@ pub fn router(auth: Arc<Auth>) -> Router {
     let protected = Router::new()
         .route("/auth/me", get(me))
         .route("/auth/refresh", post(refresh))
-        .route_layer(axum::middleware::from_fn_with_state(auth.clone(), require_auth));
+        .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_auth));
     Router::new()
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
@@ -532,7 +532,7 @@ mod tests {
         let providers = accept_any();
         let auth = auth(providers.clone());
         let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
-        let app = router(auth.clone());
+        let app = router(Arc::clone(&auth));
         let post = |token: &str| Request::post("/auth/refresh")
             .header(COOKIE, format!("{SESSION_COOKIE}={token}"))
             .body(Body::empty())
@@ -609,7 +609,7 @@ mod tests {
         let providers = accept_any();
         let auth = auth(providers.clone());
         let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
-        let app = router(auth.clone());
+        let app = router(Arc::clone(&auth));
         let old = Utc::now().timestamp() - 400;
 
         let token = auth.tokens.issue(alice.id, old, old).unwrap();
@@ -635,8 +635,8 @@ mod tests {
         let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
         let app = Router::new()
             .route("/expires", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
-            .route_layer(axum::middleware::from_fn_with_state(auth.clone(), require_auth))
-            .with_state(auth.clone());
+            .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_auth))
+            .with_state(Arc::clone(&auth));
 
         let expiry_of = |response: Response| async move {
             let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
@@ -663,8 +663,8 @@ mod tests {
         let alice = providers[0].authenticate("alice", &Credential::Password("x")).await.unwrap().unwrap();
         let app = Router::new()
             .route("/stream", get(|user: AuthenticatedUser| async move { user.expires_at.to_string() }))
-            .route_layer(axum::middleware::from_fn_with_state(auth.clone(), require_stream_auth))
-            .with_state(auth.clone());
+            .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&auth), require_stream_auth))
+            .with_state(Arc::clone(&auth));
 
         let old = Utc::now().timestamp() - 400;
         let response = app.oneshot(get_with_cookie("/stream", &auth.tokens.issue(alice.id, old, old).unwrap())).await.unwrap();

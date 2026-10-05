@@ -41,11 +41,11 @@ async fn main() -> anyhow::Result<()> {
     logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
     let security_manager = config.create_security_manager();
-    let state_store = config.create_state_store(security_manager.clone())?;
-    let entity_store = config.create_entity_store(security_manager.clone())?;
-    let component_store = config.create_component_store(security_manager.clone())?;
-    let secret_manager = config.create_secret_manager(security_manager.clone())?;
-    let user_manager = config.create_user_manager(entity_store.clone())?;
+    let state_store = config.create_state_store(Arc::clone(&security_manager))?;
+    let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
+    let component_store = config.create_component_store(Arc::clone(&security_manager))?;
+    let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
+    let user_manager = config.create_user_manager(Arc::clone(&entity_store))?;
     if user_manager.is_empty() {
         tracing::warn!("No user providers configured (`users` section): nobody can log in. \
             See examples/config.yaml.");
@@ -58,14 +58,14 @@ async fn main() -> anyhow::Result<()> {
 
     let runtime_manager = Arc::new(RuntimeManager::new(
         state_store,
-        entity_store.clone(),
-        secret_manager.clone(),
-        security_manager.clone(),
+        Arc::clone(&entity_store),
+        Arc::clone(&secret_manager),
+        Arc::clone(&security_manager),
         config.commands.clone(),
         config.component_defaults.clone(),
         ComponentRegistry::built_in(component_store),
     )?);
-    let session_manager = Arc::new(SessionManager::new(runtime_manager.clone()));
+    let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
 
     caelumora_runtime::seed::load(entity_store.as_ref(), &config.seed).await?;
 

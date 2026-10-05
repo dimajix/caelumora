@@ -218,11 +218,11 @@ pub fn register(registry: &mut ComponentRegistry) {
         ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
             let component = Arc::new(PrivateNotesComponent {
-                security_manager: context.security_manager.clone(),
+                security_manager: Arc::clone(&context.security_manager),
                 security_context: context.security_context.clone(),
             });
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(component.clone());
+            facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
             Ok(facets)
         },

@@ -508,20 +508,20 @@ impl Graph {
     /// The planned component `index`, built if it is not yet. `asked` is who
     /// asked for which facet, for the message if it is being built.
     fn ensure(self: &Arc<Self>, index: usize, asked: Option<(&str, FacetType)>) -> BoxFuture<'static, ComponentResult<Arc<ComponentNode>>> {
-        let graph = self.clone();
+        let graph = Arc::clone(self);
         let asked = asked.map(|(component, facet)| (component.to_string(), facet));
         Box::pin(async move {
             let planned = &graph.planned[index];
             {
                 let mut states = graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 match &states[index] {
-                    State::Built(node) => return Ok(node.clone()),
+                    State::Built(node) => return Ok(Arc::clone(node)),
                     State::Building => return Err(cycle(asked, &planned.descriptor.id)),
                     State::Pending => states[index] = State::Building,
                 }
             }
             let node = graph.construct(&planned.descriptor, &planned.provides).await?;
-            graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner())[index] = State::Built(node.clone());
+            graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner())[index] = State::Built(Arc::clone(&node));
             Ok(node)
         })
     }
@@ -530,7 +530,7 @@ impl Graph {
     /// of the graph, and checks that it provides exactly `provides`.
     async fn construct(self: &Arc<Self>, descriptor: &ComponentDescriptor, provides: &[FacetType]) -> ComponentResult<Arc<ComponentNode>> {
         let failed = |cause| ComponentError::Build { component: descriptor.id.clone(), kind: descriptor.kind.clone(), cause: Box::new(cause) };
-        let context = ComponentContext { building: Some((self.clone(), descriptor.id.clone())), ..self.context.clone() };
+        let context = ComponentContext { building: Some((Arc::clone(self), descriptor.id.clone())), ..self.context.clone() };
         let facets = self.registry.dispatch(descriptor.clone(), context).map_err(failed)?.await.map_err(failed)?;
 
         let mut declared: Vec<&'static str> = provides.iter().map(|f| f.name).collect();
@@ -592,7 +592,7 @@ impl Graph {
         {
             let mut defaults = self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match defaults.get(&facet.id) {
-                Some(State::Built(node)) => return Ok(node.clone()),
+                Some(State::Built(node)) => return Ok(Arc::clone(node)),
                 Some(State::Building) => return Err(cycle(asked.map(|(c, f)| (c.to_string(), f)), &descriptor.id)),
                 Some(State::Pending) | None => { defaults.insert(facet.id, State::Building); }
             }
@@ -607,7 +607,7 @@ impl Graph {
             )));
         }
         let node = self.construct(&descriptor, &provides).await?;
-        self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(facet.id, State::Built(node.clone()));
+        self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(facet.id, State::Built(Arc::clone(&node)));
         Ok(node)
     }
 }
@@ -688,7 +688,7 @@ impl ComponentContainer {
         }
 
         let graph = Arc::new(Graph {
-            registry: registry.clone(),
+            registry: Arc::clone(registry),
             context: ComponentContext { building: None, ..context.clone() },
             states: Mutex::new(planned.iter().map(|_| State::Pending).collect()),
             planned,
@@ -776,9 +776,9 @@ mod tests {
     #[tokio::test]
     async fn ref_kind_builds_fresh_using_the_callers_context_each_time() {
         let build_count = Arc::new(AtomicUsize::new(0));
-        let counted = build_count.clone();
+        let counted = Arc::clone(&build_count);
         let seen_sessions: Arc<Mutex<Vec<SessionId>>> = Arc::new(Mutex::new(Vec::new()));
-        let recorded = seen_sessions.clone();
+        let recorded = Arc::clone(&seen_sessions);
 
         let store = Arc::new(MemoryStore::new());
         store
@@ -882,10 +882,10 @@ mod tests {
         let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
         registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
         let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let recorded = seen.clone();
+        let recorded = Arc::clone(&seen);
         // Provides what it collects, so that it has to leave itself out.
         registry.register_async(ComponentKind::new("collector").provides::<dyn Named>(), move |descriptor, context| {
-            let recorded = recorded.clone();
+            let recorded = Arc::clone(&recorded);
             async move {
                 let parts = context.all::<dyn Named>().await?;
                 recorded.lock().unwrap().extend(parts.iter().map(|part| part.name()));
@@ -943,7 +943,7 @@ mod tests {
     fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
         let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
         let built = Arc::new(AtomicUsize::new(0));
-        let counted = built.clone();
+        let counted = Arc::clone(&built);
         let choice = |id: &str| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn Choice>(Arc::new(Name(id.to_string())));

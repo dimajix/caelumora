@@ -184,11 +184,11 @@ pub fn register(registry: &mut ComponentRegistry) {
         ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>(),
         |_descriptor, context| {
             let component = Arc::new(AgentMemoryComponent {
-                security_manager: context.security_manager.clone(),
+                security_manager: Arc::clone(&context.security_manager),
                 security_context: context.security_context.clone(),
             });
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(component.clone());
+            facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
             Ok(facets)
         },
@@ -254,8 +254,8 @@ mod tests {
     impl Sessions {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
-            let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-            let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
+            let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 
@@ -263,7 +263,7 @@ mod tests {
         async fn add(&mut self, id: SessionId, privacy: SessionPrivacy) -> &mut Self {
             let session = session_with(id, &privacy);
             self.runtime.entity_store().create_session(&SecurityContext::system(), &session).await.unwrap();
-            self.loops.insert(id, SessionLoop::new(session, vec![], self.runtime.clone()).await.unwrap());
+            self.loops.insert(id, SessionLoop::new(session, vec![], Arc::clone(&self.runtime)).await.unwrap());
             self
         }
 
@@ -279,7 +279,7 @@ mod tests {
                         // Gone meanwhile: back again.
                         store.create_session(&SecurityContext::system(), &session).await.unwrap();
                     }
-                    self.loops.insert(id, SessionLoop::new(session, vec![], self.runtime.clone()).await.unwrap());
+                    self.loops.insert(id, SessionLoop::new(session, vec![], Arc::clone(&self.runtime)).await.unwrap());
                 }
                 None => {
                     store.delete_session(&SecurityContext::system(), id).await.unwrap();
@@ -291,7 +291,7 @@ mod tests {
 
         /// What a turn of `memory`'s agent in channel `at` navigates.
         fn views_in(&self, at: &At, memory: &AgentMemoryComponent) -> ViewsFactory {
-            let session = self.loops.get(&at.0.0).expect("a session of the test").clone();
+            let session = Arc::clone(self.loops.get(&at.0.0).expect("a session of the test"));
             ViewsFactory::in_session(session, memory.security_context.clone())
         }
     }
@@ -323,7 +323,7 @@ mod tests {
     async fn remember(memory: &AgentMemoryComponent, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At, text: &str) {
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
         turn.see(&at.1);
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), &mut turn).await.unwrap();
         turn.commit(false).await;
@@ -333,7 +333,7 @@ mod tests {
     async fn recall(memory: &AgentMemoryComponent, sessions: &Sessions, handle: &Arc<AgentStateHandle>, agent: AgentId, at: At) -> Prompt {
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
+        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle)).expect("a turn was begun").with_views(sessions.views_in(&at, memory));
         memory.get_prompt(&turn.work()).await.unwrap()
     }
 
@@ -342,7 +342,7 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(policy.clone(), ActorId::User(UserId::new()));
+        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
         let (session, other_session) = (SessionId::new(), SessionId::new());
         let mut sessions = Sessions::under(policy).await;
         sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
@@ -353,7 +353,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         {
             state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
             turn.see(&team.1);
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
@@ -372,10 +372,10 @@ mod tests {
         // Forgotten only where it may be recalled.
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&elsewhere), Default::default(), elsewhere.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&elsewhere, &memory));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&elsewhere, &memory));
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err());
         state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.unwrap();
         turn.commit(false).await;
         assert!(handle.current().memory.current().is_empty());
@@ -386,7 +386,7 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(policy.clone(), ActorId::User(UserId::new()));
+        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
         let session = SessionId::new();
         let mut sessions = Sessions::under(policy).await;
         sessions.add(session, SessionPrivacy::default()).await;
@@ -394,7 +394,7 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&team), Default::default(), team.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&team, &memory));
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "draft" }), &mut turn).await.unwrap();
         memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.expect("remembered in this turn");
         assert!(memory.execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), &mut turn).await.is_err(), "forgotten already");
@@ -412,12 +412,12 @@ mod tests {
         let at = channel(SessionId::new(), Confidentiality::Internal);
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
         memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), &mut turn).await.unwrap();
         turn.commit(false).await;
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
         state.begin_turn(in_channel(&at), Default::default(), at.1.clone(), Vec::new(), Default::default());
-        let turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun");
+        let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun");
         assert!(memory.get_prompt(&turn.work()).await.unwrap().text.is_empty(), "no session to recall in");
     }
 
@@ -438,15 +438,15 @@ mod tests {
         let (owner, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let policy: Arc<dyn SecurityManager> = Arc::new(OnlyFor(owner));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(policy.clone()).await;
+        let mut sessions = Sessions::under(Arc::clone(&policy)).await;
         sessions.add(session, SessionPrivacy::default()).await;
         // Public, so that the built-in rule would let every channel read it.
         let (origin, reader) = (channel(session, Confidentiality::Public), channel(session, Confidentiality::Internal));
-        remember(&component(policy.clone(), owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
+        remember(&component(Arc::clone(&policy), owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
 
-        let asked_by_owner = recall(&component(policy.clone(), owner), &sessions, &handle, agent, reader.clone()).await;
+        let asked_by_owner = recall(&component(Arc::clone(&policy), owner), &sessions, &handle, agent, reader.clone()).await;
         assert!(asked_by_owner.text.contains("Kaya likes tea."), "{}", asked_by_owner.text);
-        let asked_by_stranger = recall(&component(policy.clone(), stranger), &sessions, &handle, agent, reader).await;
+        let asked_by_stranger = recall(&component(Arc::clone(&policy), stranger), &sessions, &handle, agent, reader).await;
         assert!(asked_by_stranger.text.is_empty(), "the policy refuses, whatever the levels say: {}", asked_by_stranger.text);
         let in_its_own_channel = recall(&component(policy, stranger), &sessions, &handle, agent, origin).await;
         assert!(in_its_own_channel.text.contains("Kaya likes tea."), "a channel always reads itself");
@@ -457,7 +457,7 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(policy.clone(), ActorId::User(UserId::new()));
+        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
         let session = SessionId::new();
         let mut sessions = Sessions::under(policy).await;
         sessions.add(session, SessionPrivacy::default()).await;
@@ -468,7 +468,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         {
             state.begin_turn(in_channel(&confidential), Default::default(), confidential.1.clone(), Vec::new(), Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&confidential, &memory));
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&confidential, &memory));
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), &mut turn).await.unwrap();
             assert_eq!(result.classification, Some(Classification::general(Confidentiality::Internal)), "its answer as the turn");
@@ -497,7 +497,7 @@ mod tests {
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
         // As the agent's components are given it: its owner's, called by the agent.
         let memory = AgentMemoryComponent {
-            security_manager: policy.clone(),
+            security_manager: Arc::clone(&policy),
             security_context: SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default()).next(ActorId::Agent(agent)),
         };
         let session = SessionId::new();
@@ -512,7 +512,7 @@ mod tests {
 
         let mut state = AgentChannelState::default();
         state.begin_turn(in_channel(&hr), Default::default(), hr.1.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, handle.clone()).expect("a turn was begun").with_views(sessions.views_in(&hr, &memory));
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle)).expect("a turn was begun").with_views(sessions.views_in(&hr, &memory));
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
         assert!(memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, &mut turn).await.is_err(), "never above the channel");
         let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });
@@ -532,7 +532,7 @@ mod tests {
         let handle = handle(agent).await;
         let (alice, bob) = (UserId::new(), UserId::new());
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(policy.clone(), ActorId::User(alice));
+        let memory = component(Arc::clone(&policy), ActorId::User(alice));
         let (hers, other, bobs) = (SessionId::new(), SessionId::new(), SessionId::new());
         let mut sessions = Sessions::under(policy).await;
         sessions.add(hers, session_of(PrivacyConfig::SameOwner, alice)).await

@@ -401,7 +401,7 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            let actor = Self::create_actor(channel_loop.channel.clone(), &member, &channel_loop.runtime).await?;
+            let actor = Self::create_actor(Arc::clone(&channel_loop.channel), &member, &channel_loop.runtime).await?;
             channel_loop.adopt(Arc::from(actor), member).await;
         }
         Ok(channel_loop)
@@ -429,7 +429,7 @@ impl ChannelLoop {
     /// an actor enters the channel - when the channel is built and when a
     /// participant joins (issue 91). Its task is `run`'s to start.
     async fn adopt(&self, actor: Arc<dyn Actor>, member: Member) -> ChannelActor {
-        self.moderator.add_actor(actor.clone());
+        self.moderator.add_actor(Arc::clone(&actor));
         let id = actor.id();
         let adopted = ChannelActor { actor, member, task: TaskTracker::new() };
         self.actors.rcu(|actors| {
@@ -615,7 +615,7 @@ impl ChannelLoop {
         self.channel.add_participant(context, found.clone(), start).await?;
 
         let started = async {
-            let actor = Self::create_actor(self.channel.clone(), &member, &self.runtime).await?;
+            let actor = Self::create_actor(Arc::clone(&self.channel), &member, &self.runtime).await?;
             actor.catch_up(visible_part(self.history_start_of(participant), messages)).await?;
             Ok::<_, anyhow::Error>(actor)
         }.await;
@@ -840,7 +840,7 @@ impl ChannelLoop {
     }
 
     pub(crate) fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
-        self.actors.load().get(&actor_id).map(|a| a.actor.clone())
+        self.actors.load().get(&actor_id).map(|a| Arc::clone(&a.actor))
     }
 
     /// The actor `user` acts through in this channel, or `None` if they are
@@ -1301,14 +1301,14 @@ mod tests {
 
     /// A channel of `participants`, whose actors are read from `store`.
     async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
-        let registry = crate::component::ComponentRegistry::built_in(store.clone());
+        let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         channel_built(store, participants, security, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
     }
 
     /// A channel of `participants` with `components`, built by `registry`.
     async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: crate::component::ComponentRegistry, components: caelumora_model::component::ComponentConfig) -> Arc<ChannelLoop> {
-        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
@@ -1447,7 +1447,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(policy)).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let reply = actor.execute_command("help", "").await.expect("/help runs");
         assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Private, "/help answers the issuer alone");
@@ -1475,7 +1475,7 @@ mod tests {
         let actor = channel.user_actor(alice.id).unwrap();
         let mut events = channel.observe();
         let mut following = actor.watch().events;
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
         assert!(matches!(following.try_recv().map(|e| e.event), Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
@@ -1548,10 +1548,10 @@ mod tests {
             store.create_user(&SecurityContext::system(), user).await.unwrap();
             participants.push(Participant::User(user.id));
         }
-        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(ComponentKind::new("test_moderator").provides::<dyn crate::moderator::Moderator>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn crate::moderator::Moderator>(moderator.clone());
+            facets.insert::<dyn crate::moderator::Moderator>(Arc::clone(&moderator));
             Ok(facets)
         });
         let components = caelumora_model::channel::moderation_components(Some("test_moderator"), None);
@@ -1675,11 +1675,11 @@ mod tests {
         let alice = user("alice");
         let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(crate::moderator_impl::broadcast_policy::BroadcastPolicy) as Arc<dyn crate::moderator_impl::ResponderPolicy> };
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
-        let channel = channel_moderated_by(&[&alice], moderator.clone()).await;
+        let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
-        channel.adopt(talker.clone(), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        channel.adopt(Arc::<SaysOnce>::clone(&talker), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch().events;
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let told = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -1724,7 +1724,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
         for actor in [&asked, &other] {
             // Who it is does not matter to routing: the channel only looks it up.
-            channel.adopt(actor.clone(), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
         }
         let said = || Envelope::new(
             context.clone(),
@@ -1780,7 +1780,7 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut said = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
         actor.send_message("hello".to_string(), None).await.expect("a running channel takes it");
         // Taken out of the inbox: `run` holds it now.
         tokio::time::timeout(Duration::from_secs(5), said.recv()).await.expect("the message went through").unwrap();
@@ -1867,15 +1867,15 @@ mod tests {
         store.create_user(&SecurityContext::system(), &alice).await.unwrap();
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
-        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
         // The model is a component (issue 130): the stand-in is registered as
         // a kind of its own and made every agent's default.
-        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(
             crate::component::ComponentKind::new("test_model").provides::<dyn crate::llm::LLMClient>(),
             move |_descriptor, _context| {
                 let mut facets = crate::component::ComponentFacets::empty();
-                facets.insert::<dyn crate::llm::LLMClient>(model.clone());
+                facets.insert::<dyn crate::llm::LLMClient>(Arc::clone(&model));
                 Ok(facets)
             },
         );
@@ -1889,7 +1889,7 @@ mod tests {
                 fail_policy: Default::default(),
             }],
         };
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), defaults, registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), defaults, registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
@@ -1950,7 +1950,7 @@ mod tests {
         {
             self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
             let Some(answer) = self.answers.lock().unwrap().pop_front() else { return Box::pin(futures::stream::pending()) };
-            let gate = self.gate.clone();
+            let gate = Arc::clone(&self.gate);
             Box::pin(futures::stream::once(async move {
                 gate.acquire().await.unwrap().forget();
                 Ok(caelumora_model::message::MessageEvent::Complete(Message {
@@ -1973,7 +1973,7 @@ mod tests {
             gate: Arc::new(tokio::sync::Semaphore::new(0)),
             seen: Default::default(),
         });
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(model.clone(), Default::default()).await;
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             while model.seen.lock().unwrap().is_empty() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -2010,7 +2010,7 @@ mod tests {
             gate: Arc::new(tokio::sync::Semaphore::new(0)),
             seen: Default::default(),
         });
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(model.clone(), Default::default()).await;
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             while model.seen.lock().unwrap().is_empty() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -2600,7 +2600,7 @@ mod tests {
         let executor = CommandExecutor::empty(Arc::clone(manager.security_manager()));
         let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::new(manager, Arc::new(executor))).await.unwrap();
         let mut events = restarted.observe();
-        let running = tokio::spawn({ let restarted = restarted.clone(); async move { restarted.run().await } });
+        let running = tokio::spawn({ let restarted = Arc::clone(&restarted); async move { restarted.run().await } });
         let helper = restarted.actor_by_id(ActorId::Agent(agent)).unwrap();
 
         // The agent asks again, with the same id, and the users can decide.
@@ -2634,7 +2634,7 @@ mod tests {
         }] };
         let unasked = Message { role: MessageRole::Assistant, content: Some("never given".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let model = Arc::new(Scripted(std::sync::Mutex::new([call, unasked].into())));
-        let stuck = with_an_agent(model.clone(), components).await;
+        let stuck = with_an_agent(Arc::<Scripted>::clone(&model), components).await;
         settled(&stuck.helper, ActorState::ExecutingTools).await;
         (stuck, model)
     }
@@ -2648,7 +2648,7 @@ mod tests {
         // Its old actor takes a while to end, as one that stores its state.
         let old = TaskTracker::new();
         let ended = Arc::new(AtomicBool::new(false));
-        let ending = ended.clone();
+        let ending = Arc::clone(&ended);
         old.spawn(async move {
             tokio::time::sleep(Duration::from_millis(200)).await;
             ending.store(true, Ordering::SeqCst);
@@ -2944,19 +2944,19 @@ mod tests {
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
 
         let security: Arc<dyn SecurityManager> = Arc::new(FlowRule);
-        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
+        let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(
             crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
             move |_descriptor, _context| {
                 let mut facets = crate::component::ComponentFacets::empty();
-                facets.insert::<dyn crate::external::ExternalAgent>(remote.clone());
+                facets.insert::<dyn crate::external::ExternalAgent>(Arc::<crate::external::testing::ScriptedExternalAgent>::clone(&remote));
                 Ok(facets)
             },
         );
         register_no_secrets(&mut registry);
         register_heard(&mut registry);
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store, secrets, security, default_commands(), Default::default(), registry).unwrap());
         let channel = Channel {
             id: ChannelId::new(),
             session_id: SessionId::new(),
@@ -3125,7 +3125,7 @@ mod tests {
         ]));
         let mut components = external_components();
         components.component_nodes.push(caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets"));
-        let built = external_channel(remote.clone(), components, None).await.expect("the external agent can be run");
+        let built = external_channel(Arc::clone(&remote), components, None).await.expect("the external agent can be run");
         let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
         answered(&mut events, agent).await;
 
@@ -3150,7 +3150,7 @@ mod tests {
     /// Runs `built` and has alice say "hello".
     async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)) -> Stuck {
         let events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
         channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
         let helper = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
         Stuck { channel, context, agent, helper, events, running }
@@ -3211,7 +3211,7 @@ mod tests {
             ],
             vec![Ok(ExternalEvent::Started(task("t-2"))), Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
         ]).marking(marking));
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
 
         let first = answered(&mut events, agent).await;
         assert_eq!(first.len(), 1);
@@ -3253,8 +3253,8 @@ mod tests {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             answer("t-1", "First."), answer("t-2", "Second."), answer("t-3", "Third."),
-        ]).gated(gate.clone()));
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        ]).gated(Arc::clone(&gate)));
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             while remote.sent.lock().unwrap().is_empty() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -3323,7 +3323,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
         ]).unreachable_for(1));
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
         let unreachable = turn_failed(&mut events, agent).await;
         assert!(unreachable.contains("cannot reach the external agent"), "{unreachable}");
 
@@ -3355,7 +3355,7 @@ mod tests {
             vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
             vec![Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
         ]));
-        let built = external_channel(remote.clone(), external_components_with_prompts(), None).await.expect("the external agent can be run");
+        let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), None).await.expect("the external agent can be run");
         let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
         let first = answered(&mut events, agent).await;
         channel.user_actor(alice_of(&context)).unwrap().send_message("How are you?".to_string(), None).await.unwrap();
@@ -3392,7 +3392,7 @@ mod tests {
         stored.remote.converse_in(ConversationId("c-1".to_string()));
         stored.remote.give("frame".to_string(), caelumora_model::digest::prompt("[Frame]\nBe brief."));
         stored.remote.give("heard".to_string(), caelumora_model::digest::prompt("[Heard]\n0"));
-        let built = external_channel(remote.clone(), external_components_with_prompts(), Some(stored)).await.expect("the external agent can be run");
+        let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), Some(stored)).await.expect("the external agent can be run");
         let Stuck { agent, mut events, running, .. } = start(built).await;
         answered(&mut events, agent).await;
 
@@ -3408,7 +3408,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
         ]).unreachable_for(1));
-        let built = external_channel(remote.clone(), external_components_with_prompts(), None).await.expect("the external agent can be run");
+        let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), None).await.expect("the external agent can be run");
         let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
         turn_failed(&mut events, agent).await;
 
@@ -3434,7 +3434,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Message("Noted.".to_string())), Ok(ExternalEvent::Completed)],
         ]));
-        let built = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let built = external_channel(Arc::clone(&remote), external_components(), Some(stored)).await.unwrap();
         let Stuck { agent, mut events, running, .. } = start(built).await;
 
         answered(&mut events, agent).await;
@@ -3451,7 +3451,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Partial("Let me think".to_string()))],
         ]));
-        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
         settled(&helper, ActorState::Planning).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -3472,7 +3472,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Started(task("t-1")))],
         ]));
-        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
         settled(&helper, ActorState::Planning).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -3501,7 +3501,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
         ]));
-        let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
         answered(&mut events, agent).await;
 
         channel.stop_actors().await;
@@ -3523,7 +3523,7 @@ mod tests {
             vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
             vec![Ok(ExternalEvent::Message("Sunny in Bonn.".to_string())), Ok(ExternalEvent::Completed)],
         ]));
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
 
         let question = answered(&mut events, agent).await;
         assert_eq!(question[0].content.as_deref(), Some("Which city?"), "the question is the answer");
@@ -3552,7 +3552,7 @@ mod tests {
             vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
             vec![Ok(ExternalEvent::Partial("Sun".to_string())), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
         ]).resuming(vec![vec![Ok(ExternalEvent::Message("Sunny in Bonn.".to_string())), Ok(ExternalEvent::Completed)]]));
-        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
         answered(&mut events, agent).await;
 
         let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -3712,7 +3712,7 @@ mod tests {
 
         // The remote agent takes the request on, and is still at work.
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![Ok(ExternalEvent::Started(task("t-1")))]]));
-        let Stuck { channel, agent, running, .. } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
 
         let state = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -3751,9 +3751,9 @@ mod tests {
         };
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Finished while you were away.".to_string())), Ok(ExternalEvent::Completed)]]));
-        let (channel, _, agent, owner) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let (channel, _, agent, owner) = external_channel(Arc::clone(&remote), external_components(), Some(stored)).await.unwrap();
         let mut events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let said = answered(&mut events, agent).await;
         assert_eq!(said[0].content.as_deref(), Some("Finished while you were away."), "what it did meanwhile, unasked");
@@ -3794,9 +3794,9 @@ mod tests {
         };
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
             .resuming(vec![vec![Ok(ExternalEvent::Message("Done for bob.".to_string())), Ok(ExternalEvent::Completed)]]));
-        let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(stored)).await.unwrap();
+        let (channel, _, agent, _) = external_channel(Arc::clone(&remote), external_components(), Some(stored)).await.unwrap();
         let mut events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let told = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -3838,7 +3838,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Partial("Let me think".to_string()))],
         ]));
-        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(remote.clone()).await;
+        let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
         settled(&helper, ActorState::Planning).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -3858,9 +3858,9 @@ mod tests {
         use caelumora_model::external_agent::OpenTaskState;
 
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
-        let (channel, _, agent, _) = external_channel(remote.clone(), external_components(), Some(begun_above("t-1", OpenTaskState::Working))).await.unwrap();
+        let (channel, _, agent, _) = external_channel(Arc::clone(&remote), external_components(), Some(begun_above("t-1", OpenTaskState::Working))).await.unwrap();
         let mut events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let told = turn_failed(&mut events, agent).await;
         assert!(told.contains("lowered"), "{told}");
@@ -3879,7 +3879,7 @@ mod tests {
         let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
             vec![Ok(ExternalEvent::Message("Hello.".to_string())), Ok(ExternalEvent::Completed)],
         ]));
-        let built = external_channel(remote.clone(), external_components(), Some(begun_above("t-1", OpenTaskState::InputRequired))).await.unwrap();
+        let built = external_channel(Arc::clone(&remote), external_components(), Some(begun_above("t-1", OpenTaskState::InputRequired))).await.unwrap();
         let Stuck { mut events, agent, running, .. } = start(built).await;
 
         answered(&mut events, agent).await;
@@ -3919,7 +3919,7 @@ mod tests {
             .resuming(vec![vec![Ok(ExternalEvent::Message("Half of it".to_string())), Ok(ExternalEvent::Failed("out of coffee".to_string()))]]));
         let (channel, _, agent, _) = external_channel(remote, external_components(), Some(working_on("t-1"))).await.unwrap();
         let mut events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let failed = turn_failed(&mut events, agent).await;
         assert!(failed.contains("hermes could not finish: out of coffee"), "{failed}");
@@ -3941,7 +3941,7 @@ mod tests {
             ]]));
         let (channel, _, agent, _) = external_channel(remote, external_components(), Some(working_on("t-1"))).await.unwrap();
         let mut events = channel.observe();
-        let running = tokio::spawn({ let channel = channel.clone(); async move { channel.run().await } });
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         assert!(!said_anything(&mut events, agent), "no half answer is published");

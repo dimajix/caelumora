@@ -396,7 +396,7 @@ impl AppConfig {
                 UserProviderConfig::AcceptAny { roles, default_roles } => {
                     tracing::warn!("User provider 'accept_any' is enabled: ANY username and password will be accepted. \
                         Development only - never expose this server to a network.");
-                    Arc::new(AcceptAnyUserProvider::with_roles(entity_store.clone(), roles.clone(), default_roles.clone())) as Arc<dyn UserProvider>
+                    Arc::new(AcceptAnyUserProvider::with_roles(Arc::clone(&entity_store), roles.clone(), default_roles.clone())) as Arc<dyn UserProvider>
                 }
             })
             .collect();

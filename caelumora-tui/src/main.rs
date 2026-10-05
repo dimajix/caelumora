@@ -240,16 +240,16 @@ async fn main() -> anyhow::Result<()> {
     logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
     let security_manager = config.create_security_manager();
-    let state_store = config.create_state_store(security_manager.clone())?;
-    let entity_store = config.create_entity_store(security_manager.clone())?;
-    let component_store = config.create_component_store(security_manager.clone())?;
-    let secret_manager = config.create_secret_manager(security_manager.clone())?;
+    let state_store = config.create_state_store(Arc::clone(&security_manager))?;
+    let entity_store = config.create_entity_store(Arc::clone(&security_manager))?;
+    let component_store = config.create_component_store(Arc::clone(&security_manager))?;
+    let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
 
     let runtime = Arc::new(RuntimeManager::new(
-        state_store.clone(),
-        entity_store.clone(),
+        Arc::clone(&state_store),
+        Arc::clone(&entity_store),
         secret_manager,
-        security_manager.clone(),
+        Arc::clone(&security_manager),
         config.commands.clone(),
         config.component_defaults.clone(),
         ComponentRegistry::built_in(component_store),
@@ -276,7 +276,7 @@ async fn main() -> anyhow::Result<()> {
         .find(|t| t.name.name == args.template.as_str())
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
-    let session_manager = Arc::new(SessionManager::new(runtime.clone()));
+    let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
     let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session".to_string())).await?;
     let session_id = session_loop.id();
 

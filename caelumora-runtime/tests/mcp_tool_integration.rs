@@ -71,7 +71,7 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 async fn build_container(params: serde_json::Value) -> ComponentContainer {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(store.clone())).unwrap();
+    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), Arc::clone(runtime_manager.security_manager()), Arc::clone(runtime_manager.secret_manager()));
 
@@ -96,7 +96,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let container = build_container(json!({ "endpoint": { "url": url } })).await;
     let providers = container.get_all::<dyn ToolProvider>(None);
     assert_eq!(providers.len(), 1);
-    let provider = providers[0].facet.clone();
+    let provider = Arc::clone(&providers[0].facet);
 
     let tools = provider.tools();
     assert_eq!(tools.len(), 1);
@@ -127,7 +127,7 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
         "requires_approval": true,
         "classification": { "level": "confidential" },
     })).await;
-    let provider = container.get_all::<dyn ToolProvider>(None)[0].facet.clone();
+    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
 
     let tools = provider.tools();
     assert!(!tools.is_empty(), "the server's tools are discovered");
@@ -160,7 +160,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(store.clone())).unwrap();
+    let runtime_manager = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), caelumora_runtime::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), Arc::clone(runtime_manager.security_manager()), Arc::clone(runtime_manager.secret_manager()));
 
@@ -212,6 +212,6 @@ async fn a_configured_description_replaces_what_the_server_says_of_itself() {
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." })).await;
-    let provider = container.get_all::<dyn ToolProvider>(None)[0].facet.clone();
+    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
     assert_eq!(provider.description(), "Messages echoed by the test server.");
 }

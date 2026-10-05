@@ -499,9 +499,9 @@ mod tests {
         store.create_agent(&system, &stored).await.unwrap();
 
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], security.clone()));
-        let registry = crate::component::ComponentRegistry::built_in(store.clone());
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, security, default_commands(), Default::default(), registry).unwrap());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
+        let registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, default_commands(), Default::default(), registry).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));
@@ -519,13 +519,13 @@ mod tests {
         };
         store.create_channel(&system, &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
-        let channel = ChannelLoop::new(channel, ChannelRuntime::new(runtime.clone(), Arc::new(executor))).await.unwrap();
+        let channel = ChannelLoop::new(channel, ChannelRuntime::new(Arc::clone(&runtime), Arc::new(executor))).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor_by_id(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 
         let (input, rx) = mpsc::channel(100);
         let (tx, output) = mpsc::channel(100);
-        let running = approver.clone();
+        let running = Arc::clone(&approver);
         tokio::spawn(async move {
             running.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(tx))).await.unwrap();
         });

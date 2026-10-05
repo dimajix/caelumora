@@ -71,7 +71,7 @@ pub(super) trait MemberState: Send + Sync + Debug {
 pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
     match participant {
         Participant::User(id) => match views.entities().get_user(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserMember { id: *id, name: user.username, store: views.entities().clone(), introduction: OnceCell::new() }),
+            Ok(user) => Arc::new(UserMember { id: *id, name: user.username, store: Arc::clone(views.entities()), introduction: OnceCell::new() }),
             Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
@@ -81,9 +81,9 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentMemberState {
-                member: AgentMember(StateRef { agent: agent.id, channel, store: views.states().clone() }),
+                member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()) }),
                 agent,
-                store: views.entities().clone(),
+                store: Arc::clone(views.entities()),
                 introduction: OnceCell::new(),
             }),
             // A deleted agent keeps its name (issue 164), nothing else.

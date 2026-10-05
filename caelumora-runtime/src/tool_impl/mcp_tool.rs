@@ -301,7 +301,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let config: McpToolConfig = serde_json::from_value(descriptor.params.clone())
                 .map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {}", e)))?;
 
-            let secret_manager = context.secret_manager.clone();
+            let secret_manager = Arc::clone(&context.secret_manager);
             let discover = async {
                 let auth_header = config.endpoint.bearer_token(&secret_manager, &context.security_context).await?;
                 discover_tools(&descriptor.id, &config, auth_header).await

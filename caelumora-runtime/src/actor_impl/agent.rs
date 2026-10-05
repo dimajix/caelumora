@@ -159,7 +159,7 @@ impl AgentActor {
     /// The turn under way in `state`, as its steps work with it; `None`
     /// between turns.
     fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        Turn::of(self.agent_id, self.agent_controller.name(), state, self.agent_state.clone())
+        Turn::of(self.agent_id, self.agent_controller.name(), state, Arc::clone(&self.agent_state))
             .map(|turn| turn.with_views(self.views.clone()))
     }
 

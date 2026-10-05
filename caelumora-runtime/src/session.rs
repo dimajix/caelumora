@@ -128,7 +128,7 @@ impl SessionLoop {
         let channel_docs = channels;
         let channels = DashMap::new();
         for channel in channel_docs {
-            let runtime = ChannelRuntime::new(runtime_manager.clone(), commands.clone());
+            let runtime = ChannelRuntime::new(Arc::clone(&runtime_manager), Arc::clone(&commands));
             let cl = ChannelLoop::new(channel, runtime).await?;
             let id = cl.id();
             channels.insert(id, ChannelEntry { channel: cl, task: None });
@@ -158,7 +158,7 @@ impl SessionLoop {
     /// The views of an agent in this session, as `viewer` (issue 163):
     /// this session alone, reached through its loop.
     pub(crate) fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
-        Views::of_own_session(&self.runtime_manager, self.clone(), viewer)
+        Views::of_own_session(&self.runtime_manager, Arc::clone(self), viewer)
     }
 
     pub fn id(&self) -> SessionId {
@@ -207,7 +207,7 @@ impl SessionLoop {
     }
 
     pub fn channel_by_id(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
-        self.channels.get(&channel_id).map(|entry| entry.channel.clone())
+        self.channels.get(&channel_id).map(|entry| Arc::clone(&entry.channel))
     }
 
     /// The channel `channel_id`, if `context` may read it (`GetChannel`,
@@ -227,7 +227,7 @@ impl SessionLoop {
     }
 
     pub fn channel_by_name(&self, name: &str) -> Option<Arc<ChannelLoop>> {
-        self.channels.iter().find(|entry| entry.channel.name() == name).map(|entry| entry.channel.clone())
+        self.channels.iter().find(|entry| entry.channel.name() == name).map(|entry| Arc::clone(&entry.channel))
     }
 
     /// Creates a channel in the running session on behalf of `context` and
@@ -301,10 +301,10 @@ impl SessionLoop {
     /// Builds the loop of `channel`, which the session lists, and has the
     /// session run it.
     async fn add_channel_loop(self: &Arc<Self>, channel: &Channel) -> Result<Arc<ChannelLoop>> {
-        let runtime = ChannelRuntime::new(self.runtime_manager.clone(), self.commands.clone());
+        let runtime = ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands));
         let channel_loop = ChannelLoop::new(channel.clone(), runtime).await?;
         channel_loop.attach(self);
-        self.channels.insert(channel.id, ChannelEntry { channel: channel_loop.clone(), task: None });
+        self.channels.insert(channel.id, ChannelEntry { channel: Arc::clone(&channel_loop), task: None });
         let _ = self.start_tx.send(channel.id);
         Ok(channel_loop)
     }
@@ -458,7 +458,7 @@ impl SessionLoop {
     /// set, so that `delete_channel` either finds the task or no channel.
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
-        let channel = entry.channel.clone();
+        let channel = Arc::clone(&entry.channel);
         self.events.publish(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes());
         entry.task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
@@ -537,7 +537,7 @@ impl SessionManager {
     async fn spawn_session(&self, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let attributes = session.security_attributes.clone();
-        let session_loop = SessionLoop::new(session, channels, self.runtime_manager.clone()).await?;
+        let session_loop = SessionLoop::new(session, channels, Arc::clone(&self.runtime_manager)).await?;
         self.sessions.insert(id, Arc::clone(&session_loop));
 
         let loop_for_task = Arc::clone(&session_loop);
@@ -904,7 +904,7 @@ impl SessionManager {
     /// The root of the views (issue 163): every session `viewer` may
     /// read, and from there their channels and members, running or not.
     pub fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
-        Views::new(&self.runtime_manager, self.clone(), viewer)
+        Views::new(&self.runtime_manager, Arc::<SessionManager>::clone(self), viewer)
     }
 
     /// The loop of session `id`, if it runs.
@@ -940,7 +940,7 @@ mod tests {
     fn test_runtime() -> Arc<RuntimeManager> {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        Arc::new(RuntimeManager::new(store.clone(), store.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap())
+        Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap())
     }
 
     fn make_session(name: &str) -> Session {
@@ -999,7 +999,7 @@ mod tests {
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let mut rx = runtime.event_bus().subscribe_all();
         let ctx = SecurityContext::default();
 
@@ -1030,7 +1030,7 @@ mod tests {
     #[tokio::test]
     async fn delete_session_emits_stopped_then_deleted() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
 
         let session = make_session("s2");
@@ -1059,7 +1059,7 @@ mod tests {
     #[tokio::test]
     async fn opening_a_stored_session_emits_started_but_not_created() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
 
         // Persist a session directly, without going through create_session.
@@ -1086,7 +1086,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_asked_for_at_the_same_time_starts_once() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let ctx = SecurityContext::default();
         let session = make_session("concurrent");
         let session_id = session.id;
@@ -1109,7 +1109,7 @@ mod tests {
     #[tokio::test]
     async fn a_stop_waits_for_a_start_under_way_and_then_stops_what_it_started() {
         let runtime = test_runtime();
-        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let ctx = SecurityContext::default();
         let session = make_session("stopped");
         let session_id = session.id;
@@ -1119,7 +1119,7 @@ mod tests {
         let start = manager.start_lock(session_id);
         let starting = start.lock().await;
         let stopping = tokio::spawn({
-            let manager = manager.clone();
+            let manager = Arc::clone(&manager);
             async move { manager.stop_session(&SecurityContext::system(), session_id).await.unwrap() }
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1185,7 +1185,7 @@ mod tests {
         use caelumora_model::channel::Participant;
         use caelumora_model::scope::Scope;
         let runtime = test_runtime();
-        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let store = runtime.entity_store();
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
         let personality = Personality {
@@ -1250,7 +1250,7 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let store = runtime.entity_store();
         let owner = UserId::new();
         store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
@@ -1298,7 +1298,7 @@ mod tests {
         use caelumora_model::user::UserUpdateEvent;
 
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
         let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
@@ -1324,7 +1324,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let mut rx = runtime.event_bus().subscribe_all();
 
@@ -1356,7 +1356,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_that_cannot_be_is_refused_before_anything_is_stored() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
 
@@ -1380,7 +1380,7 @@ mod tests {
     async fn a_deleted_channel_is_stopped_announced_and_kept_until_it_is_restored() {
         use caelumora_model::agent::{AgentChannelState, AgentId};
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let id = channel.id();
@@ -1433,12 +1433,12 @@ mod tests {
         let session = make_session("waiting");
         let channel_id = session.channels[0];
         persist(&runtime, &ctx, &session).await;
-        let session_loop = SessionLoop::new(session.clone(), vec![main_channel(&session)], runtime.clone()).await.unwrap();
+        let session_loop = SessionLoop::new(session.clone(), vec![main_channel(&session)], Arc::clone(&runtime)).await.unwrap();
         let mut rx = runtime.event_bus().subscribe_all();
 
         // Queued to be started, but deleted before `run` gets to it.
         session_loop.delete_channel(&ctx, channel_id).await.expect("deleted");
-        let running = tokio::spawn({ let session_loop = session_loop.clone(); async move { session_loop.run().await } });
+        let running = tokio::spawn({ let session_loop = Arc::clone(&session_loop); async move { session_loop.run().await } });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let events = drain(&mut rx);
@@ -1456,9 +1456,9 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
@@ -1488,9 +1488,9 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1517,10 +1517,10 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
@@ -1554,10 +1554,10 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = SessionManager::new(runtime.clone());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = SessionManager::new(Arc::clone(&runtime));
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
@@ -1578,7 +1578,7 @@ mod tests {
 
         let security = runtime.security_manager();
         let may_read = |reader: &Arc<ChannelLoop>, source: &Arc<ChannelLoop>| {
-            let (reader, source, security, context) = (reader.clone(), source.clone(), security.clone(), alice_ctx.clone());
+            let (reader, source, security, context) = (Arc::clone(reader), Arc::clone(source), Arc::clone(security), alice_ctx.clone());
             async move {
                 use caelumora_model::security::AccessQuestions;
                 use caelumora_model::security::Place;
@@ -1607,10 +1607,10 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = SessionManager::new(runtime.clone());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, carol) = (user("alice"), user("carol"));
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
@@ -1625,8 +1625,8 @@ mod tests {
         theirs.security_attributes = SecurityAttributes::owned_by(carol_id);
         persist(&runtime, &SecurityContext::new(carol_id, Default::default(), Default::default()), &theirs).await;
 
-        let channel = hers.channels()[0].clone();
-        let channel_runtime = ChannelRuntime::new(runtime.clone(), hers.commands.clone());
+        let channel = Arc::clone(&hers.channels()[0]);
+        let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::clone(&hers.commands));
         channel_runtime.attach(&channel);
         let views = channel_runtime.new_actor_runtime(alice_id, hers.id(), channel.id()).views(alice_ctx.clone());
         let session = views.session(channel.id(), channel.classification()).expect("attached to its session");
@@ -1651,10 +1651,10 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let alice = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -1679,7 +1679,7 @@ mod tests {
 
         // Read as an agent in another channel reads: through its turn's views.
         let reading_from = |channel: &Arc<ChannelLoop>| {
-            let channel_runtime = ChannelRuntime::new(runtime.clone(), session.commands.clone());
+            let channel_runtime = ChannelRuntime::new(Arc::clone(&runtime), Arc::clone(&session.commands));
             channel_runtime.attach(channel);
             let views = channel_runtime.new_actor_runtime(alice_id, session.id(), channel.id()).views(alice_ctx.clone());
             views.session(channel.id(), channel.classification()).expect("attached to its session")
@@ -1702,10 +1702,10 @@ mod tests {
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments)));
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = SessionManager::new(runtime.clone());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
@@ -1763,10 +1763,10 @@ mod tests {
             ("hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
         ]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments).with_roles(roles)));
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
@@ -1815,10 +1815,10 @@ mod tests {
             ("hr".to_string(), vec![Clearance { level: Confidentiality::Confidential, compartment: Some(Compartment::new("hr")) }]),
         ]).unwrap();
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_rules(ConfidentialityRules::new(compartments).with_roles(roles)));
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
-        let manager = Arc::new(SessionManager::new(runtime.clone()));
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
         let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
@@ -1826,7 +1826,7 @@ mod tests {
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         // An agent of `owner` whose personality is of `kind` and names `roles`.
         let agent = |name: &'static str, owner: ActorId, kind: PersonalityKind, roles: Option<&'static [&'static str]>| {
-            let store = store.clone();
+            let store = Arc::clone(&store);
             let system = system.clone();
             async move {
                 let personality = Personality {
@@ -1853,7 +1853,7 @@ mod tests {
         let hr = Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
         let internal = Classification::general(Confidentiality::Internal);
         let cleared = |participant: ActorId, classification: &Classification| {
-            let runtime = runtime.clone();
+            let runtime = Arc::clone(&runtime);
             let (alice_ctx, classification) = (alice_ctx.clone(), classification.clone());
             async move {
                 // A channel of only `participant` - and its approver, who is
@@ -1902,19 +1902,19 @@ mod tests {
         let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
         let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
         let store = Arc::new(MemoryStore::new());
-        let mut registry = crate::component::ComponentRegistry::built_in(store.clone());
+        let mut registry = crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         registry.register(
             crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
-            { let remote = remote.clone(); move |_descriptor, _context| {
+            { let remote = Arc::clone(&remote); move |_descriptor, _context| {
                 let mut facets = crate::component::ComponentFacets::empty();
-                facets.insert::<dyn crate::external::ExternalAgent>(remote.clone());
+                facets.insert::<dyn crate::external::ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
                 Ok(facets)
             } },
         );
         let policy = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), registry).unwrap());
-        let manager = SessionManager::new(runtime.clone());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), registry).unwrap());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let system = SecurityContext::system();
 
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
@@ -1978,7 +1978,7 @@ mod tests {
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(states.clone(), entities.clone(), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(entities.clone())).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&entities))).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores");
@@ -2017,9 +2017,9 @@ mod tests {
         use caelumora_model::user::UserId;
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
@@ -2055,7 +2055,7 @@ mod tests {
         use crate::channel::ChannelError;
         use caelumora_model::channel::HistoryAccess;
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
         let owner = match ctx.initiator_id { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
@@ -2103,7 +2103,7 @@ mod tests {
     #[tokio::test]
     async fn a_users_watch_ends_when_they_leave_or_the_channel_is_deleted() {
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
         let within = |ended: tokio_util::sync::CancellationToken| async move {
@@ -2128,7 +2128,7 @@ mod tests {
     async fn a_removed_participant_is_kept_as_a_former_one_and_announced_but_the_approver_stays() {
         use crate::channel::ChannelError;
         let runtime = test_runtime();
-        let manager = SessionManager::new(runtime.clone());
+        let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
         let mut rx = runtime.event_bus().subscribe_all();
@@ -2167,9 +2167,9 @@ mod tests {
         use caelumora_model::user::{User, UserId};
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
         let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -2200,9 +2200,9 @@ mod tests {
         use caelumora_model::user::UserId;
 
         let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let manager = SessionManager::new(runtime);
 
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());

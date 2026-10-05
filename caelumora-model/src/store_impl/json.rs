@@ -832,7 +832,7 @@ mod tests {
 
         let mut writes = tokio::task::JoinSet::new();
         for i in 0..16 {
-            let (store, system) = (store.clone(), system.clone());
+            let (store, system) = (Arc::clone(&store), system.clone());
             let changed = Personality { description: format!("version {i}"), ..personality.clone() };
             writes.spawn(async move { store.update_personality(&system, &changed).await });
         }

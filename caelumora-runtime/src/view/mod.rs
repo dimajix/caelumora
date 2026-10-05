@@ -146,7 +146,7 @@ struct OwnSession(Arc<SessionLoop>);
 
 impl RunningSessions for OwnSession {
     fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
-        (self.0.id() == id).then(|| self.0.clone())
+        (self.0.id() == id).then(|| Arc::clone(&self.0))
     }
 }
 
@@ -487,7 +487,7 @@ impl ViewsFactory {
         let session_loop = match &self.root {
             FactoryRoot::Actor(actor) => actor.channel_loop()?.session_loop()?,
             #[cfg(test)]
-            FactoryRoot::Session(session) => session.clone(),
+            FactoryRoot::Session(session) => Arc::clone(session),
         };
         let from = Place { channel, classification, session: session_loop.privacy() };
         let views = session_loop.views(Viewer::from_place(self.context.clone(), from));
@@ -525,9 +525,9 @@ mod tests {
     }
 
     fn owned_runtime_under(policy: Arc<dyn SecurityManager>) -> (Arc<MemoryStore>, Arc<SessionManager>) {
-        let store = Arc::new(MemoryStore::with_security_manager(policy.clone()));
-        let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
-        let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
+        let store = Arc::new(MemoryStore::with_security_manager(Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         (store, Arc::new(SessionManager::new(runtime)))
     }
 

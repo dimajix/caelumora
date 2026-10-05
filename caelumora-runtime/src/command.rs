@@ -110,7 +110,7 @@ impl CommandExecutor {
                         command.name, existing.component, provider.id
                     )));
                 }
-                entries.push(CommandEntry { command, component: provider.id.clone(), provider: provider.facet.clone() });
+                entries.push(CommandEntry { command, component: provider.id.clone(), provider: Arc::clone(&provider.facet) });
             }
         }
         Ok(Self { security_manager, entries })
@@ -183,7 +183,7 @@ mod tests {
     #[tokio::test]
     async fn two_components_with_the_same_command_are_a_configuration_error() {
         let security = Arc::new(DummySecurityManager::new());
-        let error = CommandExecutor::new(security.clone(), vec![provider("help", "help"), provider("my-help", "help")])
+        let error = CommandExecutor::new(Arc::<DummySecurityManager>::clone(&security), vec![provider("help", "help"), provider("my-help", "help")])
             .expect_err("the second /help would be hidden by the first");
         let message = error.to_string();
         assert!(message.contains("/help") && message.contains("'help'") && message.contains("'my-help'"), "{message}");

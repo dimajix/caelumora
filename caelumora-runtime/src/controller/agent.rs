@@ -123,7 +123,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.create_agent(&ctx, &agent).await.unwrap();
-        let controller = AgentController::new(agent.clone(), Arc::new(()), store.clone());
+        let controller = AgentController::new(agent.clone(), Arc::new(()), Arc::<MemoryStore>::clone(&store));
 
         controller.update_name(&ctx, Name::new("new_name").unwrap()).await.unwrap();
 
