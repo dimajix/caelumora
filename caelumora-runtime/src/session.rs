@@ -708,6 +708,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         }
     }
 
@@ -723,6 +724,7 @@ mod tests {
             history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: session.security_attributes.clone(),
+            deleted: None,
         }
     }
 
@@ -920,7 +922,7 @@ mod tests {
     async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, caelumora_model::actor::ActorId) {
         use caelumora_model::actor::ActorId;
         use caelumora_model::user::{User, UserId};
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (owner, other) = (user("owner"), user("other"));
         let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
         let mut session = make_session("with-users");
@@ -947,7 +949,7 @@ mod tests {
         let manager = SessionManager::new(runtime.clone());
         let store = runtime.entity_store();
         let owner = UserId::new();
-        store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new() }).await.unwrap();
+        store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let template = SessionTemplate {
             id: SessionTemplateId::new(),
             name: ScopedName::new("pairing", Default::default()).unwrap(),
@@ -965,6 +967,7 @@ mod tests {
             security_attributes: Default::default(),
             commands: Default::default(),
             privacy: Default::default(),
+            deleted: None,
         };
         store.create_session_template(&SecurityContext::system(), &template).await.unwrap();
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -1138,7 +1141,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = SessionManager::new(runtime);
 
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
@@ -1169,7 +1172,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = SessionManager::new(runtime);
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let mut session = make_session("hers");
@@ -1198,7 +1201,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = Arc::new(SessionManager::new(runtime.clone()));
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let mut session = make_session("hers");
@@ -1236,7 +1239,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = SessionManager::new(runtime.clone());
 
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let alice_id = ActorId::User(alice.id);
         let bob_id = ActorId::User(bob.id);
@@ -1288,7 +1291,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = SessionManager::new(runtime.clone());
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, carol) = (user("alice"), user("carol"));
         let (alice_id, carol_id) = (ActorId::User(alice.id), ActorId::User(carol.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -1332,7 +1335,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = Arc::new(SessionManager::new(runtime.clone()));
-        let alice = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new() };
+        let alice = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let alice_id = ActorId::User(alice.id);
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers");
@@ -1383,7 +1386,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = SessionManager::new(runtime.clone());
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -1444,7 +1447,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = Arc::new(SessionManager::new(runtime.clone()));
-        let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect() };
+        let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -1497,7 +1500,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = Arc::new(SessionManager::new(runtime.clone()));
         let system = SecurityContext::system();
-        let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect() };
+        let user = |name: &str, roles: &[&str]| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: roles.iter().map(|r| r.to_string()).collect(), deleted: None };
         let (alice, bob) = (user("alice", &["staff", "hr"]), user("bob", &["staff"]));
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
@@ -1511,6 +1514,7 @@ mod tests {
                     roles: roles.map(|roles| roles.iter().map(|r| r.to_string()).collect()),
                     description: String::new(), introduction: None, components: Default::default(),
                     security_attributes: Default::default(), reasoning_visibility: Default::default(),
+                    deleted: None,
                 };
                 store.create_personality(&system, &personality).await.unwrap();
                 let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality, owner);
@@ -1593,7 +1597,7 @@ mod tests {
         let manager = SessionManager::new(runtime.clone());
         let system = SecurityContext::system();
 
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob) = (user("alice"), user("bob"));
         let participants = record_users(&manager, &[&alice, &bob]).await;
         let mut members = ComponentDescriptor::new("members", "channel_members_prompt_provider");
@@ -1603,6 +1607,7 @@ mod tests {
             roles: None, description: String::new(), introduction: None,
             components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), members] },
             security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            deleted: None,
         };
         store.create_personality(&system, &personality).await.unwrap();
         let hermes = Agent::new(ScopedName::new("hermes", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
@@ -1826,7 +1831,7 @@ mod tests {
         let secrets = Arc::new(SecretManager::new(vec![], policy.clone()));
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let manager = SessionManager::new(runtime);
-        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() };
+        let user = |name: &str| User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
         let (alice_id, bob_id, carol_id) = (ActorId::User(alice.id), ActorId::User(bob.id), ActorId::User(carol.id));
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());

@@ -10,6 +10,10 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub roles: Vec<String>,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
 }
 
 /// A user record belongs to the system, not to the user (issue 94):
@@ -19,6 +23,8 @@ pub struct User {
 /// it. Owning it themselves would let users grant themselves `roles`.
 /// Derived rather than stored, so that no record can say otherwise.
 static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId::System, contributors: Vec::new() };
+
+crate::impl_deletable!(User, UserProfile);
 
 impl Secured for User {
     fn security_attributes(&self) -> &SecurityAttributes {
@@ -48,6 +54,10 @@ pub struct UserProfile {
     /// How the user introduces themselves; `None` if they have not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introduction: Option<String>,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
     #[serde(skip)]
     security_attributes: SecurityAttributes,
 }
@@ -89,7 +99,7 @@ impl UserProfile {
     /// The profile of user `user_id`, owned by them.
     pub fn new(user_id: UserId, introduction: Option<String>) -> Self {
         let security_attributes = SecurityAttributes { owner_id: ActorId::User(user_id), contributors: Vec::new() };
-        Self { user_id, introduction, security_attributes }
+        Self { user_id, introduction, deleted: None, security_attributes }
     }
 
     /// The user whose profile it is - also its id in the store.
@@ -110,11 +120,13 @@ struct StoredUserProfile {
     user_id: UserId,
     #[serde(default)]
     introduction: Option<String>,
+    #[serde(default)]
+    deleted: Option<crate::removal::Removal>,
 }
 
 impl From<StoredUserProfile> for UserProfile {
     fn from(stored: StoredUserProfile) -> Self {
-        UserProfile::new(stored.user_id, stored.introduction)
+        UserProfile { deleted: stored.deleted, ..UserProfile::new(stored.user_id, stored.introduction) }
     }
 }
 

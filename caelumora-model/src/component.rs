@@ -47,6 +47,10 @@ impl ComponentDescriptor {
     }
 }
 
+/// Deleted for good, not marked (issue 164): it is reached only through the
+/// personalities and templates that refer to it, and hidden with them.
+impl crate::removal::Stored for ComponentDescriptor {}
+
 impl Secured for ComponentDescriptor {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes

@@ -212,6 +212,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+            deleted: None,
         };
         let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
         store.create_agent(&SecurityContext::system(), &agent).await.unwrap();
@@ -219,7 +220,7 @@ mod tests {
     }
 
     async fn user_in(store: &MemoryStore) -> User {
-        let user = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new() };
+        let user = User { id: UserId::new(), username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         store.create_user(&SecurityContext::system(), &user).await.unwrap();
         user
     }

@@ -304,6 +304,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             security_attributes: SecurityAttributes { owner_id: privacy.owner, contributors: Vec::new() },
+            deleted: None,
         }
     }
 

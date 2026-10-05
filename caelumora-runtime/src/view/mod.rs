@@ -373,7 +373,7 @@ mod tests {
     }
 
     fn user(name: &str) -> User {
-        User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new() }
+        User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: Vec::new(), deleted: None }
     }
 
     fn as_user(id: UserId) -> Viewer {
@@ -400,6 +400,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: SecurityAttributes { owner_id: owner, contributors },
+            deleted: None,
         }
     }
 
@@ -413,6 +414,7 @@ mod tests {
             history_limits: Vec::new(),
             participants: session.participants.clone(),
             security_attributes: session.security_attributes.clone(),
+            deleted: None,
         }
     }
 
@@ -431,6 +433,7 @@ mod tests {
             roles: None,
             components: Default::default(),
             security_attributes: Default::default(),
+            deleted: None,
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
@@ -547,7 +550,7 @@ mod tests {
         use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
 
         let (store, manager) = owned_runtime();
-        let alice = User { id: UserId::new(), username: "Alice Example".to_string(), email: String::new(), roles: Vec::new() };
+        let alice = User { id: UserId::new(), username: "Alice Example".to_string(), email: String::new(), roles: Vec::new(), deleted: None };
         let gone = UserId::new();
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
         let mut session = make_session("s", ActorId::User(alice.id), vec![]);

@@ -281,6 +281,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
+            deleted: None,
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         personality
@@ -300,7 +301,7 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(store.clone(), store.clone(), secrets, policy, default_commands(), Default::default(), crate::component::ComponentRegistry::built_in(store.clone())).unwrap());
         let system = SecurityContext::system();
 
-        let (kaya, bob) = (User { id: UserId::new(), username: "Kaya".to_string(), email: String::new(), roles: Vec::new() }, User { id: UserId::new(), username: "Bob".to_string(), email: String::new(), roles: Vec::new() });
+        let (kaya, bob) = (User { id: UserId::new(), username: "Kaya".to_string(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: "Bob".to_string(), email: String::new(), roles: Vec::new(), deleted: None });
         for user in [&kaya, &bob] {
             store.create_user(&system, user).await.unwrap();
         }
@@ -317,10 +318,12 @@ mod tests {
         let session = Session {
             id: SessionId::new(), name: String::new(), participants: participants.clone(), channels: vec![ChannelId::new()],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
+            deleted: None,
         };
         let channel = Channel {
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
             classification: Classification::CHANNEL_DEFAULT, history_limits: Vec::new(), participants, security_attributes: Default::default(),
+            deleted: None,
         };
         store.create_session(&system, &session).await.unwrap();
         store.create_channel(&system, &channel).await.unwrap();

@@ -53,6 +53,10 @@ pub struct Channel {
     /// later and may not see all of it (issue 46); everybody else sees all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history_limits: Vec<HistoryLimit>,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
 }
 
 /// How much of a channel's history a new participant may see, as asked for
@@ -86,6 +90,8 @@ pub struct HistoryLimit {
     pub start: HistoryStart,
 }
 
+crate::impl_deletable!(Channel);
+
 impl Secured for Channel {
     fn security_attributes(&self) -> &SecurityAttributes {
         &self.security_attributes
@@ -114,6 +120,7 @@ impl Channel {
             security_attributes,
             classification,
             history_limits: Vec::new(),
+            deleted: None,
         }
     }
 }

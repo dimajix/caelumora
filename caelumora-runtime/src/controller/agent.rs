@@ -117,6 +117,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+            deleted: None,
         };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), &personality, caelumora_model::actor::ActorId::None);
         let store = Arc::new(MemoryStore::new());

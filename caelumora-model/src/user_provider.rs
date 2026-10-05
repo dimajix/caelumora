@@ -163,6 +163,7 @@ mod tests {
             username: name.to_string(),
             email: String::new(),
             roles: Vec::new(),
+            deleted: None,
         }
     }
 

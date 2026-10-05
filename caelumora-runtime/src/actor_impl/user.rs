@@ -329,12 +329,14 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
+            deleted: None,
         };
         let user = caelumora_model::user::User {
             id: caelumora_model::user::UserId::new(),
             username: "alice".to_string(),
             email: String::new(),
             roles: Vec::new(),
+            deleted: None,
         };
         let channel_loop = crate::channel::ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);

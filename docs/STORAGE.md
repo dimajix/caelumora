@@ -46,6 +46,29 @@ The type of a name says what it is for (`caelumora_model::name`):
 There are two implementations: `MemoryStore`, for tests, and `JsonFileStore`, which keeps one JSON
 file per document.
 
+### Deleted entities
+
+What a user deletes is to be kept, marked, and removed for good only by a purge - an
+administrator's act or a retention policy's (issues
+[164](../issues/164-soft-deletion-and-former-members.md),
+[07](../issues/07-session-deletion-audit.md)).
+The stores are generic over `Stored` (`caelumora_model::removal`), which asks every kind whether
+it was deleted. The kinds that deleting is to mark implement `Deletable` and carry `deleted:
+Option<Removal>` - who deleted it and when: sessions, channels, agents, users, user profiles,
+personalities and session templates. The field is written only when set, so documents stored before
+it load unchanged. A preconfigured component is not marked: it is runtime configuration, reached
+only through the personalities and templates that refer to it, and hidden with them; it is deleted
+for good.
+
+A document that carries the mark is not there for the five operations, before anything is asked
+(`store_impl::access`): it is not read, not listed, not found by name, not changed and not deleted
+again - also not by the system, so that no caller has to remember to leave it out. Its id stays
+taken: creating it again is a `Conflict`, and so seeding does not bring back deleted demo data.
+Nothing created or changed may carry the mark (`Validation`): only deleting is to set it.
+
+So far nothing does: `delete_x` still removes the document. Marking on delete, restoring, purging
+and reading what was deleted are the next steps of 164.
+
 ### Demo data
 
 Demo data (issue 105) is not part of any binary. The files that the configuration's `seed` names

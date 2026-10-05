@@ -93,6 +93,7 @@ impl UserProvider for AcceptAnyUserProvider {
             username: username.to_string(),
             email: String::new(),
             roles,
+            deleted: None,
         };
         self.store.create_user(&Self::context(), &user).await
             .map_err(|e| AuthError::Backend(e.to_string()))?;
@@ -163,6 +164,7 @@ mod tests {
             username: "user".to_string(),
             email: "user@example.com".to_string(),
             roles: vec!["user".to_string()],
+            deleted: None,
         };
         store.create_user(&SecurityContext::default(), &existing).await.unwrap();
 

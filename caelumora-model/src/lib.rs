@@ -25,6 +25,7 @@ pub mod plan;
 pub mod privacy;
 pub mod session;
 pub mod store;
+pub mod removal;
 pub mod user;
 pub mod template;
 pub mod store_impl;

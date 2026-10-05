@@ -1269,6 +1269,7 @@ mod tests {
             username: username.to_string(),
             email: String::new(),
             roles: Vec::new(),
+            deleted: None,
         }
     }
 
@@ -1303,6 +1304,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
+            deleted: None,
         };
         let builtin = |id: &str, facet: Arc<dyn crate::command::CommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
         let executor = CommandExecutor::new(
@@ -1840,6 +1842,7 @@ mod tests {
             roles: None,
             components,
             security_attributes: Default::default(),
+            deleted: None,
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         let alice = user("alice");
@@ -1886,6 +1889,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
+            deleted: None,
         };
         // Stored, so that leaving it can be stored too.
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
@@ -2927,6 +2931,7 @@ mod tests {
             roles: None,
             components,
             security_attributes: Default::default(),
+            deleted: None,
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         let alice = user("alice");
@@ -2959,6 +2964,7 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
             history_limits: Vec::new(),
+            deleted: None,
         };
         runtime.entity_store().create_channel(&SecurityContext::system(), &channel).await.unwrap();
         if let Some(mut stored) = stored {

@@ -1,6 +1,6 @@
 # 164 — The store forgets what was deleted and who left
 
-**Status:** open
+**Status:** in progress
 **Area:** Persistence
 
 ## The problem
@@ -82,14 +82,23 @@ transcripts, notes), and participants removed from a channel.
 
 - `Removal { by: ActorId, at: DateTime<Utc> }` (new, `removal.rs`): the mark - of a deleted entity
   and of a participant that left. `by` is `SecurityContext::caller_id`, as the log has it today.
-- `trait Deletable: Secured { fn deleted(&self) -> Option<&Removal>; fn set_deleted(&mut self,
-  deleted: Option<Removal>); }` - what the stores are generic over, besides `Secured`. A trait of
-  its own: carrying attributes and being deletable are two things, and `Secured` is implemented by
+- `trait Stored: Secured { fn deleted(&self) -> Option<&Removal> { None } }` - what the stores
+  are generic over, so that every kind is read the same way - and `trait Deletable: Stored { fn
+  set_deleted(&mut self, deleted: Option<Removal>); }` for the kinds deleting marks. Traits of
+  their own: carrying attributes and being stored are two things, and `Secured` is implemented by
   what is not stored.
 - `deleted: Option<Removal>` with `#[serde(default, skip_serializing_if = "Option::is_none")]` on
-  every stored kind - `Session`, `Channel`, `Agent`, and `Personality`, `SessionTemplate`, `User`,
-  `UserProfile`, `ComponentDescriptor` - so that every kind keeps the same operations (issue 93)
-  and the stores implement them once. Documents stored before load unchanged; no migration.
+  the deletable kinds - `Session`, `Channel`, `Agent`, `User`, `UserProfile`, and the definitions
+  that are to be managed, `Personality` and `SessionTemplate`. Documents stored before load
+  unchanged; no migration.
+- **Not a preconfigured component** (`ComponentDescriptor`, decided by the maintainer): it is
+  runtime configuration, reached only through the personalities and templates that refer to it by
+  `kind: "ref"`, and hidden with them while they are marked - as a channel is with its session. It
+  implements `Stored` with no mark, is deleted for good as today, and has no restore or purge. A
+  purge of a personality does not take its components along: another may refer to them. Deleting
+  a component that is still referred to - by a marked personality too - leaves the reference
+  dangling, as today; whether deleting it should be refused then is a question of referential
+  integrity, not of this issue.
 - `EntityKind { Personality, SessionTemplate, Agent, Session, Channel, User, UserProfile,
   Component }` (new) and three actions keyed by it, each carrying the stored attributes:
   `ActionType::ReadDeleted(EntityKind, &SecurityAttributes)`, `Restore(…)`, `Purge(…)`. Per-kind
@@ -111,7 +120,7 @@ transcripts, notes), and participants removed from a channel.
 
 ### `EntityStore` (trait, `MemoryStore`, `JsonFileStore`)
 
-Per kind, besides the five operations:
+Per deletable kind, besides the five operations:
 
 | Operation | asks | does |
 |---|---|---|
@@ -121,7 +130,7 @@ Per kind, besides the five operations:
 | `get_deleted_x(ctx, id) -> X` | `ReadDeleted(kind, stored)` | the marked document; `NotFound` otherwise |
 | `list_deleted_x(ctx) -> Vec<X>` | `ListX`, then `ReadDeleted` each | the marked documents |
 
-- `Access` (`store_impl/access.rs`) is bound to `Deletable`: `read`, `filter`, `change` and
+- `Access` (`store_impl/access.rs`) is bound to `Stored`: `read`, `filter`, `change` and
   `delete` treat a marked entity as absent; new `read_deleted`, `restore`, `purge`. `Actions` gets
   the `kind`.
 - `MemoryStore`: `delete_in` sets the mark; new `restore_in`, `purge_in` (today's `delete_in`),
@@ -129,7 +138,8 @@ Per kind, besides the five operations:
 - `JsonFileStore`: `delete_file` rewrites the document with the mark, at its path - one file per
   id stays true; `purge_file` is today's `delete_file`; `list_dir` and `read_file` filter.
 - `find_user_by_name` skips the marked.
-- The cost: 32 signatures on the trait, each one line over the generic helpers.
+- The new operations exist for the seven deletable kinds, not for components: 35 signatures on the
+  trait, each one line over the generic helpers.
 
 `StateStore`: `delete_channel_state` stays and is called on a purge only. New
 `delete_agent_state(agent_id)` - the agent's own state and its state in every channel - for the
@@ -213,8 +223,8 @@ by a name is the existing name conflict.
 
 ### Steps
 
-1. **The mark and the filter** - no behaviour change. `Removal`, `Deletable`, `deleted` on every
-   stored kind, `EntityKind` in `Actions` and `StoreError`; both stores treat a marked document as
+1. **The mark and the filter** - no behaviour change. `Removal`, `Stored`, `Deletable`, `deleted`
+   on the deletable kinds, `EntityKind` in `Actions`; both stores treat a marked document as
    absent. Nothing sets a mark yet; the store suite (`store_impl/suite.rs`) tests it with documents
    marked by hand. STORAGE.md.
 2. **The store's operations.** `delete_x` marks; `restore_x`, `purge_x`, `get_deleted_x`,
@@ -286,3 +296,22 @@ rights [125](125-invisible-admin.md)'s, the record of the acts [140](140-audit-l
   the REST API, in six steps. Decided along the way: no cascade of marks from a session to its
   channels (a channel is only reached through its session); the mark carries who and when also for
   a participant that left, since it is the entity's state - the acts themselves stay 140's.
+- **2026-10-05** — Step 1 done: the mark and the filter, without a change in behaviour.
+  `caelumora_model::removal` with `Removal`, `Stored` and `Deletable` (both implemented by
+  `impl_deletable!`); `deleted: Option<Removal>` on the seven deletable kinds, written only when
+  set. `Access` is generic over `Stored` and treats a marked document as absent in `read`,
+  `filter`, `change` and
+  `delete`; both stores go through it, `find_user_by_name` through `list`. `Actions::entity` is an
+  `EntityKind`. A suite test that both stores run (`marked_documents_are_absent`) marks documents
+  by hand (`MarkByHand`), since nothing marks yet. STORAGE.md, section *Deleted entities*.
+
+  Two departures from the plan. `StoreError::NotFound::entity` stays a `&'static str`: it also names
+  what is no entity kind - a participant, a channel state - so only `Actions` carries the
+  `EntityKind`, and errors take its `name()`. And creating or changing a document that carries the
+  mark is refused (`Validation`): otherwise `update_x` with a mark set would delete without asking
+  `DeleteX`, and with the mark taken away would restore without asking `Restore`.
+
+  A first version also marked preconfigured components, for every kind to have the same
+  operations. The maintainer decided against it: a component is runtime configuration reached only
+  through what refers to it, so the trait was split into `Stored` (asked of every kind) and
+  `Deletable` (the kinds deleting marks); see *Types and traits*.

@@ -132,7 +132,13 @@ pub struct SessionTemplate {
     /// The privacy policy of sessions made from this template (issue 134).
     #[serde(default)]
     pub privacy: PrivacyConfig,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
 }
+
+crate::impl_deletable!(SessionTemplate);
 
 impl Secured for SessionTemplate {
     fn security_attributes(&self) -> &SecurityAttributes {
@@ -165,6 +171,7 @@ impl SessionTemplate {
             created_at: now,
             updated_at: now,
             security_attributes,
+            deleted: None,
         };
         Ok((session, channels))
     }
@@ -269,6 +276,7 @@ mod tests {
             ],
             commands: crate::command::default_commands(),
             privacy: Default::default(),
+            deleted: None,
         }
     }
 

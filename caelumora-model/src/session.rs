@@ -32,7 +32,13 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub security_attributes: SecurityAttributes,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
 }
+
+crate::impl_deletable!(Session);
 
 impl Secured for Session {
     fn security_attributes(&self) -> &SecurityAttributes {

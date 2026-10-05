@@ -427,6 +427,7 @@ mod tests {
             username: "user1".to_string(),
             email: "user1@example.com".to_string(),
             roles: vec![],
+            deleted: None,
         };
 
         let approver = Approver {
@@ -447,6 +448,7 @@ mod tests {
                 Participant::Approver(approver.clone()),
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
+            deleted: None,
         };
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
@@ -549,6 +551,7 @@ mod tests {
             history_limits: Vec::new(),
             participants: vec![Participant::User(alice), Participant::User(bob), Participant::Approver(approver.clone())],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
+            deleted: None,
         };
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));
         let actor_runtime = ChannelRuntime::new(runtime_manager.clone(), Arc::new(CommandExecutor::empty(runtime_manager.security_manager())))
@@ -619,6 +622,7 @@ mod tests {
                 Participant::Approver(approver.clone()),
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
+            deleted: None,
         };
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
@@ -648,6 +652,7 @@ mod tests {
             username: "user1".to_string(),
             email: "user1@example.com".to_string(),
             roles: vec![],
+            deleted: None,
         };
         store.create_user(&caelumora_model::security::SecurityContext::default(), &user1).await.unwrap();
 
@@ -721,8 +726,8 @@ mod tests {
         let user1_id = UserId(Uuid::new_v4());
         let user2_id = UserId(Uuid::new_v4());
 
-        let user1 = User { id: user1_id, username: "u1".to_string(), email: "".to_string(), roles: vec![] };
-        let user2 = User { id: user2_id, username: "u2".to_string(), email: "".to_string(), roles: vec![] };
+        let user1 = User { id: user1_id, username: "u1".to_string(), email: "".to_string(), roles: vec![], deleted: None };
+        let user2 = User { id: user2_id, username: "u2".to_string(), email: "".to_string(), roles: vec![], deleted: None };
 
         let channel = Channel {
             id: channel_id,
@@ -737,6 +742,7 @@ mod tests {
                 Participant::User(user2.id),
             ],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
+            deleted: None,
         };
 
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
@@ -799,7 +805,7 @@ mod tests {
         let session_id = SessionId::new();
         let channel_id = ChannelId::new();
         let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::All };
-        let user = User { id: UserId(Uuid::new_v4()), username: "u1".to_string(), email: "".to_string(), roles: vec![] };
+        let user = User { id: UserId(Uuid::new_v4()), username: "u1".to_string(), email: "".to_string(), roles: vec![], deleted: None };
         let channel = Channel {
             id: channel_id,
             session_id,
@@ -809,6 +815,7 @@ mod tests {
             history_limits: Vec::new(),
             participants: vec![Participant::Approver(approver.clone()), Participant::User(user.id)],
             security_attributes: caelumora_model::security::SecurityAttributes::default(),
+            deleted: None,
         };
         store.create_channel(&caelumora_model::security::SecurityContext::system(), &channel).await.unwrap();
         let channel_controller = Arc::new(ChannelController::new(channel, runtime_manager.event_bus().clone(), store.clone()));

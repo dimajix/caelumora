@@ -95,6 +95,7 @@ mod tests {
             security_attributes: Default::default(),
             commands: Default::default(),
             privacy: Default::default(),
+            deleted: None,
         }
     }
 
@@ -113,6 +114,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
+            deleted: None,
         };
         store.create_personality(&SecurityContext::system(), &personality).await.unwrap();
         (Arc::new(store), personality.id)
@@ -156,7 +158,7 @@ mod tests {
         let missing = resolve_participants(&store, &as_user(owner), &template, SessionId::new(), owner).await.expect_err("no such user");
         assert!(matches!(missing.downcast_ref::<StoreError>(), Some(StoreError::NotFound { entity: "user", .. })), "{missing}");
 
-        store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new() }).await.unwrap();
+        store.create_user(&SecurityContext::system(), &User { id: owner, username: "alice".to_string(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let participants = resolve_participants(&store, &as_user(owner), &template, SessionId::new(), owner).await.unwrap();
         assert!(matches!(participants[0], (ref name, Participant::User(id)) if name == "user" && id == owner));
         assert!(matches!(participants[1], (ref name, Participant::Approver(_)) if name == "approval"));

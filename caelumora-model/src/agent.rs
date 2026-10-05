@@ -87,6 +87,10 @@ pub struct Personality {
     /// `channel` unless named.
     #[serde(default)]
     pub reasoning_visibility: crate::confidentiality::Visibility,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
 }
 
 impl Personality {
@@ -105,6 +109,8 @@ impl Personality {
         }
     }
 }
+
+crate::impl_deletable!(Personality, Agent);
 
 impl Secured for Personality {
     fn security_attributes(&self) -> &SecurityAttributes {
@@ -132,6 +138,10 @@ pub struct Agent {
     pub name: ScopedName,
     pub personality_id: PersonalityId,
     pub security_attributes: SecurityAttributes,
+    /// Set when it was deleted (issue 164): it stays stored, hidden from
+    /// every read but those for what was deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<crate::removal::Removal>,
 }
 
 impl Agent {
@@ -161,6 +171,7 @@ impl Agent {
             personality_id: personality.id,
             name,
             security_attributes,
+            deleted: None,
         }
     }
 }

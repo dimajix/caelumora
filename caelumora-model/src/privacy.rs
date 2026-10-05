@@ -172,6 +172,7 @@ mod tests {
             created_at: Default::default(),
             updated_at: Default::default(),
             security_attributes: crate::security::SecurityAttributes::owned_by(ActorId::User(alice)),
+            deleted: None,
         };
         let privacy = SessionPrivacy::of(&session);
         assert_eq!(privacy.people, [alice, bob].into_iter().collect());

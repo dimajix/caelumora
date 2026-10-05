@@ -154,6 +154,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         };
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();

@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use tracing::info;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use crate::security::{DummySecurityManager, Secured, SecurityManager};
+use crate::removal::Stored;
+use crate::security::{DummySecurityManager, SecurityManager};
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use std::fmt::Display;
 use std::hash::Hash;
@@ -91,8 +92,8 @@ impl MemoryStore {
 /// holds that kind and checked with its `Actions`.
 impl MemoryStore {
     async fn create_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
-        self.access(ctx).create(value, kind.create).await?;
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
+        self.access(ctx).create(value, kind).await?;
         self.write_lock(map, |v| {
             if v.contains_key(&key) {
                 return Err(StoreError::Conflict(format!("{} {} already exists", kind.entity, key)));
@@ -103,34 +104,34 @@ impl MemoryStore {
     }
 
     async fn get_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<T>
-    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let found = self.read_lock(map, |v| v.get(key).cloned());
-        self.access(ctx).read(found, kind.get, kind.entity, key.to_string()).await
+        self.access(ctx).read(found, kind, key.to_string()).await
     }
 
     async fn update_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: K, value: &T) -> StoreResult<()>
-    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(&key).cloned());
-        self.access(ctx).change(stored.as_ref(), kind.get, kind.update, kind.entity, key.to_string()).await?;
+        self.access(ctx).change(stored.as_ref(), value, kind, key.to_string()).await?;
         self.write_lock(map, |v| v.insert(key, value.clone()));
         Ok(())
     }
 
     async fn delete_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions, key: &K) -> StoreResult<bool>
-    where K: Eq + Hash + Display + Send + Sync, T: Secured + Clone + Send + Sync {
+    where K: Eq + Hash + Display + Send + Sync, T: Stored + Clone + Send + Sync {
         let stored = self.read_lock(map, |v| v.get(key).cloned());
-        if !self.access(ctx).delete(stored.as_ref(), kind.get, kind.delete).await? {
+        if !self.access(ctx).delete(stored.as_ref(), kind).await? {
             return Ok(false);
         }
         Ok(self.write_lock(map, |v| v.remove(key).is_some()))
     }
 
     async fn list_in<K, T>(&self, ctx: &SecurityContext, map: &RwLock<HashMap<K, T>>, kind: &Actions) -> StoreResult<Vec<T>>
-    where K: Eq + Hash + Send + Sync, T: Secured + Clone + Send + Sync {
+    where K: Eq + Hash + Send + Sync, T: Stored + Clone + Send + Sync {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
         let all = self.read_lock(map, |v| v.values().cloned().collect());
-        Ok(access.filter(all, kind.get).await)
+        Ok(access.filter(all, kind).await)
     }
 }
 
@@ -342,5 +343,20 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_a_state_store() {
         suite::state_store_behaves(&MemoryStore::new()).await;
+    }
+
+    #[async_trait::async_trait]
+    impl suite::MarkByHand for MemoryStore {
+        async fn store_marked_session(&self, session: &Session) {
+            self.write_lock(&self.sessions, |v| v.insert(session.id, session.clone()));
+        }
+        async fn store_marked_user(&self, user: &User) {
+            self.write_lock(&self.users, |v| v.insert(user.id, user.clone()));
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_what_is_marked_deleted_out_of_sight() {
+        suite::marked_documents_are_absent(&MemoryStore::new()).await;
     }
 }

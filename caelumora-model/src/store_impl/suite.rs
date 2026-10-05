@@ -15,6 +15,7 @@ use crate::security::SecurityContext;
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
+use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
 use chrono::Utc;
 use uuid::Uuid;
@@ -69,6 +70,7 @@ fn personality() -> Personality {
         roles: None,
         description: String::new(),
         components: Default::default(),
+        deleted: None,
     }
 }
 
@@ -87,6 +89,7 @@ fn session_template() -> SessionTemplate {
             classification: Classification::CHANNEL_DEFAULT,
             participants: vec!["user".to_string()],
         }],
+        deleted: None,
     }
 }
 
@@ -101,6 +104,7 @@ fn session() -> Session {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         security_attributes: Default::default(),
+        deleted: None,
     }
 }
 
@@ -114,6 +118,7 @@ fn channel() -> Channel {
         history_limits: Vec::new(),
         participants: Vec::new(),
         security_attributes: Default::default(),
+        deleted: None,
     }
 }
 
@@ -123,6 +128,7 @@ fn user(username: &str) -> User {
         username: username.to_string(),
         email: String::new(),
         roles: vec!["user".to_string()],
+        deleted: None,
     }
 }
 
@@ -135,6 +141,21 @@ fn component() -> ComponentDescriptor {
         fail_policy: Default::default(),
         security_attributes: Default::default(),
     }
+}
+
+/// A store that marks a document deleted by hand, writing it as it would
+/// be stored once deleted (issue 164) - for the suite, until deleting
+/// marks.
+#[async_trait::async_trait]
+pub(crate) trait MarkByHand {
+    async fn store_marked_session(&self, session: &Session);
+    async fn store_marked_user(&self, user: &User);
+}
+
+/// `value` marked deleted.
+fn marked<T: Deletable>(mut value: T) -> T {
+    value.set_deleted(Some(Removal::now(crate::actor::ActorId::System)));
+    value
 }
 
 // A named function rather than a closure: a closure returning a borrow of
@@ -221,4 +242,36 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     assert!(store.get_agent_channel_state(remote_agent, other_channel).await.expect("get").remote.conversation.is_some(), "other channels keep theirs");
     store.get_channel_state(other_channel).await.expect("other channels keep theirs");
     store.delete_channel_state(channel).await.expect("nothing left to delete is no error");
+}
+
+/// What is marked deleted is not there for any of the five operations,
+/// also not for the system, and its id stays taken; nothing created or
+/// changed may carry the mark (issue 164).
+pub(crate) async fn marked_documents_are_absent<S: EntityStore + MarkByHand>(store: &S) {
+    let system = SecurityContext::system();
+    let kept = session();
+    store.create_session(&system, &kept).await.expect("create");
+    let gone = session();
+    store.store_marked_session(&marked(gone.clone())).await;
+
+    let read = store.get_session(&system, gone.id).await;
+    assert!(matches!(read, Err(StoreError::NotFound { entity: "session", .. })), "not read, not even by the system: {read:?}");
+    let listed = store.list_sessions(&system).await.expect("list");
+    assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), [kept.id], "not listed");
+    let changed = store.update_session(&system, &gone).await;
+    assert!(matches!(changed, Err(StoreError::NotFound { .. })), "not changed: {changed:?}");
+    assert!(!store.delete_session(&system, gone.id).await.expect("delete"), "not deleted again");
+    let again = store.create_session(&system, &gone).await;
+    assert!(matches!(again, Err(StoreError::Conflict(_))), "its id stays taken: {again:?}");
+
+    let created = store.create_session(&system, &marked(session())).await;
+    assert!(matches!(created, Err(StoreError::Validation(_))), "nothing is created marked: {created:?}");
+    let changed = store.update_session(&system, &marked(kept.clone())).await;
+    assert!(matches!(changed, Err(StoreError::Validation(_))), "nor changed to be: {changed:?}");
+    assert!(store.get_session(&system, kept.id).await.expect("still there").deleted.is_none());
+
+    let carol = user("carol");
+    store.store_marked_user(&marked(carol.clone())).await;
+    let found = store.find_user_by_name(&system, "carol").await;
+    assert!(matches!(found, Err(StoreError::NotFound { .. })), "not found by name: {found:?}");
 }

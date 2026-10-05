@@ -71,6 +71,43 @@ pub trait Journaled: Serialize + DeserializeOwned + Send {
 }
 
 
+/// The kinds of entity an `EntityStore` keeps (issue 164): what the
+/// actions that concern every kind alike are keyed by, and its name in
+/// errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntityKind {
+    Personality,
+    SessionTemplate,
+    Agent,
+    Session,
+    Channel,
+    User,
+    UserProfile,
+    Component,
+}
+
+impl EntityKind {
+    /// Its name, as errors give it.
+    pub fn name(self) -> &'static str {
+        match self {
+            EntityKind::Personality => "personality",
+            EntityKind::SessionTemplate => "session_template",
+            EntityKind::Agent => "agent",
+            EntityKind::Session => "session",
+            EntityKind::Channel => "channel",
+            EntityKind::User => "user",
+            EntityKind::UserProfile => "user_profile",
+            EntityKind::Component => "component",
+        }
+    }
+}
+
+impl std::fmt::Display for EntityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// The durable entities (issue 93): every kind has the same five
 /// operations - `create`, `get`, `update`, `delete`, `list` - by id, and
 /// every one of them is checked the same way (`store_impl::access`).
@@ -79,6 +116,12 @@ pub trait Journaled: Serialize + DeserializeOwned + Send {
 /// Only users are also found by name: a username is an identity. Whoever
 /// looks for another kind by name filters `list_x`, with `Scope::contains`
 /// where the scope matters.
+///
+/// An entity marked deleted (`Deletable::deleted`, issue 164) is not there
+/// for any of the five: not read, not listed, not changed, not deleted
+/// again - also not for the system - and its id is not free for `create`.
+/// Nothing new or changed can carry the mark (`Validation`): only deleting
+/// sets it.
 #[async_trait]
 pub trait EntityStore : Debug + Sync + Send {
     // Personalities
@@ -204,6 +247,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         };
         let session2 = Session {
             commands: Default::default(),
@@ -215,6 +259,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         };
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();

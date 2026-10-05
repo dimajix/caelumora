@@ -149,7 +149,7 @@ impl World {
     }
 
     async fn user(&self, name: &str) -> UserId {
-        let user = User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: vec!["staff".to_string()] };
+        let user = User { id: UserId::new(), username: name.to_string(), email: String::new(), roles: vec!["staff".to_string()], deleted: None };
         self.store.create_user(&Self::system(), &user).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
@@ -188,6 +188,7 @@ impl World {
             components: Default::default(),
             security_attributes: attributes(owner, contributors),
             reasoning_visibility: Default::default(),
+            deleted: None,
         };
         self.store.create_personality(&Self::system(), &personality).await.unwrap();
         personality
@@ -214,6 +215,7 @@ impl World {
             security_attributes: attributes(owner, contributors),
             commands: Default::default(),
             privacy: Default::default(),
+            deleted: None,
         };
         self.store.create_session_template(&Self::system(), &template).await.unwrap();
         template.id
@@ -246,6 +248,7 @@ impl World {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: caelumora_model::channel::participant_attributes(alice, &in_session),
+            deleted: None,
         };
         self.store.create_session(&Self::system(), &session).await.unwrap();
         self.store.create_channel(&Self::system(), &Channel { security_attributes: caelumora_model::channel::participant_attributes(alice, &channel.participants), ..channel }).await.unwrap();

@@ -14,13 +14,17 @@
 //!   writing oneself in as owner would pass the check. An entity the caller
 //!   may not even read is not found; one they may read but not change is
 //!   refused.
+//! - **What is marked deleted** (issue 164) is not there for any of them,
+//!   before anything is asked: the store treats it as absent. And nothing
+//!   created or changed may carry the mark, so that only deleting sets it.
 //!
 //! Every check goes through `Enforcement::require` (issue 95), with the
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use crate::security::{ActionType, Enforcement, Secured, SecurityAttributes, SecurityContext, SecurityManager};
-use crate::store::{StoreError, StoreResult};
+use crate::removal::Stored;
+use crate::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager};
+use crate::store::{EntityKind, StoreError, StoreResult};
 
 
 // Every method takes the actions to ask about as functions from an
@@ -47,18 +51,18 @@ impl<'a> Access<'a> {
     }
 
     /// `found`, if it exists and the caller may read it; not found otherwise.
-    pub(crate) async fn read<T: Secured>(&self, found: Option<T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, entity: &'static str, id: String) -> StoreResult<T> {
-        let not_found = || StoreError::NotFound { entity, id };
-        let Some(value) = found else { return Err(not_found()) };
-        self.require(read(value.security_attributes()), not_found).await?;
+    pub(crate) async fn read<T: Stored>(&self, found: Option<T>, kind: &Actions, id: String) -> StoreResult<T> {
+        let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
+        let Some(value) = found.filter(present) else { return Err(not_found()) };
+        self.require((kind.get)(value.security_attributes()), not_found).await?;
         Ok(value)
     }
 
     /// The entities of `values` the caller may read.
-    pub(crate) async fn filter<T: Secured>(&self, values: Vec<T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>) -> Vec<T> {
+    pub(crate) async fn filter<T: Stored>(&self, values: Vec<T>, kind: &Actions) -> Vec<T> {
         let mut readable = Vec::with_capacity(values.len());
-        for value in values {
-            if self.manager.check(self.ctx, read(value.security_attributes())).await {
+        for value in values.into_iter().filter(present) {
+            if self.manager.check(self.ctx, (kind.get)(value.security_attributes())).await {
                 readable.push(value);
             }
         }
@@ -66,26 +70,43 @@ impl<'a> Access<'a> {
     }
 
     /// Whether the caller may create `value`.
-    pub(crate) async fn create<T: Secured>(&self, value: &T, create: impl Fn(&SecurityAttributes) -> ActionType<'_>) -> StoreResult<()> {
-        self.allow(create(value.security_attributes())).await
+    pub(crate) async fn create<T: Stored>(&self, value: &T, kind: &Actions) -> StoreResult<()> {
+        unmarked(value, kind)?;
+        self.allow((kind.create)(value.security_attributes())).await
     }
 
-    /// Whether the caller may change `stored`, the entity as it is now.
-    pub(crate) async fn change<T: Secured>(&self, stored: Option<&T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, change: impl Fn(&SecurityAttributes) -> ActionType<'_>, entity: &'static str, id: String) -> StoreResult<()> {
-        let not_found = || StoreError::NotFound { entity, id };
-        let Some(stored) = stored else { return Err(not_found()) };
-        self.require(read(stored.security_attributes()), not_found).await?;
-        self.allow(change(stored.security_attributes())).await
+    /// Whether the caller may change `stored`, the entity as it is now, to
+    /// `value`.
+    pub(crate) async fn change<T: Stored>(&self, stored: Option<&T>, value: &T, kind: &Actions, id: String) -> StoreResult<()> {
+        let not_found = || StoreError::NotFound { entity: kind.entity.name(), id };
+        let Some(stored) = stored.filter(|s| present(*s)) else { return Err(not_found()) };
+        self.require((kind.get)(stored.security_attributes()), not_found).await?;
+        self.allow((kind.update)(stored.security_attributes())).await?;
+        unmarked(value, kind)
     }
 
     /// Whether to delete `stored`: `false` if there is nothing the caller
     /// could see to delete, an error if they may see but not delete it.
-    pub(crate) async fn delete<T: Secured>(&self, stored: Option<&T>, read: impl Fn(&SecurityAttributes) -> ActionType<'_>, delete: impl Fn(&SecurityAttributes) -> ActionType<'_>) -> StoreResult<bool> {
-        let Some(stored) = stored else { return Ok(false) };
-        if self.require(read(stored.security_attributes()), || ()).await.is_err() {
+    pub(crate) async fn delete<T: Stored>(&self, stored: Option<&T>, kind: &Actions) -> StoreResult<bool> {
+        let Some(stored) = stored.filter(|s| present(*s)) else { return Ok(false) };
+        if self.require((kind.get)(stored.security_attributes()), || ()).await.is_err() {
             return Ok(false);
         }
-        self.allow(delete(stored.security_attributes())).await.map(|_| true)
+        self.allow((kind.delete)(stored.security_attributes())).await.map(|_| true)
+    }
+}
+
+/// Whether `value` is there for the five operations: not marked deleted.
+fn present<T: Stored>(value: &T) -> bool {
+    value.deleted().is_none()
+}
+
+/// Refuses `value` if it carries the mark of a deletion: only deleting
+/// sets it (issue 164), not whoever writes a document.
+fn unmarked<T: Stored>(value: &T, kind: &Actions) -> StoreResult<()> {
+    match value.deleted() {
+        None => Ok(()),
+        Some(_) => Err(StoreError::Validation(format!("a {} is marked deleted only by deleting it", kind.entity))),
     }
 }
 
@@ -93,7 +114,7 @@ impl<'a> Access<'a> {
 /// kind is read, listed, created, changed and deleted the same way (issue
 /// 93), and a store implements the five operations once for all kinds.
 pub(crate) struct Actions {
-    pub(crate) entity: &'static str,
+    pub(crate) entity: EntityKind,
     pub(crate) get: for<'a> fn(&'a SecurityAttributes) -> ActionType<'a>,
     pub(crate) list: ActionType<'static>,
     pub(crate) create: for<'a> fn(&'a SecurityAttributes) -> ActionType<'a>,
@@ -102,7 +123,7 @@ pub(crate) struct Actions {
 }
 
 pub(crate) const PERSONALITIES: Actions = Actions {
-    entity: "personality",
+    entity: EntityKind::Personality,
     get: |a| ActionType::GetPersonality(a),
     list: ActionType::ListPersonalities,
     create: |a| ActionType::CreatePersonality(a),
@@ -111,7 +132,7 @@ pub(crate) const PERSONALITIES: Actions = Actions {
 };
 
 pub(crate) const SESSION_TEMPLATES: Actions = Actions {
-    entity: "session_template",
+    entity: EntityKind::SessionTemplate,
     get: |a| ActionType::GetSessionTemplate(a),
     list: ActionType::ListSessionTemplates,
     create: |a| ActionType::CreateSessionTemplate(a),
@@ -120,7 +141,7 @@ pub(crate) const SESSION_TEMPLATES: Actions = Actions {
 };
 
 pub(crate) const AGENTS: Actions = Actions {
-    entity: "agent",
+    entity: EntityKind::Agent,
     get: |a| ActionType::GetAgent(a),
     list: ActionType::ListAgents,
     create: |a| ActionType::CreateAgent(a),
@@ -129,7 +150,7 @@ pub(crate) const AGENTS: Actions = Actions {
 };
 
 pub(crate) const SESSIONS: Actions = Actions {
-    entity: "session",
+    entity: EntityKind::Session,
     get: |a| ActionType::GetSession(a),
     list: ActionType::ListSessions,
     create: |a| ActionType::CreateSession(a),
@@ -138,7 +159,7 @@ pub(crate) const SESSIONS: Actions = Actions {
 };
 
 pub(crate) const CHANNELS: Actions = Actions {
-    entity: "channel",
+    entity: EntityKind::Channel,
     get: |a| ActionType::GetChannel(a),
     list: ActionType::ListChannels,
     create: |a| ActionType::CreateChannel(a),
@@ -147,7 +168,7 @@ pub(crate) const CHANNELS: Actions = Actions {
 };
 
 pub(crate) const USERS: Actions = Actions {
-    entity: "user",
+    entity: EntityKind::User,
     get: |a| ActionType::GetUser(a),
     list: ActionType::ListUsers,
     create: |a| ActionType::CreateUser(a),
@@ -156,7 +177,7 @@ pub(crate) const USERS: Actions = Actions {
 };
 
 pub(crate) const USER_PROFILES: Actions = Actions {
-    entity: "user_profile",
+    entity: EntityKind::UserProfile,
     get: |a| ActionType::GetUserProfile(a),
     list: ActionType::ListUserProfiles,
     create: |a| ActionType::CreateUserProfile(a),
@@ -165,7 +186,7 @@ pub(crate) const USER_PROFILES: Actions = Actions {
 };
 
 pub(crate) const COMPONENTS: Actions = Actions {
-    entity: "component",
+    entity: EntityKind::Component,
     get: |a| ActionType::GetComponent(a),
     list: ActionType::ListComponents,
     create: |a| ActionType::CreateComponent(a),
@@ -215,6 +236,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             security_attributes: SecurityAttributes { owner_id: owner, contributors },
+            deleted: None,
         }
     }
 
@@ -274,7 +296,7 @@ mod tests {
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
-        let record = User { id: alice_id, username: "alice".to_string(), email: String::new(), roles: vec!["user".to_string()] };
+        let record = User { id: alice_id, username: "alice".to_string(), email: String::new(), roles: vec!["user".to_string()], deleted: None };
 
         let own = store.create_user(&alice_ctx, &record).await;
         assert!(matches!(own, Err(StoreError::PermissionDenied)), "nobody records themselves, got {own:?}");

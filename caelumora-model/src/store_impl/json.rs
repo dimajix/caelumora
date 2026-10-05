@@ -1,7 +1,8 @@
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::ComponentDescriptor;
-use crate::security::{Secured, SecurityManager};
+use crate::removal::Stored;
+use crate::security::SecurityManager;
 use crate::store_impl::access::{Access, Actions, AGENTS, CHANNELS, COMPONENTS, PERSONALITIES, SESSIONS, SESSION_TEMPLATES, USERS, USER_PROFILES};
 use crate::session::{Session, SessionId};
 use crate::store::{EntityStore, Journaled, StateStore, StoreError, StoreResult};
@@ -347,8 +348,8 @@ use crate::security::SecurityContext;
 /// The five operations of every entity kind (issue 93), each document a
 /// file at `path` and checked with its kind's `Actions`.
 impl JsonFileStore {
-    async fn create_file<T: Secured + Serialize + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
-        self.access(ctx).create(value, kind.create).await?;
+    async fn create_file<T: Stored + Serialize + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+        self.access(ctx).create(value, kind).await?;
         if tokio::fs::try_exists(&path).await.map_err(to_backend_error)? {
             return Err(StoreError::Conflict(format!("{} {} already exists", kind.entity, id)));
         }
@@ -356,32 +357,32 @@ impl JsonFileStore {
         write_json_atomic(&path, value).await
     }
 
-    async fn get_file<T: Secured + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<T> {
+    async fn get_file<T: Stored + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String) -> StoreResult<T> {
         let found = read_json_opt::<T>(&path).await?;
-        self.access(ctx).read(found, kind.get, kind.entity, id).await
+        self.access(ctx).read(found, kind, id).await
     }
 
-    async fn update_file<T: Secured + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
+    async fn update_file<T: Stored + Serialize + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf, id: String, value: &T) -> StoreResult<()> {
         let stored = read_json_opt::<T>(&path).await?;
-        self.access(ctx).change(stored.as_ref(), kind.get, kind.update, kind.entity, id.clone()).await?;
+        self.access(ctx).change(stored.as_ref(), value, kind, id.clone()).await?;
         debug!("Writing {} {} to {}", kind.entity, id, path.display());
         write_json_atomic(&path, value).await
     }
 
-    async fn delete_file<T: Secured + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
+    async fn delete_file<T: Stored + DeserializeOwned + Send + Sync>(&self, ctx: &SecurityContext, kind: &Actions, path: PathBuf) -> StoreResult<bool> {
         let stored = read_json_opt::<T>(&path).await?;
-        if !self.access(ctx).delete(stored.as_ref(), kind.get, kind.delete).await? {
+        if !self.access(ctx).delete(stored.as_ref(), kind).await? {
             return Ok(false);
         }
         debug!("Deleting {} at {}", kind.entity, path.display());
         delete_if_exists(&path).await
     }
 
-    async fn list_dir<T: Secured + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
+    async fn list_dir<T: Stored + DeserializeOwned + Send>(&self, ctx: &SecurityContext, kind: &Actions, dir: PathBuf) -> StoreResult<Vec<T>> {
         let access = self.access(ctx);
         access.allow(kind.list).await?;
         let all = read_all_from_dir::<T>(&dir).await?;
-        Ok(access.filter(all, kind.get).await)
+        Ok(access.filter(all, kind).await)
     }
 }
 
@@ -629,6 +630,38 @@ mod tests {
         suite::state_store_behaves(&store(dir.path())).await;
     }
 
+    #[async_trait::async_trait]
+    impl suite::MarkByHand for JsonFileStore {
+        async fn store_marked_session(&self, session: &Session) {
+            write_json_atomic(&self.session_path(session.id), session).await.unwrap();
+        }
+        async fn store_marked_user(&self, user: &User) {
+            write_json_atomic(&self.user_path(user.id), user).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_what_is_marked_deleted_out_of_sight() {
+        let dir = tempdir().unwrap();
+        suite::marked_documents_are_absent(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
+    async fn a_document_stored_before_marks_existed_loads_and_one_not_deleted_is_written_without() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let system = SecurityContext::system();
+        let session = Session {
+            id: SessionId(Uuid::new_v4()), name: "old".to_string(), participants: Vec::new(), channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
+            security_attributes: SecurityAttributes::default(), deleted: None,
+        };
+        store.create_session(&system, &session).await.unwrap();
+        let text = tokio::fs::read_to_string(store.session_path(session.id)).await.unwrap();
+        assert!(!text.contains("deleted"), "{text}");
+        assert!(store.get_session(&system, session.id).await.unwrap().deleted.is_none());
+    }
+
     #[tokio::test]
     async fn concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files() {
         // Entities may be written at the same time - by two requests that
@@ -641,6 +674,7 @@ mod tests {
             id: PersonalityId::new(), name: crate::name::ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, description: String::new(), introduction: None,
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            deleted: None,
         };
         store.create_personality(&system, &personality).await.unwrap();
 
@@ -682,6 +716,7 @@ mod tests {
             history_limits: Vec::new(),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         };
         let channel_id = channel.id;
         let session = Session {
@@ -694,6 +729,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         };
         store.create_session(&ctx, &session).await.unwrap();
 
@@ -739,6 +775,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(),
+            deleted: None,
         };
         store.create_session(&ctx, &s1).await.unwrap();
 
