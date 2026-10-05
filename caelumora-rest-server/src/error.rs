@@ -156,7 +156,8 @@ impl ApiError {
     /// - a request that cannot be met is the client's: `404` for a session,
     ///   template, channel, participant or context that is not there (or may
     ///   not be seen, which is answered the same), `409` for one that is
-    ///   there already, `400` for any other `SessionError`, `ChannelError`,
+    ///   there already - or still leaving -, `400` for any other
+    ///   `SessionError`, `ChannelError`,
     ///   `CommandError` or `TemplateError`;
     /// - a refusal (`is_forbidden`, or a refused context) is `403`,
     ///   `<subject>_forbidden`, saying what was refused and not why;
@@ -200,6 +201,7 @@ impl ApiError {
         if let Some(e) = error.downcast_ref::<ChannelError>() {
             match e {
                 ChannelError::AlreadyParticipant { .. } => return Self::conflict("already_participant", detail),
+                ChannelError::StillLeaving { .. } => return Self::conflict("still_leaving", detail),
                 ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => return Self::not_found("participant_not_found", detail),
                 ChannelError::NotInSession { .. } | ChannelError::ApproverStays { .. } => return bad_request("invalid_participant"),
                 ChannelError::ClassificationRefused { .. } => return bad_request("invalid_classification"),
@@ -374,6 +376,7 @@ mod tests {
         assert_eq!(answer(anyhow::Error::new(SessionError::ChannelNotFound { session, channel }), Subject::Session), (404, "channel_not_found"));
         assert_eq!(answer(anyhow::Error::new(SessionError::DuplicateChannelName { session, name: caelumora_model::name::Name::new("x").unwrap() }), Subject::Session), (409, "channel_exists"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::AlreadyParticipant { participant: someone, channel }), Subject::Participant), (409, "already_participant"));
+        assert_eq!(answer(anyhow::Error::new(ChannelError::StillLeaving { participant: someone, channel }), Subject::Participant), (409, "still_leaving"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::ParticipantGone { participant: someone, channel }), Subject::Participant), (404, "participant_not_found"));
         assert_eq!(answer(anyhow::Error::new(ChannelError::ApproverStays { channel }), Subject::Participant), (400, "invalid_participant"));
         let classification = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;

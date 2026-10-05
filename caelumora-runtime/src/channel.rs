@@ -102,6 +102,10 @@ pub enum ChannelError {
     /// 133).
     #[error("{participant} is not cleared for channel {channel} as it is, or would be, classified")]
     NotCleared { participant: ActorId, channel: ChannelId },
+    /// A participant added again while the actor it had before is still
+    /// ending - one that does not end even when aborted (issue 171).
+    #[error("{participant} is still leaving channel {channel}")]
+    StillLeaving { participant: ActorId, channel: ChannelId },
 }
 
 /// A participant with what its actor is built from: the instance's
@@ -240,6 +244,11 @@ type Actors = HashMap<ActorId, ChannelActor>;
 /// rather than waited for (issue 161); this is for whatever else hangs.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 
+/// How long adding a participant again waits for the actor it had before
+/// to end (issue 171): past `STOP_GRACE`, after which that actor's task is
+/// aborted, by as long as the abort takes to reach it.
+const LEAVE_GRACE: Duration = Duration::from_secs(STOP_GRACE.as_secs() + 1);
+
 /// Waits until the tasks `tasks` track have ended, at most `STOP_GRACE`,
 /// and returns whether they did (issue 187). An actor whose task never
 /// started has nothing tracked, and is not waited for.
@@ -270,6 +279,14 @@ pub struct ChannelLoop {
     /// when someone joins or leaves (issue 46), so that every reader sees
     /// one set.
     actors: ArcSwap<Actors>,
+    /// The tasks of the actors that were removed, which may still be ending
+    /// (issue 171): a participant added again waits for its predecessor
+    /// (`left`). Kept until the participant is added again; the task of one
+    /// that has ended is waited for at once. Nothing else cleans it up: an
+    /// entry of a participant never added again stays as long as the
+    /// channel runs - a closed `TaskTracker`, a few bytes each, which only
+    /// grows with removals.
+    leaving: std::sync::Mutex<HashMap<ActorId, TaskTracker>>,
     moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
@@ -336,6 +353,7 @@ impl ChannelLoop {
             channel: channel_controller,
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
+            leaving: std::sync::Mutex::new(HashMap::new()),
             moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
@@ -554,10 +572,12 @@ impl ChannelLoop {
     /// `JoinChannel`), then its actor built and given the part of the
     /// history it may see (`Actor::catch_up`, issue 190), then started, the
     /// moderator and the mention directory told, and the join announced.
+    /// A participant removed shortly before is added only once its old
+    /// actor has ended (`left`, issue 171).
     ///
     /// # Errors
-    /// `ChannelError::NotInSession`, `AlreadyParticipant` or `Forbidden`; a
-    /// `StoreError` if `context` may not change the channel.
+    /// `ChannelError::NotInSession`, `AlreadyParticipant`, `StillLeaving` or
+    /// `Forbidden`; a `StoreError` if `context` may not change the channel.
     pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
         // Whether the actor may change the channel at all, before anything
         // is asked of the participant (issue 198, F2): who may not learns
@@ -567,6 +587,7 @@ impl ChannelLoop {
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
+        self.left(participant).await?;
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
@@ -603,10 +624,12 @@ impl ChannelLoop {
     /// Removes `participant` from the channel on behalf of `context` (issue
     /// 46): stored first (`UpdateChannel`), then its actor stopped - an agent
     /// at once, without finishing a turn; the approver discards its pending
-    /// approvals. The leave is announced by the `ChannelController` on the
-    /// event bus (issue 73), and in the channel by `run` with a
-    /// `ParticipantRemoved` in the name of `context`'s caller, after which
-    /// nothing of the participant enters the channel any more (issue 162).
+    /// approvals. Until its task has ended, the participant cannot be added
+    /// again (`left`, issue 171). The leave is announced by the
+    /// `ChannelController` on the event bus (issue 73), and in the channel by
+    /// `run` with a `ParticipantRemoved` in the name of `context`'s caller,
+    /// after which nothing of the participant enters the channel any more
+    /// (issue 162).
     /// Its state is kept, for the record and for when it joins again.
     ///
     /// # Errors
@@ -616,10 +639,11 @@ impl ChannelLoop {
         if matches!(participant, ActorId::Approver(_)) {
             return Err(ChannelError::ApproverStays { channel: self.id }.into());
         }
-        let Some(actor) = self.actor_by_id(participant) else {
+        let Some(ChannelActor { actor, task, .. }) = self.actors.load().get(&participant).cloned() else {
             return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
         };
         self.channel.remove_participant(context, participant).await?;
+        self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(participant, task);
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.remove(&participant);
@@ -630,6 +654,30 @@ impl ChannelLoop {
         actor.stop();
         let _ = self.changes_tx.send(ActorChange::Stop(participant, context.clone()));
         info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
+        Ok(())
+    }
+
+    /// Waits until the actor `participant` had in the channel before has
+    /// ended its task, if it was removed (issue 171): until then it may
+    /// still store the participant's state - a turn given up - which a new
+    /// actor loads as it is built, and what it sends would pass as the new
+    /// actor's. At most `LEAVE_GRACE`: by then `run` has aborted it.
+    ///
+    /// # Errors
+    /// `ChannelError::StillLeaving` if it has not ended even so - it blocks
+    /// without ever reaching an `await`.
+    async fn left(&self, participant: ActorId) -> Result<(), ChannelError> {
+        let Some(task) = self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&participant).cloned() else {
+            return Ok(());
+        };
+        // Closed by `run` once it stops the actor; not if the channel does
+        // not run, and then nothing is tracked to wait for.
+        task.close();
+        if tokio::time::timeout(LEAVE_GRACE, task.wait()).await.is_err() {
+            warn!("{} is added to channel {} again, but its old actor has not ended", participant, self.id);
+            return Err(ChannelError::StillLeaving { participant, channel: self.id });
+        }
+        self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&participant);
         Ok(())
     }
 
@@ -816,6 +864,10 @@ impl ChannelLoop {
 
         loop {
             tokio::select! {
+                // Events before changes (issue 171): what a removed actor
+                // sent before it ended is routed - or dropped, as its
+                // sender's - before an actor that joins under its id starts.
+                biased;
                 maybe_event = event_rx.recv() => {
                     if self.handle_actor_event(maybe_event, &running).await {
                         break;
@@ -843,8 +895,13 @@ impl ChannelLoop {
     async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
             ActorChange::Start(joined) => {
-                // Joined before `run` started: already running.
-                if !running.contains_key(&joined.actor.id()) {
+                // Joined before `run` started: already running. Removed
+                // again before `run` got to start it: never started, so that
+                // it cannot run next to whoever joins under its id after it
+                // (issue 171).
+                let id = joined.actor.id();
+                let still_joined = self.actors.load().get(&id).is_some_and(|current| Arc::ptr_eq(&current.actor, &joined.actor));
+                if !running.contains_key(&id) && still_joined {
                     let handle = self.spawn_actor(&joined, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
@@ -2572,6 +2629,27 @@ mod tests {
         let stuck = with_an_agent(model.clone(), components).await;
         settled(&stuck.helper, ActorState::ExecutingTools).await;
         (stuck, model)
+    }
+
+    #[tokio::test]
+    async fn a_participant_is_added_again_only_once_its_old_actor_has_ended() {
+        let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let participant = ActorId::Agent(agent);
+        assert!(channel.left(participant).await.is_ok(), "nothing to wait for: it never left");
+
+        // Its old actor takes a while to end, as one that stores its state.
+        let old = TaskTracker::new();
+        let ended = Arc::new(AtomicBool::new(false));
+        let ending = ended.clone();
+        old.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            ending.store(true, Ordering::SeqCst);
+        });
+        channel.leaving.lock().unwrap().insert(participant, old);
+
+        channel.left(participant).await.expect("it ends within the grace");
+        assert!(ended.load(Ordering::SeqCst), "not before its old actor ended");
+        assert!(!channel.leaving.lock().unwrap().contains_key(&participant), "and is forgotten");
     }
 
     #[tokio::test]

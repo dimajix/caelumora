@@ -193,6 +193,16 @@ for the record and for a later return. The approver answers a leaving agent's pe
 denied, so that nothing keeps waiting, and decides the others again, since the number of users
 changed. The approver itself cannot be removed.
 
+A participant added again while its old actor still ends - storing its state, at most `STOP_GRACE`
+before it is aborted - waits for it (issue 171): `ChannelLoop` keeps the task of every removed actor
+(`leaving`), and `add_participant` waits on it before it changes or loads anything, at most a
+little past the grace (`LEAVE_GRACE`); an actor that has not ended even then is answered with
+`ChannelError::StillLeaving` (REST `409`, `still_leaving`). The new actor thus loads the state as
+the old one left it, and never runs next to it. The run loop takes the events its actors sent
+before a change of its actors (`biased`), so that what the old actor sent before it ended is
+routed - or dropped, as a removed actor's - before the new one starts under the same id. An actor
+removed before the run loop started it is never started.
+
 ### How others learn of it
 
 A leave is announced on the event bus like every change of membership (issue 73). In the channel

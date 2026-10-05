@@ -1807,6 +1807,10 @@ mod tests {
         let approver = channel.members().into_iter().find(|m| m.kind == "approver").expect("an approver").id;
         let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
         assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
+
+        // Added again at once, once its old actor has ended (issue 171).
+        channel.add_participant(&ctx, other, caelumora_model::channel::HistoryAccess::All).await.expect("added again");
+        assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
