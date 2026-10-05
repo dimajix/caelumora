@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -159,6 +160,17 @@ pub(crate) fn not_executed_result() -> String {
     )
 }
 
+/// The result for a call that was running when its turn was cancelled or
+/// stopped (issue 161): it was interrupted, and what it did before stays
+/// done. The runtime cannot tell how far it got - the model checks before
+/// it calls it again.
+pub(crate) fn interrupted_result() -> String {
+    unsuccessful_result(
+        ToolResultStatus::Interrupted,
+        "This tool call was interrupted while it ran, because the turn ended. It may have taken effect in part or in full. Check its effect before calling it again.",
+    )
+}
+
 /// The result for a call that had no result when its turn ended (issue
 /// 148): it never ran, `because` - why the turn ended, as in "the turn
 /// ended before it ran, because it was cancelled".
@@ -301,14 +313,32 @@ impl GuardedToolExecutor {
         Self { security_manager, executor }
     }
 
-    /// Runs `call` if it may be run now, and answers it either way.
-    pub async fn execute(&self, call: &ToolCall, turn: &mut Turn<'_>) -> ToolCallResult {
+    /// Runs `call` if it may be run now, and answers it either way. Once
+    /// `cancelled` - the turn is cancelled or stopped - the call is no
+    /// longer waited for (issue 161): whatever the executor and its tool
+    /// are doing is dropped, and the call is answered as interrupted, with
+    /// when it started, so that it counts as having run. Dropping a tool
+    /// does not undo what it did (issue 20).
+    pub async fn execute(&self, call: &ToolCall, turn: &mut Turn<'_>, cancelled: &CancellationToken) -> ToolCallResult {
         if let Err(e) = self.check(call, turn).await {
             return self.failed(call, e, turn);
         }
         let started_at = chrono::Utc::now();
-        let outcome = self.executor.execute(call, turn).await;
+        // A tool that is done when the turn ends has its result.
+        let outcome = tokio::select! {
+            biased;
+            outcome = self.executor.execute(call, turn) => Some(outcome),
+            () = cancelled.cancelled() => None,
+        };
         let finished_at = chrono::Utc::now();
+        let Some(outcome) = outcome else {
+            info!(tool = %call.function_name, duration_ms = (finished_at - started_at).num_milliseconds(), "Tool interrupted: its turn ended");
+            // A fixed text of the runtime's: as the turn (issue 168).
+            let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interrupted_result(), turn.label());
+            result.started_at = Some(started_at);
+            result.finished_at = Some(finished_at);
+            return result;
+        };
         // A call of a tool that does not exist never ran: no timing.
         if matches!(outcome, Err(ToolError::UnknownTool(_))) {
             return self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn);
@@ -458,12 +488,14 @@ mod tests {
                 tool("test_tool", self.requires_approval, None),
                 tool("hr_tool", self.requires_approval, None),
                 tool("configured_tool", self.requires_approval, Some(hr())),
+                tool("hanging_tool", self.requires_approval, None),
             ]
         }
         async fn execute(&self, name: &str, _params: &Value, _turn: &mut Turn) -> ToolResult<ToolOutput> {
             match name {
                 "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
                 "configured_tool" => Ok(json!({"salary": 2}).into()),
+                "hanging_tool" => std::future::pending().await,
                 _ => Ok(json!({"result": "ok"}).into()),
             }
         }
@@ -538,7 +570,7 @@ mod tests {
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
         assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "refused before anyone is asked: {admitted:?}");
-        let result = executor.execute(&call("test_tool"), &mut context).await;
+        let result = executor.execute(&call("test_tool"), &mut context, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden);
         assert_eq!(result.content, forbidden_result());
         assert!(result.started_at.is_none() && result.finished_at.is_none(), "a refused call never ran");
@@ -581,7 +613,7 @@ mod tests {
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, ..Default::default() });
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
-        let result = executor.execute(&call("test_tool"), &mut context).await;
+        let result = executor.execute(&call("test_tool"), &mut context, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
     }
 
@@ -608,7 +640,7 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor);
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
-        let result = executor.execute(&call("test_tool"), &mut turn).await;
+        let result = executor.execute(&call("test_tool"), &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.content, "{\"result\":\"ok\"}");
         assert_eq!(result.classification, Classification::CHANNEL_DEFAULT, "the channel's");
@@ -616,11 +648,33 @@ mod tests {
         assert!(finished_at >= started_at);
         assert!(serde_json::to_string(&result).unwrap().contains("\"started_at\""), "and it is stored with the history");
 
-        let unknown = executor.execute(&call("does_not_exist"), &mut turn).await;
+        let unknown = executor.execute(&call("does_not_exist"), &mut turn, &CancellationToken::new()).await;
         assert_eq!(unknown.status, ToolResultStatus::UnknownTool);
         assert!(unknown.content.contains("Available tools: test_tool"), "{}", unknown.content);
         assert_eq!((unknown.id.as_deref(), unknown.tool_name.as_str()), (Some("call_1"), "does_not_exist"), "the result is the call's");
         assert!(unknown.started_at.is_none(), "it never ran");
+    }
+
+    #[tokio::test]
+    async fn a_call_still_running_when_its_turn_ends_is_interrupted_and_counts_as_run() {
+        let executor = executor(Arc::new(DummySecurityManager::new()));
+        let mut agent_channel_state = agent_turn(&executor);
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
+        let cancelled = CancellationToken::new();
+        let ending = cancelled.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            ending.cancel();
+        });
+
+        let result = executor.execute(&call("hanging_tool"), &mut turn, &cancelled).await;
+        assert_eq!(result.status, ToolResultStatus::Interrupted, "not waited for once the turn ends");
+        assert_eq!(result.content, interrupted_result());
+        let (started_at, finished_at) = (result.started_at.expect("it ran"), result.finished_at.expect("until it was interrupted"));
+        assert!(finished_at >= started_at);
+
+        let done = executor.execute(&call("test_tool"), &mut turn, &cancelled).await;
+        assert_eq!(done.status, ToolResultStatus::Ok, "a tool that is done has its result");
     }
 
     #[tokio::test]
@@ -630,7 +684,7 @@ mod tests {
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
 
         for name in ["hr_tool", "configured_tool"] {
-            let result = executor.execute(&call(name), &mut turn).await;
+            let result = executor.execute(&call(name), &mut turn, &CancellationToken::new()).await;
             assert_eq!(result.status, ToolResultStatus::Withheld, "{name}: HR's, and the channel is general");
             assert!(!result.content.contains("salary"), "{name}: {}", result.content);
             assert!(result.content.contains("internal {hr}"), "the model is told why: {}", result.content);
@@ -647,7 +701,7 @@ mod tests {
             turn.work.classification = hr();
         }
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent_state::AgentStateHandle::detached()).expect("a turn is under way");
-        let result = executor.execute(&call("hr_tool"), &mut turn).await;
+        let result = executor.execute(&call("hr_tool"), &mut turn, &CancellationToken::new()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.classification, hr(), "as the tool classified it");
     }

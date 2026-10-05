@@ -53,7 +53,8 @@ default. Waiting for that does not go through `run` either: `run`'s `JoinSet` al
 actors' tasks, so that they end with the channel's own task. Each actor's task is additionally
 tracked by a `TaskTracker` in `ChannelLoop::actors`, which whoever stopped the actor waits on.
 Removing a participant and deleting the channel use the same grace: an actor that has not ended
-after `STOP_GRACE` - a tool that hangs - is aborted.
+after `STOP_GRACE` is aborted. A tool that hangs no longer keeps an agent: a stop interrupts it, and
+the agent gives its turn up within the grace, the call recorded as having run (issue 161).
 
 ### One writer per document
 
@@ -221,7 +222,7 @@ the whole channel rather than one per actor.
 UI's stop button. It is an operation on the channel, like renaming or deleting it, not an act of
 taking part: the policy decides who may, and nobody has to be a participant for it (issue 102).
 
-It is not a kill. A running tool finishes, the agent reflects, emits `FullResponseGenerated` so that
+It is not a kill. The agent reflects, emits `FullResponseGenerated` so that
 observers stop waiting - the users get it even when the turn said nothing (issue 225) - and returns
 to a normal state with its history intact. A model call in flight, however, is dropped rather than
 awaited: `Actor::cancel` is synchronous, leaves the agent's run loop an interrupt and cancels the
@@ -230,8 +231,9 @@ the request is abandoned at once, wherever it stands (issue 76). Waiting for an 
 too: a turn waiting for a decision ends at once, without one, and withdraws its requests (see
 [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md)). The run loop takes the interrupt after the step it
 cut short and goes on in `Cancelling`, whatever that step returned; `stop` works the same way with
-an interrupt of its own, which wins (issue 152). A tool does not see the token: it runs to its end,
-and a cancel waits for it ([161](../issues/161-tools-cannot-be-interrupted.md)).
+an interrupt of its own, which wins (issue 152). A running tool is not waited for either: the call
+is answered as interrupted, and no further call of the step is started (issue 161, see
+[TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md#running-tool-calls)).
 
 Lowering a channel's classification cancels its turns in the same way, as a consequence of the
 reclassification; each agent then gives its turn up instead of taking it over (issue 141, see

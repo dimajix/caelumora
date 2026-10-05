@@ -23,6 +23,7 @@ const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   invalid_arguments: 'Invalid arguments',
   failed: 'Failed',
   not_executed: 'Not executed',
+  interrupted: 'Interrupted',
   unknown_tool: 'Unknown tool',
   withheld: 'Withheld',
 };

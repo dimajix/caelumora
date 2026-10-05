@@ -236,7 +236,8 @@ struct ChannelActor {
 type Actors = HashMap<ActorId, ChannelActor>;
 
 /// How long a stopped actor gets to end its task by itself before it is
-/// aborted (issue 75): a tool that hangs is the case this is for.
+/// aborted (issue 75). An agent's tool under way is interrupted by the stop
+/// rather than waited for (issue 161); this is for whatever else hangs.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// Waits until the tasks `tasks` track have ended, at most `STOP_GRACE`,
@@ -2546,8 +2547,9 @@ mod tests {
         running.abort();
     }
 
-    #[tokio::test]
-    async fn a_cancel_while_a_tool_runs_ends_the_turn_after_the_tool() {
+    /// An agent whose model calls the `sleep` tool, which sleeps longer
+    /// than any test waits, and would then say what it is never asked for.
+    async fn with_an_agent_in_a_long_tool() -> (Stuck, Arc<Scripted>) {
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::message::MessageRole;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -2560,22 +2562,65 @@ mod tests {
         let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
             kind: crate::tool_impl::sleep_tool::SLEEP_TOOL_KIND.to_string(),
-            params: serde_json::json!({ "seconds": 0.5 }),
+            params: serde_json::json!({ "seconds": 60 }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
             security_attributes: Default::default(),
         }] };
         let unasked = Message { role: MessageRole::Assistant, content: Some("never given".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let model = Arc::new(Scripted(std::sync::Mutex::new([call, unasked].into())));
-        let Stuck { channel, context, helper, running, .. } = with_an_agent(model.clone(), components).await;
-        settled(&helper, ActorState::ExecutingTools).await;
+        let stuck = with_an_agent(model.clone(), components).await;
+        settled(&stuck.helper, ActorState::ExecutingTools).await;
+        (stuck, model)
+    }
+
+    #[tokio::test]
+    async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
+        use caelumora_model::tool::ToolResultStatus;
+
+        let (Stuck { channel, context, agent, helper, mut events, running }, model) = with_an_agent_in_a_long_tool().await;
 
         channel.cancel(&context).await.expect("permitted");
 
-        // The tool step returns `Planning`; the cancel wins over it, and the
-        // model is not asked again.
+        // The turn ends at once, not when the tool would have (issue 161),
+        // and the model is not asked again.
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == ActorId::Agent(agent) {
+                    if let ActorEvent::FullResponseGenerated(messages) = envelope.event { break messages }
+                }
+            }
+        }).await.expect("the cancelled turn ends without waiting for the tool");
+        let results: Vec<_> = ended.iter().flat_map(|m| m.tool_results.iter()).collect();
+        assert_eq!(results.len(), 1, "{ended:?}");
+        assert_eq!(results[0].status, ToolResultStatus::Interrupted);
+        assert!(results[0].started_at.is_some(), "it ran");
         settled(&helper, ActorState::Idle).await;
         assert_eq!(model.0.lock().unwrap().len(), 1, "the second answer was never asked for");
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_is_told_the_tool_ran() {
+        use caelumora_model::transcript::GivenUpReason;
+
+        let (Stuck { channel, context, agent, running, .. }, _) = with_an_agent_in_a_long_tool().await;
+
+        channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
+
+        // Within the grace of a stop (issue 161): the turn is given up rather
+        // than the actor aborted with the turn left as it was before the tool.
+        let stored = tokio::time::timeout(STOP_GRACE, async {
+            loop {
+                let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+                if state.turn.is_none() && !state.transcript.given_up_turns().is_empty() { break state }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the turn is given up before the grace runs out");
+        assert_eq!(stored.transcript.given_up_turns()[0].given_up.reason, GivenUpReason::Stopped);
+        let told = stored.transcript.messages().last().and_then(|m| m.content.clone()).unwrap_or_default();
+        assert!(told.contains("- sleep(") && told.contains("interrupted"), "the agent is told the call ran: {told}");
         running.abort();
     }
 

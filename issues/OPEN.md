@@ -62,9 +62,9 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [32](32-unavailable-tools-invisible-to-model.md) | open | A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed. |
 | [126](126-mcp-tools-discovered-once.md) | open | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
 | [139](139-mcp-result-classification.md) | open | An MCP server cannot classify its results one by one, only be configured with one classification for all of them. |
-| [161](161-tools-cannot-be-interrupted.md) | open | A running tool cannot be interrupted, so a cancel waits for it and a stop during it aborts the agent without giving its turn up. |
 | [180](180-outbound-flow-unchecked.md) | open | What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked. |
 | [194](194-tool-sets.md) | open | An agent's tools reach the model and the UI as a flat list without the grouping and purpose of the provider they come from, and the UI shows them only per message, not for the agent. |
+| [226](226-concurrent-tool-calls.md) | open | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 
 ## User interaction
 

@@ -173,6 +173,10 @@ pub enum ToolResultStatus {
     /// The tool never ran: the turn that made the call ended first (issue
     /// 148), or the server restarted before it ran (issue 75).
     NotExecuted,
+    /// The tool ran, but was interrupted before it ended: the turn that made
+    /// the call was cancelled or stopped meanwhile (issue 161). What it did
+    /// before is done; whether it took effect is unknown.
+    Interrupted,
     /// No tool of that name exists.
     UnknownTool,
     /// The tool ran, but its result is classified so that it may not flow
@@ -203,8 +207,9 @@ pub struct ToolCallResult {
     /// channel. Never above the channel: what may not flow into it is
     /// withheld.
     pub classification: Classification,
-    /// When the tool started and finished running - only for a call that
-    /// ran, not for one a decision or a check answered. Stored with the
+    /// When the tool started and finished running - or was interrupted
+    /// (issue 161) - only for a call that ran, not for one a decision or a
+    /// check answered. Stored with the
     /// history; published with the call, even where its content is
     /// withheld: when it ran is the call's, not the content's.
     #[serde(default, skip_serializing_if = "Option::is_none")]

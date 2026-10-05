@@ -232,6 +232,10 @@ impl ToolProvider for McpToolProvider {
             if let Some(arguments) = params.as_object().cloned() {
                 request = request.with_arguments(arguments);
             }
+            // An interrupted call is dropped here (issue 161), and `service`
+            // with it: rmcp then aborts the request and ends the session in
+            // the background - this call's alone - which tells the server
+            // as much as `notifications/cancelled` would.
             let call = service.call_tool(request);
 
             let result = tokio::time::timeout(self.config.timeout(), call).await;

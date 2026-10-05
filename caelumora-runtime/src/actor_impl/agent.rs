@@ -535,8 +535,16 @@ impl AgentActor {
         // as the assistant message that triggered it), not the state that
         // call itself just brought about.
         let progress_before = turn.plan_progress();
+        // A cancel or stop interrupts the call under way, and no further call
+        // is started (issue 161); those left without a result are abandoned
+        // as the turn ends. What happens to the turn is the run loop's: it
+        // takes the interrupt after this step.
+        let cancelled = self.control.token();
         for (id, call) in turn.tool_calls().to_run() {
-            let result = self.tool_executor.execute(&call, turn).await;
+            if cancelled.is_cancelled() {
+                return Ok(ActorState::ExecutingTools);
+            }
+            let result = self.tool_executor.execute(&call, turn, &cancelled).await;
             turn.tool_calls().record(id, result);
         }
         // Once every call has its result, the turn keeps the tool message for

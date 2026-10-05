@@ -49,7 +49,8 @@ issue 222), then commits once:
 *   **`ExecutingTools`** runs the approved calls that have no result yet. Once every call of the
     step has a result, the tool message goes into the turn and the agent returns to `Planning` - or
     to `Reflecting` if a tool asked for the turn to end, as the stop tool does. If calls are still
-    pending, it goes to `WaitingForApproval`.
+    pending, it goes to `WaitingForApproval`. A cancel or stop interrupts the call under way - it
+    is answered as interrupted - and starts no further one (issue 161).
 *   **`WaitingForApproval`** waits for `ApprovalGranted`, `ApprovalDenied` or `ApprovalTimedOut`,
     records the decision and returns to `ExecutingTools`. Other events stay queued until the turn is
     over. See [TOOLS-AND-COMMANDS.md](TOOLS-AND-COMMANDS.md) for the approval process.

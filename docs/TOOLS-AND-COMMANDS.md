@@ -73,6 +73,30 @@ next step (issue 15), classifies the result and withholds what may not flow into
 permissions and about what the model sees is thus never the choice of whoever may write a
 personality.
 
+A call is not waited for longer than its turn lasts (issue 161). The guard runs it next to the
+turn's `CancellationToken`, which a cancel and a stop cancel; then the executor's future - and with
+it the tool's - is dropped wherever it stands, the call is answered as `interrupted`, and the agent
+starts no further call of the step. A tool that is done when the token is cancelled keeps its
+result. Dropping a tool does not undo what it did ([20](../issues/20-transactional-effects.md)):
+the call keeps when it started, so that it counts as having run - a turn given up tells the agent
+of it - and the model is told to check its effect before calling it again.
+
+Dropping a future ends it: none of the tool's code runs after the `await` it stood at, and what the
+future holds - timers, sockets, open requests - is released. That is all the stopping a tool gets;
+it does not see the token, and there is no way yet for one to clean up otherwise. A tool therefore:
+
+*   expects to be dropped at any `await`, and never leaves the turn half changed across one;
+*   binds whatever it starts to its own future, since that is all that is dropped: a task it spawns
+    is aborted on drop (e.g. through `tokio_util::task::AbortOnDropHandle`; a plain `JoinHandle`
+    only detaches it), a child process is started with `kill_on_drop(true)`, and work on a thread
+    of its own (`spawn_blocking`, `std::thread`) cannot be interrupted at all;
+*   does not block: code that never reaches an `await` - a long computation, `std::thread::sleep` -
+    cannot be interrupted, and holds up the agent's whole task, which even the abort after
+    `STOP_GRACE` does not end.
+
+What happened outside the process - a request the remote side already received - is not undone,
+and whether the remote side stops depends on it (for MCP servers see below).
+
 The default executor has the `ToolProvider`s of the agent's components injected, with their
 component ids. It runs a call on the provider that has the tool - no more.
 
@@ -103,6 +127,11 @@ over the Streamable HTTP transport:
     every tool of the server).
 *   **Calls.** Each call opens a connection of its own. The remote structured content is the result
     if there is one, else the joined text; a remote error is a failed call.
+*   **Interrupted calls.** An interrupted call (issue 161) drops its connection. rmcp then closes
+    it in the background: it aborts the HTTP request under way and ends the MCP session
+    (`DELETE`, if the server keeps sessions). No `notifications/cancelled` is sent - rmcp does so
+    only for its own timeout - but as each call has its session of its own, the session ending says
+    the same. Whether the remote tool stops is up to the server.
 
 ## Approvals
 
@@ -166,19 +195,21 @@ Every call ends with a result the model can act on (issue 15).
     message says what happened and what to do next. The statuses are `denied` (by a user),
     `forbidden` (by policy - without the reason, which stays in the log), `timed_out` (no approval
     in time), `invalid_arguments`, `failed` (with the tool's error), `not_executed` (the tool never
-    ran: its turn ended first, or the server restarted before it ran) and `unknown_tool` (with the
-    tools that do exist).
+    ran: its turn ended first, or the server restarted before it ran), `interrupted` (the tool ran,
+    but its turn was cancelled or stopped before it ended) and `unknown_tool` (with the tools that
+    do exist).
 *   The same status is stored as `ToolCallResult::status`, so the UI and an audit trail can tell
     refusals and failures from results.
 *   The wording lives in `crate::tool` (`ToolError::to_result`, `denied_result`, `timed_out_result`,
-    `forbidden_result`, `abandoned_result`, `not_executed_result`).
+    `forbidden_result`, `abandoned_result`, `not_executed_result`, `interrupted_result`).
 *   No call is left without a result. A turn that ends while calls of its step have none - cancelled
     while waiting for an approval, given up - answers them as `not_executed`, saying why the turn
     ended, and keeps the tool message with the results of those that did run (`ToolCalls::abandon`,
     issue 148).
 
 A call that ran also records when: `ToolCallResult::started_at` and `finished_at`, set by the
-executor around the tool's own run (not the checks before it). They are stored with the history and
+executor around the tool's own run (not the checks before it) - `finished_at` is when an
+interrupted call was interrupted. They are stored with the history and
 published with the call, so that a client can show the duration (issue 100).
 
 ## User commands
