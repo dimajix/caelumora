@@ -301,6 +301,7 @@ argues against it, and what came out of the last attempt.
 | [210](210-a2a-agent-structure.md) | done | The A2A agent is one file of 925 lines holding the protocol's types, their translation, the HTTP transport and the component, with what is sent built from untyped JSON. |
 | [211](211-turn-and-agent-work-structure.md) | done | `Turn` is the agent's handle on its state between turns, the components' API and the turn's logic at once, the two kinds of agent publish and catch up through code written twice, and an `OpenTask` keeps less of its contexts than a `TurnState`. |
 | [214](214-prompt-logic-in-the-context-provider.md) | done | What an agent is given besides the conversation is decided in a component, a free function and, for an external agent, its actor - and the component's facet writes into the turn instead of answering. |
+| [229](229-services-fetched-through-the-runtime.md) | open | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
 
 ## Integrations
 
