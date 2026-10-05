@@ -220,3 +220,12 @@ it said itself (`GET …/actors/{aid}/history`), which may differ from what the 
 its perceive processors did not pass on to its transcript is greyed out and marked "not passed on";
 a message whose context is recorded opens it in the context panel, and closing that returns to the
 history. The history is loaded again whenever the channel's messages change.
+
+The turns the agent gave up (issue 146, `GET …/actors/{aid}/given-up-turns`) are folded into the
+history where they branched off: after the message the server names as `after`, first if it names
+none, last if the history does not hold it. Each is a folded block with why it ended - failed,
+stopped, or the channel lowered - and when; opened, it shows the turn's messages with their tool
+calls and results, each with its context where it is recorded. A failed turn's notice in the chat
+offers "What the turn did" for an agent whose context the user may read, which opens the history
+panel with the latest turn given up unfolded. A turn given up because the agent left the channel
+cannot be shown once it has: the history panel is offered for members only.

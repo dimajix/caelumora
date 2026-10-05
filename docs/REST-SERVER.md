@@ -76,7 +76,7 @@ Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-i
 | `GET …/participants/{aid}` | One participant, with what its model calls used (`usage`, issue 209) - fetched again when an agent's turn ends, instead of the whole channel |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message |
 | `GET …/actors/{aid}/history` | All that was offered to an agent and what it said itself, whole like the channel's messages - each with `has_context` and `in_transcript` (issue 207) |
-| `GET …/actors/{aid}/given-up-turns` | The turns an agent gave up - failed or stopped - with their reason and messages (issue 145) |
+| `GET …/actors/{aid}/given-up-turns` | The turns an agent gave up - failed or stopped - with their reason, the history message they branched off `after`, and their messages like the history's (issues 145, 146) |
 | `GET …/commands`, `POST …/commands` | The commands the user may see; run one |
 | `GET …/channels/{cid}/events` | The channel's stream |
 | `GET /events` | The global stream |

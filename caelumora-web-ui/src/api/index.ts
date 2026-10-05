@@ -3,6 +3,7 @@ import type {
   ChannelMember,
   ChannelResponse,
   Command,
+  GivenUpTurn,
   HistoryMessage,
   CommandReply,
   MessageContextResponse,
@@ -225,6 +226,13 @@ export const api = {
   async getAgentHistory(sessionId: string, channelId: string, actorUuid: string): Promise<HistoryMessage[]> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history`);
     await ensureOk(res, 'Failed to fetch the history');
+    return res.json();
+  },
+
+  /** The turns actor `actorUuid` gave up in the channel, oldest first (issues 145, 146). */
+  async getGivenUpTurns(sessionId: string, channelId: string, actorUuid: string): Promise<GivenUpTurn[]> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/given-up-turns`);
+    await ensureOk(res, 'Failed to fetch the turns given up');
     return res.json();
   },
 

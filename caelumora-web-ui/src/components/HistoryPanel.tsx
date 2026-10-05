@@ -3,18 +3,20 @@
 // message. It may differ from what the channel shows - an agent that joined
 // late or was asleep heard what it heard. What its perceive processors did
 // not pass on to its transcript is marked; what each of its own messages was
-// produced from opens as that message's context.
+// produced from opens as that message's context. The turns it gave up (issue
+// 146) are shown where they branched off, folded, with why they ended and
+// what they did.
 
 import React, {useEffect, useState} from 'react';
-import {History, ScrollText, X} from 'lucide-react';
-import type {ChannelMember, HistoryMessage, Message} from '../types';
+import {ChevronDown, ChevronRight, History, ScrollText, Undo2, X} from 'lucide-react';
+import type {ChannelMember, GivenUpReason, GivenUpTurn, HistoryMessage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {clsx as cn} from 'clsx';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
-import {mergeToolResults} from '../messages';
+import {formatTimestamp, mergeToolResults} from '../messages';
 
 /** How many of the latest messages are shown before "show earlier". */
 const SHOWN_AT_FIRST = 20;
@@ -27,23 +29,74 @@ interface HistoryPanelProps {
   members: ChannelMember[];
   /** Changes whenever the history may have grown, to load it again. */
   version: number;
+  /** Opens the latest turn given up - when the panel was asked what a failed turn did. */
+  openLatestGivenUp?: boolean;
   /** Shows the context of one of the agent's messages. */
   onShowContext: (message: Message) => void;
   onClose: () => void;
 }
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, member, members, version, onShowContext, onClose}) => {
+/** A row of the panel: messages of the history, merged with their tool results, or a turn given up. */
+type Row = {kind: 'message'; message: Message} | {kind: 'turn'; turn: GivenUpTurn; index: number};
+
+/**
+ * The rows of `history` with each of `turns` after the message it branched
+ * off after - first if after none, last if the history does not hold that
+ * message.
+ */
+function rowsOf(history: HistoryMessage[], turns: GivenUpTurn[]): Row[] {
+  const held = new Set(history.map(entry => entry.message.id));
+  const turnRows = (after: string | null | undefined) => turns
+    .map((turn, index): Row => ({kind: 'turn', turn, index}))
+    .filter(row => row.kind === 'turn' && (after === undefined ? row.turn.after !== null && !held.has(row.turn.after) : row.turn.after === after));
+  const rows: Row[] = turnRows(null);
+  let pending: Message[] = [];
+  const flush = () => {
+    rows.push(...mergeToolResults(pending).map((message): Row => ({kind: 'message', message})));
+    pending = [];
+  };
+  for (const entry of history) {
+    pending.push(entry.message);
+    const after = turnRows(entry.message.id);
+    if (after.length > 0) {
+      flush();
+      rows.push(...after);
+    }
+  }
+  flush();
+  rows.push(...turnRows(undefined));
+  return rows;
+}
+
+/** Why a turn was given up, for its heading. */
+function reasonText(reason: GivenUpReason): string {
+  switch (reason.kind) {
+    case 'failed':
+      return `It failed: ${reason.message}`;
+    case 'lowered':
+      return `The channel was lowered to ${classificationLabel(reason.channel)} while it ran.`;
+    case 'stopped':
+      return 'The agent was stopped, leaving the channel.';
+  }
+}
+
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, member, members, version, openLatestGivenUp, onShowContext, onClose}) => {
   const actor = actorUuid(member.id);
   const [history, setHistory] = useState<HistoryMessage[] | null>(null);
+  const [turns, setTurns] = useState<GivenUpTurn[]>([]);
+  const [open, setOpen] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     if (!actor) return;
     let current = true;
-    api.getAgentHistory(sessionId, channelId, actor)
-      .then(result => {
-        if (current) setHistory(result);
+    Promise.all([api.getAgentHistory(sessionId, channelId, actor), api.getGivenUpTurns(sessionId, channelId, actor)])
+      .then(([history, turns]) => {
+        if (!current) return;
+        setHistory(history);
+        setTurns(turns);
+        if (openLatestGivenUp && turns.length > 0) setOpen(prev => new Set(prev).add(turns.length - 1));
       })
       .catch(error => {
         if (error instanceof ApiRequestError && error.code === 'context_forbidden') {
@@ -53,11 +106,77 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
         }
       });
     return () => { current = false; };
-  }, [sessionId, channelId, actor, version]);
+  }, [sessionId, channelId, actor, version, openLatestGivenUp]);
 
-  const marks = new Map((history ?? []).map(entry => [entry.message.id, entry]));
-  const messages = mergeToolResults((history ?? []).map(entry => entry.message));
-  const hidden = showAll ? 0 : Math.max(0, messages.length - SHOWN_AT_FIRST);
+  const marks = new Map([...(history ?? []), ...turns.flatMap(turn => turn.messages)].map(entry => [entry.message.id, entry]));
+  const rows = rowsOf(history ?? [], turns);
+  const messageRows = rows.flatMap((row, index) => row.kind === 'message' ? [index] : []);
+  const hidden = showAll ? 0 : Math.max(0, messageRows.length - SHOWN_AT_FIRST);
+  const firstShown = hidden > 0 ? messageRows[hidden] : 0;
+
+  const toggle = (index: number) => setOpen(prev => {
+    const next = new Set(prev);
+    if (!next.delete(index)) next.add(index);
+    return next;
+  });
+
+  const messageView = (message: Message, key: React.Key) => {
+    const mark = message.id ? marks.get(message.id) : undefined;
+    const passedOn = mark?.in_transcript ?? true;
+    return (
+      <MessageView
+        key={key}
+        message={message}
+        members={members}
+        className={cn('max-w-full', !passedOn && 'opacity-50')}
+        badges={[
+          ...(message.internal ? ['internal'] : []),
+          ...(message.classification ? [classificationLabel(message.classification)] : []),
+          ...(passedOn ? [] : ['not passed on']),
+        ]}
+        actions={mark?.has_context ? (
+          <button
+            onClick={() => onShowContext(message)}
+            className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
+            title="Show what the agent saw"
+            aria-label="Show what the agent saw"
+          >
+            <ScrollText size={13} />
+          </button>
+        ) : undefined}
+      />
+    );
+  };
+
+  const turnView = (turn: GivenUpTurn, index: number) => {
+    const expanded = open.has(index);
+    const at = formatTimestamp(turn.at);
+    return (
+      <div key={`turn-${index}`} className="rounded-lg border border-dashed border-amber-400 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20">
+        <button
+          onClick={() => toggle(index)}
+          className="w-full flex items-start gap-2 p-2 text-left text-xs text-amber-900 dark:text-amber-200"
+          aria-expanded={expanded}
+        >
+          {expanded ? <ChevronDown size={14} className="mt-0.5 shrink-0" /> : <ChevronRight size={14} className="mt-0.5 shrink-0" />}
+          <Undo2 size={14} className="mt-0.5 shrink-0" />
+          <span className="flex-1">
+            <span className="font-semibold">Turn given up</span>
+            {at && <span className="opacity-70" title={at.full}> · {at.short}</span>}
+            <span className="block">{reasonText(turn.reason)}</span>
+          </span>
+        </button>
+        {expanded && (
+          <div className="p-2 pt-0 space-y-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              What the turn produced. It is not part of what the agent heard and said, but what its tools did stays done.
+            </div>
+            {mergeToolResults(turn.messages.map(entry => entry.message)).map((message, idx) => messageView(message, message.id ?? idx))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="w-[28rem] max-w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
@@ -71,7 +190,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
         </div>
         <div className="text-xs text-gray-500 dark:text-gray-400">
           Everything offered to the agent in this channel, which may differ from what the channel shows.
-          Greyed out is what it did not pass on to its transcript.
+          Greyed out is what it did not pass on to its transcript; the turns it gave up are folded in where they began.
         </div>
       </div>
 
@@ -90,34 +209,10 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
                 </button>
               </div>
             )}
-            {messages.slice(hidden).map((message, idx) => {
-              const mark = message.id ? marks.get(message.id) : undefined;
-              const passedOn = mark?.in_transcript ?? true;
-              return (
-                <MessageView
-                  key={message.id ?? idx}
-                  message={message}
-                  members={members}
-                  className={cn('max-w-full', !passedOn && 'opacity-50')}
-                  badges={[
-                    ...(message.internal ? ['internal'] : []),
-                    ...(message.classification ? [classificationLabel(message.classification)] : []),
-                    ...(passedOn ? [] : ['not passed on']),
-                  ]}
-                  actions={mark?.has_context ? (
-                    <button
-                      onClick={() => onShowContext(message)}
-                      className="p-0.5 opacity-60 hover:opacity-100 focus:opacity-100"
-                      title="Show what the agent saw"
-                      aria-label="Show what the agent saw"
-                    >
-                      <ScrollText size={13} />
-                    </button>
-                  ) : undefined}
-                />
-              );
-            })}
-            {messages.length === 0 && (
+            {rows.slice(firstShown).map((row, idx) => row.kind === 'turn'
+              ? turnView(row.turn, row.index)
+              : messageView(row.message, row.message.id ?? `message-${idx}`))}
+            {rows.length === 0 && (
               <div className="text-sm text-gray-500 dark:text-gray-400">The agent has heard nothing here yet.</div>
             )}
           </>

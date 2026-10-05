@@ -402,6 +402,24 @@ export interface HistoryMessage {
   in_transcript: boolean;
 }
 
+/** Why an agent gave up a turn (issue 145). */
+export type GivenUpReason =
+  | {kind: 'failed'; message: string}
+  | {kind: 'lowered'; channel: Classification}
+  | {kind: 'stopped'};
+
+/**
+ * A turn an agent gave up (issues 145, 146): why and when, the message of
+ * its history it branched off after (null if it began before anything was
+ * said), and its messages, which the agent's history no longer holds.
+ */
+export interface GivenUpTurn {
+  reason: GivenUpReason;
+  at: string;
+  after: string | null;
+  messages: HistoryMessage[];
+}
+
 /** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {
   message_id: string;

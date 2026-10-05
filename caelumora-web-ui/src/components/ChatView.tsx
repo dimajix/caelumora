@@ -149,7 +149,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [contextOf, setContextOf] = useState<{channelId: string; message: Message} | null>(null);
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
-  const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
+  const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember; givenUp?: boolean} | null>(null);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
@@ -359,6 +359,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           const failed: Message = {
             role: 'System',
             content: actorEvent.TurnFailed.message,
+            sender_id: envelope.context.sender_id,
             sender_name: envelope.context.sender_name,
             turnFailed: true,
             span_id: envelope.context.span_id,
@@ -570,6 +571,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
     return `The chain between agents reached its limit of ${maxAgentHops} ${maxAgentHops === 1 ? 'hop' : 'hops'}, so ${whom} to respond. A message from a user starts a new chain.`;
   };
 
+  /** The sender of `msg`, if it is a member whose context the user may read (issue 146). */
+  const readableAgent = (msg: Message): ChannelMember | undefined => {
+    if (!msg.sender_id) return undefined;
+    const sender = actorKey(msg.sender_id);
+    return members.find(m => actorKey(m.id) === sender && m.can_read_context);
+  };
+
   /** Whether the user may see the context of `msg`: a stored message of an agent they may read (issue 41). */
   const mayShowContext = (msg: Message): boolean => {
     if (!msg.id || !msg.sender_id) return false;
@@ -659,6 +667,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
               <div className="wrap-break-word">{msg.content}</div>
               {msg.span_id && (
                 <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
+              )}
+              {readableAgent(msg) && (
+                <button
+                  onClick={() => setHistoryOf({channelId, member: readableAgent(msg)!, givenUp: true})}
+                  className="mt-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50"
+                >
+                  <History size={12} />
+                  What the turn did
+                </button>
               )}
               <MessageFooter message={msg} />
             </div>
@@ -899,6 +916,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
           member={historyOf.member}
           members={members}
           version={messages.length}
+          openLatestGivenUp={historyOf.givenUp}
           onShowContext={message => setContextOf({channelId, message})}
           onClose={() => setHistoryOf(null)}
         />

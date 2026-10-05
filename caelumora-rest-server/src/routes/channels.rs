@@ -12,7 +12,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_runtime::actor_impl::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
-use caelumora_runtime::view::{ChannelView, MemberView, Viewer};
+use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Viewer};
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
@@ -376,17 +376,30 @@ pub async fn message_context(
 }
 
 /// The turns actor `aid` gave up in the channel (issue 145), oldest first,
-/// for whoever may read what it saw.
+/// for whoever may read what it saw - each with where it branched off the
+/// agent's history and its messages as that history's are (issue 146).
 pub async fn given_up_turns(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<GivenUpTurnResponse>>, ApiError> {
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let turns = member_of(&channel, aid).await?.context().await
-        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?
-        .given_up_turns();
-    Ok(Json(turns.into_iter().map(Into::into).collect()))
+    let view = member_of(&channel, aid).await?.context().await
+        .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the turns given up"))?;
+    let turns = view.given_up_turns().into_iter()
+        .map(|turn| GivenUpTurnResponse {
+            reason: turn.given_up.reason,
+            at: turn.given_up.at,
+            after: turn.after,
+            messages: turn.messages.into_iter().map(|message| history_message(&view, message)).collect(),
+        })
+        .collect();
+    Ok(Json(turns))
+}
+
+/// `message` of the agent whose context `view` is, as its history shows it.
+fn history_message(view: &AgentContextView, message: Message) -> HistoryMessageResponse {
+    HistoryMessageResponse { has_context: view.has_context(message.id), in_transcript: view.in_transcript(message.id), message }
 }
 
 /// All that was offered to actor `aid` in the channel and what it said
@@ -400,9 +413,7 @@ pub async fn agent_history(
     let channel = crate::routes::channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = member_of(&channel, aid).await?.context().await
         .map_err(|e| ApiError::from_runtime(e.into(), Subject::Context, "reading the history"))?;
-    let history = view.history().into_iter()
-        .map(|message| HistoryMessageResponse { has_context: view.has_context(message.id), in_transcript: view.in_transcript(message.id), message })
-        .collect();
+    let history = view.history().into_iter().map(|message| history_message(&view, message)).collect();
     Ok(Json(history))
 }
 

@@ -367,18 +367,15 @@ pub struct CommandReplyResponse {
 /// A turn an agent gave up (issue 145): why and when, and the messages it
 /// had produced, which stay in the agent's transcript as a branch no longer
 /// active. What each of them was produced from is its context, as for any
-/// message of the agent.
+/// message of the agent. `after` is the message of the agent's history the
+/// turn branched off after, where it is shown (issue 146); `None` if it
+/// began before anything was said.
 #[derive(Debug, Serialize)]
 pub struct GivenUpTurnResponse {
     pub reason: caelumora_model::transcript::GivenUpReason,
     pub at: chrono::DateTime<chrono::Utc>,
-    pub messages: Vec<Message>,
-}
-
-impl From<caelumora_model::transcript::GivenUpTurn> for GivenUpTurnResponse {
-    fn from(turn: caelumora_model::transcript::GivenUpTurn) -> Self {
-        Self { reason: turn.given_up.reason, at: turn.given_up.at, messages: turn.messages }
-    }
+    pub after: Option<caelumora_model::message::MessageId>,
+    pub messages: Vec<HistoryMessageResponse>,
 }
 
 /// A message of an agent's history (issue 207) - offered to it or said by
@@ -582,15 +579,19 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_given_up_is_answered_with_its_reason_and_messages() {
-        use caelumora_model::transcript::{GivenUp, GivenUpReason, GivenUpTurn};
-        let turn = GivenUpTurn {
-            given_up: GivenUp { reason: GivenUpReason::Failed { message: "boom".to_string() }, at: chrono::Utc::now(), turn_entries: 1 },
-            messages: vec![Message::new(Classification::CHANNEL_DEFAULT)],
+    fn a_turn_given_up_is_answered_with_its_reason_place_and_messages() {
+        use caelumora_model::transcript::GivenUpReason;
+        let after = caelumora_model::message::MessageId::new();
+        let turn = GivenUpTurnResponse {
+            reason: GivenUpReason::Failed { message: "boom".to_string() },
+            at: chrono::Utc::now(),
+            after: Some(after),
+            messages: vec![HistoryMessageResponse { message: Message::new(Classification::CHANNEL_DEFAULT), has_context: true, in_transcript: true }],
         };
-        let json = serde_json::to_value(GivenUpTurnResponse::from(turn)).unwrap();
+        let json = serde_json::to_value(turn).unwrap();
         assert_eq!(json["reason"], serde_json::json!({ "kind": "failed", "message": "boom" }));
-        assert_eq!(json["messages"].as_array().map(Vec::len), Some(1));
+        assert_eq!(json["after"], serde_json::json!(after));
+        assert_eq!(json["messages"][0]["has_context"], true);
     }
 
     #[test]

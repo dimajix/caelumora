@@ -57,3 +57,7 @@ they were there:
 - **2026-10-01** — Opened by the maintainer in step 6 of [163](163-navigable-views.md): a `None` for
   a gone channel and a former member known by its messages are what the views can do until the store
   keeps what was deleted. Plays into [07](07-session-deletion-audit.md).
+- **2026-10-05** — From [146](146-show-given-up-turns.md): the turn an agent gave up because it
+  was removed is recorded, but the web UI offers an agent's history and given-up turns for members
+  only, so it cannot be shown once the agent has left - exactly when it would be asked for. A former
+  member known to the views would make it reachable.

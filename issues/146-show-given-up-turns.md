@@ -1,6 +1,6 @@
 # 146 — The web UI does not show the turns an agent gave up
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -37,3 +37,19 @@ and what they returned - although those effects remain.
 
 - **2026-09-30** — Opened while implementing [145](145-ended-turns-leave-a-record.md): the
   maintainer wanted the REST endpoint there and the web UI as an issue of its own.
+- **2026-10-05** — Done in the history panel of [207](207-agent-history-in-ui.md), which did not
+  exist when this was opened: it is the agent's own view, offered only where `can_read_context`
+  holds, and a given-up turn is part of what the agent did. The context panel shows one message, the
+  chat the channel's history - neither fits.
+
+  The turns are shown where they branched off, as folded blocks with why and when they ended, and
+  opened with their messages, tool calls and results, each with its context. The place comes from
+  the server: `GivenUpTurn::after` is the last message before the turn that is not internal - one
+  the agent's history holds too - so the client neither guesses from timestamps nor knows how the
+  transcript branches. The endpoint's messages are now `HistoryMessageResponse`s, with `has_context`
+  as in the history; that their contexts can be shown holds because `give_up_turn` keeps them in
+  the history as a branch no longer active. A failed turn's notice in the chat offers "What the turn
+  did", opening the panel with the latest turn given up unfolded.
+
+  Not covered: a turn given up because the agent was removed cannot be shown once it has left, since
+  the panel is offered for members only - noted in [164](164-soft-deletion-and-former-members.md).

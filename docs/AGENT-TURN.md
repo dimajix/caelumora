@@ -649,8 +649,11 @@ with channel and agent names - a channel of another session is not named - and t
 with the digest of their set. Every prompt part and every knowledge read carries its
 `classification` (`null` if not known), and every item and knowledge read `sets_label`: whether it
 set the message's label (issue 170, `LabelCauses` in the REST server; the rule is in
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md)). `GET …/actors/{aid}/given-up-turns` lists the turns given
-up, oldest first, and answers `403 context_forbidden` alike.
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md)). `GET …/actors/{aid}/given-up-turns` lists the turns
+given up, oldest first, and answers `403 context_forbidden` alike. Each names, as `after`, the last
+message before it that is not internal (`GivenUpTurn::after`) - one the agent's history holds as
+well, where a client shows the turn (issue 146) - and gives its messages with `has_context` and
+`in_transcript` like the history.
 
 So that a client offers this only where it works, every member of a channel response carries
 `can_read_context`, decided for the requesting user when the channel's snapshot is taken (see

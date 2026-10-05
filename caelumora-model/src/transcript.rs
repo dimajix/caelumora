@@ -4,7 +4,7 @@
 
 use crate::chain::Chain;
 use crate::digest::Digest;
-use crate::message::Message;
+use crate::message::{Message, MessageId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +54,10 @@ pub enum GivenUpReason {
 pub struct GivenUpTurn {
     pub given_up: GivenUp,
     pub messages: Vec<Message>,
+    /// The last message before the turn that is not internal - so one the
+    /// agent's history holds as well: where the turn branched off what the
+    /// agent heard and said (issue 146). `None` if there was none.
+    pub after: Option<MessageId>,
 }
 
 /// An agent's transcript (issue 50): the sequence of messages its context is
@@ -119,7 +123,8 @@ impl Chain<TranscriptEntry> {
                 let path = self.prefix(end)?;
                 let start = path.len().saturating_sub(given_up.turn_entries);
                 let messages = path[start..].iter().filter_map(|e| e.entry.message()).cloned().collect();
-                Some(GivenUpTurn { given_up: given_up.clone(), messages })
+                let after = path[..start].iter().rev().filter_map(|e| e.entry.message()).find(|m| !m.internal).map(|m| m.id);
+                Some(GivenUpTurn { given_up: given_up.clone(), messages, after })
             })
             .collect()
     }
@@ -247,9 +252,30 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].given_up, given_up);
         assert_eq!(turns[0].messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(3)], "the turn's, not what came before");
+        assert_eq!(turns[0].after, Some(id(1)), "where it branched off");
         assert_eq!(loaded.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(4)], "the model is given the messages");
         assert_eq!(loaded.entries().len(), 3, "the record is on the active path");
         assert!(!transcript.give_up(crate::digest::prompt("elsewhere"), given_up), "no such branch");
+    }
+
+    #[test]
+    fn a_turn_given_up_branched_off_after_the_last_message_that_is_not_internal() {
+        let mut transcript = Transcript::default();
+        transcript.push(make_message(id(1)));
+        transcript.push(Message { internal: true, ..make_message(id(2)) });
+        let before = transcript.digest();
+        transcript.push(make_message(id(3)));
+        let end = transcript.digest().unwrap();
+        transcript.move_head(before.as_ref());
+        transcript.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 1 });
+        assert_eq!(transcript.given_up_turns()[0].after, Some(id(1)), "an internal message is not in the history");
+
+        let mut first = Transcript::default();
+        first.push(make_message(id(1)));
+        let end = first.digest().unwrap();
+        first.move_head(None);
+        first.give_up(end, GivenUp { reason: GivenUpReason::Stopped, at: Utc::now(), turn_entries: 1 });
+        assert_eq!(first.given_up_turns()[0].after, None, "nothing before it");
     }
 
     #[test]

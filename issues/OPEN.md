@@ -70,7 +70,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [56](56-response-language.md) | open | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
-| [146](146-show-given-up-turns.md) | open | The web UI does not show the turns an agent gave up, so what their tools did can be read only through the API. |
 | [165](165-ask-the-user-tool.md) | open | An agent cannot ask the user a question and wait for the answer - yes/no, a choice, free text - and the web UI has no way to show a tool call other than generically. |
 | [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
 | [218](218-paged-histories.md) | open | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
