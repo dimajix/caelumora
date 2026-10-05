@@ -202,6 +202,7 @@ argues against it, and what came out of the last attempt.
 | [219](219-usage-hover.md) | done | The token usage is shown in two hovers built differently - a box too narrow for lines that wrap, and the browser's plain tooltip - and neither looks good. |
 | [220](220-user-stream-from-its-actor.md) | done | A user's stream is the channel's broadcast, not what their actor receives, so the moderator cannot decide what a user sees and a cut-off chain never reaches the web UI. |
 | [225](225-cancel-leaves-answer-generating.md) | done | After a cancel the web UI keeps showing the answer as being generated, and the cancel button stays lit. |
+| [227](227-agent-management.md) | open | Agents cannot be seen or managed on their own, only as members of channels: no list, no renaming, no trash in the web UI, nothing of what an agent has across channels. |
 
 ## Context and knowledge
 
