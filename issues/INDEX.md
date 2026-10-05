@@ -174,7 +174,7 @@ argues against it, and what came out of the last attempt.
 
 | No. | Status | Issue |
 |---|---|---|
-| [28](28-user-commands.md) | in progress | Everything a user types goes to the agents; there is no way to address the system itself with slash commands such as `/help`, `/wakeup` or `/compact`. |
+| [28](28-user-commands.md) | done | Everything a user types goes to the agents; there is no way to address the system itself with slash commands such as `/help`, `/wakeup` or `/compact`. |
 | [35](35-sidebar-live-updates.md) | done | The web UI's session list is loaded once and never updated, so sessions and channels created or deleted elsewhere stay invisible until a reload. |
 | [40](40-choose-session-template.md) | done | A new session in the web UI always uses the first template of an unordered list, and the user cannot choose another. |
 | [41](41-show-message-context.md) | done | The web UI offers no way to see what an agent's model saw when it produced a message, although the server can answer it. |

@@ -42,6 +42,7 @@ every turn.
 
 - A session can run past the model's context window without failing.
 - The chosen strategy is pluggable per agent rather than hard-coded.
+- A user can compact an agent's context by hand with the command `/compact`.
 
 ## History
 
@@ -63,4 +64,11 @@ every turn.
   transcript's length. Compression will have to store a context that is not the transcript anyway;
   once that mechanism exists, a filter function's result is one more such stored context, and the
   open function becomes cheap. Reconsider it here.
-
+- **2026-10-05** — `/compact` moved here from [28](28-user-commands.md), which is done otherwise. It
+  is the manual trigger for this issue's mechanism, not a mechanism of its own: a `CommandProvider`
+  like `/help` and `/wakeup`, configured in `AppConfig::commands`, run by the user's actor and
+  checked with `ExecuteCommand`. Its answer is channel-wide, since everyone in the channel should
+  know that an agent's context was compacted. Like compression itself, it must not mutate the
+  stored history. Which agent it compacts in a channel with several - `/compact [agent]` like
+  `/wakeup` - and who may compact a shared agent ([14](14-approval-privilege.md)) are decided with
+  it.

@@ -1,6 +1,6 @@
 # 28 — User commands
 
-**Status:** in progress
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -170,3 +170,10 @@ should contain.
   the session's configuration. It stays a struct - `ToolExecutor` is a trait, but there is no second
   implementation of the command side to justify one. Commands already report two components
   providing the same name; tools do not yet, which is [37](37-tool-name-collisions.md).
+- **2026-10-05** — Done without `/compact`, which moved to [16](16-context-compression.md): the
+  command only triggers 16's mechanism, and there is nothing to trigger until 16 provides it. Kept
+  open for that alone, this issue would only have waited on another. Still open elsewhere: whether
+  an executed command is recorded ([05](05-postgres-event-recorder.md)), who may run a command on a
+  shared agent ([14](14-approval-privilege.md)), and whether a command visible but not runnable, or
+  the reverse, is useful - for the first real policy ([23](23-acls-in-security-attributes.md),
+  [24](24-opa-security-manager.md)).
