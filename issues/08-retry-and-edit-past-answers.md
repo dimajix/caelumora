@@ -1,6 +1,6 @@
 # 08 — "Retry" and changing past answers
 
-**Status:** in progress
+**Status:** rejected
 **Area:** Sessions & channels
 
 ## The problem
@@ -551,3 +551,18 @@ Each compiles, passes and can be committed on its own.
   made, each from the root, and its active path holds only what the remote agent has not been
   given yet - so the invariant above does not hold for it, and a switch cannot take back what a
   remote agent was given. What a switch means for an external agent is open.
+- **2026-10-05** — Closed as rejected, replaced by
+  [234](234-modify-revoke-and-retry-messages.md). Branching turned out to solve more than was asked
+  for, and most of what made the plan above hard came from the switching itself: stores that hold
+  different messages in different order, answers of a branch no longer shown, an external agent
+  that cannot take back what it was given. The wish behind this issue - correct a message, ask for
+  another answer - is met in 234 without a fork: a message is modified or revoked where it stands,
+  by events that name it by id, and a retry is a request to the agent, which revokes its last
+  answer and answers anew. Of the two designs under *Considerations* neither was chosen; 234 is a
+  third, which changes what stands and keeps the record, since the chains stay append-only. Step 1
+  of the plan - every chain a tree with a head - stays: given-up turns
+  ([145](145-ended-turns-leave-a-record.md)) and external agents
+  ([205](205-external-agent-message-context.md)) use it. Branching itself - keeping alternatives
+  and switching between them - is a feature of its own without an issue now; whoever takes it up
+  finds the plan and its three revisions here. The issues that refer to this one for branching
+  (among them [19](19-memory-tiers.md), phase 3) refer to that part.
