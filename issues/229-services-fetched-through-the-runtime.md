@@ -1,6 +1,6 @@
 # 229 — Central services are fetched through the runtime again and again
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -87,3 +87,9 @@ reason to look a service up each time does not apply.
 - **2026-10-05** — Opened after [14](14-approval-privilege.md), whose approver reached the policy
   through `runtime_manager()` and whose tests needed the whole runtime. The maintainer proposed
   taking such services once, in the constructor; inventory as above.
+- **2026-10-05** — The rules are in [CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md) ("Services
+  are held, not fetched") and, in short, in `AGENTS.md`. Step 1, the views: `Views` takes the
+  `SecurityManager`, both stores and the `ComponentRegistry` from the runtime once, in `new`, and no
+  longer holds the runtime; it lends them (`security()`, `entities()`, `states()`, `components()`)
+  together with the viewer's `context()`. `MemberView` reaches them through `views()`, so a check is
+  `self.views().security().may_…(self.views().context(), …)`. No behaviour changed.

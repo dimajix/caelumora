@@ -43,10 +43,11 @@ use caelumora_model::channel::Participant;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, Place, SecurityContext};
+use caelumora_model::security::{AccessQuestions, Place, SecurityContext, SecurityManager};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AgentSnapshot, DeletedSnapshot};
-use caelumora_model::store::{EntityKind, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StateStore, StoreResultExt};
+use crate::component::ComponentRegistry;
 use std::sync::Arc;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
@@ -149,25 +150,54 @@ impl RunningSessions for OwnSession {
     }
 }
 
-/// The root of the navigation: every session the viewer may read.
+/// The root of the navigation: every session the viewer may read. Holds
+/// the services every edge uses, taken from the runtime once (issue 229).
 #[derive(Clone)]
 pub struct Views {
-    runtime: Arc<RuntimeManager>,
+    security: Arc<dyn SecurityManager>,
+    entities: Arc<dyn EntityStore>,
+    states: Arc<dyn StateStore>,
+    components: Arc<ComponentRegistry>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
 
 impl Views {
-    pub(crate) fn new(runtime: Arc<RuntimeManager>, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
-        Self { runtime, running, viewer }
+    pub(crate) fn new(runtime: &RuntimeManager, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
+        Self {
+            security: runtime.security_manager(),
+            entities: runtime.entity_store(),
+            states: runtime.state_store(),
+            components: runtime.component_registry(),
+            running,
+            viewer,
+        }
     }
 
     pub fn viewer(&self) -> &Viewer {
         &self.viewer
     }
 
-    pub(crate) fn runtime(&self) -> &RuntimeManager {
-        &self.runtime
+    /// The viewer's context: in whose name every edge asks.
+    pub(crate) fn context(&self) -> &SecurityContext {
+        self.viewer.context()
+    }
+
+    /// The policy every edge asks, in the viewer's `context`.
+    pub(crate) fn security(&self) -> &Arc<dyn SecurityManager> {
+        &self.security
+    }
+
+    pub(crate) fn entities(&self) -> &Arc<dyn EntityStore> {
+        &self.entities
+    }
+
+    pub(crate) fn states(&self) -> &Arc<dyn StateStore> {
+        &self.states
+    }
+
+    pub(crate) fn components(&self) -> &ComponentRegistry {
+        &self.components
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -176,7 +206,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
-        let sessions = self.runtime.entity_store().list_sessions(self.viewer.context()).await
+        let sessions = self.entities.list_sessions(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the sessions")))?;
         // The store lists what the viewer may read; a running session is
         // reached through its loop.
@@ -199,12 +229,12 @@ impl Views {
         let found = match self.running.running(id) {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
-                if !self.runtime.security_manager().may_read_session(self.viewer.context(), &attributes).await {
+                if !self.security.may_read_session(self.viewer.context(), &attributes).await {
                     return Err(not_found());
                 }
                 Found::Running(session_loop)
             }
-            None => Found::Stored(self.runtime.entity_store().get_session(self.viewer.context(), id).await.map_err(|e| {
+            None => Found::Stored(self.entities.get_session(self.viewer.context(), id).await.map_err(|e| {
                 let e = anyhow::Error::new(e);
                 if crate::error::is_not_found(&e, "session") || crate::error::is_forbidden(&e) { not_found() } else { ViewError::Failed(e) }
             })?),
@@ -238,10 +268,10 @@ impl Views {
     /// Whether session `id` was deleted and the viewer could read it were
     /// it there.
     async fn gone_session<T>(&self, id: SessionId) -> ViewResult<Reached<T>> {
-        let deleted = self.runtime.entity_store().get_deleted_session(&SecurityContext::system(), id).await.optional()
+        let deleted = self.entities.get_deleted_session(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}"))))?;
         Ok(match deleted {
-            Some(session) if self.runtime.security_manager().may_read_session(self.viewer.context(), &session.security_attributes).await =>
+            Some(session) if self.security.may_read_session(self.viewer.context(), &session.security_attributes).await =>
                 session.deleted.map_or(Reached::Never, Reached::Gone),
             _ => Reached::Never,
         })
@@ -250,11 +280,11 @@ impl Views {
     /// Whether channel `id` of session `session` was deleted and the viewer
     /// could read it were it there.
     async fn gone_channel<T>(&self, session: SessionId, id: ChannelId) -> ViewResult<Reached<T>> {
-        let deleted = self.runtime.entity_store().get_deleted_channel(&SecurityContext::system(), id).await.optional()
+        let deleted = self.entities.get_deleted_channel(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up channel {id}"))))?;
         Ok(match deleted {
             Some(channel) if channel.session_id == session
-                && self.runtime.security_manager().may_read_channel(self.viewer.context(), &channel.security_attributes).await =>
+                && self.security.may_read_channel(self.viewer.context(), &channel.security_attributes).await =>
                 channel.deleted.map_or(Reached::Never, Reached::Gone),
             _ => Reached::Never,
         })
@@ -266,9 +296,9 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn agents(&self) -> ViewResult<Vec<AgentSnapshot>> {
-        let agents = self.runtime.entity_store().list_agents(self.viewer.context()).await
+        let agents = self.entities.list_agents(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the agents")))?;
-        let policy = self.runtime.security_manager();
+        let policy = &self.security;
         let mut listed = Vec::with_capacity(agents.len());
         for agent in agents {
             let can_delete = policy.may_delete_agent(self.viewer.context(), &agent.security_attributes).await;
@@ -283,9 +313,9 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
-        let agents = self.runtime.entity_store().list_deleted_agents(self.viewer.context()).await
+        let agents = self.entities.list_deleted_agents(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted agents")))?;
-        let policy = self.runtime.security_manager();
+        let policy = &self.security;
         let mut deleted = Vec::with_capacity(agents.len());
         for agent in agents {
             let Some(removal) = agent.deleted.clone() else { continue };
@@ -307,9 +337,9 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
-        let sessions = self.runtime.entity_store().list_deleted_sessions(self.viewer.context()).await
+        let sessions = self.entities.list_deleted_sessions(self.viewer.context()).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context("listing the deleted sessions")))?;
-        let policy = self.runtime.security_manager();
+        let policy = &self.security;
         let mut deleted = Vec::with_capacity(sessions.len());
         for session in sessions {
             let Some(removal) = session.deleted.clone() else { continue };
@@ -330,7 +360,7 @@ impl Views {
     /// without a place reads by other questions and is not asked this one.
     pub(crate) async fn may_read_from(&self, source: &Place) -> bool {
         let Some(from) = &self.viewer.from else { return true };
-        self.runtime.security_manager().may_channel_read(self.viewer.context(), from, source).await
+        self.security.may_channel_read(self.viewer.context(), from, source).await
     }
 
     /// The name of `participant`; `None` for a user or agent that no
@@ -339,7 +369,7 @@ impl Views {
     /// even where the record itself is not theirs to read (issue 120).
     async fn name_of(&self, participant: &Participant) -> Option<String> {
         match participant {
-            Participant::User(id) => self.runtime.entity_store().get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
+            Participant::User(id) => self.entities.get_user(&SecurityContext::system(), *id).await.ok().map(|user| user.username),
             Participant::Agent(id) => match self.agent_of(*id).await {
                 Some(agent) => Some(agent.name.to_string()),
                 None => self.deleted_agent_name(*id).await,
@@ -352,14 +382,14 @@ impl Views {
     /// what it said keeps its sender. Read in the runtime's name, like its
     /// name while it exists.
     pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<String> {
-        self.runtime.entity_store().get_deleted_agent(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
+        self.entities.get_deleted_agent(&SecurityContext::system(), id).await.ok().map(|agent| agent.name.to_string())
     }
 
     /// The document of agent `id` - its name, its attributes, its
     /// personality - or `None` if it no longer exists. Read in the
     /// runtime's name, like its name.
     async fn agent_of(&self, id: AgentId) -> Option<Agent> {
-        self.runtime.entity_store().get_agent(&SecurityContext::system(), id).await.ok()
+        self.entities.get_agent(&SecurityContext::system(), id).await.ok()
     }
 
     /// The session `id` as privacy sees it now, or `None` if there is no
@@ -373,7 +403,7 @@ impl Views {
     /// # Errors
     /// `Failed` if it cannot be looked up.
     pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
-        let session = self.runtime.entity_store().get_session(&SecurityContext::system(), id).await.optional()
+        let session = self.entities.get_session(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("looking up session {id}"))))?;
         Ok(session.as_ref().map(SessionPrivacy::of))
     }
@@ -382,7 +412,7 @@ impl Views {
     /// for (issue 133). Without them, only what is public: a failed lookup
     /// shows less.
     async fn roles(&self) -> Vec<String> {
-        caelumora_model::confidentiality::user_roles(self.runtime.entity_store().as_ref(), self.viewer.context().initiator_id).await.unwrap_or_default()
+        caelumora_model::confidentiality::user_roles(self.entities.as_ref(), self.viewer.context().initiator_id).await.unwrap_or_default()
     }
 }
 
@@ -454,7 +484,7 @@ impl ViewsFactory {
             FactoryRoot::Session { session, runtime } => (session.clone(), runtime.clone()),
         };
         let from = Place { channel, classification, session: session_loop.privacy() };
-        let views = Views::new(runtime, Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
+        let views = Views::new(&runtime, Arc::new(OwnSession(session_loop.clone())), Viewer::from_place(self.context.clone(), from));
         Some(SessionView::of(views, Found::Running(session_loop)))
     }
 }

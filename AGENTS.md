@@ -55,6 +55,8 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     credentials never.
 *   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
     code. Keep the REST API compatible with `caelumora-web-ui`.
+*   A type takes the services it uses - the `SecurityManager`, the stores, the event bus - when it
+    is made and keeps them as fields; it does not fetch them through the runtime at every use.
 *   A pure access question is a method of `AccessQuestions`, an operation checks its own permission
     with `Enforcement::require` - before it asks anything of others - and a frontend never asks the
     `SecurityManager` itself (see [SECURITY.md](docs/SECURITY.md)).

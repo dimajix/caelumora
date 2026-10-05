@@ -51,6 +51,31 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
     is now; `channel_loop()` and `session_loop()` the running object above; loading any stored
     entity is `load_…` (`ActorRuntime::load_session`).
 
+### Services are held, not fetched
+
+A type takes the services it works with - the `SecurityManager`, the stores, the event bus, the
+`ComponentRegistry` - when it is made, and keeps them as fields (issue 229):
+
+*   **Constructor injection.** `new` takes the services, or takes them once from the runtime it is
+    given, and stores them as `Arc<dyn Trait>`: `dyn`, since the policy and the stores are chosen
+    at run time, and `Arc`, since the type lives in a task. No service is fetched again through the
+    runtime at every use, and none sits in a global (`static`, `OnceLock`), which would hide the
+    dependency and tie every test to one instance. The services never change while the process
+    runs, so a held one cannot go stale.
+*   **What it holds says what it needs.** A type holds the services it uses, not the runtime that
+    reaches all of them. Several services that go together travel as a small context holding
+    exactly those - `ComponentContext`, `Views` - never as one that holds everything again. A
+    scoped runtime such as `ActorRuntime` is such a context; its users do not reach past it
+    (`runtime_manager()`).
+*   **No threading next to the owner.** A service is not passed into a function beside the object
+    that already holds it; the function becomes a method of that object, or takes the object.
+*   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service
+    clones it.
+*   **One step to ask.** A check reads as the question it is -
+    `views.security().may_approve(views.context(), …)` - not as a walk through the runtime. A type
+    that is asked often in someone's name holds that name with the services, as `Views` holds its
+    viewer.
+
 ## Error handling
 
 Errors carry what failed, and only what may be shown goes to users (issue 02).

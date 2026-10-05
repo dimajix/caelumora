@@ -91,7 +91,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [229](229-services-fetched-through-the-runtime.md) | open | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
+| [229](229-services-fetched-through-the-runtime.md) | in progress | Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on. |
 
 ## Open architecture questions
 

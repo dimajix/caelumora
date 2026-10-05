@@ -68,7 +68,7 @@ impl SessionView {
     /// Whether the viewer may change the session - rename it, change its
     /// privacy (`UpdateSession`).
     pub async fn may_change(&self) -> bool {
-        self.views.runtime().security_manager().may_change_session(self.views.viewer().context(), &self.session.security_attributes).await
+        self.views.security().may_change_session(self.views.context(), &self.session.security_attributes).await
     }
 
     /// The channels the viewer may read as a whole, in the order of the
@@ -131,8 +131,8 @@ impl SessionView {
     /// all; an agent reads what its channel may read by their
     /// classifications, and the rest entry by entry.
     async fn readable(&self, channel: &Channel) -> Option<Readable> {
-        let security = self.views.runtime().security_manager();
-        let context = self.views.viewer().context();
+        let security = self.views.security();
+        let context = self.views.context();
         if self.views.viewer().place().is_some() {
             let source = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
             let whole = self.views.may_read_from(&source).await;
@@ -148,7 +148,7 @@ impl SessionView {
     /// that does not exist.
     async fn cleared_for(&self, classification: &Classification) -> bool {
         let roles = self.views.roles().await;
-        self.views.runtime().security_manager().may_see_channel(self.views.viewer().context(), &roles, classification).await
+        self.views.security().may_see_channel(self.views.context(), &roles, classification).await
     }
 
     /// The document of channel `id`, if the session has it, with its loop
@@ -158,7 +158,7 @@ impl SessionView {
         match &self.running {
             Some(session_loop) => Ok(session_loop.channel_by_id(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
             None if self.session.channels.contains(&id) => {
-                let channel = self.views.runtime().entity_store().get_channel(&SecurityContext::system(), id).await
+                let channel = self.views.entities().get_channel(&SecurityContext::system(), id).await
                     .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("reading channel {id}"))))?;
                 Ok(Some((Arc::new(channel), None)))
             }
@@ -174,7 +174,7 @@ impl SessionView {
                 .map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))
                 .collect(),
             None => {
-                let store = self.views.runtime().entity_store();
+                let store = self.views.entities();
                 let system = SecurityContext::system();
                 let mut channels = Vec::with_capacity(self.session.channels.len());
                 for id in &self.session.channels {
@@ -196,9 +196,9 @@ impl SessionView {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_channels(&self) -> ViewResult<Vec<DeletedSnapshot<ChannelId>>> {
-        let runtime = self.views().runtime();
-        let context = self.views().viewer().context();
-        let channels = runtime.entity_store().list_deleted_channels(context).await
+        let views = self.views();
+        let context = views.context();
+        let channels = views.entities().list_deleted_channels(context).await
             .map_err(|e| ViewError::Failed(anyhow::Error::new(e).context(format!("listing the deleted channels of session {}", self.id()))))?;
         let may_change = self.may_change().await;
         let mut deleted = Vec::new();
@@ -208,7 +208,7 @@ impl SessionView {
                 id: channel.id,
                 name: channel.name.to_string(),
                 deleted: removal,
-                can_restore: may_change && runtime.security_manager().may_restore(context, EntityKind::Channel, &channel.security_attributes).await,
+                can_restore: may_change && views.security().may_restore(context, EntityKind::Channel, &channel.security_attributes).await,
                 can_purge: false,
             });
         }

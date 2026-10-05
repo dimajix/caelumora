@@ -69,14 +69,14 @@ impl ChannelView {
     /// The kind of the channel's moderator, e.g. `policy_moderator` (issue
     /// 174); `None` if it is a preconfigured component.
     pub fn moderator(&self) -> Option<String> {
-        self.views().runtime.component_registry().kind_of::<dyn Moderator>(&self.channel.components)
+        self.views().components().kind_of::<dyn Moderator>(&self.channel.components)
     }
 
     /// The kind of the policy configured for the moderator's slot, e.g.
     /// `round_robin_policy` (issues 44, 174); `None` if it is a
     /// preconfigured component.
     pub fn responder_policy(&self) -> Option<String> {
-        self.views().runtime.component_registry().kind_of::<dyn ResponderPolicy>(&self.channel.components)
+        self.views().components().kind_of::<dyn ResponderPolicy>(&self.channel.components)
     }
 
     /// The classification of the channel's contents (issue 133).
@@ -115,7 +115,7 @@ impl ChannelView {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub async fn may_change(&self) -> bool {
-        self.views().runtime().security_manager().may_change_channel(self.views().viewer().context(), &self.channel.security_attributes).await
+        self.views().security().may_change_channel(self.views().context(), &self.channel.security_attributes).await
     }
 
     /// Its participants, in the order of the channel.
@@ -177,7 +177,7 @@ impl ChannelView {
         let mut history = match &self.running {
             Some(channel_loop) => channel_loop.visible_history(actor).await,
             None => {
-                let state = match self.views().runtime().state_store().get_channel_state(self.channel.id).await {
+                let state = match self.views().states().get_channel_state(self.channel.id).await {
                     Ok(state) => state,
                     // Nothing was said yet.
                     Err(StoreError::NotFound { .. }) => ChannelState::new(self.channel.id),
@@ -326,6 +326,11 @@ impl MemberView {
         &self.channel
     }
 
+    /// The views the member was reached through: in whose name it is read.
+    fn views(&self) -> &Views {
+        self.channel.views()
+    }
+
     pub fn id(&self) -> ActorId {
         self.participant.actor_id()
     }
@@ -358,7 +363,7 @@ impl MemberView {
     /// message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub async fn may_read_context(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.channel.views().runtime().security_manager().may_read_agent_context(self.channel.views().viewer().context(), attributes).await,
+            Some(attributes) => self.views().security().may_read_agent_context(self.views().context(), attributes).await,
             None => false,
         }
     }
@@ -367,7 +372,7 @@ impl MemberView {
     /// (`ReadAgentTools`, issue 194) - only ever for agents.
     pub async fn may_read_tools(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.channel.views().runtime().security_manager().may_read_agent_tools(self.channel.views().viewer().context(), attributes, &self.channel.channel.security_attributes).await,
+            Some(attributes) => self.views().security().may_read_agent_tools(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
             None => false,
         }
     }
@@ -378,7 +383,7 @@ impl MemberView {
     /// else sees only that it waits.
     pub async fn may_approve(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) if !self.former => self.channel.views().runtime().security_manager().may_approve(self.channel.views().viewer().context(), attributes, &self.channel.channel.security_attributes).await,
+            Some(attributes) if !self.former => self.views().security().may_approve(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
             _ => false,
         }
     }
@@ -394,10 +399,10 @@ impl MemberView {
     /// see (`ReadAgentTools`).
     pub async fn tool_sets(&self) -> ViewResult<Vec<ToolSet>> {
         let Some(attributes) = self.state.attributes() else { return Ok(Vec::new()) };
-        let views = self.channel.views();
+        let views = self.views();
         let forbidden = || ViewError::Forbidden { actor: self.id() };
-        views.runtime().security_manager()
-            .require(views.viewer().context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, forbidden).await
+        views.security()
+            .require(views.context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, forbidden).await
             .map_err(|_| forbidden())?;
         if self.former {
             return Ok(Vec::new());
@@ -409,7 +414,7 @@ impl MemberView {
     /// its owner (`DeleteAgent`, issue 164).
     pub async fn may_delete(&self) -> bool {
         match (self.state.agent(), self.state.attributes()) {
-            (Some(_), Some(attributes)) => self.channel.views().runtime().security_manager().may_delete_agent(self.channel.views().viewer().context(), attributes).await,
+            (Some(_), Some(attributes)) => self.views().security().may_delete_agent(self.views().context(), attributes).await,
             _ => false,
         }
     }
@@ -482,10 +487,10 @@ impl MemberView {
     async fn readable_agent(&self) -> ViewResult<&AgentMember> {
         let no_context = || ViewError::NoContext { actor: self.id() };
         let attributes = self.state.attributes().ok_or_else(no_context)?;
-        let views = self.channel.views();
+        let views = self.views();
         let forbidden = || ViewError::Forbidden { actor: self.id() };
-        views.runtime().security_manager()
-            .require(views.viewer().context(), ActionType::ReadAgentContext(attributes), forbidden).await
+        views.security()
+            .require(views.context(), ActionType::ReadAgentContext(attributes), forbidden).await
             .map_err(|_| forbidden())?;
         self.state.agent().ok_or_else(no_context)
     }

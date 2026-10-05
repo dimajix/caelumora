@@ -69,10 +69,9 @@ pub(super) trait MemberState: Send + Sync + Debug {
 /// and an agent's kind decides how its state is read, not what the viewer
 /// may see.
 pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
-    let runtime = views.runtime();
     match participant {
-        Participant::User(id) => match runtime.entity_store().get_user(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserMember { id: *id, name: user.username, store: runtime.entity_store(), introduction: OnceCell::new() }),
+        Participant::User(id) => match views.entities().get_user(&SecurityContext::system(), *id).await {
+            Ok(user) => Arc::new(UserMember { id: *id, name: user.username, store: views.entities().clone(), introduction: OnceCell::new() }),
             Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
@@ -82,9 +81,9 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentMemberState {
-                member: AgentMember(StateRef { agent: agent.id, channel, store: runtime.state_store() }),
+                member: AgentMember(StateRef { agent: agent.id, channel, store: views.states().clone() }),
                 agent,
-                store: runtime.entity_store(),
+                store: views.entities().clone(),
                 introduction: OnceCell::new(),
             }),
             // A deleted agent keeps its name (issue 164), nothing else.
