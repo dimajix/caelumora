@@ -16,6 +16,7 @@ use arc_swap::ArcSwap;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, HistoryAccess, HistoryStart, Participant};
 use crate::controller::{AgentController, ChannelController, ControllerManager, UserController};
+use crate::event::EventBus;
 use caelumora_model::agent::{Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::event::GlobalEvent;
@@ -273,7 +274,13 @@ pub struct ChannelLoop {
     id: ChannelId,
     session_id: SessionId,
     channel: Arc<ChannelController>,
+    /// What builds the runtimes of its actors.
     runtime: ChannelRuntime,
+    /// The services it works with, taken from `runtime` once (issue 229).
+    security: Arc<dyn SecurityManager>,
+    entities: Arc<dyn EntityStore>,
+    controllers: Arc<ControllerManager>,
+    events: Arc<EventBus>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
     /// when someone joins or leaves (issue 46), so that every reader sees
@@ -351,6 +358,10 @@ impl ChannelLoop {
             id,
             session_id,
             channel: channel_controller,
+            security: runtime.security_manager(),
+            entities: runtime.entity_store(),
+            controllers: runtime.controller_manager(),
+            events: runtime.event_bus(),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: std::sync::Mutex::new(HashMap::new()),
@@ -377,7 +388,7 @@ impl ChannelLoop {
             // without it rather than not at all (issues 120, 198). Its
             // owner's loss must not keep everyone else out, nor can a third
             // party - the personality's owner - stop someone's channel so.
-            let found = Member::of(participant, &channel_loop.channel.load(), &channel_loop.runtime.controller_manager(), channel_loop.runtime.security_manager().as_ref()).await;
+            let found = channel_loop.member_of(participant).await;
             let member = match found {
                 Ok(Some(member)) => member,
                 Ok(None) => {
@@ -394,6 +405,11 @@ impl ChannelLoop {
             channel_loop.adopt(Arc::from(actor), member).await;
         }
         Ok(channel_loop)
+    }
+
+    /// `participant` with what its actor is built from (`Member::of`).
+    async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
+        Member::of(participant, &self.channel.load(), &self.controllers, self.security.as_ref()).await
     }
 
     /// Makes `session` the session of this channel. Called once by the
@@ -498,12 +514,11 @@ impl ChannelLoop {
         self.require(context, action, "reclassifying").await?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
-        let (store, security) = (self.runtime.entity_store(), self.runtime.security_manager());
         for ChannelActor { member, .. } in self.actors.load().values() {
-            member.require_cleared(store.as_ref(), security.as_ref(), context, &classification, self.id).await?;
+            member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &classification, self.id).await?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
-        let lowered = !self.runtime.security_manager().may_publish(context, context.caller_id, &channel, &classification).await;
+        let lowered = !self.security.may_publish(context, context.caller_id, &channel, &classification).await;
         if lowered {
             self.cancel_actors();
         }
@@ -543,7 +558,7 @@ impl ChannelLoop {
         state.history.reclassify(message, classification.clone());
         self.state_store.put_channel_state(self.id, &mut state).await?;
         drop(state);
-        self.runtime.event_bus().publish(GlobalEvent::MessageReclassified(self.session_id, self.id, message, classification), attributes);
+        self.events.publish(GlobalEvent::MessageReclassified(self.session_id, self.id, message, classification), attributes);
         Ok(())
     }
 
@@ -591,9 +606,9 @@ impl ChannelLoop {
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let member = Member::of(&found, &self.channel.load(), &self.runtime.controller_manager(), self.runtime.security_manager().as_ref()).await?
+        let member = self.member_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        member.require_cleared(self.runtime.entity_store().as_ref(), self.runtime.security_manager().as_ref(), context, &self.classification(), self.id).await?;
+        member.require_cleared(self.entities.as_ref(), self.security.as_ref(), context, &self.classification(), self.id).await?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -787,7 +802,7 @@ impl ChannelLoop {
     /// refused, not why.
     async fn require(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
         let channel = self.id;
-        Ok(self.runtime.security_manager().require(context, action, || ChannelError::Forbidden { action: what, channel }).await?)
+        Ok(self.security.require(context, action, || ChannelError::Forbidden { action: what, channel }).await?)
     }
 
     pub fn actor_ids(&self) -> Vec<ActorId> {
@@ -926,7 +941,7 @@ impl ChannelLoop {
                 // actor sent before is routed, what it sends after is not
                 // (`handle_actor_event`), so that nothing of it follows the
                 // announcement (issue 162).
-                let name = self.runtime.controller_manager().actor_name(remover.caller_id).await.unwrap_or_else(|e| {
+                let name = self.controllers.actor_name(remover.caller_id).await.unwrap_or_else(|e| {
                     warn!("Cannot name {} for channel {}: {}", remover.caller_id, self.id, e);
                     remover.caller_id.to_string()
                 });
@@ -1022,11 +1037,10 @@ impl ChannelLoop {
             _ => return true,
         };
         let channel = self.classification();
-        let security = self.runtime.security_manager();
         for message in messages {
             let parts = std::iter::once(&message.classification).chain(message.tool_results.iter().map(|r| &r.classification));
             for classification in parts {
-                if !security.may_publish(&event.security, event.context.sender_id, classification, &channel).await {
+                if !self.security.may_publish(&event.security, event.context.sender_id, classification, &channel).await {
                     warn!("Dropped {}: a part of its message {} is classified {}, which channel {} does not admit", event.describe(), message.id, classification, self.id);
                     return false;
                 }

@@ -102,3 +102,10 @@ reason to look a service up each time does not apply.
   `ControllerManager` at all. No behaviour changed. `runtime_manager()` is also still reached from
   outside the runtime module by `ViewsFactory::session`, which builds an agent's views, and by a
   test in `channel.rs`.
+- **2026-10-05** — Step 3, the channel: `ChannelLoop` takes the `SecurityManager`, the
+  `EntityStore`, the `ControllerManager` and the `EventBus` from its `ChannelRuntime` once, in
+  `new`, and holds them; it keeps the `ChannelRuntime` only to build its actors' runtimes.
+  `Member::of`, threaded three times with the controllers and the policy, is called through
+  `ChannelLoop::member_of`. No behaviour changed. The free `channel::require_cleared`, which
+  `SessionLoop` and `SessionManager` call for a new channel, still threads the runtime's services
+  into `Member::of`; it goes with the step for the session.
