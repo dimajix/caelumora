@@ -207,8 +207,9 @@ All three show their numbers in the same hover card (`HoverCard` with `UsageStat
 groups under a heading, labels on the left and values aligned on the right, never wrapped, the card
 as wide as its content. It opens on hover, on keyboard focus and on tap, above its trigger - below
 where there is no room - and always inside the window; it is placed in the page's body, so that the
-scrolling member list and chat do not cut it off, and closes when the page scrolls - placed by
-`useFloating` (`floating.ts`), like the menus.
+scrolling member list and chat do not cut it off, and closes when what holds its trigger scrolls -
+not when the chat beside it receives messages. It is placed by `useFloating` (`floating.ts`), like
+the menus, and placed again when its size changes.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who
@@ -216,25 +217,30 @@ answers - the channel's `responder_policy` (issue 174) - is shown above it as it
 `mentions_only_policy` the input says that agents answer only when mentioned (`moderator.ts`) - by
 a user or by another agent.
 
-Where `can_change` is set, the member list offers adding a participant of the session - with how
-much of the history they may see (`AddParticipantDialog`, issue 46) - and removing one. The channel
-is fetched again when the global stream announces a join or leave for it.
+A member's row shows its name and handle, and below them how full its context is; what can be done
+with the member is in its menu (`ActionMenu`, issue 230) - "Show history", "Show tools", "Remove
+from channel", "Delete agent" - each only where the member offers it, and no menu where it offers
+nothing.
 
-An agent whose tools the user may see (`can_read_tools`, issue 194) has a wrench icon in the member
-list. It opens the tools panel (`ToolsPanel`): what the agent can call in this channel now
+Where `can_change` is set, the member list offers adding a participant of the session - with how
+much of the history they may see (`AddParticipantDialog`, issue 46) - and the menu removing one.
+The channel is fetched again when the global stream announces a join or leave for it.
+
+An agent whose tools the user may see (`can_read_tools`, issue 194) has "Show tools" in its menu.
+It opens the tools panel (`ToolsPanel`): what the agent can call in this channel now
 (`GET …/actors/{aid}/tools`), by the tool set the tools come from, with each set's description and,
 where it is unavailable, why - each tool marked where a call needs approval, is shown to its owner
 only, or has its results classified. The sets are drawn by `ToolSetList`, as in the context panel.
 An agent that has no tools here - external, or its channel not running - says so.
 
-An agent the user may delete (`can_delete`) has a delete button in the member list; it asks once
-more ("Delete agent?"), since the agent leaves every channel it takes part in, not only this one,
-and a restore - only over REST so far - brings it back into none (issue 164).
+An agent the user may delete (`can_delete`) has "Delete agent" in its menu; it asks once more in its
+place ("Delete agent? It leaves every channel"), since the agent leaves every channel it takes part
+in, not only this one, and a restore - only over REST so far - brings it back into none (issue 164).
 
 Below the members, a folded group "Former members" lists who took part and left (issue 164), each
-with when, and - where `can_read_context` - the history icon, so that what a removed agent did, the
-turn it gave up when it was removed included ([146](../issues/146-show-given-up-turns.md)), can
-still be read.
+with when, and - where `can_read_context` - "Show history" in its menu, so that what a removed agent
+did, the turn it gave up when it was removed included ([146](../issues/146-show-given-up-turns.md)),
+can still be read.
 
 A "Notes" tab next to the members shows the notes the channel's agents published (`NotesList`, issue
 17). They come with the snapshot and are fetched again (`GET …/notes`) when the global stream
@@ -261,12 +267,13 @@ holds for both kinds of agent ("What … was given"; the label set by what it ha
 this set it): the REST API does not tell them apart. A context never changes, so what was fetched
 once is kept. See [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
 
-The member list gives every agent whose context the user may read a history icon. It opens the
-history panel (`HistoryPanel`, issue 207): all that was offered to the agent in the channel and what
-it said itself (`GET …/actors/{aid}/history`), which may differ from what the channel shows. What
-its perceive processors did not pass on to its transcript is greyed out and marked "not passed on";
-a message whose context is recorded opens it in the context panel, and closing that returns to the
-history. The history is loaded again whenever the channel's messages change.
+Every agent whose context the user may read has "Show history" in its menu in the member list. It
+opens the history panel (`HistoryPanel`, issue 207): all that was offered to the agent in the
+channel and what it said itself (`GET …/actors/{aid}/history`), which may differ from what the
+channel shows. What its perceive processors did not pass on to its transcript is greyed out and
+marked "not passed on"; a message whose context is recorded opens it in the context panel, and
+closing that returns to the history. The history is loaded again whenever the channel's messages
+change.
 
 The turns the agent gave up (issue 146, `GET …/actors/{aid}/given-up-turns`) are folded into the
 history where they branched off: after the message the server names as `after`, first if it names

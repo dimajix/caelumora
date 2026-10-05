@@ -20,8 +20,8 @@ export interface Placement {
  * `trigger` and to the `floating` element, and its `position` - next to the
  * trigger as `placement` says, on the other side where there is no room, and
  * always inside the window; `null` until it is rendered and its size is
- * known. Where the trigger is no longer - the page scrolled, the window
- * changed - `onGone` is called.
+ * known. Where the trigger is no longer - what holds it scrolled, the
+ * window changed - `onGone` is called.
  */
 export function useFloating<T extends HTMLElement, F extends HTMLElement>(
   open: boolean,
@@ -33,33 +33,51 @@ export function useFloating<T extends HTMLElement, F extends HTMLElement>(
   const [position, setPosition] = useState<{left: number; top: number} | null>(null);
   const {prefer, align} = placement;
 
+  // Placed when it opens, and again whenever its size changes - an entry
+  // asking for a confirmation is wider.
   useLayoutEffect(() => {
-    if (!open || !trigger.current || !floating.current) return;
-    const anchor = trigger.current.getBoundingClientRect();
-    const {width, height} = floating.current.getBoundingClientRect();
-    const above = anchor.top - GAP - height;
-    const below = anchor.bottom + GAP;
-    const fitsBelow = below + height <= window.innerHeight - MARGIN;
-    const top = prefer === 'above'
-      ? (above >= MARGIN ? above : Math.min(below, window.innerHeight - MARGIN - height))
-      : (fitsBelow || above < MARGIN ? Math.min(below, window.innerHeight - MARGIN - height) : above);
-    const wanted = align === 'start' ? anchor.left : anchor.right - width;
-    const left = Math.max(MARGIN, Math.min(wanted, window.innerWidth - MARGIN - width));
-    setPosition({left, top: Math.max(MARGIN, top)});
+    const element = floating.current;
+    if (!open || !element) return;
+    const place = () => {
+      if (!trigger.current) return;
+      const anchor = trigger.current.getBoundingClientRect();
+      const {width, height} = element.getBoundingClientRect();
+      const above = anchor.top - GAP - height;
+      const below = anchor.bottom + GAP;
+      const fitsBelow = below + height <= window.innerHeight - MARGIN;
+      const top = prefer === 'above'
+        ? (above >= MARGIN ? above : Math.min(below, window.innerHeight - MARGIN - height))
+        : (fitsBelow || above < MARGIN ? Math.min(below, window.innerHeight - MARGIN - height) : above);
+      const wanted = align === 'start' ? anchor.left : anchor.right - width;
+      const left = Math.max(MARGIN, Math.min(wanted, window.innerWidth - MARGIN - width));
+      setPosition({left, top: Math.max(MARGIN, top)});
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      // Not shown where it was when it opens again.
+      setPosition(null);
+    };
   }, [open, prefer, align]);
 
   const gone = useEffectEvent(onGone);
   useLayoutEffect(() => {
     if (!open) return;
     const away = () => gone();
-    window.addEventListener('scroll', away, true);
+    // Only what moves the trigger: a list beside it scrolling - a chat
+    // receiving messages - leaves it where it is.
+    const scrolled = (e: Event) => {
+      if (e.target instanceof Node && trigger.current && e.target.contains(trigger.current)) gone();
+    };
+    window.addEventListener('scroll', scrolled, true);
     window.addEventListener('resize', away);
     return () => {
-      window.removeEventListener('scroll', away, true);
+      window.removeEventListener('scroll', scrolled, true);
       window.removeEventListener('resize', away);
     };
   }, [open]);
 
-  // Placed anew whenever it opens, before it is shown.
   return {trigger, floating, position: open ? position : null};
 }

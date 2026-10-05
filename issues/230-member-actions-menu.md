@@ -1,6 +1,6 @@
 # 230 — The actions on a channel member crowd out its name
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -50,3 +50,14 @@ WEB-UI.md describes it.
 - **2026-10-05** — Issue created at the maintainer's request: the action icons on the channel
   members leave hardly any room for the name; a menu like the one on the channel names in the
   sidebar is preferred.
+- **2026-10-05** — Done. `ActionMenu` (`caelumora-web-ui/src/components/ActionMenu.tsx`) is the
+  one menu for the actions on a list entry: a `MoreVertical` button, entries with icon and text,
+  red for what removes something, an optional confirmation in the entry's place, `role="menu"`,
+  arrow keys, Escape back to the button, closing on a click elsewhere. The sidebar's session and
+  channel menus moved to it first, without changing what they do (the deletion of a session or
+  channel still asks nothing, as before). Its placement is the hover card's, moved into
+  `useFloating` (`floating.ts`), which also places it again when its size changes and closes it
+  only when what holds its trigger scrolls - closing on any scroll made both close at once in a
+  channel whose agents were talking. A member's row now holds its name, handle, token gauge and
+  the menu: "Show history", "Show tools", "Remove from channel", "Delete agent" ("Delete agent? It
+  leaves every channel" on the first choice); a former member's menu holds "Show history".

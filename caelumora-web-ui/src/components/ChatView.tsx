@@ -59,6 +59,7 @@ import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {formatArguments, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults} from '../messages';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
+import {ActionMenu, type MenuAction} from './ActionMenu';
 import {UsageStats} from './UsageStats';
 import {ContextPanel} from './ContextPanel';
 import {HistoryPanel} from './HistoryPanel';
@@ -68,6 +69,9 @@ import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
+
+/** The menu button of a member's row: shown while the row is hovered or the button focused. */
+const ROW_MENU = 'text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -159,8 +163,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
   const [toolsOf, setToolsOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
   // Whether the former members of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
-  // The agent whose deletion was clicked once, to be confirmed (issue 164).
-  const [deletingAgent, setDeletingAgent] = useState<string | null>(null);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
@@ -282,7 +284,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
 
   /** Deletes the agent `member` (issue 164): it leaves every channel, this one too. */
   const deleteAgent = async (member: ChannelMember) => {
-    setDeletingAgent(null);
     const uuid = actorUuid(member.id);
     if (!uuid) return;
     try {
@@ -291,6 +292,31 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
       reportError(`Failed to delete ${member.name}`, error);
     }
   };
+
+  /** What can be done with `member` of the channel: what it offers (issue 230). */
+  const memberActions = (member: ChannelMember): MenuAction[] => [
+    ...historyActions(member),
+    ...(member.can_read_tools ? [{
+      label: 'Show tools', icon: Wrench, title: `Show the tools of ${member.name}`,
+      onSelect: () => { setHistoryOf(null); setToolsOf({channelId, member}); },
+    }] : []),
+    // The approver belongs to every channel and cannot be removed.
+    ...(channel?.can_change && member.kind !== 'approver' ? [{
+      label: 'Remove from channel', icon: UserMinus, danger: true, title: `Remove ${member.name} from the channel`,
+      onSelect: () => void removeParticipant(member),
+    }] : []),
+    ...(member.can_delete ? [{
+      label: 'Delete agent', icon: Trash2, danger: true, confirm: 'Delete agent? It leaves every channel',
+      title: `${member.name} leaves every channel it takes part in, not only this one`,
+      onSelect: () => void deleteAgent(member),
+    }] : []),
+  ];
+
+  /** Reading what `member` heard and said - for a former member too - where it may be read. */
+  const historyActions = (member: ChannelMember): MenuAction[] => member.can_read_context ? [{
+    label: 'Show history', icon: History, title: `Show what ${member.name} heard and said`,
+    onSelect: () => setHistoryOf({channelId, member}),
+  }] : [];
 
   const removeParticipant = async (member: ChannelMember) => {
     const uuid = actorUuid(member.id);
@@ -1073,55 +1099,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                   </div>
                   {usage[actorKey(member.id)] && <TokenGauge usage={usage[actorKey(member.id)]} />}
                 </div>
-                {member.can_read_context && (
-                  <button
-                    onClick={() => setHistoryOf({channelId, member})}
-                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
-                    title={`Show what ${member.name} heard and said`}
-                    aria-label={`Show what ${member.name} heard and said`}
-                  >
-                    <History size={14} />
-                  </button>
-                )}
-                {member.can_read_tools && (
-                  <button
-                    onClick={() => { setHistoryOf(null); setToolsOf({channelId, member}); }}
-                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
-                    title={`Show the tools of ${member.name}`}
-                    aria-label={`Show the tools of ${member.name}`}
-                  >
-                    <Wrench size={14} />
-                  </button>
-                )}
-                {member.can_delete && (deletingAgent === actorKey(member.id) ? (
-                  <button
-                    onClick={() => void deleteAgent(member)}
-                    className="shrink-0 px-1 rounded-md text-xs text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
-                    title={`${member.name} leaves every channel it takes part in`}
-                  >
-                    Delete agent?
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setDeletingAgent(actorKey(member.id))}
-                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
-                    title={`Delete the agent ${member.name}`}
-                    aria-label={`Delete the agent ${member.name}`}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                ))}
-                {/* The approver belongs to every channel and cannot be removed. */}
-                {channel?.can_change && member.kind !== 'approver' && (
-                  <button
-                    onClick={() => void removeParticipant(member)}
-                    className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700"
-                    title={`Remove ${member.name} from the channel`}
-                    aria-label={`Remove ${member.name} from the channel`}
-                  >
-                    <UserMinus size={14} />
-                  </button>
-                )}
+                <ActionMenu
+                  label={`Options of ${member.name}`}
+                  className={ROW_MENU}
+                  actions={memberActions(member)}
+                />
               </div>
             ))}
           </div>
@@ -1155,16 +1137,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user }
                           <div className="text-sm text-gray-500 dark:text-gray-400 truncate">{member.name}</div>
                           {left && <div className="text-[11px] text-gray-400 dark:text-gray-500" title={left.full}>left {left.short}</div>}
                         </div>
-                        {member.can_read_context && (
-                          <button
-                            onClick={() => setHistoryOf({channelId, member})}
-                            className="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
-                            title={`Show what ${member.name} heard and said`}
-                            aria-label={`Show what ${member.name} heard and said`}
-                          >
-                            <History size={14} />
-                          </button>
-                        )}
+                        <ActionMenu
+                          label={`Options of ${member.name}`}
+                          className={ROW_MENU}
+                          actions={historyActions(member)}
+                        />
                       </div>
                     );
                   })}
